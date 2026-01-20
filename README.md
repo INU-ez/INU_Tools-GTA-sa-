@@ -1,6 +1,6 @@
 # INU_Tools (GTA SA)
 
-Аддон для Blender для работы с моделями GTA San Andreas. Предоставляет полный набор инструментов для экспорта, прелайтинга и подготовки 3D моделей для GTA SA.
+Аддон для Blender для работы с моделями GTA San Andreas. Предоставляет набор инструментов для экспорта, прелайтинга и подготовки 3D моделей для GTA SA.
 
 ![Blender](https://img.shields.io/badge/Blender-4.4+-orange?logo=blender)
 ![License](https://img.shields.io/badge/License-MIT-blue)
