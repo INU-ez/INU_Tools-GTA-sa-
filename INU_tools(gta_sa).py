@@ -8,7 +8,7 @@
 bl_info = {
     "name": "INU_tools(gta_sa)",
     "author": "INU",
-    "version": (1, 4, 4),
+    "version": (1, 4, 5),
     "blender": (4, 4, 0),
     "location": "View3D > Sidebar (N) > GTA Tools",
     "description": "Toolset for GTA SA models. Requires DragonFF addon",
@@ -17,6 +17,8 @@ bl_info = {
 }
 
 # Changelog:
+# v1.4.5 - Export All: массовый экспорт нескольких групп моделей (Model1_DFF + Model2_DFF и т.д.)
+#        - Lightmap Generator: панель снова доступна в интерфейсе
 # v1.4.4 - Prelight: Fill Colors - покраска полигонов с пипеткой и системой уровней
 #        - Prelight: Scatter Light - рассеивание света с настройками и уровнями
 #        - Prelight: убраны лишние заголовки, оставлены только кнопки
@@ -24,7 +26,7 @@ bl_info = {
 #        - Color Attributes: кнопка Day/Night создаёт оба атрибута
 #        - Drag-and-Drop: перетаскивание PNG/JPG/TGA из File Browser создаёт материал
 #        - INU Tools панель перемещена в Properties > Scene
-#        - Скрыт Lightmap Generator, удалена пустая вкладка GTA Textures из N-панели
+#        - Удалена пустая вкладка GTA Textures из N-панели
 # v1.4.3 - TXD экспорт: исправлена прозрачность DXT3 текстур в игре
 #        - TXD экспорт: текстуры с размером не кратным 4 пропускаются с предупреждением
 # v1.4.2 - TXD экспорт: добавлен GPU режим через NVIDIA Texture Tools
@@ -1000,6 +1002,30 @@ def find_selected_models():
             models[model_type] = obj
 
     return models
+
+
+def find_all_selected_model_groups():
+    """Find all DFF/LOD/COL model groups among selected objects, grouped by base_name"""
+    groups = {}  # {base_name: {'DFF': obj, 'LOD': obj, 'COL': obj}}
+
+    for obj in bpy.context.selected_objects:
+        if obj.type != 'MESH':
+            continue
+
+        model_type, base_name = get_model_type(obj)
+        if not base_name:
+            continue
+
+        # Нормализуем base_name (убираем _ в конце если есть)
+        base_name_clean = base_name.rstrip('_')
+
+        if base_name_clean not in groups:
+            groups[base_name_clean] = {'DFF': None, 'LOD': None, 'COL': None}
+
+        if model_type and groups[base_name_clean][model_type] is None:
+            groups[base_name_clean][model_type] = obj
+
+    return groups
 
 
 def get_base_name_from_selected():
@@ -2818,7 +2844,7 @@ class GTATOOLS_OT_export_col(bpy.types.Operator, ExportHelper):
 
 
 class GTATOOLS_OT_export_all(bpy.types.Operator):
-    """Export all selected models (DFF + COL + LOD + TXD)"""
+    """Export all selected models (DFF + COL + LOD + TXD) - supports multiple model groups"""
     bl_idname = "gtatools.export_all"
     bl_label = "Export All (DFF+COL+LOD+TXD)"
     bl_options = {'REGISTER'}
@@ -2829,46 +2855,13 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
         context.window_manager.fileselect_add(self)
         return {'RUNNING_MODAL'}
 
-    def execute(self, context):
-        # Ищем модели среди выделенных
-        models = find_selected_models()
-
-        if not models['DFF'] and not models['LOD'] and not models['COL']:
-            self.report({'ERROR'}, T("Выделите модели для экспорта!"))
-            return {'CANCELLED'}
-
-        # Disable prelight preview before export (otherwise export breaks)
-        for model_type in ['DFF', 'LOD', 'COL']:
-            if models[model_type] and models[model_type].type == 'MESH':
-                setup_prelight_preview(models[model_type], enable=False)
-
-        # Get base name
-        base_name = get_base_name_from_selected()
-        if not base_name:
-            self.report({'ERROR'}, T("Не удалось определить имя модели!"))
-            return {'CANCELLED'}
-
+    def export_model_group(self, context, base_name, models, skip_txd, use_gpu):
+        """Export a single model group (DFF + LOD + COL + TXD)"""
         exported = []
         errors = []
-        wm = context.window_manager
-
-        # Настройки экспорта
-        skip_txd = context.scene.gtatools_export_all_skip_txd
-        use_gpu = context.scene.gtatools_txd_use_gpu
-
-        # Считаем количество шагов для прогресс-бара
-        total_steps = sum([
-            1 if models['DFF'] else 0,
-            1 if models['LOD'] else 0,
-            1 if models['COL'] else 0,
-            1 if (models['DFF'] or models['LOD']) and not skip_txd else 0  # TXD
-        ])
-        current_step = 0
-        wm.progress_begin(0, total_steps)
 
         # Экспорт DFF (версия GTA SA)
         if models['DFF']:
-            wm.progress_update(current_step)
             dff_path = os.path.join(self.directory, f"{base_name}.dff")
             try:
                 bpy.ops.object.select_all(action='DESELECT')
@@ -2882,14 +2875,12 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
                     export_coll=False
                 )
 
-                exported.append(f"DFF: {base_name}.dff")
+                exported.append(f"{base_name}.dff")
             except Exception as e:
-                errors.append(f"DFF: {str(e)}")
-            current_step += 1
+                errors.append(f"{base_name}.dff: {str(e)}")
 
         # Экспорт LOD (с префиксом LOD, версия GTA SA)
         if models['LOD']:
-            wm.progress_update(current_step)
             lod_path = os.path.join(self.directory, f"LOD{base_name}.dff")
             try:
                 bpy.ops.object.select_all(action='DESELECT')
@@ -2903,14 +2894,12 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
                     export_coll=False
                 )
 
-                exported.append(f"LOD: LOD{base_name}.dff")
+                exported.append(f"LOD{base_name}.dff")
             except Exception as e:
-                errors.append(f"LOD: {str(e)}")
-            current_step += 1
+                errors.append(f"LOD{base_name}.dff: {str(e)}")
 
         # Экспорт COL (версия GTA SA COL3)
         if models['COL']:
-            wm.progress_update(current_step)
             col_path = os.path.join(self.directory, f"{base_name}.col")
             try:
                 bpy.ops.object.select_all(action='DESELECT')
@@ -2935,14 +2924,12 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
 
                 # Исправляем имя модели внутри COL файла
                 fix_col_model_name(col_path, base_name)
-                exported.append(f"COL: {base_name}.col")
+                exported.append(f"{base_name}.col")
             except Exception as e:
-                errors.append(f"COL: {str(e)}")
-            current_step += 1
+                errors.append(f"{base_name}.col: {str(e)}")
 
         # Экспорт TXD (текстуры из DFF + LOD в один архив)
         if (models['DFF'] or models['LOD']) and not skip_txd:
-            wm.progress_update(current_step)
             txd_path = os.path.join(self.directory, f"{base_name}.txd")
             try:
                 bpy.ops.object.select_all(action='DESELECT')
@@ -2956,23 +2943,77 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
                         context.view_layer.objects.active = models['LOD']
                 result, message, _ = export_txd(txd_path, context, selected_only=True, use_gpu=use_gpu)
                 if result == {'FINISHED'}:
-                    exported.append(f"TXD: {base_name}.txd")
+                    exported.append(f"{base_name}.txd")
                 else:
-                    errors.append(f"TXD: {message}")
+                    errors.append(f"{base_name}.txd: {message}")
             except Exception as e:
-                errors.append(f"TXD: {str(e)}")
+                errors.append(f"{base_name}.txd: {str(e)}")
+
+        return exported, errors
+
+    def execute(self, context):
+        # Ищем все группы моделей среди выделенных
+        model_groups = find_all_selected_model_groups()
+
+        if not model_groups:
+            self.report({'ERROR'}, T("Выделите модели для экспорта!"))
+            return {'CANCELLED'}
+
+        # Disable prelight preview before export (otherwise export breaks)
+        for base_name, models in model_groups.items():
+            for model_type in ['DFF', 'LOD', 'COL']:
+                if models[model_type] and models[model_type].type == 'MESH':
+                    setup_prelight_preview(models[model_type], enable=False)
+
+        all_exported = []
+        all_errors = []
+        wm = context.window_manager
+
+        # Настройки экспорта
+        skip_txd = context.scene.gtatools_export_all_skip_txd
+        use_gpu = context.scene.gtatools_txd_use_gpu
+
+        # Считаем общее количество шагов для прогресс-бара
+        total_steps = 0
+        for base_name, models in model_groups.items():
+            total_steps += sum([
+                1 if models['DFF'] else 0,
+                1 if models['LOD'] else 0,
+                1 if models['COL'] else 0,
+                1 if (models['DFF'] or models['LOD']) and not skip_txd else 0
+            ])
+
+        current_step = 0
+        wm.progress_begin(0, total_steps)
+
+        # Экспортируем каждую группу моделей
+        for base_name, models in model_groups.items():
+            wm.progress_update(current_step)
+            exported, errors = self.export_model_group(context, base_name, models, skip_txd, use_gpu)
+            all_exported.extend(exported)
+            all_errors.extend(errors)
+
+            # Обновляем прогресс
+            current_step += sum([
+                1 if models['DFF'] else 0,
+                1 if models['LOD'] else 0,
+                1 if models['COL'] else 0,
+                1 if (models['DFF'] or models['LOD']) and not skip_txd else 0
+            ])
 
         wm.progress_end()
 
         # Включаем превью прелайта обратно после экспорта
-        for model_type in ['DFF', 'LOD', 'COL']:
-            if models[model_type] and models[model_type].type == 'MESH':
-                setup_prelight_preview(models[model_type], enable=True)
+        for base_name, models in model_groups.items():
+            for model_type in ['DFF', 'LOD', 'COL']:
+                if models[model_type] and models[model_type].type == 'MESH':
+                    setup_prelight_preview(models[model_type], enable=True)
 
         # Result
-        if exported:
-            self.report({'INFO'}, f"{T('Экспортировано:')} {', '.join(exported)}")
-        if errors:
+        num_groups = len(model_groups)
+        if all_exported:
+            self.report({'INFO'}, f"{T('Экспортировано:')} {len(all_exported)} файлов ({num_groups} моделей)")
+        if all_errors:
             self.report({'WARNING'}, f"{T('Ошибки:')} {'; '.join(errors)}")
 
         return {'FINISHED'}
@@ -5576,7 +5617,7 @@ classes = (
     GTATOOLS_PT_prelight_panel,
     GTATOOLS_PT_bake_settings_subpanel,
     GTATOOLS_PT_vertex_paint_panel,
-    # GTATOOLS_PT_lightmap_panel,  # Скрыто - beta
+    GTATOOLS_PT_lightmap_panel,
     GTATOOLS_PT_uv_tools_panel,
 )
 
