@@ -4817,7 +4817,7 @@ class GTATOOLS_PT_prelight_panel(bpy.types.Panel):
             # Day row
             row = box.row(align=True)
             if "Day" in mesh.color_attributes:
-                is_active = (active_attr and active_attr.name == "Day")
+                is_active = bool(active_attr and active_attr.name == "Day")
                 icon = 'RADIOBUT_ON' if is_active else 'RADIOBUT_OFF'
                 op = row.operator("gtatools.select_color_attribute", text="Day", icon=icon, depress=is_active)
                 op.attribute_name = "Day"
@@ -4831,7 +4831,7 @@ class GTATOOLS_PT_prelight_panel(bpy.types.Panel):
             # Night row
             row = box.row(align=True)
             if "Night" in mesh.color_attributes:
-                is_active = (active_attr and active_attr.name == "Night")
+                is_active = bool(active_attr and active_attr.name == "Night")
                 icon = 'RADIOBUT_ON' if is_active else 'RADIOBUT_OFF'
                 op = row.operator("gtatools.select_color_attribute", text="Night", icon=icon, depress=is_active)
                 op.attribute_name = "Night"
@@ -4846,7 +4846,7 @@ class GTATOOLS_PT_prelight_panel(bpy.types.Panel):
             for attr in mesh.color_attributes:
                 if attr.name not in ("Day", "Night"):
                     row = box.row(align=True)
-                    is_active = (active_attr and active_attr.name == attr.name)
+                    is_active = bool(active_attr and active_attr.name == attr.name)
                     icon = 'RADIOBUT_ON' if is_active else 'RADIOBUT_OFF'
                     op = row.operator("gtatools.select_color_attribute", text=attr.name, icon=icon, depress=is_active)
                     op.attribute_name = attr.name
