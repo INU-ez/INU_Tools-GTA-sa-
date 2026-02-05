@@ -122,7 +122,7 @@ INU_Tools — аддон для Blender для работы с моделями 
 
 #### Авторы
 
-- **INU** — автор аддона
+- **INU** — автор аддона (Discord: 1.n.u)
 - [DragonFF](https://github.com/Parik27/DragonFF) — Parik27
 
 #### Лицензия
