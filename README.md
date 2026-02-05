@@ -2,49 +2,106 @@
 
 # INU_Tools (GTA SA)
 
-Аддон для Blender — набор инструментов для экспорта, прелайтинга и подготовки моделей GTA San Andreas.
-
 ![Blender](https://img.shields.io/badge/Blender-4.4+-orange?logo=blender)
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue)
 ![Version](https://img.shields.io/badge/Version-1.4.6-green)
 
+INU_Tools — аддон для Blender для работы с моделями GTA San Andreas.
+Предоставляет инструменты экспорта, прелайтинга и подготовки 3D моделей.
+
+Для работы экспорта требуется аддон [DragonFF](https://github.com/Parik27/DragonFF).
+
 ## Возможности
 
-| Раздел | Инструменты |
-|--------|-------------|
-| **Export** | DFF (v3.6.0.3), COL (COL3), LOD, TXD (DXT сжатие, параллельная обработка, GPU через NVIDIA Texture Tools) |
-| **Export All** | Массовый экспорт по суффиксам `_DFF` / `_LOD` / `_COL` + автосборка TXD |
-| **DFF Flags** | Панель настроек геометрии DragonFF (Light, Normals, Pipeline, Vertex Colors, UV Maps) |
-| **Prelight** | Запекание Vertex Colors (Fast / With Shadows), Day/Night атрибуты, анализ и предпросмотр |
-| **Post-Processing** | Smooth, Contrast, Brightness, Gamma — пост-обработка vertex colors |
-| **Fill & Scatter** | Покраска полигонов с пипеткой и уровнями, рассеивание света |
-| **UV Editor** | Grid Randomizer, Snap to Grid, 9 точек выравнивания, связывание полигонов |
-| **Geometry** | Проверка висящих вершин/рёбер, N-gons, очистка геометрии |
-| **Materials** | Автозагрузка текстур, очистка дубликатов, Drag & Drop из File Browser |
-| **Lightmap** | Генерация кода для MTA-скрипта, копирование настроек, V-offset *(временно не работает)* |
+<details>
+<summary><b>Export</b></summary>
 
-## Требования
+- ✅ DFF экспорт (GTA SA v3.6.0.3)
+- ✅ COL экспорт (формат COL3)
+- ✅ LOD экспорт
+- ✅ TXD экспорт (DXT сжатие, параллельная обработка, GPU через NVIDIA Texture Tools)
+- ✅ Export All — массовый экспорт по суффиксам `_DFF` / `_LOD` / `_COL` + автосборка TXD
+- ✅ DFF Flags — панель настроек геометрии DragonFF (Light, Normals, Pipeline, UV Maps)
 
-- **Blender 4.4+**
-- **[DragonFF](https://github.com/Parik27/DragonFF)** (обязателен для DFF/COL экспорта)
-- NVIDIA Texture Tools (опционально, GPU сжатие)
+</details>
+
+<details>
+<summary><b>Prelight</b></summary>
+
+- ✅ Запекание Vertex Colors (Fast / With Shadows)
+- ✅ Raycast тени через depsgraph
+- ✅ Fill Colors — покраска полигонов с пипеткой и системой уровней
+- ✅ Scatter Light — рассеивание света с настраиваемыми параметрами
+- ✅ Day/Night — раздельные атрибуты цвета для дня и ночи
+- ✅ Анализ и предпросмотр вертексных цветов
+
+</details>
+
+<details>
+<summary><b>Post-Processing</b></summary>
+
+- ✅ Smooth — сглаживание vertex colors между соседними вершинами
+- ✅ Contrast — настройка контраста
+- ✅ Brightness — настройка яркости
+- ✅ Gamma — гамма-коррекция
+
+</details>
+
+<details>
+<summary><b>UV Editor</b></summary>
+
+- ✅ UV Grid Randomizer — рандомизация позиций UV в ячейках сетки
+- ✅ Snap to Grid — привязка UV островов к ближайшей ячейке
+- ✅ 9 точек выравнивания — выбор позиции UV в ячейке
+- ✅ Связать полигоны — перемещение полигонов с пересекающимися UV вместе
+
+</details>
+
+<details>
+<summary><b>Geometry & Materials</b></summary>
+
+- ✅ Проверка геометрии — висящие вершины, рёбра, N-gons
+- ✅ Очистка геометрии — удаление проблемных элементов
+- ✅ Автозагрузка текстур по именам материалов
+- ✅ Очистка дубликатов материалов (.001, .002)
+- ✅ Проверка лимита материалов (50 для GTA SA)
+- ✅ Drag & Drop — создание материалов перетаскиванием изображений
+
+</details>
+
+<details>
+<summary><b>Lightmap Generator</b> <i>(временно не работает)</i></summary>
+
+- ☐ Генерация кода для MTA-скрипта
+- ☐ Копирование настроек лайтмапа между объектами
+- ☐ Настройка V-offset для выравнивания текстур
+
+Ссылка на файл скрипта для MTA лежит в Issues.
+
+</details>
 
 ## Установка
 
 1. Скачайте `INU_tools(gta_sa).py`
 2. Blender → Edit → Preferences → Add-ons → Install → выберите файл
-3. Включите "INU_tools(gta_sa)" в списке
+3. Включите "INU_tools(gta_sa)" в списке аддонов
 
 ## Использование
 
-| Расположение | Что находится |
-|---|---|
-| **Properties > Scene > INU Tools** | Экспорт, текстуры, материалы |
-| **View3D > Sidebar (N) > GTA Tools** | Геометрия, прелайт, DFF Flags |
-| **UV Editor > Sidebar (N) > GTA Tools** | UV инструменты |
+Аддон добавляет панели в:
+- **Properties > Scene > INU Tools** — экспорт, текстуры, материалы
+- **View3D > Sidebar (N) > GTA Tools** — геометрия, прелайт, DFF Flags
+- **UV Editor > Sidebar (N) > GTA Tools** — UV инструменты
 
-### Быстрый экспорт
+#### Быстрый экспорт
+
 Назовите объекты с суффиксами (`Model_DFF`, `Model_LOD`, `Model_COL`), выделите и нажмите **Export All**.
+
+## Требования
+
+- **Blender 4.4+**
+- **[DragonFF](https://github.com/Parik27/DragonFF)** — обязателен для DFF/COL экспорта
+- NVIDIA Texture Tools — опционально, для GPU сжатия текстур
 
 <details>
 <summary><b>История изменений</b></summary>
@@ -63,11 +120,11 @@
 
 </details>
 
-## Авторы
+#### Авторы
 
 - **INU** — автор аддона
-- **[DragonFF](https://github.com/Parik27/DragonFF)** — Parik27 (зависимость для экспорта)
+- [DragonFF](https://github.com/Parik27/DragonFF) — Parik27
 
-## Лицензия
+#### Лицензия
 
 [GPL-3.0](LICENSE)
