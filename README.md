@@ -85,8 +85,7 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 > <details>
 > <summary><b>Tutorial .gif</b></summary>
 >
-> ![add_material](https://github.com/INU-ez/INU_Tools-GTA-sa-/tree/main/gif/add_material.gif
-)
+> ![add_material](gif/add_material.gif)
 >
 > </details>
 
