@@ -34,6 +34,14 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 > - ✅ Scatter Light — рассеивание света с настраиваемыми параметрами
 > - ✅ Day/Night — раздельные атрибуты цвета для дня и ночи
 > - ✅ Анализ и предпросмотр вертексных цветов
+> - ✅ Функция сохранения материалов на модели для Itera
+>
+> <details>
+> <summary><b>Tutorial .gif</b></summary>
+>
+>![Image](https://github.com/user-attachments/assets/c61ce6c7-4d7f-49bb-a8cf-d0a2267120fa)
+>
+> </details>
 
 </details>
 
@@ -61,8 +69,6 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 > ![Image](https://github.com/user-attachments/assets/29de2c48-648c-4a7c-a5d7-a403504b6453)
 >
 > </details>
-
-
 
 </details>
 
