@@ -284,6 +284,14 @@ TRANSLATIONS = {
     "Проверить объект на висящие вершины и рёбра (не присоединённые к полигонам)": "Check object for loose vertices and edges (not attached to polygons)",
     "Элемент списка цветов заливки": "Fill color list item",
 
+    # Material Backup
+    "Сохранить материалы объекта в буфер": "Save object materials to buffer",
+    "Восстановить сохранённые материалы на объект": "Restore saved materials to object",
+    "Материалы сохранены": "Materials saved",
+    "Материалы восстановлены": "Materials restored",
+    "Нет сохранённых материалов!": "No saved materials!",
+    "Материал не найден:": "Material not found:",
+
     # Post-processing vertex colors
     "Пост-обработка vertex colors": "Post-process vertex colors",
     "Сгладить vertex colors между соседними вершинами": "Smooth vertex colors between neighboring vertices",
@@ -3951,6 +3959,93 @@ class GTATOOLS_OT_prelight_preview(bpy.types.Operator):
             return {'CANCELLED'}
 
 
+class GTATOOLS_OT_save_materials(bpy.types.Operator):
+    """Сохранить материалы объекта в буфер"""
+    bl_idname = "gtatools.save_materials"
+    bl_label = "Save Materials"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        obj = context.active_object
+        if obj is None or obj.type != 'MESH':
+            self.report({'ERROR'}, T("Выберите меш объект!"))
+            return {'CANCELLED'}
+
+        import json
+        mesh = obj.data
+
+        # Сохраняем имена материалов в слотах
+        mat_names = []
+        for slot in obj.material_slots:
+            mat_names.append(slot.material.name if slot.material else "")
+
+        # Сохраняем material_index каждого полигона
+        face_indices = [p.material_index for p in mesh.polygons]
+
+        obj["gtatools_saved_materials"] = json.dumps({
+            "materials": mat_names,
+            "face_indices": face_indices
+        })
+        self.report({'INFO'}, T("Материалы сохранены") + f" ({len(mat_names)})")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_restore_materials(bpy.types.Operator):
+    """Восстановить сохранённые материалы на объект"""
+    bl_idname = "gtatools.restore_materials"
+    bl_label = "Restore Materials"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        obj = context.active_object
+        if obj is None or obj.type != 'MESH':
+            self.report({'ERROR'}, T("Выберите меш объект!"))
+            return {'CANCELLED'}
+
+        raw = obj.get("gtatools_saved_materials")
+        if not raw:
+            self.report({'ERROR'}, T("Нет сохранённых материалов!"))
+            return {'CANCELLED'}
+
+        import json
+        data = json.loads(raw)
+
+        # Поддержка старого формата (список имён) и нового (dict)
+        if isinstance(data, list):
+            mat_names = data
+            face_indices = None
+        else:
+            mat_names = data["materials"]
+            face_indices = data.get("face_indices")
+
+        mesh = obj.data
+
+        # Очищаем все слоты
+        mesh.materials.clear()
+
+        # Создаём слоты и назначаем материалы
+        not_found = []
+        for mat_name in mat_names:
+            if mat_name == "":
+                mesh.materials.append(None)
+            elif mat_name in bpy.data.materials:
+                mesh.materials.append(bpy.data.materials[mat_name])
+            else:
+                not_found.append(mat_name)
+                mesh.materials.append(None)
+
+        # Восстанавливаем назначения полигонов
+        if face_indices and len(face_indices) == len(mesh.polygons):
+            for poly, idx in zip(mesh.polygons, face_indices):
+                poly.material_index = idx
+
+        if not_found:
+            self.report({'WARNING'}, T("Материал не найден:") + " " + ", ".join(not_found))
+        else:
+            self.report({'INFO'}, T("Материалы восстановлены") + f" ({len(mat_names)})")
+        return {'FINISHED'}
+
+
 class GTATOOLS_OT_eyedropper_color(bpy.types.Operator):
     """Click on polygon to pick its color"""
     bl_idname = "gtatools.eyedropper_color"
@@ -5195,6 +5290,17 @@ class GTATOOLS_PT_prelight_panel(bpy.types.Panel):
             row.operator("gtatools.add_color_attribute", text="", icon='ADD')
             row.operator("gtatools.remove_color_attribute", text="", icon='REMOVE')
 
+        # Material Backup
+        layout.separator()
+        row = layout.row(align=True)
+        row.operator("gtatools.save_materials", text="Save Materials", icon='FILE_TICK')
+        row.operator("gtatools.restore_materials", text="Restore", icon='LOOP_BACK')
+        if obj and obj.get("gtatools_saved_materials"):
+            import json
+            data = json.loads(obj["gtatools_saved_materials"])
+            count = len(data["materials"]) if isinstance(data, dict) else len(data)
+            layout.label(text=f"Saved: {count} mat(s)", icon='CHECKMARK')
+
         layout.separator()
 
         # Bake Vertex Colors
@@ -5995,6 +6101,8 @@ classes = (
     GTATOOLS_OT_remove_lightmap,
     GTATOOLS_OT_create_day_night,
     GTATOOLS_OT_prelight_preview,
+    GTATOOLS_OT_save_materials,
+    GTATOOLS_OT_restore_materials,
     GTATOOLS_OT_eyedropper_color,
     GTATOOLS_OT_fill_faces,
     GTATOOLS_OT_restore_fill,
