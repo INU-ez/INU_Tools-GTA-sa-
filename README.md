@@ -35,6 +35,13 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 > - ✅ Day/Night — раздельные атрибуты цвета для дня и ночи
 > - ✅ Анализ и предпросмотр вертексных цветов
 > - ✅ Функция сохранения материалов на модели для Itera
+>
+> <details>
+> <summary><b>Tutorial .gif</b></summary>
+>
+> ![Itera_Inu_tools](gif/Itera_Inu_tools.gif)
+>
+> </details>
 
 </details>
 
@@ -59,7 +66,7 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 > <details>
 > <summary><b>Tutorial .gif</b></summary>
 >
-> ![Image](https://github.com/user-attachments/assets/29de2c48-648c-4a7c-a5d7-a403504b6453)
+> ![random_windows](gif/random_windows.gif)
 >
 > </details>
 
@@ -75,7 +82,7 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 > <details>
 > <summary><b>Tutorial .gif</b></summary>
 >
-> ![Image](https://github.com/user-attachments/assets/832d41df-81ae-4af5-8223-59d3f448b771)
+> ![Check](gif/Check.gif)
 >
 > </details>
 
