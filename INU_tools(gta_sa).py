@@ -3050,13 +3050,13 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
         context.window_manager.fileselect_add(self)
         return {'RUNNING_MODAL'}
 
-    def export_model_group(self, context, base_name, models, skip_txd, use_gpu):
+    def export_model_group(self, context, base_name, models, skip_dff, skip_col, skip_lod, skip_txd, use_gpu):
         """Export a single model group (DFF + LOD + COL + TXD)"""
         exported = []
         errors = []
 
         # Экспорт DFF (версия GTA SA)
-        if models['DFF']:
+        if models['DFF'] and not skip_dff:
             dff_path = os.path.join(self.directory, f"{base_name}.dff")
             try:
                 bpy.ops.object.select_all(action='DESELECT')
@@ -3075,7 +3075,7 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
                 errors.append(f"{base_name}.dff: {str(e)}")
 
         # Экспорт LOD (с префиксом LOD, версия GTA SA)
-        if models['LOD']:
+        if models['LOD'] and not skip_lod:
             lod_path = os.path.join(self.directory, f"LOD{base_name}.dff")
             try:
                 bpy.ops.object.select_all(action='DESELECT')
@@ -3094,7 +3094,7 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
                 errors.append(f"LOD{base_name}.dff: {str(e)}")
 
         # Экспорт COL (версия GTA SA COL3)
-        if models['COL']:
+        if models['COL'] and not skip_col:
             col_path = os.path.join(self.directory, f"{base_name}.col")
             try:
                 bpy.ops.object.select_all(action='DESELECT')
@@ -3165,16 +3165,19 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
         wm = context.window_manager
 
         # Настройки экспорта
-        skip_txd = context.scene.gtatools_export_all_skip_txd
+        skip_dff = not context.scene.gtatools_export_all_dff
+        skip_col = not context.scene.gtatools_export_all_col
+        skip_lod = not context.scene.gtatools_export_all_lod
+        skip_txd = not context.scene.gtatools_export_all_txd
         use_gpu = context.scene.gtatools_txd_use_gpu
 
         # Считаем общее количество шагов для прогресс-бара
         total_steps = 0
         for base_name, models in model_groups.items():
             total_steps += sum([
-                1 if models['DFF'] else 0,
-                1 if models['LOD'] else 0,
-                1 if models['COL'] else 0,
+                1 if models['DFF'] and not skip_dff else 0,
+                1 if models['LOD'] and not skip_lod else 0,
+                1 if models['COL'] and not skip_col else 0,
                 1 if (models['DFF'] or models['LOD']) and not skip_txd else 0
             ])
 
@@ -3184,15 +3187,15 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
         # Экспортируем каждую группу моделей
         for base_name, models in model_groups.items():
             wm.progress_update(current_step)
-            exported, errors = self.export_model_group(context, base_name, models, skip_txd, use_gpu)
+            exported, errors = self.export_model_group(context, base_name, models, skip_dff, skip_col, skip_lod, skip_txd, use_gpu)
             all_exported.extend(exported)
             all_errors.extend(errors)
 
             # Обновляем прогресс
             current_step += sum([
-                1 if models['DFF'] else 0,
-                1 if models['LOD'] else 0,
-                1 if models['COL'] else 0,
+                1 if models['DFF'] and not skip_dff else 0,
+                1 if models['LOD'] and not skip_lod else 0,
+                1 if models['COL'] and not skip_col else 0,
                 1 if (models['DFF'] or models['LOD']) and not skip_txd else 0
             ])
 
@@ -4980,7 +4983,10 @@ class GTATOOLS_PT_export_panel(bpy.types.Panel):
         row = layout.row(align=True)
         row.operator("gtatools.export_all", text="Export All (DFF+COL+LOD+TXD)", icon='EXPORT')
         row = layout.row(align=True)
-        row.prop(context.scene, "gtatools_export_all_skip_txd", text=T("Пропустить TXD"))
+        row.prop(context.scene, "gtatools_export_all_dff", text="DFF", toggle=True)
+        row.prop(context.scene, "gtatools_export_all_col", text="COL", toggle=True)
+        row.prop(context.scene, "gtatools_export_all_lod", text="LOD", toggle=True)
+        row.prop(context.scene, "gtatools_export_all_txd", text="TXD", toggle=True)
 
         layout.separator()
 
@@ -4993,6 +4999,9 @@ class GTATOOLS_PT_export_panel(bpy.types.Panel):
         row = layout.row(align=True)
         row.operator("gtatools.check_geometry", text="Check vertex", icon='VIEWZOOM')
         row.operator("gtatools.check_ngons", text="Check N-gon", icon='MESH_DATA')
+
+        row = layout.row(align=True)
+        row.operator("gtatools.check_materials", text="Check Material", icon='MATERIAL')
 
         row = layout.row(align=True)
         row.operator("gtatools.export_txd", text="TXD", icon='TEXTURE')
@@ -5104,7 +5113,6 @@ class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
         # Buttons
         layout.operator("gtatools.load_textures", text=T("Загрузить текстуры"), icon='IMPORT')
         layout.operator("gtatools.cleanup_materials", text=T("Очистка материалов"), icon='BRUSH_DATA')
-        layout.operator("gtatools.check_materials", text=T("Проверить материалы"), icon='MATERIAL')
 
 
 class GTATOOLS_PT_prelight_panel(bpy.types.Panel):
@@ -6205,10 +6213,25 @@ def register():
     )
 
     # Export settings
-    bpy.types.Scene.gtatools_export_all_skip_txd = BoolProperty(
-        name="Skip TXD",
-        description="Do not export TXD with Export All",
-        default=False
+    bpy.types.Scene.gtatools_export_all_dff = BoolProperty(
+        name="Export DFF",
+        description="Export DFF with Export All",
+        default=True
+    )
+    bpy.types.Scene.gtatools_export_all_col = BoolProperty(
+        name="Export COL",
+        description="Export COL with Export All",
+        default=True
+    )
+    bpy.types.Scene.gtatools_export_all_lod = BoolProperty(
+        name="Export LOD",
+        description="Export LOD with Export All",
+        default=True
+    )
+    bpy.types.Scene.gtatools_export_all_txd = BoolProperty(
+        name="Export TXD",
+        description="Export TXD with Export All",
+        default=True
     )
 
     print("[GTA Tools Panel] Addon registered!")
@@ -6231,7 +6254,10 @@ def unregister():
     del bpy.types.Scene.gtatools_show_nvtt_settings
     del bpy.types.Scene.gtatools_texture_path2
     del bpy.types.Scene.gtatools_texture_path1
-    del bpy.types.Scene.gtatools_export_all_skip_txd
+    del bpy.types.Scene.gtatools_export_all_dff
+    del bpy.types.Scene.gtatools_export_all_col
+    del bpy.types.Scene.gtatools_export_all_lod
+    del bpy.types.Scene.gtatools_export_all_txd
     del bpy.types.Scene.gtatools_scatter_radius
     del bpy.types.Scene.gtatools_scatter_iterations
     del bpy.types.Scene.gtatools_scatter_falloff
