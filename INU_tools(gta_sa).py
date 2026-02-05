@@ -8,7 +8,7 @@
 bl_info = {
     "name": "INU_tools(gta_sa)",
     "author": "INU",
-    "version": (1, 4, 5),
+    "version": (1, 4, 6),
     "blender": (4, 4, 0),
     "location": "View3D > Sidebar (N) > GTA Tools",
     "description": "Toolset for GTA SA models. Requires DragonFF addon",
@@ -17,6 +17,9 @@ bl_info = {
 }
 
 # Changelog:
+# v1.4.6 - Prelight: Post-Processing — новая подпанель пост-обработки vertex colors (Smooth, Contrast, Brightness, Gamma)
+#        - Prelight: Fast Bake теперь поддерживает тени (raycast через depsgraph), переключатель Shadows в панели
+#        - Export: новая подпанель DFF Flags — отображает флаги геометрии DragonFF (Light, Normals, Pipeline, UV Maps и др.)
 # v1.4.5 - Export All: массовый экспорт нескольких групп моделей (Model1_DFF + Model2_DFF и т.д.)
 #        - Lightmap Generator: панель снова доступна в интерфейсе
 # v1.4.4 - Prelight: Fill Colors - покраска полигонов с пипеткой и системой уровней
@@ -280,6 +283,19 @@ TRANSLATIONS = {
     "Получить Fill цвет выделенных полигонов": "Get Fill color of selected polygons",
     "Проверить объект на висящие вершины и рёбра (не присоединённые к полигонам)": "Check object for loose vertices and edges (not attached to polygons)",
     "Элемент списка цветов заливки": "Fill color list item",
+
+    # Post-processing vertex colors
+    "Пост-обработка vertex colors": "Post-process vertex colors",
+    "Сгладить vertex colors между соседними вершинами": "Smooth vertex colors between neighboring vertices",
+    "Применить контраст к vertex colors": "Apply contrast to vertex colors",
+    "Применить яркость к vertex colors": "Apply brightness to vertex colors",
+    "Применить гамма-коррекцию к vertex colors": "Apply gamma correction to vertex colors",
+    "Количество итераций сглаживания": "Number of smoothing iterations",
+    "Сила сглаживания (0 = без изменений, 1 = полное усреднение)": "Smoothing factor (0 = no change, 1 = full average)",
+    "Контраст (1 = без изменений, <1 = меньше, >1 = больше)": "Contrast (1 = no change, <1 = less, >1 = more)",
+    "Яркость смещение (-1..+1)": "Brightness offset (-1..+1)",
+    "Гамма-коррекция (1 = без изменений, <1 = светлее, >1 = темнее)": "Gamma correction (1 = no change, <1 = lighter, >1 = darker)",
+    "Панель пост-обработки vertex colors": "Vertex colors post-processing panel",
 }
 
 def T(text):
@@ -1539,11 +1555,11 @@ def bake_vertex_colors_from_lights(obj, use_shadows=True):
                 shadow = 1.0
                 if use_shadows:
                     # Offset start position slightly along normal to avoid self-intersection
-                    ray_start = world_pos + world_normal * 0.01
-                    result, location, normal, index, hit_obj, matrix = bpy.context.scene.ray_cast(
-                        depsgraph, ray_start, light_dir_normalized, distance=distance - 0.02
+                    ray_start = world_pos + world_normal * 0.02
+                    result, location, normal_hit, index, hit_obj, matrix = bpy.context.scene.ray_cast(
+                        depsgraph, ray_start, light_dir_normalized, distance=distance - 0.04
                     )
-                    if result and hit_obj != obj:
+                    if result:
                         shadow = 0.0
 
                 # Light attenuation (inverse square with minimum)
@@ -1565,8 +1581,8 @@ def bake_vertex_colors_from_lights(obj, use_shadows=True):
     return True, f"Baked lighting from {len(lights)} lights"
 
 
-def bake_vertex_colors_simple(obj, ambient=0.05, intensity_mult=0.008, gamma=1.8):
-    """Simple vertex color baking from Point lights (no shadows, faster)"""
+def bake_vertex_colors_simple(obj, ambient=0.05, intensity_mult=0.008, gamma=1.8, use_shadows=True):
+    """Simple vertex color baking from Point lights"""
     if obj is None or obj.type != 'MESH':
         return False, "Select a mesh object!"
 
@@ -1595,6 +1611,9 @@ def bake_vertex_colors_simple(obj, ambient=0.05, intensity_mult=0.008, gamma=1.8
     world_matrix = obj.matrix_world
     normal_matrix = world_matrix.to_3x3().inverted().transposed()
 
+    # Prepare depsgraph for raycasting
+    depsgraph = bpy.context.evaluated_depsgraph_get() if use_shadows else None
+
     for poly in mesh.polygons:
         for loop_idx in poly.loop_indices:
             loop = mesh.loops[loop_idx]
@@ -1622,9 +1641,19 @@ def bake_vertex_colors_simple(obj, ambient=0.05, intensity_mult=0.008, gamma=1.8
                 if n_dot_l <= 0:
                     continue
 
+                # Shadow check with raycast
+                shadow = 1.0
+                if use_shadows and depsgraph:
+                    ray_start = world_pos + world_normal * 0.02
+                    result, location, normal_hit, index, hit_obj, matrix = bpy.context.scene.ray_cast(
+                        depsgraph, ray_start, light_dir_normalized, distance=distance - 0.04
+                    )
+                    if result:
+                        shadow = 0.0
+
                 # 3Ds Max style attenuation (inverse square law)
                 attenuation = 1.0 / (1.0 + distance * distance * 0.0001)
-                intensity = light.energy * attenuation * n_dot_l * intensity_mult
+                intensity = light.energy * attenuation * n_dot_l * intensity_mult * shadow
                 light_color = Vector(light.color) * intensity
 
                 total_light += light_color
@@ -1730,6 +1759,172 @@ def analyze_vertex_colors(obj):
         'avg_brightness': avg_bright,
         'layer_name': color_attr.name
     }
+
+
+# =============================================================================
+# POST-PROCESSING VERTEX COLORS
+# =============================================================================
+
+def smooth_vertex_colors(obj, iterations=1, factor=0.5):
+    """Сгладить vertex colors между соседними вершинами"""
+    if obj is None or obj.type != 'MESH':
+        return False, "Select a mesh object!"
+
+    mesh = obj.data
+    if not mesh.color_attributes:
+        return False, "No vertex colors found!"
+
+    color_attr = mesh.color_attributes.active_color
+    if color_attr is None:
+        return False, "No active color layer!"
+
+    bm = bmesh.new()
+    bm.from_mesh(mesh)
+    bm.verts.ensure_lookup_table()
+    bm.faces.ensure_lookup_table()
+
+    # Build vertex -> loop indices mapping and vertex -> color mapping
+    # color_attr.data is per-loop (face corner)
+    loop_idx = 0
+    vert_loops = {}  # vert_index -> [loop_indices]
+    for face in bm.faces:
+        for vert in face.verts:
+            if vert.index not in vert_loops:
+                vert_loops[vert.index] = []
+            vert_loops[vert.index].append(loop_idx)
+            loop_idx += 1
+
+    for iteration in range(iterations):
+        # Collect current per-vertex average colors
+        vert_colors = {}
+        for vi, loops in vert_loops.items():
+            r, g, b = 0.0, 0.0, 0.0
+            for li in loops:
+                c = color_attr.data[li].color
+                r += c[0]
+                g += c[1]
+                b += c[2]
+            n = len(loops)
+            vert_colors[vi] = (r / n, g / n, b / n)
+
+        # For each vertex, compute smoothed color from neighbors
+        smoothed = {}
+        for vert in bm.verts:
+            vi = vert.index
+            if vi not in vert_colors:
+                continue
+            neighbors = []
+            for edge in vert.link_edges:
+                other = edge.other_vert(vert)
+                if other.index in vert_colors:
+                    neighbors.append(vert_colors[other.index])
+
+            if not neighbors:
+                smoothed[vi] = vert_colors[vi]
+                continue
+
+            # Average of neighbors
+            avg_r = sum(c[0] for c in neighbors) / len(neighbors)
+            avg_g = sum(c[1] for c in neighbors) / len(neighbors)
+            avg_b = sum(c[2] for c in neighbors) / len(neighbors)
+
+            # Blend: original * (1 - factor) + avg * factor
+            orig = vert_colors[vi]
+            smoothed[vi] = (
+                orig[0] * (1.0 - factor) + avg_r * factor,
+                orig[1] * (1.0 - factor) + avg_g * factor,
+                orig[2] * (1.0 - factor) + avg_b * factor,
+            )
+
+        # Write smoothed colors back to all loops
+        for vi, color in smoothed.items():
+            for li in vert_loops[vi]:
+                c = color_attr.data[li].color
+                color_attr.data[li].color = (color[0], color[1], color[2], c[3])
+
+    bm.free()
+    return True, f"Smoothed {iterations}x (factor {factor:.2f})"
+
+
+def adjust_vertex_colors_contrast(obj, contrast=1.0):
+    """Применить контраст к vertex colors.
+    contrast=1 — без изменений, <1 — меньше контраста, >1 — больше.
+    """
+    if obj is None or obj.type != 'MESH':
+        return False, "Select a mesh object!"
+
+    mesh = obj.data
+    color_attr = mesh.color_attributes.active_color
+    if color_attr is None:
+        return False, "No active color layer!"
+
+    # Compute average brightness
+    total_r, total_g, total_b = 0.0, 0.0, 0.0
+    count = len(color_attr.data)
+    for data in color_attr.data:
+        c = data.color
+        total_r += c[0]
+        total_g += c[1]
+        total_b += c[2]
+
+    avg_r = total_r / count
+    avg_g = total_g / count
+    avg_b = total_b / count
+
+    # Apply contrast: new = avg + (old - avg) * contrast
+    for i, data in enumerate(color_attr.data):
+        c = data.color
+        r = max(0.0, min(1.0, avg_r + (c[0] - avg_r) * contrast))
+        g = max(0.0, min(1.0, avg_g + (c[1] - avg_g) * contrast))
+        b = max(0.0, min(1.0, avg_b + (c[2] - avg_b) * contrast))
+        color_attr.data[i].color = (r, g, b, c[3])
+
+    return True, f"Contrast: {contrast:.2f}"
+
+
+def adjust_vertex_colors_brightness(obj, brightness=0.0):
+    """Применить яркость к vertex colors. brightness — смещение (-1..+1)."""
+    if obj is None or obj.type != 'MESH':
+        return False, "Select a mesh object!"
+
+    mesh = obj.data
+    color_attr = mesh.color_attributes.active_color
+    if color_attr is None:
+        return False, "No active color layer!"
+
+    for i, data in enumerate(color_attr.data):
+        c = data.color
+        r = max(0.0, min(1.0, c[0] + brightness))
+        g = max(0.0, min(1.0, c[1] + brightness))
+        b = max(0.0, min(1.0, c[2] + brightness))
+        color_attr.data[i].color = (r, g, b, c[3])
+
+    return True, f"Brightness: {brightness:+.2f}"
+
+
+def adjust_vertex_colors_gamma(obj, gamma=1.0):
+    """Применить гамма-коррекцию к vertex colors.
+    gamma=1 — без изменений, <1 — светлее, >1 — темнее.
+    """
+    if obj is None or obj.type != 'MESH':
+        return False, "Select a mesh object!"
+
+    mesh = obj.data
+    color_attr = mesh.color_attributes.active_color
+    if color_attr is None:
+        return False, "No active color layer!"
+
+    if gamma <= 0:
+        return False, "Gamma must be > 0"
+
+    for i, data in enumerate(color_attr.data):
+        c = data.color
+        r = pow(max(0.0, c[0]), gamma)
+        g = pow(max(0.0, c[1]), gamma)
+        b = pow(max(0.0, c[2]), gamma)
+        color_attr.data[i].color = (min(1.0, r), min(1.0, g), min(1.0, b), c[3])
+
+    return True, f"Gamma: {gamma:.2f}"
 
 
 def setup_prelight_preview(obj, enable=True):
@@ -3280,8 +3475,9 @@ class GTATOOLS_OT_bake_vertex_colors_simple(bpy.types.Operator):
         ambient = scene.gtatools_bake_ambient
         intensity = scene.gtatools_bake_intensity
         gamma = scene.gtatools_bake_gamma
+        use_shadows = scene.gtatools_bake_shadows
 
-        success, message = bake_vertex_colors_simple(obj, ambient, intensity, gamma)
+        success, message = bake_vertex_colors_simple(obj, ambient, intensity, gamma, use_shadows)
 
         if success:
             # Сброс сохранённого v_offset для активного color attribute (UI остаётся)
@@ -3366,6 +3562,84 @@ class GTATOOLS_OT_apply_v_offset(bpy.types.Operator):
 
         success, message = apply_brightness_offset(obj, v_offset)
 
+        if success:
+            self.report({'INFO'}, message)
+            return {'FINISHED'}
+        else:
+            self.report({'ERROR'}, message)
+            return {'CANCELLED'}
+
+
+class GTATOOLS_OT_vc_smooth(bpy.types.Operator):
+    """Сгладить vertex colors между соседними вершинами"""
+    bl_idname = "gtatools.vc_smooth"
+    bl_label = "Smooth Vertex Colors"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        obj = context.active_object
+        scene = context.scene
+        iterations = scene.gtatools_vc_smooth_iterations
+        factor = scene.gtatools_vc_smooth_factor
+
+        success, message = smooth_vertex_colors(obj, iterations, factor)
+        if success:
+            self.report({'INFO'}, message)
+            return {'FINISHED'}
+        else:
+            self.report({'ERROR'}, message)
+            return {'CANCELLED'}
+
+
+class GTATOOLS_OT_vc_contrast(bpy.types.Operator):
+    """Применить контраст к vertex colors"""
+    bl_idname = "gtatools.vc_contrast"
+    bl_label = "Apply Contrast"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        obj = context.active_object
+        contrast = context.scene.gtatools_vc_contrast
+
+        success, message = adjust_vertex_colors_contrast(obj, contrast)
+        if success:
+            self.report({'INFO'}, message)
+            return {'FINISHED'}
+        else:
+            self.report({'ERROR'}, message)
+            return {'CANCELLED'}
+
+
+class GTATOOLS_OT_vc_brightness(bpy.types.Operator):
+    """Применить яркость к vertex colors"""
+    bl_idname = "gtatools.vc_brightness"
+    bl_label = "Apply Brightness"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        obj = context.active_object
+        brightness = context.scene.gtatools_vc_brightness
+
+        success, message = adjust_vertex_colors_brightness(obj, brightness)
+        if success:
+            self.report({'INFO'}, message)
+            return {'FINISHED'}
+        else:
+            self.report({'ERROR'}, message)
+            return {'CANCELLED'}
+
+
+class GTATOOLS_OT_vc_gamma(bpy.types.Operator):
+    """Применить гамма-коррекцию к vertex colors"""
+    bl_idname = "gtatools.vc_gamma"
+    bl_label = "Apply Gamma"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        obj = context.active_object
+        gamma = context.scene.gtatools_vc_gamma
+
+        success, message = adjust_vertex_colors_gamma(obj, gamma)
         if success:
             self.report({'INFO'}, message)
             return {'FINISHED'}
@@ -4751,6 +5025,56 @@ class GTATOOLS_PT_export_panel(bpy.types.Panel):
                 box.label(text=T("Статус: Не найден"), icon='ERROR')
 
 
+class GTATOOLS_PT_dff_flags_panel(bpy.types.Panel):
+    """DFF Geometry Flags"""
+    bl_label = "DFF Flags"
+    bl_idname = "GTATOOLS_PT_dff_flags_panel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'GTA Tools'
+    bl_parent_id = "GTATOOLS_PT_export_panel"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw(self, context):
+        layout = self.layout
+        obj = context.active_object
+
+        if not obj or obj.type != 'MESH':
+            layout.label(text=T("Выберите меш-объект"), icon='INFO')
+            return
+
+        if not hasattr(obj, 'dff'):
+            layout.label(text="DragonFF not found", icon='ERROR')
+            return
+
+        settings = obj.dff
+
+        box = layout.box()
+        box.label(text="Geometry Flags:", icon='PREFERENCES')
+        box.prop(settings, "light", text="Light (rpGEOMETRYLIGHT)")
+        box.prop(settings, "modulate_color", text="Modulate Material Color")
+        box.prop(settings, "export_normals", text="Export Normals")
+
+        box = layout.box()
+        box.label(text="Pipeline:", icon='NODE_MATERIAL')
+        box.prop(settings, "pipeline", text="")
+        if settings.pipeline == 'CUSTOM':
+            box.prop(settings, "custom_pipeline", text="Custom")
+
+        box = layout.box()
+        box.label(text="Vertex Colors:", icon='COLOR')
+        box.prop(settings, "day_cols", text="Day Vertex Colours")
+        box.prop(settings, "night_cols", text="Night Vertex Colours")
+
+        box = layout.box()
+        box.label(text="UV Maps:", icon='UV')
+        box.prop(settings, "uv_map1", text="UV Map 1")
+        if settings.uv_map1:
+            box.prop(settings, "uv_map2", text="UV Map 2")
+
+        box.prop(settings, "export_binsplit", text="Bin Mesh PLG")
+
+
 class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
     """INU Tools panel in Properties > Scene"""
     bl_label = "INU Tools"
@@ -4867,6 +5191,8 @@ class GTATOOLS_PT_prelight_panel(bpy.types.Panel):
 
         # Bake Vertex Colors
         row = layout.row(align=True)
+        row.prop(scene, "gtatools_bake_shadows", text="Shadows", icon='SHADING_RENDERED', toggle=True)
+        row = layout.row(align=True)
         row.operator("gtatools.bake_vertex_colors_simple", text="Fast", icon='RENDER_STILL')
         row.operator("gtatools.bake_vertex_colors", text="With Shadows", icon='RENDER_RESULT')
 
@@ -4900,6 +5226,50 @@ class GTATOOLS_PT_bake_settings_subpanel(bpy.types.Panel):
 
         layout.separator()
         layout.operator("gtatools.reset_bake_settings", icon='LOOP_BACK')
+
+
+class GTATOOLS_PT_vc_postprocess_panel(bpy.types.Panel):
+    """Панель пост-обработки vertex colors"""
+    bl_label = "Post-Processing"
+    bl_idname = "GTATOOLS_PT_vc_postprocess_panel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'GTA Tools'
+    bl_parent_id = "GTATOOLS_PT_prelight_panel"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw(self, context):
+        layout = self.layout
+        scene = context.scene
+
+        # Smooth
+        box = layout.box()
+        box.label(text="Smooth:", icon='MOD_SMOOTH')
+        row = box.row(align=True)
+        row.prop(scene, "gtatools_vc_smooth_iterations", text="Iterations")
+        row.prop(scene, "gtatools_vc_smooth_factor", text="Factor")
+        box.operator("gtatools.vc_smooth", text="Smooth", icon='SMOOTHCURVE')
+
+        # Contrast
+        box = layout.box()
+        box.label(text="Contrast:", icon='CAMERA_DATA')
+        row = box.row(align=True)
+        row.prop(scene, "gtatools_vc_contrast", text="Contrast")
+        row.operator("gtatools.vc_contrast", text="Apply", icon='CHECKMARK')
+
+        # Brightness
+        box = layout.box()
+        box.label(text="Brightness:", icon='LIGHT_SUN')
+        row = box.row(align=True)
+        row.prop(scene, "gtatools_vc_brightness", text="Brightness")
+        row.operator("gtatools.vc_brightness", text="Apply", icon='CHECKMARK')
+
+        # Gamma
+        box = layout.box()
+        box.label(text="Gamma:", icon='FCURVE')
+        row = box.row(align=True)
+        row.prop(scene, "gtatools_vc_gamma", text="Gamma")
+        row.operator("gtatools.vc_gamma", text="Apply", icon='CHECKMARK')
 
 
 class GTATOOLS_PT_vertex_paint_panel(bpy.types.Panel):
@@ -5582,6 +5952,10 @@ classes = (
     GTATOOLS_OT_reset_scatter_settings,
     GTATOOLS_OT_analyze_vertex_colors,
     GTATOOLS_OT_apply_v_offset,
+    GTATOOLS_OT_vc_smooth,
+    GTATOOLS_OT_vc_contrast,
+    GTATOOLS_OT_vc_brightness,
+    GTATOOLS_OT_vc_gamma,
     GTATOOLS_OT_load_lightmap,
     GTATOOLS_OT_remove_lightmap,
     GTATOOLS_OT_create_day_night,
@@ -5613,9 +5987,11 @@ classes = (
     GTATOOLS_OT_snap_uv_to_grid,
     GTATOOLS_PT_main_panel,
     GTATOOLS_PT_export_panel,
+    GTATOOLS_PT_dff_flags_panel,
     GTATOOLS_PT_inu_tools_panel,
     GTATOOLS_PT_prelight_panel,
     GTATOOLS_PT_bake_settings_subpanel,
+    GTATOOLS_PT_vc_postprocess_panel,
     GTATOOLS_PT_vertex_paint_panel,
     GTATOOLS_PT_lightmap_panel,
     GTATOOLS_PT_uv_tools_panel,
@@ -5739,6 +6115,12 @@ def register():
         max=3.0
     )
 
+    bpy.types.Scene.gtatools_bake_shadows = BoolProperty(
+        name="Shadows",
+        description="Enable shadow casting during bake (rays check for occlusion)",
+        default=True
+    )
+
     # V offset for night prelight
     bpy.types.Scene.gtatools_v_offset = FloatProperty(
         name="V Offset",
@@ -5746,6 +6128,43 @@ def register():
         default=0.0,
         min=-100.0,
         max=100.0
+    )
+
+    # Post-processing vertex colors
+    bpy.types.Scene.gtatools_vc_smooth_iterations = IntProperty(
+        name="Iterations",
+        description=T("Количество итераций сглаживания"),
+        default=1,
+        min=1,
+        max=50
+    )
+    bpy.types.Scene.gtatools_vc_smooth_factor = FloatProperty(
+        name="Factor",
+        description=T("Сила сглаживания (0 = без изменений, 1 = полное усреднение)"),
+        default=0.5,
+        min=0.0,
+        max=1.0
+    )
+    bpy.types.Scene.gtatools_vc_contrast = FloatProperty(
+        name="Contrast",
+        description=T("Контраст (1 = без изменений, <1 = меньше, >1 = больше)"),
+        default=1.0,
+        min=0.0,
+        max=3.0
+    )
+    bpy.types.Scene.gtatools_vc_brightness = FloatProperty(
+        name="Brightness",
+        description=T("Яркость смещение (-1..+1)"),
+        default=0.0,
+        min=-1.0,
+        max=1.0
+    )
+    bpy.types.Scene.gtatools_vc_gamma = FloatProperty(
+        name="Gamma",
+        description=T("Гамма-коррекция (1 = без изменений, <1 = светлее, >1 = темнее)"),
+        default=1.0,
+        min=0.1,
+        max=3.0
     )
 
     # Vertex paint - fill color
@@ -5820,6 +6239,12 @@ def unregister():
     del bpy.types.Scene.gtatools_fill_color
     del bpy.types.Object.gtatools_fill_colors
     del bpy.types.Scene.gtatools_v_offset
+    del bpy.types.Scene.gtatools_vc_smooth_iterations
+    del bpy.types.Scene.gtatools_vc_smooth_factor
+    del bpy.types.Scene.gtatools_vc_contrast
+    del bpy.types.Scene.gtatools_vc_brightness
+    del bpy.types.Scene.gtatools_vc_gamma
+    del bpy.types.Scene.gtatools_bake_shadows
     del bpy.types.Scene.gtatools_bake_gamma
     del bpy.types.Scene.gtatools_bake_intensity
     del bpy.types.Scene.gtatools_bake_ambient
