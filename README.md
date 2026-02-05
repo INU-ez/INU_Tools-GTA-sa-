@@ -16,44 +16,53 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 <details>
 <summary><b>Export</b></summary>
 
-- ✅ DFF экспорт (GTA SA v3.6.0.3)
-- ✅ COL экспорт (формат COL3)
-- ✅ LOD экспорт
-- ✅ TXD экспорт (DXT сжатие, параллельная обработка, GPU через NVIDIA Texture Tools)
-- ✅ Export All — массовый экспорт по суффиксам `_DFF` / `_LOD` / `_COL` + автосборка TXD
-- ✅ DFF Flags — панель настроек геометрии DragonFF (Light, Normals, Pipeline, UV Maps)
+> - ✅ DFF экспорт (GTA SA v3.6.0.3)
+> - ✅ COL экспорт (формат COL3)
+> - ✅ LOD экспорт
+> - ✅ TXD экспорт (DXT сжатие, параллельная обработка, GPU через NVIDIA Texture Tools)
+> - ✅ Export All — массовый экспорт по суффиксам `_DFF` / `_LOD` / `_COL` + автосборка TXD
+> - ✅ DFF Flags — панель настроек геометрии DragonFF (Light, Normals, Pipeline, UV Maps)
 
 </details>
 
 <details>
 <summary><b>Prelight</b></summary>
 
-- ✅ Запекание Vertex Colors (Fast / With Shadows)
-- ✅ Raycast тени через depsgraph
-- ✅ Fill Colors — покраска полигонов с пипеткой и системой уровней
-- ✅ Scatter Light — рассеивание света с настраиваемыми параметрами
-- ✅ Day/Night — раздельные атрибуты цвета для дня и ночи
-- ✅ Анализ и предпросмотр вертексных цветов
+> - ✅ Запекание Vertex Colors (Fast / With Shadows)
+> - ✅ Raycast тени через depsgraph
+> - ✅ Fill Colors — покраска полигонов с пипеткой и системой уровней
+> - ✅ Scatter Light — рассеивание света с настраиваемыми параметрами
+> - ✅ Day/Night — раздельные атрибуты цвета для дня и ночи
+> - ✅ Анализ и предпросмотр вертексных цветов
 
 </details>
 
 <details>
 <summary><b>Post-Processing</b></summary>
 
-- ✅ Smooth — сглаживание vertex colors между соседними вершинами
-- ✅ Contrast — настройка контраста
-- ✅ Brightness — настройка яркости
-- ✅ Gamma — гамма-коррекция
+> - ✅ Smooth — сглаживание vertex colors между соседними вершинами
+> - ✅ Contrast — настройка контраста
+> - ✅ Brightness — настройка яркости
+> - ✅ Gamma — гамма-коррекция
 
 </details>
 
 <details>
 <summary><b>UV Editor</b></summary>
 
-- ✅ UV Grid Randomizer — рандомизация позиций UV в ячейках сетки
-- ✅ Snap to Grid — привязка UV островов к ближайшей ячейке
-- ✅ 9 точек выравнивания — выбор позиции UV в ячейке
-- ✅ Связать полигоны — перемещение полигонов с пересекающимися UV вместе
+> - ✅ UV Grid Randomizer — рандомизация позиций UV в ячейках сетки
+> - ✅ Snap to Grid — привязка UV островов к ближайшей ячейке
+> - ✅ 9 точек выравнивания — выбор позиции UV в ячейке
+> - ✅ Связать полигоны — перемещение полигонов с пересекающимися UV вместе
+>
+> <details>
+> <summary><b>Tutorial .gif</b></summary>
+>
+> ![Image](https://github.com/user-attachments/assets/29de2c48-648c-4a7c-a5d7-a403504b6453)
+>
+> </details>
+
+
 
 </details>
 
@@ -88,9 +97,9 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 <details>
 <summary><b>Lightmap Generator</b></summary>
 
-- ✅ Генерация кода для MTA-скрипта
-- ✅ Копирование настроек лайтмапа между объектами
-- ✅ Настройка V-offset для выравнивания текстур
+> - ✅ Генерация кода для MTA-скрипта
+> - ✅ Копирование настроек лайтмапа между объектами
+> - ✅ Настройка V-offset для выравнивания текстур
 
 Ссылка на файл скрипта для MTA лежит в Issues.
 
