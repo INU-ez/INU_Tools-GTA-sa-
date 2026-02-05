@@ -5896,6 +5896,19 @@ class GTATOOLS_OT_snap_uv_to_grid(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class GTATOOLS_OT_set_uv_align(bpy.types.Operator):
+    """Выбрать позицию привязки UV в ячейке"""
+    bl_idname = "gtatools.set_uv_align"
+    bl_label = "Set UV Align"
+    bl_options = {'INTERNAL'}
+
+    alignment: bpy.props.StringProperty()
+
+    def execute(self, context):
+        context.scene.gtatools_uv_grid_align = self.alignment
+        return {'FINISHED'}
+
+
 class GTATOOLS_PT_uv_tools_panel(bpy.types.Panel):
     """GTA Tools UV panel"""
     bl_label = "GTA Tools"
@@ -5912,18 +5925,32 @@ class GTATOOLS_PT_uv_tools_panel(bpy.types.Panel):
         box = layout.box()
         box.label(text="UV Grid Randomizer", icon='GRID')
 
-        row = box.row(align=True)
-        row.prop(scene, "gtatools_uv_grid_cols", text=T("Колонки"))
-        row.prop(scene, "gtatools_uv_grid_rows", text=T("Ряды"))
-
         # Toggle grid visibility button
         global _uv_grid_visible
         icon = 'HIDE_OFF' if _uv_grid_visible else 'HIDE_ON'
         text = T("Скрыть сетку") if _uv_grid_visible else T("Показать сетку")
         box.operator("gtatools.toggle_uv_grid", text=text, icon=icon)
 
-        # Alignment selection
-        box.prop(scene, "gtatools_uv_grid_align", text=T("Позиция"))
+        # Cols/Rows + Alignment visual grid side by side
+        current = scene.gtatools_uv_grid_align
+        grid = [
+            ['TOP_LEFT', 'TOP_CENTER', 'TOP_RIGHT'],
+            ['LEFT_CENTER', 'CENTER', 'RIGHT_CENTER'],
+            ['BOTTOM_LEFT', 'BOTTOM_CENTER', 'BOTTOM_RIGHT'],
+        ]
+        split = box.split(factor=0.35)
+        # Left: 3x3 grid
+        left = split.column(align=True)
+        for grid_row in grid:
+            row = left.row(align=True)
+            for pos in grid_row:
+                ic = 'RADIOBUT_ON' if current == pos else 'RADIOBUT_OFF'
+                op = row.operator("gtatools.set_uv_align", text="", icon=ic)
+                op.alignment = pos
+        # Right: Cols and Rows stacked
+        right = split.column(align=True)
+        right.prop(scene, "gtatools_uv_grid_cols", text=T("Колонки"))
+        right.prop(scene, "gtatools_uv_grid_rows", text=T("Ряды"))
 
         # Link islands toggle
         row = box.row(align=True)
@@ -5993,6 +6020,7 @@ classes = (
     GTATOOLS_OT_toggle_uv_grid,
     GTATOOLS_OT_randomize_uv_grid,
     GTATOOLS_OT_snap_uv_to_grid,
+    GTATOOLS_OT_set_uv_align,
     GTATOOLS_PT_main_panel,
     GTATOOLS_PT_export_panel,
     GTATOOLS_PT_dff_flags_panel,

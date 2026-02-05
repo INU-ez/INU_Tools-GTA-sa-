@@ -6,7 +6,7 @@
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue)
 ![Version](https://img.shields.io/badge/Version-1.4.6-green)
 
-INU_Tools — Blender аддон для работы с моделями GTA San Andreas.
+INU_Tools — аддон для Blender для работы с моделями GTA San Andreas.
 Предоставляет инструменты экспорта, прелайтинга и подготовки 3D моделей.
 
 Для работы экспорта требуется аддон [DragonFF](https://github.com/Parik27/DragonFF).
@@ -60,18 +60,31 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 <details>
 <summary><b>Geometry & Materials</b></summary>
 
-- ✅ Проверка геометрии — висящие вершины, рёбра, N-gons
-- ✅ Очистка геометрии — удаление проблемных элементов
-- ✅ Проверка лимита материалов (50 для GTA SA)
+> [!NOTE]
+> - ✅ Проверка геометрии — висящие вершины, рёбра, N-gons
+> - ✅ Очистка геометрии — удаление проблемных элементов
+> - ✅ Проверка лимита материалов (50 для GTA SA)
+>
+> <details>
+> <summary><b>Tutorial .gif</b></summary>
+>
+> ![Image](https://github.com/user-attachments/assets/832d41df-81ae-4af5-8223-59d3f448b771)
+>
+> </details>
 
-![Image](https://github.com/user-attachments/assets/832d41df-81ae-4af5-8223-59d3f448b771)
+> [!TIP]
+> - ✅ Автозагрузка текстур по именам материалов
+> - ✅ Drag & Drop — создание материалов перетаскиванием изображений
+>
+> <details>
+> <summary><b>Tutorial .gif</b></summary>
+>
+> ![Image](https://github.com/user-attachments/assets/59196d0f-bd92-4f8d-b6ce-9b1e102652be)
+>
+> </details>
 
-- ✅ Автозагрузка текстур по именам материалов
-- ✅ Drag & Drop — создание материалов перетаскиванием изображений
-
-![Image](https://github.com/user-attachments/assets/59196d0f-bd92-4f8d-b6ce-9b1e102652be)
-
-- ✅ Очистка дубликатов материалов (.001, .002)
+> [!NOTE]
+> - ✅ Очистка дубликатов материалов (.001, .002)
 
 </details>
 
