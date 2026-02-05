@@ -155,6 +155,7 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 
 - **INU** — автор аддона (Discord: 1.n.u)
 - [DragonFF](https://github.com/Parik27/DragonFF) — Parik27
+- Itera Tools 3 - (https://itera.gumroad.com/l/IteraTools3)
 
 #### Лицензия
 
