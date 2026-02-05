@@ -6,7 +6,7 @@
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue)
 ![Version](https://img.shields.io/badge/Version-1.4.6-green)
 
-INU_Tools — аддон для Blender для работы с моделями GTA San Andreas.
+INU_Tools — Blender аддон для работы с моделями GTA San Andreas.
 Предоставляет инструменты экспорта, прелайтинга и подготовки 3D моделей.
 
 Для работы экспорта требуется аддон [DragonFF](https://github.com/Parik27/DragonFF).
@@ -60,7 +60,6 @@ INU_Tools — аддон для Blender для работы с моделями 
 <details>
 <summary><b>Geometry & Materials</b></summary>
 
-> [!NOTE]
 > - ✅ Проверка геометрии — висящие вершины, рёбра, N-gons
 > - ✅ Очистка геометрии — удаление проблемных элементов
 > - ✅ Проверка лимита материалов (50 для GTA SA)
@@ -72,7 +71,6 @@ INU_Tools — аддон для Blender для работы с моделями 
 >
 > </details>
 
-> [!TIP]
 > - ✅ Автозагрузка текстур по именам материалов
 > - ✅ Drag & Drop — создание материалов перетаскиванием изображений
 >
@@ -83,7 +81,6 @@ INU_Tools — аддон для Blender для работы с моделями 
 >
 > </details>
 
-> [!NOTE]
 > - ✅ Очистка дубликатов материалов (.001, .002)
 
 </details>
