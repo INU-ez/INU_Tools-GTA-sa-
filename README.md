@@ -67,8 +67,11 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 ![Image](https://github.com/user-attachments/assets/832d41df-81ae-4af5-8223-59d3f448b771)
 
 - ✅ Автозагрузка текстур по именам материалов
-- ✅ Очистка дубликатов материалов (.001, .002)
 - ✅ Drag & Drop — создание материалов перетаскиванием изображений
+
+![Image](https://github.com/user-attachments/assets/59196d0f-bd92-4f8d-b6ce-9b1e102652be)
+
+- ✅ Очистка дубликатов материалов (.001, .002)
 
 </details>
 
