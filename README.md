@@ -26,14 +26,8 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 </details>
 
 <details>
-<summary><b>Prelight</b></summary>
+<summary><b>Support Itera Tools 3</b></summary>
 
-> - ✅ Запекание Vertex Colors (Fast / With Shadows)
-> - ✅ Raycast тени через depsgraph
-> - ✅ Fill Colors — покраска полигонов с пипеткой и системой уровней
-> - ✅ Scatter Light — рассеивание света с настраиваемыми параметрами
-> - ✅ Day/Night — раздельные атрибуты цвета для дня и ночи
-> - ✅ Анализ и предпросмотр вертексных цветов
 > - ✅ Функция сохранения материалов на модели для Itera
 >
 > <details>
@@ -42,6 +36,20 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 > ![Itera_Inu_tools](gif/Itera_Inu_tools.gif)
 >
 > </details>
+
+</details>
+
+
+
+<details>
+<summary><b>Prelight</b></summary>
+
+> - ✅ Запекание Vertex Colors (Fast / With Shadows)
+> - ✅ Raycast тени через depsgraph
+> - ✅ Fill Colors — покраска полигонов с пипеткой и системой уровней
+> - ✅ Scatter Light — рассеивание света с настраиваемыми параметрами
+> - ✅ Day/Night — раздельные атрибуты цвета для дня и ночи
+> - ✅ Анализ и предпросмотр вертексных цветов
 
 </details>
 
