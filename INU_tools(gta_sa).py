@@ -8,7 +8,7 @@
 bl_info = {
     "name": "INU_tools(gta_sa)",
     "author": "INU",
-    "version": (1, 4, 6),
+    "version": (1, 4, 7),
     "blender": (4, 4, 0),
     "location": "View3D > Sidebar (N) > GTA Tools",
     "description": "Toolset for GTA SA models. Requires DragonFF addon",
@@ -17,6 +17,8 @@ bl_info = {
 }
 
 # Changelog:
+# v1.4.7 - Export: COL Surface Type — панель выбора типа поверхности коллизии в Material Properties
+#        - 179 материалов GTA SA с поиском по названию, запись через DragonFF col_mat_index
 # v1.4.6 - Prelight: Post-Processing — новая подпанель пост-обработки vertex colors (Smooth, Contrast, Brightness, Gamma)
 #        - Prelight: Fast Bake теперь поддерживает тени (raycast через depsgraph), переключатель Shadows в панели
 #        - Export: новая подпанель DFF Flags — отображает флаги геометрии DragonFF (Light, Normals, Pipeline, UV Maps и др.)

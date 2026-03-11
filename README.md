@@ -4,7 +4,7 @@
 
 ![Blender](https://img.shields.io/badge/Blender-4.4+-orange?logo=blender)
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue)
-![Version](https://img.shields.io/badge/Version-1.4.6-green)
+![Version](https://img.shields.io/badge/Version-1.4.7-green)
 
 INU_Tools — Blender аддон для работы с моделями GTA San Andreas.
 Предоставляет инструменты экспорта, прелайтинга и подготовки 3D моделей.
@@ -22,6 +22,7 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 > - ✅ TXD экспорт (DXT сжатие, параллельная обработка, GPU через NVIDIA Texture Tools)
 > - ✅ Export All — массовый экспорт по суффиксам `_DFF` / `_LOD` / `_COL` + автосборка TXD
 > - ✅ DFF Flags — панель настроек геометрии DragonFF (Light, Normals, Pipeline, UV Maps)
+> - ✅ COL Surface Type — назначение типа поверхности (179 материалов GTA SA) через DragonFF с поиском
 
 </details>
 
@@ -130,6 +131,7 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 Аддон добавляет панели в:
 - **Properties > Scene > INU Tools** — экспорт, текстуры, материалы
 - **View3D > Sidebar (N) > GTA Tools** — геометрия, прелайт, DFF Flags
+- **Properties > Material > COL Surface Type** — выбор типа поверхности коллизии
 - **UV Editor > Sidebar (N) > GTA Tools** — UV инструменты
 
 #### Быстрый экспорт
@@ -145,6 +147,8 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 <details>
 <summary><b>История изменений</b></summary>
 
+
+- **v1.4.7** — COL Surface Type: панель выбора типа поверхности коллизии (179 материалов GTA SA) в Material Properties; поиск по названию; запись через DragonFF `col_mat_index`
 - **v1.4.6** — Post-Processing vertex colors (Smooth, Contrast, Brightness, Gamma); Fast Bake с тенями (raycast); панель DFF Flags
 - **v1.4.5** — Export All: массовый экспорт нескольких групп; Lightmap Generator возвращён в интерфейс
 - **v1.4.4** — Fill Colors, Scatter Light, Drag-and-Drop текстур, панель перемещена в Properties > Scene
