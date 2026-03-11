@@ -304,6 +304,15 @@ TRANSLATIONS = {
     "Яркость смещение (-1..+1)": "Brightness offset (-1..+1)",
     "Гамма-коррекция (1 = без изменений, <1 = светлее, >1 = темнее)": "Gamma correction (1 = no change, <1 = lighter, >1 = darker)",
     "Панель пост-обработки vertex colors": "Vertex colors post-processing panel",
+
+    # COL Flags
+    "Выберите COL меш-объект": "Select a COL mesh object",
+    "Нет материалов на объекте": "No materials on object",
+    "Тип поверхности GTA SA для коллизии": "GTA SA surface type for collision",
+    "Назначить surface ID на выбранный материал": "Assign surface ID to selected material",
+    "Surface ID назначен:": "Surface ID assigned:",
+    "COL Surface Materials:": "COL Surface Materials:",
+    "введите запрос для фильтрации": "type to filter",
 }
 
 def T(text):
@@ -1130,6 +1139,218 @@ def fix_col_model_name(col_path, model_name):
     except Exception as e:
         print(f"fix_col_model_name error: {e}")
         return False
+
+
+# =============================================================================
+# COL SURFACE MATERIALS
+# =============================================================================
+
+# GTA SA surface material IDs (0-178)
+# Format: (id, name, description)
+GTA_SA_SURFACE_MATERIALS = [
+    (0, "DEFAULT", "Default surface"),
+    (1, "TARMAC", "Tarmac (asphalt)"),
+    (2, "TARMAC_FUCKED", "Damaged tarmac"),
+    (3, "TARMAC_REALLYFUCKED", "Heavily damaged tarmac"),
+    (4, "PAVEMENT", "Pavement (sidewalk)"),
+    (5, "PAVEMENT_FUCKED", "Damaged pavement"),
+    (6, "GRAVEL", "Gravel"),
+    (7, "FUCKED_CONCRETE", "Damaged concrete"),
+    (8, "PAINTED_GROUND", "Painted ground"),
+    (9, "GRASS_SHORT_LUSH", "Grass short lush"),
+    (10, "GRASS_MEDIUM_LUSH", "Grass medium lush"),
+    (11, "GRASS_LONG_LUSH", "Grass long lush"),
+    (12, "GRASS_SHORT_DRY", "Grass short dry"),
+    (13, "GRASS_MEDIUM_DRY", "Grass medium dry"),
+    (14, "GRASS_LONG_DRY", "Grass long dry"),
+    (15, "GOLFGRASS_ROUGH", "Golf grass rough"),
+    (16, "GOLFGRASS_SMOOTH", "Golf grass smooth"),
+    (17, "STEEP_SLIDYGRASS", "Steep slidy grass"),
+    (18, "STEEP_CLIFF", "Steep cliff"),
+    (19, "FLOWERBED", "Flower bed"),
+    (20, "MEADOW", "Meadow"),
+    (21, "WASTEGROUND", "Waste ground"),
+    (22, "WOODLANDGROUND", "Woodland ground"),
+    (23, "VEGETATION", "Vegetation"),
+    (24, "MUD_WET", "Mud wet"),
+    (25, "MUD_DRY", "Mud dry"),
+    (26, "DIRT", "Dirt"),
+    (27, "DIRTTRACK", "Dirt track"),
+    (28, "SAND_DEEP", "Sand deep"),
+    (29, "SAND_MEDIUM", "Sand medium"),
+    (30, "SAND_COMPACT", "Sand compact"),
+    (31, "SAND_ARID", "Sand arid"),
+    (32, "SAND_MORE", "Sand more"),
+    (33, "SAND_BEACH", "Sand beach"),
+    (34, "CONCRETE_BEACH", "Concrete beach"),
+    (35, "ROCK_DRY", "Rock dry"),
+    (36, "ROCK_WET", "Rock wet"),
+    (37, "ROCK_CLIFF", "Rock cliff"),
+    (38, "WATER_RIVERBED", "Water riverbed"),
+    (39, "WATER_SHALLOW", "Water shallow"),
+    (40, "CORNFIELD", "Corn field"),
+    (41, "HEDGE", "Hedge"),
+    (42, "WOOD_CRATES", "Wood crates"),
+    (43, "WOOD_SOLID", "Wood solid"),
+    (44, "WOOD_THIN", "Wood thin"),
+    (45, "GLASS", "Glass"),
+    (46, "GLASS_WINDOWS_LARGE", "Glass windows large"),
+    (47, "GLASS_WINDOWS_SMALL", "Glass windows small"),
+    (48, "EMPTY1", "Empty 1"),
+    (49, "EMPTY2", "Empty 2"),
+    (50, "GARAGE_DOOR", "Garage door"),
+    (51, "THICK_METAL_PLATE", "Thick metal plate"),
+    (52, "SCAFFOLD_POLE", "Scaffold pole"),
+    (53, "LAMP_POST", "Lamp post"),
+    (54, "METAL_GATE", "Metal gate"),
+    (55, "METAL_CHAIN_FENCE", "Metal chain fence"),
+    (56, "GIRDER", "Girder"),
+    (57, "FIRE_HYDRANT", "Fire hydrant"),
+    (58, "CONTAINER", "Container"),
+    (59, "NEWS_VENDOR", "News vendor"),
+    (60, "WHEELBASE", "Wheelbase"),
+    (61, "CARDBOARDBOX", "Cardboard box"),
+    (62, "PED", "Ped (body)"),
+    (63, "CAR", "Car"),
+    (64, "CAR_PANEL", "Car panel"),
+    (65, "CAR_MOVINGCOMPONENT", "Car moving component"),
+    (66, "TRANSPARENT_CLOTH", "Transparent cloth"),
+    (67, "RUBBER", "Rubber"),
+    (68, "PLASTIC", "Plastic"),
+    (69, "TRANSPARENT_STONE", "Transparent stone"),
+    (70, "WOOD_BENCH", "Wood bench"),
+    (71, "CARPET", "Carpet"),
+    (72, "FLOORBOARD", "Floorboard"),
+    (73, "STAIRSWOOD", "Stairs wood"),
+    (74, "P_SAND", "Sand (phys)"),
+    (75, "P_SAND_DENSE", "Sand dense (phys)"),
+    (76, "P_SAND_ARID", "Sand arid (phys)"),
+    (77, "P_SAND_COMPACT", "Sand compact (phys)"),
+    (78, "P_SAND_ROCKY", "Sand rocky (phys)"),
+    (79, "P_SAND_BEACH", "Sand beach (phys)"),
+    (80, "P_GRASS_SHORT", "Grass short (phys)"),
+    (81, "P_GRASS_MEADOW", "Grass meadow (phys)"),
+    (82, "P_GRASS_DRY", "Grass dry (phys)"),
+    (83, "P_WOODLAND", "Woodland (phys)"),
+    (84, "P_WOODDENSE", "Wood dense (phys)"),
+    (85, "P_ROADSIDE", "Roadside (phys)"),
+    (86, "P_ROADSIDEDES", "Roadside desert (phys)"),
+    (87, "P_FLOWERBED", "Flowerbed (phys)"),
+    (88, "P_WASTEGROUND", "Waste ground (phys)"),
+    (89, "P_CONCRETE", "Concrete (phys)"),
+    (90, "P_OFFICEDESK", "Office desk"),
+    (91, "P_711SHELF1", "711 Shelf 1"),
+    (92, "P_711SHELF2", "711 Shelf 2"),
+    (93, "P_711SHELF3", "711 Shelf 3"),
+    (94, "P_RESTURANTTABLE", "Restaurant table"),
+    (95, "P_BARTABLE", "Bar table"),
+    (96, "P_UNDERWATERLUSH", "Underwater lush"),
+    (97, "P_UNDERWATERBARREN", "Underwater barren"),
+    (98, "P_UNDERWATERCORAL", "Underwater coral"),
+    (99, "P_UNDERWATERDEEP", "Underwater deep"),
+    (100, "P_RIVERBED", "Riverbed"),
+    (101, "P_RUBBLE", "Rubble"),
+    (102, "P_BEDROOMFLOOR", "Bedroom floor"),
+    (103, "P_KITCHENFLOOR", "Kitchen floor"),
+    (104, "P_LIVINGROOMFLOOR", "Livingroom floor"),
+    (105, "P_CORRIDORFLOOR", "Corridor floor"),
+    (106, "P_711FLOOR", "711 floor"),
+    (107, "P_ABORETUMFLOOR", "Fast food floor"),
+    (108, "P_SKANKYFLOOR", "Skanky floor"),
+    (109, "P_MOUNTAIN", "Mountain"),
+    (110, "P_MARSH", "Marsh"),
+    (111, "P_BUSHY", "Bushy"),
+    (112, "P_BUSHYMIX", "Bushy mix"),
+    (113, "P_BUSHYDRY", "Bushy dry"),
+    (114, "P_BUSHYMID", "Bushy mid"),
+    (115, "P_GRASSWEEFLOWERS", "Grass wee flowers"),
+    (116, "P_GRASSDRYTALL", "Grass dry tall"),
+    (117, "P_GRASSLUSHTALL", "Grass lush tall"),
+    (118, "P_GRASSGREENMIX", "Grass green mix"),
+    (119, "P_GRASSBROWNMIX", "Grass brown mix"),
+    (120, "P_GRASSLOW", "Grass low"),
+    (121, "P_GRASSROCKY", "Grass rocky"),
+    (122, "P_GRASSSMALLTREES", "Grass small trees"),
+    (123, "P_DIRTROCKY", "Dirt rocky"),
+    (124, "P_DIRTWEEDS", "Dirt weeds"),
+    (125, "P_GRASSWEEDS", "Grass weeds"),
+    (126, "P_RIVEREDGE", "River edge"),
+    (127, "P_POOLSIDE", "Poolside"),
+    (128, "P_FORESTSTUMPS", "Forest stumps"),
+    (129, "P_FORESTSTICKS", "Forest sticks"),
+    (130, "P_FORESTLEAVES", "Forest leaves"),
+    (131, "P_DESERTROCKS", "Desert rocks"),
+    (132, "P_FORRESTDRY", "Forest dry"),
+    (133, "P_SPARSEFLOWERS", "Sparse flowers"),
+    (134, "P_BUILDINGSITE", "Building site"),
+    (135, "P_DOCKLANDS", "Docklands"),
+    (136, "P_INDUSTRIAL", "Industrial"),
+    (137, "P_INDUSTJETTY", "Industrial jetty"),
+    (138, "P_CONCRETELITTER", "Concrete litter"),
+    (139, "P_ALLEYRUBISH", "Alley rubbish"),
+    (140, "P_JUNKYARDPILES", "Junkyard piles"),
+    (141, "P_JUNKYARDGRND", "Junkyard ground"),
+    (142, "P_DUMP", "Dump"),
+    (143, "P_CACTUSDENSE", "Cactus dense"),
+    (144, "P_AIRPORTGND", "Airport ground"),
+    (145, "P_CORNFIELD", "Cornfield (phys)"),
+    (146, "P_YOURGRASS1", "Grass light"),
+    (147, "P_YOURGRASS2", "Grass lighter"),
+    (148, "P_YOURGRASS3", "Grass lighter 2"),
+    (149, "P_GRASSMID1", "Grass mid 1"),
+    (150, "P_GRASSMID2", "Grass mid 2"),
+    (151, "P_GRASSDARK", "Grass dark"),
+    (152, "P_GRASSDARK2", "Grass dark 2"),
+    (153, "P_GRASSDIRTMIX", "Grass dirt mix"),
+    (154, "P_RIVERBEDSTONE", "Riverbed stone"),
+    (155, "P_RIVERBEDSHALLOW", "Riverbed shallow"),
+    (156, "P_RIVERBEDWEEDS", "Riverbed weeds"),
+    (157, "P_SEAWEED", "Seaweed"),
+    (158, "DOOR", "Door"),
+    (159, "PLASTICBARRIER", "Plastic barrier"),
+    (160, "PARKGRASS", "Park grass"),
+    (161, "STAIRSSTONE", "Stairs stone"),
+    (162, "STAIRSMETAL", "Stairs metal"),
+    (163, "STAIRSCARPET", "Stairs carpet"),
+    (164, "FLOORMETAL", "Floor metal"),
+    (165, "FLOORCONCRETE", "Floor concrete"),
+    (166, "BIN_BAG", "Bin bag"),
+    (167, "THIN_METAL_SHEET", "Thin metal sheet"),
+    (168, "METAL_BARREL", "Metal barrel"),
+    (169, "PLASTIC_CONE", "Plastic cone"),
+    (170, "PLASTIC_DUMPSTER", "Plastic dumpster"),
+    (171, "METAL_DUMPSTER", "Metal dumpster"),
+    (172, "WOOD_PICKET_FENCE", "Wood picket fence"),
+    (173, "WOOD_SLATTED_FENCE", "Wood slatted fence"),
+    (174, "WOOD_RANCH_FENCE", "Wood ranch fence"),
+    (175, "UNBREAKABLE_GLASS", "Unbreakable glass"),
+    (176, "HAY_BALE", "Hay bale"),
+    (177, "GORE", "Gore"),
+    (178, "RAILTRACK", "Rail track"),
+]
+
+# Build enum items for Blender UI: (identifier, name, description)
+COL_SURFACE_ENUM_ITEMS = [
+    (str(sid), f"{sid}: {name}", desc)
+    for sid, name, desc in GTA_SA_SURFACE_MATERIALS
+]
+
+def get_col_surface_id(mat):
+    """Get COL surface ID from DragonFF material property or fallback."""
+    if mat is None:
+        return 0
+    # Use DragonFF's property (mat.dff.col_mat_index)
+    if hasattr(mat, 'dff') and hasattr(mat.dff, 'col_mat_index'):
+        return mat.dff.col_mat_index
+    return 0
+
+
+def get_surface_name(surface_id):
+    """Get surface name by ID."""
+    for sid, name, _ in GTA_SA_SURFACE_MATERIALS:
+        if sid == surface_id:
+            return name
+    return "DEFAULT"
 
 
 def get_base_name_from_selection():
@@ -3127,6 +3348,7 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
 
                 # Исправляем имя модели внутри COL файла
                 fix_col_model_name(col_path, base_name)
+
                 exported.append(f"{base_name}.col")
             except Exception as e:
                 errors.append(f"{base_name}.col: {str(e)}")
@@ -5179,6 +5401,100 @@ class GTATOOLS_PT_dff_flags_panel(bpy.types.Panel):
         box.prop(settings, "export_binsplit", text="Bin Mesh PLG")
 
 
+class GTATOOLS_OT_set_col_surface(bpy.types.Operator):
+    """Assign GTA SA surface type to material for COL collision"""
+    bl_idname = "gtatools.set_col_surface"
+    bl_label = "Set COL Surface"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    material_name: StringProperty()
+    surface_id: IntProperty(default=0, min=0, max=178)
+
+    def execute(self, context):
+        mat = bpy.data.materials.get(self.material_name)
+        if mat is None:
+            self.report({'ERROR'}, f"Material not found: {self.material_name}")
+            return {'CANCELLED'}
+        # Write to DragonFF's property (used by COL exporter)
+        if hasattr(mat, 'dff') and hasattr(mat.dff, 'col_mat_index'):
+            mat.dff.col_mat_index = self.surface_id
+        name = get_surface_name(self.surface_id)
+        self.report({'INFO'}, f"{T('Surface ID назначен:')} {self.material_name} = {self.surface_id} ({name})")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_col_surface_menu(bpy.types.Operator):
+    """Pick surface type for COL material"""
+    bl_idname = "gtatools.col_surface_menu"
+    bl_label = "Surface Type"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    material_name: StringProperty()
+
+    # Search filter
+    search: StringProperty(
+        name="Search",
+        description="Filter surface types",
+        default="",
+        options={'TEXTEDIT_UPDATE'},  # live update while typing
+    )
+
+    def execute(self, context):
+        return {'CANCELLED'}
+
+    def invoke(self, context, event):
+        self.search = ""
+        return context.window_manager.invoke_popup(self, width=300)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "search", text="", icon='VIEWZOOM')
+
+        col = layout.column(align=True)
+        search_lower = self.search.lower()
+        for sid, name, desc in GTA_SA_SURFACE_MATERIALS:
+            if search_lower and search_lower not in name.lower() and search_lower not in str(sid):
+                continue
+            op = col.operator("gtatools.set_col_surface", text=f"{sid}: {name}")
+            op.material_name = self.material_name
+            op.surface_id = sid
+
+
+class GTATOOLS_PT_col_material_panel(bpy.types.Panel):
+    """COL Surface Type selector in Material Properties"""
+    bl_label = "COL Surface Type"
+    bl_idname = "GTATOOLS_PT_col_material_panel"
+    bl_space_type = 'PROPERTIES'
+    bl_region_type = 'WINDOW'
+    bl_context = 'material'
+    bl_options = {'DEFAULT_CLOSED'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.material is not None
+
+    def draw(self, context):
+        layout = self.layout
+        mat = context.material
+
+        if not hasattr(mat, 'dff') or not hasattr(mat.dff, 'col_mat_index'):
+            layout.label(text="DragonFF not found", icon='ERROR')
+            return
+
+        current_id = mat.dff.col_mat_index
+        current_name = get_surface_name(current_id)
+
+        # Current value display + DragonFF property
+        row = layout.row(align=True)
+        row.prop(mat.dff, "col_mat_index", text="ID")
+        # Search button
+        op = row.operator("gtatools.col_surface_menu", text="", icon='VIEWZOOM')
+        op.material_name = mat.name
+
+        # Show surface name
+        layout.label(text=f"{current_name}", icon='PHYSICS')
+
+
 class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
     """INU Tools panel in Properties > Scene"""
     bl_label = "INU Tools"
@@ -6132,6 +6448,9 @@ classes = (
     GTATOOLS_PT_main_panel,
     GTATOOLS_PT_export_panel,
     GTATOOLS_PT_dff_flags_panel,
+    GTATOOLS_OT_set_col_surface,
+    GTATOOLS_OT_col_surface_menu,
+    GTATOOLS_PT_col_material_panel,
     GTATOOLS_PT_inu_tools_panel,
     GTATOOLS_PT_prelight_panel,
     GTATOOLS_PT_bake_settings_subpanel,
