@@ -22,7 +22,8 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 > - ✅ TXD экспорт (DXT сжатие, параллельная обработка, GPU через NVIDIA Texture Tools)
 > - ✅ Export All — массовый экспорт по суффиксам `_DFF` / `_LOD` / `_COL` + автосборка TXD
 > - ✅ DFF Flags — панель настроек геометрии DragonFF (Light, Normals, Pipeline, UV Maps)
-> - ✅ COL Surface Type — назначение типа поверхности (179 материалов GTA SA) через DragonFF с поиском
+> - ✅ COL Surface Type — назначение типа поверхности (179 материалов GTA SA) через DragonFF с поиском и группировкой по 13 категориям
+> - ✅ COL Light — Day Light, Night Light, Brightness в панели Material Properties
 
 </details>
 
@@ -51,6 +52,14 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 > - ✅ Scatter Light — рассеивание света с настраиваемыми параметрами
 > - ✅ Day/Night — раздельные атрибуты цвета для дня и ночи
 > - ✅ Анализ и предпросмотр вертексных цветов
+> - ✅ Prelight COL — конвертация vertex colors в COL Day/Night Light (авторазбиение материалов по яркости)
+>
+> <details>
+> <summary><b>Tutorial .gif</b></summary>
+>
+> ![Itera_Inu_tools](gif/col_light.gif)
+>
+> </details>
 
 </details>
 
@@ -148,7 +157,7 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 <summary><b>История изменений</b></summary>
 
 
-- **v1.4.7** — COL Surface Type: панель выбора типа поверхности коллизии (179 материалов GTA SA) в Material Properties; поиск по названию; запись через DragonFF `col_mat_index`
+- **v1.4.7** — COL Surface Type с группировкой по 13 категориям; Day/Night Light + Brightness в Material Properties; Prelight COL — конвертация vertex colors в COL Light с авторазбиением материалов по яркости (0-15)
 - **v1.4.6** — Post-Processing vertex colors (Smooth, Contrast, Brightness, Gamma); Fast Bake с тенями (raycast); панель DFF Flags
 - **v1.4.5** — Export All: массовый экспорт нескольких групп; Lightmap Generator возвращён в интерфейс
 - **v1.4.4** — Fill Colors, Scatter Light, Drag-and-Drop текстур, панель перемещена в Properties > Scene

@@ -68,7 +68,7 @@ import subprocess
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from mathutils import Vector
-from bpy.props import StringProperty, BoolProperty, FloatProperty, FloatVectorProperty, IntProperty, CollectionProperty
+from bpy.props import StringProperty, BoolProperty, FloatProperty, FloatVectorProperty, IntProperty, CollectionProperty, EnumProperty
 from bpy_extras.io_utils import ExportHelper
 
 
@@ -1336,6 +1336,32 @@ COL_SURFACE_ENUM_ITEMS = [
     (str(sid), f"{sid}: {name}", desc)
     for sid, name, desc in GTA_SA_SURFACE_MATERIALS
 ]
+
+# Surface material categories for grouped display
+COL_SURFACE_CATEGORIES = [
+    ("Default", [0]),
+    ("Concrete", [1, 2, 3, 4, 5, 7, 8, 34, 89, 134, 135, 136, 137, 138, 139, 144, 165]),
+    ("Gravel", [6, 101]),
+    ("Grass", [9, 10, 11, 12, 13, 14, 15, 16, 17, 19, 20, 21, 80, 81, 82, 83, 84, 85, 86, 87, 88,
+               111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 125, 128, 129, 130, 132,
+               133, 146, 147, 148, 149, 150, 151, 152, 153, 160]),
+    ("Dirt", [22, 24, 25, 26, 27, 109, 110, 123, 124, 140, 141, 142]),
+    ("Sand", [28, 29, 30, 31, 32, 33, 74, 75, 76, 77, 78, 79]),
+    ("Glass", [45, 46, 47, 69, 175]),
+    ("Wood", [42, 43, 44, 70, 72, 73, 172, 173, 174, 176]),
+    ("Metal", [50, 51, 52, 53, 54, 55, 56, 57, 58, 162, 164, 167, 168, 171, 178]),
+    ("Stone", [18, 35, 36, 37, 61, 154, 155, 161]),
+    ("Vegetation", [23, 40, 41, 96, 97, 98, 99, 100, 126, 127, 131, 143, 145, 156, 157]),
+    ("Water", [38, 39]),
+    ("Misc", [48, 49, 59, 60, 62, 63, 64, 65, 66, 67, 68, 71, 90, 91, 92, 93, 94, 95,
+              102, 103, 104, 105, 106, 107, 108, 158, 159, 163, 166, 169, 170, 177]),
+]
+
+# Build lookup: surface_id -> category name
+_surface_id_to_category = {}
+for _cat_name, _cat_ids in COL_SURFACE_CATEGORIES:
+    for _sid in _cat_ids:
+        _surface_id_to_category[_sid] = _cat_name
 
 def get_col_surface_id(mat):
     """Get COL surface ID from DragonFF material property or fallback."""
@@ -5438,8 +5464,31 @@ class GTATOOLS_OT_col_surface_menu(bpy.types.Operator):
         name="Search",
         description="Filter surface types",
         default="",
-        options={'TEXTEDIT_UPDATE'},  # live update while typing
+        options={'TEXTEDIT_UPDATE'},
     )
+
+    # Category expand toggles (collapsed by default)
+    cat_default: BoolProperty(default=False)
+    cat_concrete: BoolProperty(default=False)
+    cat_gravel: BoolProperty(default=False)
+    cat_grass: BoolProperty(default=False)
+    cat_dirt: BoolProperty(default=False)
+    cat_sand: BoolProperty(default=False)
+    cat_glass: BoolProperty(default=False)
+    cat_wood: BoolProperty(default=False)
+    cat_metal: BoolProperty(default=False)
+    cat_stone: BoolProperty(default=False)
+    cat_vegetation: BoolProperty(default=False)
+    cat_water: BoolProperty(default=False)
+    cat_misc: BoolProperty(default=False)
+
+    _cat_props = {
+        "Default": "cat_default", "Concrete": "cat_concrete", "Gravel": "cat_gravel",
+        "Grass": "cat_grass", "Dirt": "cat_dirt", "Sand": "cat_sand",
+        "Glass": "cat_glass", "Wood": "cat_wood", "Metal": "cat_metal",
+        "Stone": "cat_stone", "Vegetation": "cat_vegetation", "Water": "cat_water",
+        "Misc": "cat_misc",
+    }
 
     def execute(self, context):
         return {'CANCELLED'}
@@ -5452,14 +5501,247 @@ class GTATOOLS_OT_col_surface_menu(bpy.types.Operator):
         layout = self.layout
         layout.prop(self, "search", text="", icon='VIEWZOOM')
 
-        col = layout.column(align=True)
         search_lower = self.search.lower()
-        for sid, name, desc in GTA_SA_SURFACE_MATERIALS:
-            if search_lower and search_lower not in name.lower() and search_lower not in str(sid):
+        name_lookup = {sid: name for sid, name, desc in GTA_SA_SURFACE_MATERIALS}
+
+        if search_lower:
+            col = layout.column(align=True)
+            for sid, name, desc in GTA_SA_SURFACE_MATERIALS:
+                if search_lower not in name.lower() and search_lower not in str(sid):
+                    continue
+                op = col.operator("gtatools.set_col_surface", text=f"{sid}: {name}")
+                op.material_name = self.material_name
+                op.surface_id = sid
+        else:
+            for cat_name, cat_ids in COL_SURFACE_CATEGORIES:
+                prop_name = self._cat_props.get(cat_name, "")
+                is_open = getattr(self, prop_name, False)
+
+                box = layout.box()
+                row = box.row()
+                icon = 'DISCLOSURE_TRI_DOWN' if is_open else 'DISCLOSURE_TRI_RIGHT'
+                row.prop(self, prop_name, text=f"{cat_name} ({len(cat_ids)})", icon=icon, emboss=False)
+
+                if is_open:
+                    col = box.column(align=True)
+                    for sid in cat_ids:
+                        name = name_lookup.get(sid, f"UNKNOWN_{sid}")
+                        op = col.operator("gtatools.set_col_surface", text=f"{sid}: {name}")
+                        op.material_name = self.material_name
+                        op.surface_id = sid
+
+
+class GTATOOLS_OT_bake_col_light(bpy.types.Operator):
+    """Convert vertex colors to COL Day/Night Light per polygon (splits materials by brightness)"""
+    bl_idname = "gtatools.bake_col_light"
+    bl_label = "Bake COL Light"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj and obj.type == 'MESH' and obj.data.color_attributes
+
+    def _read_brightness(self, color_attr):
+        """Read per-loop brightness from a color attribute."""
+        result = []
+        for i in range(len(color_attr.data)):
+            c = color_attr.data[i].color
+            result.append(max(c[0], c[1], c[2]))
+        return result
+
+    def _poly_avg(self, mesh, loop_brightness):
+        """Calculate per-polygon average brightness."""
+        result = {}
+        for poly in mesh.polygons:
+            avg = 0.0
+            for loop_idx in poly.loop_indices:
+                avg += loop_brightness[loop_idx]
+            avg /= len(poly.loop_indices)
+            result[poly.index] = avg
+        return result
+
+    def _map_to_range(self, avg, light_min, light_max):
+        """Map brightness 0.0-1.0 to light_min-light_max range."""
+        value = light_min + avg * (light_max - light_min)
+        return min(15, max(0, round(value)))
+
+    def execute(self, context):
+        obj = context.active_object
+        mesh = obj.data
+        scene = context.scene
+
+        day_min = scene.gtatools_col_day_min
+        day_max = scene.gtatools_col_day_max
+        night_min = scene.gtatools_col_night_min
+        night_max = scene.gtatools_col_night_max
+
+        # Day source: "Day" layer or active
+        day_attr = mesh.color_attributes.get("Day") or mesh.color_attributes.active_color
+        if day_attr is None:
+            self.report({'ERROR'}, "No vertex color layer found")
+            return {'CANCELLED'}
+
+        # Night source: "Night" layer (optional, falls back to Day)
+        night_attr = mesh.color_attributes.get("Night") or day_attr
+
+        day_brightness = self._read_brightness(day_attr)
+        night_brightness = self._read_brightness(night_attr)
+
+        day_avg = self._poly_avg(mesh, day_brightness)
+        night_avg = self._poly_avg(mesh, night_brightness)
+
+        # Calculate per-polygon levels
+        poly_levels = {}
+        for poly in mesh.polygons:
+            d = self._map_to_range(day_avg[poly.index], day_min, day_max)
+            n = self._map_to_range(night_avg[poly.index], night_min, night_max)
+            poly_levels[poly.index] = (d, n)
+
+        # Group polygons by (material_index, day_level, night_level)
+        groups = {}
+        for poly in mesh.polygons:
+            key = (poly.material_index, poly_levels[poly.index][0], poly_levels[poly.index][1])
+            if key not in groups:
+                groups[key] = []
+            groups[key].append(poly.index)
+
+        # Find which materials need splitting
+        mat_levels = {}
+        for (mat_idx, d, n), poly_indices in groups.items():
+            if mat_idx not in mat_levels:
+                mat_levels[mat_idx] = {}
+            mat_levels[mat_idx][(d, n)] = poly_indices
+
+        new_mat_map = {}
+        created_names = []
+
+        for mat_idx, levels in mat_levels.items():
+            if mat_idx >= len(obj.material_slots):
                 continue
-            op = col.operator("gtatools.set_col_surface", text=f"{sid}: {name}")
-            op.material_name = self.material_name
-            op.surface_id = sid
+
+            orig_mat = obj.material_slots[mat_idx].material
+            if orig_mat is None:
+                continue
+
+            if len(levels) == 1:
+                d, n = list(levels.keys())[0]
+                if hasattr(orig_mat, 'dff'):
+                    orig_mat.dff.col_day_light = d
+                    orig_mat.dff.col_night_light = n
+            else:
+                sorted_levels = sorted(levels.keys(), key=lambda x: x[0], reverse=True)
+                highest = sorted_levels[0]
+
+                if hasattr(orig_mat, 'dff'):
+                    orig_mat.dff.col_day_light = highest[0]
+                    orig_mat.dff.col_night_light = highest[1]
+
+                new_mat_map[(mat_idx, highest)] = mat_idx
+
+                for (d, n) in sorted_levels[1:]:
+                    copy_mat = orig_mat.copy()
+                    copy_mat.name = f"{orig_mat.name}_d{d}_n{n}"
+                    created_names.append(copy_mat.name)
+
+                    if hasattr(copy_mat, 'dff') and hasattr(orig_mat, 'dff'):
+                        copy_mat.dff.col_mat_index = orig_mat.dff.col_mat_index
+                        copy_mat.dff.col_flags = orig_mat.dff.col_flags
+                        copy_mat.dff.col_brightness = orig_mat.dff.col_brightness
+                        copy_mat.dff.col_day_light = d
+                        copy_mat.dff.col_night_light = n
+
+                    obj.data.materials.append(copy_mat)
+                    new_slot_idx = len(obj.material_slots) - 1
+                    new_mat_map[(mat_idx, (d, n))] = new_slot_idx
+
+        # Reassign polygons to new materials
+        for (mat_idx, level_key), new_slot_idx in new_mat_map.items():
+            for poly_idx in mat_levels[mat_idx][level_key]:
+                mesh.polygons[poly_idx].material_index = new_slot_idx
+
+        # Store created material names on object for cleanup
+        import json
+        existing = json.loads(obj.get("gtatools_col_light_mats", "[]"))
+        existing.extend(created_names)
+        obj["gtatools_col_light_mats"] = json.dumps(existing)
+
+        total_new = len(created_names)
+        self.report({'INFO'}, f"COL Light baked: {total_new} new materials, {len(mesh.polygons)} polygons")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_clear_col_light_mats(bpy.types.Operator):
+    """Remove COL light material copies created by Bake COL Light"""
+    bl_idname = "gtatools.clear_col_light_mats"
+    bl_label = "Clear COL Light"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj and obj.type == 'MESH'
+
+    def execute(self, context):
+        import json
+        import re
+
+        obj = context.active_object
+        mesh = obj.data
+
+        # Get stored list of created materials
+        stored_names = set(json.loads(obj.get("gtatools_col_light_mats", "[]")))
+
+        # Also detect by pattern _dN_nN as fallback
+        pattern = re.compile(r'^(.+)_d(\d{1,2})_n(\d{1,2})$')
+
+        merge_map = {}  # slot_idx -> original_slot_idx
+
+        for i, slot in enumerate(obj.material_slots):
+            if slot.material is None:
+                continue
+
+            is_col_light = slot.material.name in stored_names
+
+            if not is_col_light:
+                m = pattern.match(slot.material.name)
+                if m and int(m.group(2)) <= 15 and int(m.group(3)) <= 15:
+                    is_col_light = True
+
+            if is_col_light:
+                m = pattern.match(slot.material.name)
+                if m:
+                    orig_name = m.group(1)
+                    for j, orig_slot in enumerate(obj.material_slots):
+                        if orig_slot.material and orig_slot.material.name == orig_name:
+                            merge_map[i] = j
+                            break
+
+        if not merge_map:
+            self.report({'INFO'}, "No COL light materials to clear")
+            return {'FINISHED'}
+
+        # Reassign polygons back to original materials
+        for poly in mesh.polygons:
+            if poly.material_index in merge_map:
+                poly.material_index = merge_map[poly.material_index]
+
+        # Remove unused material slots (from end to start)
+        removed = 0
+        for slot_idx in sorted(merge_map.keys(), reverse=True):
+            mat = obj.material_slots[slot_idx].material
+            obj.active_material_index = slot_idx
+            bpy.ops.object.material_slot_remove()
+            if mat and mat.users == 0:
+                bpy.data.materials.remove(mat)
+            removed += 1
+
+        # Clear stored list
+        if "gtatools_col_light_mats" in obj:
+            del obj["gtatools_col_light_mats"]
+
+        self.report({'INFO'}, f"Cleared {removed} COL light materials")
+        return {'FINISHED'}
 
 
 class GTATOOLS_PT_col_material_panel(bpy.types.Panel):
@@ -5495,6 +5777,16 @@ class GTATOOLS_PT_col_material_panel(bpy.types.Panel):
 
         # Show surface name
         layout.label(text=f"{current_name}", icon='PHYSICS')
+
+        layout.separator()
+
+        # Day/Night Light
+        row = layout.row(align=True)
+        row.prop(mat.dff, "col_day_light", text="Day Light")
+        row.prop(mat.dff, "col_night_light", text="Night Light")
+
+        # Brightness
+        layout.prop(mat.dff, "col_brightness", text="Brightness")
 
 
 class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
@@ -5702,6 +5994,60 @@ class GTATOOLS_PT_vc_postprocess_panel(bpy.types.Panel):
         row = box.row(align=True)
         row.prop(scene, "gtatools_vc_gamma", text="Gamma")
         row.operator("gtatools.vc_gamma", text="Apply", icon='CHECKMARK')
+
+
+class GTATOOLS_PT_prelight_col_panel(bpy.types.Panel):
+    """Convert vertex colors to COL Day/Night Light"""
+    bl_label = "Prelight COL"
+    bl_idname = "GTATOOLS_PT_prelight_col_panel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'GTA Tools'
+    bl_parent_id = "GTATOOLS_PT_main_panel"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw(self, context):
+        layout = self.layout
+        obj = context.active_object
+        scene = context.scene
+
+        # Show source layers
+        if obj and obj.type == 'MESH' and obj.data.color_attributes:
+            mesh = obj.data
+            day_src = "Day" if "Day" in mesh.color_attributes else (mesh.color_attributes.active_color.name if mesh.color_attributes.active_color else "—")
+            night_src = "Night" if "Night" in mesh.color_attributes else day_src
+            layout.label(text=f"Day: {day_src} | Night: {night_src}", icon='COLOR')
+        else:
+            layout.label(text="No vertex colors", icon='INFO')
+
+        layout.separator()
+
+        # Day range
+        box = layout.box()
+        box.label(text="Day Light:", icon='LIGHT_SUN')
+        row = box.row(align=True)
+        row.prop(scene, "gtatools_col_day_min", text="Min")
+        row.prop(scene, "gtatools_col_day_max", text="Max")
+
+        # Night range
+        box = layout.box()
+        box.label(text="Night Light:", icon='SHADING_RENDERED')
+        row = box.row(align=True)
+        row.prop(scene, "gtatools_col_night_min", text="Min")
+        row.prop(scene, "gtatools_col_night_max", text="Max")
+
+        layout.separator()
+
+        row = layout.row(align=True)
+        row.operator("gtatools.bake_col_light", text="Bake COL Light", icon='RENDER_STILL')
+        row.operator("gtatools.clear_col_light_mats", text="", icon='X')
+
+        # Show info about created COL materials
+        if obj and obj.type == 'MESH':
+            import json
+            stored = json.loads(obj.get("gtatools_col_light_mats", "[]"))
+            if stored:
+                layout.label(text=f"COL light materials: {len(stored)}", icon='CHECKMARK')
 
 
 class GTATOOLS_PT_vertex_paint_panel(bpy.types.Panel):
@@ -6457,6 +6803,9 @@ classes = (
     GTATOOLS_PT_prelight_panel,
     GTATOOLS_PT_bake_settings_subpanel,
     GTATOOLS_PT_vc_postprocess_panel,
+    GTATOOLS_OT_bake_col_light,
+    GTATOOLS_OT_clear_col_light_mats,
+    GTATOOLS_PT_prelight_col_panel,
     GTATOOLS_PT_vertex_paint_panel,
     GTATOOLS_PT_lightmap_panel,
     GTATOOLS_PT_uv_tools_panel,
@@ -6522,6 +6871,16 @@ def register():
         description="Polygons with overlapping UVs move together",
         default=False
     )
+
+    # COL Light settings
+    bpy.types.Scene.gtatools_col_day_min = IntProperty(
+        name="Day Min", description="Minimum Day Light value (shadow)", default=10, min=0, max=15)
+    bpy.types.Scene.gtatools_col_day_max = IntProperty(
+        name="Day Max", description="Maximum Day Light value (lit)", default=15, min=0, max=15)
+    bpy.types.Scene.gtatools_col_night_min = IntProperty(
+        name="Night Min", description="Minimum Night Light value (shadow)", default=0, min=0, max=15)
+    bpy.types.Scene.gtatools_col_night_max = IntProperty(
+        name="Night Max", description="Maximum Night Light value (lit)", default=5, min=0, max=15)
 
     # NVIDIA Texture Tools settings
     bpy.types.Scene.gtatools_nvtt_path = StringProperty(
@@ -6706,6 +7065,10 @@ def unregister():
     del bpy.types.Scene.gtatools_uv_grid_rows
     del bpy.types.Scene.gtatools_uv_grid_align
     del bpy.types.Scene.gtatools_uv_link_islands
+    del bpy.types.Scene.gtatools_col_day_min
+    del bpy.types.Scene.gtatools_col_day_max
+    del bpy.types.Scene.gtatools_col_night_min
+    del bpy.types.Scene.gtatools_col_night_max
     del bpy.types.Scene.gtatools_nvtt_path
     del bpy.types.Scene.gtatools_txd_use_gpu
     del bpy.types.Scene.gtatools_show_nvtt_settings
