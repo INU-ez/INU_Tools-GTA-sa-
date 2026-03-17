@@ -21,9 +21,6 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 > - ✅ LOD экспорт
 > - ✅ TXD экспорт (DXT сжатие, параллельная обработка, GPU через NVIDIA Texture Tools)
 > - ✅ Export All — массовый экспорт по суффиксам `_DFF` / `_LOD` / `_COL` + автосборка TXD
-> - ✅ DFF Flags — панель настроек геометрии DragonFF (Light, Normals, Pipeline, UV Maps)
-> - ✅ COL Surface Type — назначение типа поверхности (179 материалов GTA SA) через DragonFF с поиском и группировкой по 13 категориям
-> - ✅ COL Light — Day Light, Night Light, Brightness в панели Material Properties
 
 </details>
 
