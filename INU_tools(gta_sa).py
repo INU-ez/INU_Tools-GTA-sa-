@@ -8,7 +8,7 @@
 bl_info = {
     "name": "INU_tools(gta_sa)",
     "author": "INU",
-    "version": (1, 4, 7),
+    "version": (1, 4, 8),
     "blender": (4, 4, 0),
     "location": "View3D > Sidebar (N) > GTA Tools",
     "description": "Toolset for GTA SA models. Requires DragonFF addon",
@@ -6200,6 +6200,7 @@ from gpu_extras.batch import batch_for_shader
 # Global variable for draw handler
 _uv_grid_draw_handler = None
 _uv_grid_visible = False
+addon_keymaps = []
 
 
 def draw_uv_grid_callback():
@@ -6278,6 +6279,70 @@ def draw_uv_grid_callback():
 
     gpu.state.blend_set('NONE')
     gpu.state.line_width_set(1.0)
+
+
+class GTATOOLS_OT_toggle_uv_editor(bpy.types.Operator):
+    """Toggle UV Editor panel (split/join area)"""
+    bl_idname = "gtatools.toggle_uv_editor"
+    bl_label = T("Открыть/Закрыть UV Editor")
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        screen = context.screen
+
+        # Ищем уже открытый IMAGE_EDITOR
+        uv_area = None
+        for area in screen.areas:
+            if area.type == 'IMAGE_EDITOR':
+                uv_area = area
+                break
+
+        if uv_area is not None:
+            # Закрываем UV Editor — объединяем с соседней областью
+            # Находим 3D Viewport рядом для объединения
+            view3d_area = None
+            for area in screen.areas:
+                if area.type == 'VIEW_3D':
+                    view3d_area = area
+                    break
+
+            if view3d_area:
+                # Закрываем UV area через area_close
+                with context.temp_override(area=uv_area):
+                    bpy.ops.screen.area_close()
+                self.report({'INFO'}, T("UV Editor закрыт"))
+            return {'FINISHED'}
+        else:
+            # Открываем UV Editor — разделяем текущий 3D Viewport
+            target_area = None
+            for area in screen.areas:
+                if area.type == 'VIEW_3D':
+                    target_area = area
+                    break
+
+            if target_area is None:
+                self.report({'ERROR'}, T("Не найден 3D Viewport"))
+                return {'CANCELLED'}
+
+            # Разделяем область вертикально (UV слева)
+            with context.temp_override(area=target_area):
+                bpy.ops.screen.area_split(direction='VERTICAL', factor=0.5)
+
+            # Находим новую область (самая маленькая VIEW_3D) и меняем тип на IMAGE_EDITOR
+            # После split появляется новая область VIEW_3D
+            all_view3d = [a for a in screen.areas if a.type == 'VIEW_3D']
+            if len(all_view3d) >= 2:
+                # Новая область — та что с меньшей шириной (левая часть, factor=0.4)
+                new_area = min(all_view3d, key=lambda a: a.width)
+                new_area.type = 'IMAGE_EDITOR'
+                # Переключаем на UV Editor mode
+                for space in new_area.spaces:
+                    if space.type == 'IMAGE_EDITOR':
+                        space.mode = 'UV'
+                        break
+
+            self.report({'INFO'}, T("UV Editor открыт"))
+            return {'FINISHED'}
 
 
 class GTATOOLS_OT_toggle_uv_grid(bpy.types.Operator):
@@ -6789,6 +6854,7 @@ classes = (
     GTATOOLS_FH_texture_drop,
     GTATOOLS_OT_check_materials,
     GTATOOLS_OT_cleanup_materials,
+    GTATOOLS_OT_toggle_uv_editor,
     GTATOOLS_OT_toggle_uv_grid,
     GTATOOLS_OT_randomize_uv_grid,
     GTATOOLS_OT_snap_uv_to_grid,
@@ -7050,10 +7116,23 @@ def register():
         default=True
     )
 
+    # Keymap: Shift+T — toggle UV Editor
+    wm = bpy.context.window_manager
+    kc = wm.keyconfigs.addon
+    if kc:
+        km = kc.keymaps.new(name='3D View', space_type='VIEW_3D')
+        kmi = km.keymap_items.new('gtatools.toggle_uv_editor', 'T', 'PRESS', shift=True)
+        addon_keymaps.append((km, kmi))
+
     print("[GTA Tools Panel] Addon registered!")
 
 
 def unregister():
+    # Remove keymaps
+    for km, kmi in addon_keymaps:
+        km.keymap_items.remove(kmi)
+    addon_keymaps.clear()
+
     # Remove UV grid draw handler
     global _uv_grid_draw_handler, _uv_grid_visible
     if _uv_grid_draw_handler is not None:

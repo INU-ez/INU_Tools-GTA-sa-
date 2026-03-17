@@ -143,6 +143,15 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 - **Properties > Material > COL Surface Type** — выбор типа поверхности коллизии
 - **UV Editor > Sidebar (N) > GTA Tools** — UV инструменты
 
+<details>
+<summary><b>Горячие клавиши</b></summary>
+
+> | Клавиша | Действие |
+> |---------|----------|
+> | `Shift+T` | Открыть / закрыть UV Editor |
+
+</details>
+
 #### Быстрый экспорт
 
 Назовите объекты с суффиксами (`Model_DFF`, `Model_LOD`, `Model_COL`), выделите и нажмите **Export All**.
@@ -156,7 +165,7 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 <details>
 <summary><b>История изменений</b></summary>
 
-
+- **v1.4.8** — Shift+T Раскрытие UV редкатора
 - **v1.4.7** — COL Surface Type с группировкой по 13 категориям; Day/Night Light + Brightness в Material Properties; Prelight COL — конвертация vertex colors в COL Light с авторазбиением материалов по яркости (0-15)
 - **v1.4.6** — Post-Processing vertex colors (Smooth, Contrast, Brightness, Gamma); Fast Bake с тенями (raycast); панель DFF Flags
 - **v1.4.5** — Export All: массовый экспорт нескольких групп; Lightmap Generator возвращён в интерфейс
