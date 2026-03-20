@@ -164,6 +164,7 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 
 - **Blender 5.1+**
 - NVIDIA Texture Tools — опционально, для GPU сжатия текстур
+- Itera Tools 3 - (https://itera.gumroad.com/l/IteraTools3)
 
 <details>
 <summary><b>История изменений</b></summary>
@@ -188,7 +189,6 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 #### Авторы
 
 - **INU** — автор аддона (Discord: 1.n.u)
-- Itera Tools 3 - (https://itera.gumroad.com/l/IteraTools3)
 
 #### Лицензия
 
