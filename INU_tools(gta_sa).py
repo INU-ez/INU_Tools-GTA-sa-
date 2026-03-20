@@ -4983,9 +4983,11 @@ class GTATOOLS_OT_load_textures(bpy.types.Operator):
             alpha_input = principled.inputs.get('Alpha')
             if alpha_input and not alpha_input.is_linked:
                 links.new(tex_node.outputs['Alpha'], alpha_input)
-                material.blend_method = 'BLEND'
+                material.blend_method = 'HASHED'
                 if hasattr(material, 'shadow_method'):
                     material.shadow_method = 'HASHED'
+                if hasattr(material, 'show_transparent_back'):
+                    material.show_transparent_back = False
 
         return True
 
@@ -5140,9 +5142,11 @@ class GTATOOLS_OT_drop_texture_as_material(bpy.types.Operator):
                 transparent_count = int(np.sum(alpha < 0.95))
                 if transparent_count > 5000:
                     links.new(tex_node.outputs['Alpha'], principled.inputs['Alpha'])
-                    material.blend_method = 'BLEND'
+                    material.blend_method = 'HASHED'
                     if hasattr(material, 'shadow_method'):
                         material.shadow_method = 'HASHED'
+                    if hasattr(material, 'show_transparent_back'):
+                        material.show_transparent_back = False
             except:
                 pass
 
@@ -6310,7 +6314,7 @@ class GTATOOLS_OT_toggle_uv_editor(bpy.types.Operator):
                 # Закрываем UV area через area_close
                 with context.temp_override(area=uv_area):
                     bpy.ops.screen.area_close()
-                self.report({'INFO'}, T("UV Editor закрыт"))
+                pass
             return {'FINISHED'}
         else:
             # Открываем UV Editor — разделяем текущий 3D Viewport
@@ -6341,7 +6345,7 @@ class GTATOOLS_OT_toggle_uv_editor(bpy.types.Operator):
                         space.mode = 'UV'
                         break
 
-            self.report({'INFO'}, T("UV Editor открыт"))
+            pass
             return {'FINISHED'}
 
 
