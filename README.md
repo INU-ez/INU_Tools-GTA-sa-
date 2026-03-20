@@ -2,24 +2,23 @@
 
 # INU_Tools (GTA SA)
 
-![Blender](https://img.shields.io/badge/Blender-4.4+-orange?logo=blender)
+![Blender](https://img.shields.io/badge/Blender-5.1+-orange?logo=blender)
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue)
-![Version](https://img.shields.io/badge/Version-1.4.7-green)
+![Version](https://img.shields.io/badge/Version-1.5.0-green)
 
 INU_Tools — Blender аддон для работы с моделями GTA San Andreas.
 Предоставляет инструменты экспорта, прелайтинга и подготовки 3D моделей.
-
-Для работы экспорта требуется аддон [DragonFF](https://github.com/Parik27/DragonFF).
+Начиная с v1.5.0 аддон имеет собственный экспорт DFF, COL и TXD (без зависимости от DragonFF).
 
 ## Возможности
 
 <details>
-<summary><b>Export</b></summary>
+<summary><b>Export/Import</b></summary>
 
-> - ✅ DFF экспорт (GTA SA v3.6.0.3)
-> - ✅ COL экспорт (формат COL3)
-> - ✅ LOD экспорт
-> - ✅ TXD экспорт (DXT сжатие, параллельная обработка, GPU через NVIDIA Texture Tools)
+> - ✅ DFF экспорт/импорт (GTA SA v3.6.0.3)
+> - ✅ COL экспорт/импорт (формат COL3)
+> - ✅ LOD экспорт/импорт
+> - ✅ TXD экспорт/импорт (DXT сжатие, параллельная обработка, GPU через NVIDIA Texture Tools)
 > - ✅ Export All — массовый экспорт по суффиксам `_DFF` / `_LOD` / `_COL` + автосборка TXD
 
 </details>
@@ -112,6 +111,14 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 > </details>
 
 > - ✅ Очистка дубликатов материалов (.001, .002)
+> - ✅ Сортировка материалов по имени
+>
+> <details>
+> <summary><b>Tutorial</b></summary>
+>
+> ![material_sorting](gif/material_sorting.jpg)
+>
+> </details>
 
 </details>
 
@@ -128,9 +135,9 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 
 ## Установка
 
-1. Скачайте `INU_tools(gta_sa).py`
-2. Blender → Edit → Preferences → Add-ons → Install → выберите файл
-3. Включите "INU_tools(gta_sa)" в списке аддонов
+1. Скачайте папку `INU_tools/` (или zip-архив)
+2. Поместите папку `INU_tools/` в `Blender/5.1/scripts/addons/`
+3. Blender → Edit → Preferences → Add-ons → включите "INU_tools(gta_sa)"
 
 ## Использование
 
@@ -155,14 +162,14 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 
 ## Требования
 
-- **Blender 4.4+**
-- **[DragonFF](https://github.com/Parik27/DragonFF)** — обязателен для DFF/COL экспорта
+- **Blender 5.1+**
 - NVIDIA Texture Tools — опционально, для GPU сжатия текстур
 
 <details>
 <summary><b>История изменений</b></summary>
 
-- **v1.4.8** — Shift+T Раскрытие UV редкатора
+- **v1.5.0** — Собственный DFF/COL/TXD импорт и экспорт (без DragonFF); авто-импорт TXD при импорте DFF; numpy DXT декомпрессия; сортировка материалов по имени; аддон переведён в пакетную структуру (`INU_tools/`); исправлены prelight preview при экспорте; совместимость с Blender 5.1
+- **v1.4.8** — Shift+T Раскрытие UV редактора
 - **v1.4.7** — COL Surface Type с группировкой по 13 категориям; Day/Night Light + Brightness в Material Properties; Prelight COL — конвертация vertex colors в COL Light с авторазбиением материалов по яркости (0-15)
 - **v1.4.6** — Post-Processing vertex colors (Smooth, Contrast, Brightness, Gamma); Fast Bake с тенями (raycast); панель DFF Flags
 - **v1.4.5** — Export All: массовый экспорт нескольких групп; Lightmap Generator возвращён в интерфейс
@@ -181,7 +188,6 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 #### Авторы
 
 - **INU** — автор аддона (Discord: 1.n.u)
-- [DragonFF](https://github.com/Parik27/DragonFF) — Parik27
 - Itera Tools 3 - (https://itera.gumroad.com/l/IteraTools3)
 
 #### Лицензия

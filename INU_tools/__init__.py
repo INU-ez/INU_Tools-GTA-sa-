@@ -1,18 +1,15 @@
-# INU_tools(gta_sa) for Blender 4.4
+# INU_tools(gta_sa) for Blender 4.4+
 # Объединённая панель инструментов для работы с GTA SA моделями
 # Включает: Export (DFF, COL, LOD, TXD), Prelight, Lightmap Generator
-#
-# This addon depends on DragonFF addon for DFF/COL export.
-# DragonFF © its respective authors.
 
 bl_info = {
     "name": "INU_tools(gta_sa)",
     "author": "INU",
-    "version": (1, 4, 8),
+    "version": (1, 5, 0),
     "blender": (4, 4, 0),
     "location": "View3D > Sidebar (N) > GTA Tools",
-    "description": "Toolset for GTA SA models. Requires DragonFF addon",
-    "warning": "Requires DragonFF addon installed for DFF/COL export",
+    "description": "Toolset for GTA SA models",
+    "warning": "",
     "category": "3D View",
 }
 
@@ -61,6 +58,7 @@ bl_info = {
 import bpy
 import bmesh
 import math
+import re as _re
 import struct
 import os
 import tempfile
@@ -69,7 +67,7 @@ import numpy as np
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from mathutils import Vector
 from bpy.props import StringProperty, BoolProperty, FloatProperty, FloatVectorProperty, IntProperty, CollectionProperty, EnumProperty
-from bpy_extras.io_utils import ExportHelper
+from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 
 # =============================================================================
@@ -184,6 +182,9 @@ TRANSLATIONS = {
     "слотов, удалено:": "slots, removed:",
     "дубликатов": "duplicates",
     "Дубликаты материалов не найдены": "No duplicate materials found",
+    "Сортировка материалов": "Sort Materials",
+    "Материалы уже отсортированы": "Materials already sorted",
+    "Отсортировано материалов:": "Materials sorted:",
     "Сохраните .blend файл сначала!": "Save .blend file first!",
     "Текстуры с приставкой LP_ не найдены в папке:": "Textures with LP_ prefix not found in folder:",
     "Не удалось применить лайтмап - нет подходящих материалов": "Could not apply lightmap - no suitable materials",
@@ -1367,9 +1368,8 @@ def get_col_surface_id(mat):
     """Get COL surface ID from DragonFF material property or fallback."""
     if mat is None:
         return 0
-    # Use DragonFF's property (mat.dff.col_mat_index)
-    if hasattr(mat, 'dff') and hasattr(mat.dff, 'col_mat_index'):
-        return mat.dff.col_mat_index
+    if hasattr(mat, 'inu'):
+        return mat.inu.col_mat_index
     return 0
 
 
@@ -3018,6 +3018,97 @@ def check_loose_geometry(obj):
 # PROPERTY GROUPS
 # =============================================================================
 
+class INUObjectProps(bpy.types.PropertyGroup):
+    """INU_tools object export properties (replaces DragonFF obj.dff)."""
+
+    type : EnumProperty(
+        items=[
+            ('OBJ', 'Object', 'Object will be exported as a mesh or a dummy'),
+            ('COL', 'Collision Object', 'Object is a collision object'),
+            ('SHA', 'Shadow Object', 'Object is a shadow object'),
+            ('NON', "Don't export", 'Object will NOT be exported'),
+        ],
+        name="Type",
+        default='OBJ',
+    )
+
+    pipeline : EnumProperty(
+        items=[
+            ('NONE', 'None', 'Export without setting a pipeline'),
+            ('0x53F20098', 'Buildings', 'Reflection Building Pipeline'),
+            ('0x53F2009A', 'Night Vertex Colors', 'Night Vertex Colors Pipeline'),
+            ('CUSTOM', 'Custom Pipeline', 'Set a custom pipeline value'),
+        ],
+        name="Pipeline",
+        description="Rendering pipeline for the engine",
+    )
+    custom_pipeline : StringProperty(name="Custom Pipeline")
+
+    export_normals : BoolProperty(
+        default=True,
+        description="Export vertex normals (disable for map objects)",
+    )
+    export_binsplit : BoolProperty(
+        default=True,
+        description="Export Bin Mesh PLG (increases compatibility with DFF viewers)",
+    )
+
+    uv_map1 : BoolProperty(default=True, description="Export first UV map")
+    uv_map2 : BoolProperty(default=True, description="Export second UV map")
+    day_cols : BoolProperty(default=True, description="Export day vertex prelight colors")
+    night_cols : BoolProperty(default=True, description="Export night vertex colors")
+
+    light : BoolProperty(default=True, description="rpGEOMETRYLIGHT flag")
+    modulate_color : BoolProperty(default=True, description="rpGEOMETRYMODULATEMATERIALCOLOR flag")
+
+    # Collision sphere/cone properties
+    col_material : IntProperty(default=12, description="Material for Sphere/Cone")
+    col_flags : IntProperty(default=0, description="Flags for Sphere/Cone")
+    col_brightness : IntProperty(default=0, description="Brightness for Sphere/Cone")
+    col_light : IntProperty(default=0, description="Light for Sphere/Cone")
+
+
+class INUMaterialProps(bpy.types.PropertyGroup):
+    """INU_tools material properties (replaces DragonFF mat.dff)."""
+
+    ambient : FloatProperty(name="Ambient Shading", default=1.0)
+
+    # Collision surface
+    col_mat_index : IntProperty(name="Surface ID", default=0, description="COL surface type ID (0-178)")
+    col_flags : IntProperty(name="Flags", default=0)
+    col_brightness : IntProperty(name="Brightness", default=0)
+    col_light : IntProperty(name="Light", default=0)
+    col_day_light : IntProperty(name="Day Light", default=0, min=0, max=15)
+    col_night_light : IntProperty(name="Night Light", default=0, min=0, max=15)
+
+    # Environment Map
+    export_env_map : BoolProperty(name="Environment Map")
+    env_map_tex : StringProperty()
+    env_map_coef : FloatProperty(default=0.5)
+    env_map_fb_alpha : BoolProperty()
+
+    # Bump Map
+    export_bump_map : BoolProperty(name="Bump Map")
+    bump_map_tex : StringProperty()
+
+    # Reflection
+    export_reflection : BoolProperty(name="Reflection Material")
+    reflection_scale_x : FloatProperty()
+    reflection_scale_y : FloatProperty()
+    reflection_offset_x : FloatProperty()
+    reflection_offset_y : FloatProperty()
+    reflection_intensity : FloatProperty()
+
+    # Specular
+    export_specular : BoolProperty(name="Specular Material")
+    specular_level : FloatProperty()
+    specular_texture : StringProperty()
+
+    # UV Animation
+    export_animation : BoolProperty(name="UV Animation")
+    animation_name : StringProperty()
+
+
 class GTATOOLS_FillColorItem(bpy.types.PropertyGroup):
     """Fill color list item"""
     color: FloatVectorProperty(
@@ -3213,29 +3304,40 @@ class GTATOOLS_OT_export_dff(bpy.types.Operator, ExportHelper):
     filter_glob: StringProperty(default="*.dff", options={'HIDDEN'})
 
     def execute(self, context):
-        # Check if DragonFF is available
         try:
-            # Отключаем превью прелайта перед экспортом (иначе экспорт ломается)
+            # Запоминаем у каких объектов prelight preview был включён
+            prelight_was_on = []
             for obj in context.selected_objects:
                 if obj.type == 'MESH':
-                    setup_prelight_preview(obj, enable=False)
+                    # Проверяем наличие Prelight_Mix ноды — признак включённого превью
+                    has_prelight = False
+                    for mat_slot in obj.material_slots:
+                        mat = mat_slot.material
+                        if mat and mat.use_nodes and mat.node_tree.nodes.get("Prelight_Mix"):
+                            has_prelight = True
+                            break
+                    if has_prelight:
+                        prelight_was_on.append(obj)
+                        setup_prelight_preview(obj, enable=False)
 
-            # export_version='0x36003' = GTA SA, only_selected=True, export_coll=False
-            bpy.ops.export_dff.scene(
-                filepath=self.filepath,
-                export_version='0x36003',
-                only_selected=True,
-                export_coll=False
-            )
+            # Собираем меши для экспорта
+            from .ops.dff_export import export_dff as inu_export_dff
+            dff_objects = [o for o in context.selected_objects if o.type == 'MESH']
+            inu_export_dff(filepath=self.filepath, objects=dff_objects)
 
-            # Включаем превью прелайта обратно после экспорта
-            for obj in context.selected_objects:
-                if obj.type == 'MESH':
-                    setup_prelight_preview(obj, enable=True)
+            # Восстанавливаем prelight только для тех объектов, где он был
+            for obj in prelight_was_on:
+                setup_prelight_preview(obj, enable=True)
 
             self.report({'INFO'}, f"Exported DFF: {self.filepath}")
             return {'FINISHED'}
         except Exception as e:
+            # При ошибке тоже восстанавливаем prelight
+            for obj in prelight_was_on:
+                try:
+                    setup_prelight_preview(obj, enable=True)
+                except:
+                    pass
             self.report({'ERROR'}, f"DFF export error: {str(e)}")
             return {'CANCELLED'}
 
@@ -3249,15 +3351,21 @@ class GTATOOLS_OT_export_col(bpy.types.Operator, ExportHelper):
     filter_glob: StringProperty(default="*.col", options={'HIDDEN'})
 
     def execute(self, context):
-        # Check if collision exporter is available
+        from .ops.col_export import export_col as inu_export_col
+        prelight_was_on = []
         try:
-            # Отключаем превью прелайта перед экспортом (иначе экспорт ломается)
+            # Запоминаем и отключаем prelight только где он был
             for obj in context.selected_objects:
                 if obj.type == 'MESH':
-                    setup_prelight_preview(obj, enable=False)
-                    # Устанавливаем тип объекта как Collision для DragonFF
-                    if hasattr(obj, 'dff'):
-                        obj.dff.type = 'COL'
+                    has_prelight = False
+                    for mat_slot in obj.material_slots:
+                        mat = mat_slot.material
+                        if mat and mat.use_nodes and mat.node_tree.nodes.get("Prelight_Mix"):
+                            has_prelight = True
+                            break
+                    if has_prelight:
+                        prelight_was_on.append(obj)
+                        setup_prelight_preview(obj, enable=False)
 
             # COL всегда экспортируется в центре (0,0,0)
             original_locations = {}
@@ -3266,11 +3374,15 @@ class GTATOOLS_OT_export_col(bpy.types.Operator, ExportHelper):
                     original_locations[obj.name] = obj.location.copy()
                     obj.location = (0, 0, 0)
 
-            # export_version='3' = GTA SA (COL3), only_selected=True
-            bpy.ops.export_col.scene(
+            # Собираем объекты для экспорта
+            col_objects = [o for o in context.selected_objects
+                           if o.type in ('MESH', 'EMPTY')]
+
+            # Экспорт через INU_tools COL exporter
+            inu_export_col(
                 filepath=self.filepath,
-                export_version='3',
-                only_selected=True
+                objects=col_objects,
+                version=3,
             )
 
             # Возвращаем оригинальные позиции
@@ -3278,21 +3390,291 @@ class GTATOOLS_OT_export_col(bpy.types.Operator, ExportHelper):
                 if obj.name in original_locations:
                     obj.location = original_locations[obj.name]
 
-            # Исправляем имя модели внутри COL файла
-            # Берём имя из имени файла (без расширения)
-            model_name = os.path.splitext(os.path.basename(self.filepath))[0]
-            fix_col_model_name(self.filepath, model_name)
+            # Восстанавливаем prelight только где он был
+            for obj in prelight_was_on:
+                setup_prelight_preview(obj, enable=True)
 
-            # Включаем превью прелайта обратно после экспорта
-            for obj in context.selected_objects:
-                if obj.type == 'MESH':
+            self.report({'INFO'}, f"Exported COL: {self.filepath}")
+            return {'FINISHED'}
+        except Exception as e:
+            for obj in prelight_was_on:
+                try:
                     setup_prelight_preview(obj, enable=True)
+                except:
+                    pass
+            self.report({'ERROR'}, f"COL export error: {str(e)}")
+            return {'CANCELLED'}
 
+
+class GTATOOLS_OT_import_dff(bpy.types.Operator):
+    """Import GTA SA DFF model"""
+    bl_idname = "gtatools.import_dff"
+    bl_label = "Import DFF (.dff)"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    filepath: StringProperty(subtype='FILE_PATH')
+    filter_glob: StringProperty(default="*.dff", options={'HIDDEN'})
+
+    def invoke(self, context, event):
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        from .ops.dff_import import import_dff as inu_import_dff
+        from .ops.txd_import import import_txd as inu_import_txd
+        try:
+            inu_import_dff(filepath=self.filepath, context=context)
+            self.report({'INFO'}, f"Imported DFF: {self.filepath}")
+        except Exception as e:
+            self.report({'ERROR'}, f"DFF import error: {str(e)}")
+            return {'CANCELLED'}
+
+        # Auto-import TXD (if enabled)
+        if not getattr(context.scene, 'gtatools_txd_auto_import', True):
+            return {'FINISHED'}
+        txd_file = None
+        dff_name = os.path.splitext(os.path.basename(self.filepath))[0]
+        custom_dir = getattr(context.scene, 'gtatools_txd_import_path', '')
+        if custom_dir:
+            custom_dir = bpy.path.abspath(custom_dir)
+
+        search_dirs = []
+        if custom_dir and os.path.isdir(custom_dir):
+            search_dirs.append(custom_dir)
+        search_dirs.append(os.path.dirname(self.filepath))
+
+        for search_dir in search_dirs:
+            if txd_file:
+                break
+            same_name = os.path.join(search_dir, dff_name + ".txd")
+            if os.path.isfile(same_name):
+                txd_file = same_name
+                break
+            for f in os.listdir(search_dir):
+                if f.lower().endswith('.txd'):
+                    txd_file = os.path.join(search_dir, f)
+                    break
+
+        if txd_file:
+            try:
+                images = inu_import_txd(filepath=txd_file)
+                self.report({'INFO'}, f"TXD: {len(images)} textures ({os.path.basename(txd_file)})")
+            except Exception as e:
+                self.report({'WARNING'}, f"TXD import error: {str(e)}")
+
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_import_col(bpy.types.Operator):
+    """Import GTA SA COL collision model"""
+    bl_idname = "gtatools.import_col"
+    bl_label = "Import COL (.col)"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    filepath: StringProperty(subtype='FILE_PATH')
+    filter_glob: StringProperty(default="*.col", options={'HIDDEN'})
+
+    def invoke(self, context, event):
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        from .ops.col_import import import_col as inu_import_col
+        try:
+            inu_import_col(filepath=self.filepath, context=context)
+            self.report({'INFO'}, f"Imported COL: {self.filepath}")
+            return {'FINISHED'}
+        except Exception as e:
+            self.report({'ERROR'}, f"COL import error: {str(e)}")
+            return {'CANCELLED'}
+
+
+class GTATOOLS_OT_import_txd(bpy.types.Operator):
+    """Import GTA SA TXD texture dictionary"""
+    bl_idname = "gtatools.import_txd"
+    bl_label = "Import TXD (.txd)"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    filepath: StringProperty(subtype='FILE_PATH')
+    filter_glob: StringProperty(default="*.txd", options={'HIDDEN'})
+
+    def invoke(self, context, event):
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        from .ops.txd_import import import_txd as inu_import_txd
+        try:
+            images = inu_import_txd(filepath=self.filepath)
+            self.report({'INFO'}, f"Imported TXD: {len(images)} textures")
+            return {'FINISHED'}
+        except Exception as e:
+            self.report({'ERROR'}, f"TXD import error: {str(e)}")
+            return {'CANCELLED'}
+
+
+# ── File > Export / Import operators (with ExportHelper/ImportHelper) ──
+
+class GTATOOLS_OT_file_export_dff(bpy.types.Operator, ExportHelper):
+    """Export GTA SA DFF model"""
+    bl_idname = "gtatools.file_export_dff"
+    bl_label = "GTA SA DFF (.dff)"
+    bl_options = {'PRESET'}
+    filename_ext = ".dff"
+    filter_glob: StringProperty(default="*.dff", options={'HIDDEN'})
+
+    def execute(self, context):
+        from .ops.dff_export import export_dff as inu_export_dff
+        try:
+            dff_objects = [o for o in context.selected_objects if o.type == 'MESH']
+            inu_export_dff(filepath=self.filepath, objects=dff_objects)
+            self.report({'INFO'}, f"Exported DFF: {self.filepath}")
+            return {'FINISHED'}
+        except Exception as e:
+            self.report({'ERROR'}, f"DFF export error: {str(e)}")
+            return {'CANCELLED'}
+
+
+class GTATOOLS_OT_file_export_col(bpy.types.Operator, ExportHelper):
+    """Export GTA SA COL collision model"""
+    bl_idname = "gtatools.file_export_col"
+    bl_label = "GTA SA COL (.col)"
+    bl_options = {'PRESET'}
+    filename_ext = ".col"
+    filter_glob: StringProperty(default="*.col", options={'HIDDEN'})
+
+    def execute(self, context):
+        from .ops.col_export import export_col as inu_export_col
+        try:
+            col_objects = [o for o in context.selected_objects if o.type in ('MESH', 'EMPTY')]
+            inu_export_col(filepath=self.filepath, objects=col_objects, version=3)
             self.report({'INFO'}, f"Exported COL: {self.filepath}")
             return {'FINISHED'}
         except Exception as e:
             self.report({'ERROR'}, f"COL export error: {str(e)}")
             return {'CANCELLED'}
+
+
+class GTATOOLS_OT_file_export_txd(bpy.types.Operator, ExportHelper):
+    """Export GTA SA TXD texture archive"""
+    bl_idname = "gtatools.file_export_txd"
+    bl_label = "GTA SA TXD (.txd)"
+    bl_options = {'PRESET'}
+    filename_ext = ".txd"
+    filter_glob: StringProperty(default="*.txd", options={'HIDDEN'})
+
+    def execute(self, context):
+        use_gpu = getattr(context.scene, 'gtatools_txd_use_gpu', False)
+        result, message, transparent_list = export_txd(self.filepath, context, False, use_gpu)
+        self.report({'INFO'} if result == {'FINISHED'} else {'ERROR'}, message)
+        return result
+
+
+class GTATOOLS_OT_file_import_dff(bpy.types.Operator, ImportHelper):
+    """Import GTA SA DFF model"""
+    bl_idname = "gtatools.file_import_dff"
+    bl_label = "GTA SA DFF (.dff)"
+    bl_options = {'REGISTER', 'UNDO'}
+    filename_ext = ".dff"
+    filter_glob: StringProperty(default="*.dff", options={'HIDDEN'})
+
+    def execute(self, context):
+        from .ops.dff_import import import_dff as inu_import_dff
+        from .ops.txd_import import import_txd as inu_import_txd
+        try:
+            inu_import_dff(filepath=self.filepath, context=context)
+            self.report({'INFO'}, f"Imported DFF: {self.filepath}")
+        except Exception as e:
+            self.report({'ERROR'}, f"DFF import error: {str(e)}")
+            return {'CANCELLED'}
+
+        # Auto-import TXD: search in custom folder or DFF folder
+        txd_file = None
+        dff_name = os.path.splitext(os.path.basename(self.filepath))[0]
+        custom_dir = getattr(context.scene, 'gtatools_txd_import_path', '')
+        if custom_dir:
+            custom_dir = bpy.path.abspath(custom_dir)
+
+        # Search directories: custom folder first, then DFF folder
+        search_dirs = []
+        if custom_dir and os.path.isdir(custom_dir):
+            search_dirs.append(custom_dir)
+        search_dirs.append(os.path.dirname(self.filepath))
+
+        for search_dir in search_dirs:
+            if txd_file:
+                break
+            # First try same name as DFF
+            same_name = os.path.join(search_dir, dff_name + ".txd")
+            if os.path.isfile(same_name):
+                txd_file = same_name
+                break
+            # Then any .txd in folder
+            for f in os.listdir(search_dir):
+                if f.lower().endswith('.txd'):
+                    txd_file = os.path.join(search_dir, f)
+                    break
+
+        if txd_file:
+            try:
+                images = inu_import_txd(filepath=txd_file)
+                self.report({'INFO'}, f"TXD: {len(images)} textures ({os.path.basename(txd_file)})")
+            except Exception as e:
+                self.report({'WARNING'}, f"TXD import error: {str(e)}")
+        else:
+            self.report({'WARNING'}, "TXD not found in DFF folder")
+
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_file_import_col(bpy.types.Operator, ImportHelper):
+    """Import GTA SA COL collision model"""
+    bl_idname = "gtatools.file_import_col"
+    bl_label = "GTA SA COL (.col)"
+    bl_options = {'REGISTER', 'UNDO'}
+    filename_ext = ".col"
+    filter_glob: StringProperty(default="*.col", options={'HIDDEN'})
+
+    def execute(self, context):
+        from .ops.col_import import import_col as inu_import_col
+        try:
+            inu_import_col(filepath=self.filepath, context=context)
+            self.report({'INFO'}, f"Imported COL: {self.filepath}")
+            return {'FINISHED'}
+        except Exception as e:
+            self.report({'ERROR'}, f"COL import error: {str(e)}")
+            return {'CANCELLED'}
+
+
+def menu_func_export(self, context):
+    self.layout.operator(GTATOOLS_OT_file_export_dff.bl_idname)
+    self.layout.operator(GTATOOLS_OT_file_export_col.bl_idname)
+    self.layout.operator(GTATOOLS_OT_file_export_txd.bl_idname)
+
+
+class GTATOOLS_OT_file_import_txd(bpy.types.Operator, ImportHelper):
+    """Import GTA SA TXD texture dictionary"""
+    bl_idname = "gtatools.file_import_txd"
+    bl_label = "GTA SA TXD (.txd)"
+    bl_options = {'REGISTER', 'UNDO'}
+    filename_ext = ".txd"
+    filter_glob: StringProperty(default="*.txd", options={'HIDDEN'})
+
+    def execute(self, context):
+        from .ops.txd_import import import_txd as inu_import_txd
+        try:
+            images = inu_import_txd(filepath=self.filepath)
+            self.report({'INFO'}, f"Imported TXD: {len(images)} textures")
+            return {'FINISHED'}
+        except Exception as e:
+            self.report({'ERROR'}, f"TXD import error: {str(e)}")
+            return {'CANCELLED'}
+
+
+def menu_func_import(self, context):
+    self.layout.operator(GTATOOLS_OT_file_import_dff.bl_idname)
+    self.layout.operator(GTATOOLS_OT_file_import_col.bl_idname)
+    self.layout.operator(GTATOOLS_OT_file_import_txd.bl_idname)
 
 
 class GTATOOLS_OT_export_all(bpy.types.Operator):
@@ -3316,17 +3698,8 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
         if models['DFF'] and not skip_dff:
             dff_path = os.path.join(self.directory, f"{base_name}.dff")
             try:
-                bpy.ops.object.select_all(action='DESELECT')
-                models['DFF'].select_set(True)
-                context.view_layer.objects.active = models['DFF']
-
-                bpy.ops.export_dff.scene(
-                    filepath=dff_path,
-                    export_version='0x36003',
-                    only_selected=True,
-                    export_coll=False
-                )
-
+                from .ops.dff_export import export_dff as inu_export_dff
+                inu_export_dff(filepath=dff_path, objects=[models['DFF']])
                 exported.append(f"{base_name}.dff")
             except Exception as e:
                 errors.append(f"{base_name}.dff: {str(e)}")
@@ -3335,17 +3708,8 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
         if models['LOD'] and not skip_lod:
             lod_path = os.path.join(self.directory, f"LOD{base_name}.dff")
             try:
-                bpy.ops.object.select_all(action='DESELECT')
-                models['LOD'].select_set(True)
-                context.view_layer.objects.active = models['LOD']
-
-                bpy.ops.export_dff.scene(
-                    filepath=lod_path,
-                    export_version='0x36003',
-                    only_selected=True,
-                    export_coll=False
-                )
-
+                from .ops.dff_export import export_dff as inu_export_dff
+                inu_export_dff(filepath=lod_path, objects=[models['LOD']])
                 exported.append(f"LOD{base_name}.dff")
             except Exception as e:
                 errors.append(f"LOD{base_name}.dff: {str(e)}")
@@ -3354,28 +3718,21 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
         if models['COL'] and not skip_col:
             col_path = os.path.join(self.directory, f"{base_name}.col")
             try:
-                bpy.ops.object.select_all(action='DESELECT')
-                models['COL'].select_set(True)
-                context.view_layer.objects.active = models['COL']
-                # Устанавливаем тип объекта как Collision для DragonFF
-                if hasattr(models['COL'], 'dff'):
-                    models['COL'].dff.type = 'COL'
+                from .ops.col_export import export_col as inu_export_col
 
                 # COL всегда экспортируется в центре (0,0,0)
                 original_col_loc = models['COL'].location.copy()
                 models['COL'].location = (0, 0, 0)
 
-                bpy.ops.export_col.scene(
+                inu_export_col(
                     filepath=col_path,
-                    export_version='3',
-                    only_selected=True
+                    objects=[models['COL']],
+                    version=3,
+                    model_name=base_name,
                 )
 
                 # Возвращаем позицию
                 models['COL'].location = original_col_loc
-
-                # Исправляем имя модели внутри COL файла
-                fix_col_model_name(col_path, base_name)
 
                 exported.append(f"{base_name}.col")
             except Exception as e:
@@ -3412,11 +3769,21 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
             self.report({'ERROR'}, T("Выделите модели для экспорта!"))
             return {'CANCELLED'}
 
-        # Disable prelight preview before export (otherwise export breaks)
+        # Запоминаем объекты с активным prelight и отключаем
+        prelight_was_on = set()
         for base_name, models in model_groups.items():
             for model_type in ['DFF', 'LOD', 'COL']:
-                if models[model_type] and models[model_type].type == 'MESH':
-                    setup_prelight_preview(models[model_type], enable=False)
+                obj = models[model_type]
+                if obj and obj.type == 'MESH':
+                    has_prelight = False
+                    for mat_slot in obj.material_slots:
+                        mat = mat_slot.material
+                        if mat and mat.use_nodes and mat.node_tree.nodes.get("Prelight_Mix"):
+                            has_prelight = True
+                            break
+                    if has_prelight:
+                        prelight_was_on.add(obj)
+                        setup_prelight_preview(obj, enable=False)
 
         all_exported = []
         all_errors = []
@@ -3459,11 +3826,9 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
 
         wm.progress_end()
 
-        # Включаем превью прелайта обратно после экспорта
-        for base_name, models in model_groups.items():
-            for model_type in ['DFF', 'LOD', 'COL']:
-                if models[model_type] and models[model_type].type == 'MESH':
-                    setup_prelight_preview(models[model_type], enable=True)
+        # Восстанавливаем prelight только где он был включён
+        for obj in prelight_was_on:
+            setup_prelight_preview(obj, enable=True)
 
         # Result
         num_groups = len(model_groups)
@@ -5280,6 +5645,60 @@ class GTATOOLS_OT_cleanup_materials(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class GTATOOLS_OT_sort_materials(bpy.types.Operator):
+    """Sort material slots alphabetically by material name"""
+    bl_idname = "gtatools.sort_materials"
+    bl_label = "Sort Materials"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj and obj.type == 'MESH' and len(obj.material_slots) > 1
+
+    def execute(self, context):
+        obj = context.active_object
+        mesh = obj.data
+
+        # Собираем текущие материалы и индексы полигонов
+        mat_names = []
+        for slot in obj.material_slots:
+            mat_names.append(slot.material.name if slot.material else "")
+
+        # Натуральная сортировка: 1, 2, 3, 10 вместо 1, 10, 2, 3
+        def natural_key(i):
+            return [int(p) if p.isdigit() else p for p in _re.split(r'(\d+)', mat_names[i].lower())]
+
+        sorted_indices = sorted(range(len(mat_names)), key=natural_key)
+
+        # Если уже отсортировано — ничего не делаем
+        if sorted_indices == list(range(len(mat_names))):
+            self.report({'INFO'}, T("Материалы уже отсортированы"))
+            return {'FINISHED'}
+
+        # Маппинг старый индекс -> новый индекс
+        index_map = {old: new for new, old in enumerate(sorted_indices)}
+
+        # Сохраняем новые индексы полигонов
+        new_indices = [index_map[poly.material_index] for poly in mesh.polygons]
+
+        # Сохраняем отсортированные материалы
+        sorted_mats = [obj.material_slots[i].material for i in sorted_indices]
+
+        # Очищаем все слоты и добавляем в отсортированном порядке
+        mesh.materials.clear()
+        for mat in sorted_mats:
+            mesh.materials.append(mat)
+
+        # Восстанавливаем индексы полигонов
+        for poly, idx in zip(mesh.polygons, new_indices):
+            poly.material_index = idx
+
+        sorted_count = len(sorted_mats)
+        self.report({'INFO'}, f"{T('Отсортировано материалов:')} {sorted_count}")
+        return {'FINISHED'}
+
+
 # =============================================================================
 # PANELS
 # =============================================================================
@@ -5357,30 +5776,38 @@ class GTATOOLS_PT_export_panel(bpy.types.Panel):
 
         # GPU/CPU переключатель
         row = layout.row(align=True)
-        row.prop(context.scene, "gtatools_txd_use_gpu", text="GPU (NVTT)", toggle=True)
+        if hasattr(context.scene, "gtatools_txd_use_gpu"):
+            row.prop(context.scene, "gtatools_txd_use_gpu", text="GPU (NVTT)", toggle=True)
 
         # Проверка NVTT если включен GPU
-        if context.scene.gtatools_txd_use_gpu:
+        if getattr(context.scene, "gtatools_txd_use_gpu", False):
             nvtt_path = context.scene.gtatools_nvtt_path
             available, msg = check_nvtt_available(nvtt_path)
             if not available:
                 layout.label(text=T("Статус: Не найден"), icon='ERROR')
 
-        # NVTT Settings (раскрывающийся)
-        box = layout.box()
-        row = box.row()
-        row.prop(context.scene, "gtatools_show_nvtt_settings",
-                 icon='TRIA_DOWN' if context.scene.gtatools_show_nvtt_settings else 'TRIA_RIGHT',
-                 text="NVTT Settings", emboss=False)
 
-        if context.scene.gtatools_show_nvtt_settings:
-            box.prop(context.scene, "gtatools_nvtt_path", text="")
-            nvtt_path = context.scene.gtatools_nvtt_path
-            available, msg = check_nvtt_available(nvtt_path)
-            if available:
-                box.label(text=T("Статус: Готов"), icon='CHECKMARK')
-            else:
-                box.label(text=T("Статус: Не найден"), icon='ERROR')
+class GTATOOLS_PT_import_panel(bpy.types.Panel):
+    """GTA models import panel"""
+    bl_label = "Import"
+    bl_idname = "GTATOOLS_PT_import_panel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'GTA Tools'
+    bl_parent_id = "GTATOOLS_PT_main_panel"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw(self, context):
+        layout = self.layout
+
+        layout.label(text="Import Individual:")
+        row = layout.row(align=True)
+        row.operator("gtatools.import_dff", text="DFF", icon='MESH_DATA')
+        row.operator("gtatools.import_col", text="COL", icon='MESH_CUBE')
+        row.operator("gtatools.import_txd", text="TXD", icon='TEXTURE')
+
+        layout.separator()
+        layout.prop(context.scene, "gtatools_txd_auto_import", text="Import TXD")
 
 
 class GTATOOLS_PT_dff_flags_panel(bpy.types.Panel):
@@ -5401,11 +5828,7 @@ class GTATOOLS_PT_dff_flags_panel(bpy.types.Panel):
             layout.label(text=T("Выберите меш-объект"), icon='INFO')
             return
 
-        if not hasattr(obj, 'dff'):
-            layout.label(text="DragonFF not found", icon='ERROR')
-            return
-
-        settings = obj.dff
+        settings = obj.inu
 
         box = layout.box()
         box.label(text="Geometry Flags:", icon='PREFERENCES')
@@ -5447,9 +5870,7 @@ class GTATOOLS_OT_set_col_surface(bpy.types.Operator):
         if mat is None:
             self.report({'ERROR'}, f"Material not found: {self.material_name}")
             return {'CANCELLED'}
-        # Write to DragonFF's property (used by COL exporter)
-        if hasattr(mat, 'dff') and hasattr(mat.dff, 'col_mat_index'):
-            mat.dff.col_mat_index = self.surface_id
+        mat.inu.col_mat_index = self.surface_id
         name = get_surface_name(self.surface_id)
         self.report({'INFO'}, f"{T('Surface ID назначен:')} {self.material_name} = {self.surface_id} ({name})")
         return {'FINISHED'}
@@ -5630,16 +6051,14 @@ class GTATOOLS_OT_bake_col_light(bpy.types.Operator):
 
             if len(levels) == 1:
                 d, n = list(levels.keys())[0]
-                if hasattr(orig_mat, 'dff'):
-                    orig_mat.dff.col_day_light = d
-                    orig_mat.dff.col_night_light = n
+                orig_mat.inu.col_day_light = d
+                orig_mat.inu.col_night_light = n
             else:
                 sorted_levels = sorted(levels.keys(), key=lambda x: x[0], reverse=True)
                 highest = sorted_levels[0]
 
-                if hasattr(orig_mat, 'dff'):
-                    orig_mat.dff.col_day_light = highest[0]
-                    orig_mat.dff.col_night_light = highest[1]
+                orig_mat.inu.col_day_light = highest[0]
+                orig_mat.inu.col_night_light = highest[1]
 
                 new_mat_map[(mat_idx, highest)] = mat_idx
 
@@ -5648,12 +6067,11 @@ class GTATOOLS_OT_bake_col_light(bpy.types.Operator):
                     copy_mat.name = f"{orig_mat.name}_d{d}_n{n}"
                     created_names.append(copy_mat.name)
 
-                    if hasattr(copy_mat, 'dff') and hasattr(orig_mat, 'dff'):
-                        copy_mat.dff.col_mat_index = orig_mat.dff.col_mat_index
-                        copy_mat.dff.col_flags = orig_mat.dff.col_flags
-                        copy_mat.dff.col_brightness = orig_mat.dff.col_brightness
-                        copy_mat.dff.col_day_light = d
-                        copy_mat.dff.col_night_light = n
+                    copy_mat.inu.col_mat_index = orig_mat.inu.col_mat_index
+                    copy_mat.inu.col_flags = orig_mat.inu.col_flags
+                    copy_mat.inu.col_brightness = orig_mat.inu.col_brightness
+                    copy_mat.inu.col_day_light = d
+                    copy_mat.inu.col_night_light = n
 
                     obj.data.materials.append(copy_mat)
                     new_slot_idx = len(obj.material_slots) - 1
@@ -5765,16 +6183,12 @@ class GTATOOLS_PT_col_material_panel(bpy.types.Panel):
         layout = self.layout
         mat = context.material
 
-        if not hasattr(mat, 'dff') or not hasattr(mat.dff, 'col_mat_index'):
-            layout.label(text="DragonFF not found", icon='ERROR')
-            return
-
-        current_id = mat.dff.col_mat_index
+        current_id = mat.inu.col_mat_index
         current_name = get_surface_name(current_id)
 
-        # Current value display + DragonFF property
+        # Current value display
         row = layout.row(align=True)
-        row.prop(mat.dff, "col_mat_index", text="ID")
+        row.prop(mat.inu, "col_mat_index", text="ID")
         # Search button
         op = row.operator("gtatools.col_surface_menu", text="", icon='VIEWZOOM')
         op.material_name = mat.name
@@ -5786,11 +6200,17 @@ class GTATOOLS_PT_col_material_panel(bpy.types.Panel):
 
         # Day/Night Light
         row = layout.row(align=True)
-        row.prop(mat.dff, "col_day_light", text="Day Light")
-        row.prop(mat.dff, "col_night_light", text="Night Light")
+        row.prop(mat.inu, "col_day_light", text="Day Light")
+        row.prop(mat.inu, "col_night_light", text="Night Light")
 
         # Brightness
-        layout.prop(mat.dff, "col_brightness", text="Brightness")
+        layout.prop(mat.inu, "col_brightness", text="Brightness")
+
+
+def _draw_sort_materials_menu(self, context):
+    """Append sort button to material context menu"""
+    self.layout.separator()
+    self.layout.operator("gtatools.sort_materials", text=T("Сортировка материалов"), icon='SORTALPHA')
 
 
 class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
@@ -5822,6 +6242,22 @@ class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
         # Buttons
         layout.operator("gtatools.load_textures", text=T("Загрузить текстуры"), icon='IMPORT')
         layout.operator("gtatools.cleanup_materials", text=T("Очистка материалов"), icon='BRUSH_DATA')
+
+        # NVTT Settings
+        layout.separator()
+        box = layout.box()
+        row = box.row()
+        row.prop(scene, "gtatools_show_nvtt_settings",
+                 icon='TRIA_DOWN' if scene.gtatools_show_nvtt_settings else 'TRIA_RIGHT',
+                 text="NVTT Settings", emboss=False)
+        if scene.gtatools_show_nvtt_settings:
+            box.prop(scene, "gtatools_nvtt_path", text="")
+            nvtt_path = scene.gtatools_nvtt_path
+            available, msg = check_nvtt_available(nvtt_path)
+            if available:
+                box.label(text=T("Статус: Готов"), icon='CHECKMARK')
+            else:
+                box.label(text=T("Статус: Не найден"), icon='ERROR')
 
 
 class GTATOOLS_PT_prelight_panel(bpy.types.Panel):
@@ -6805,6 +7241,8 @@ class GTATOOLS_PT_uv_tools_panel(bpy.types.Panel):
 # =============================================================================
 
 classes = (
+    INUObjectProps,
+    INUMaterialProps,
     GTATOOLS_FillColorItem,
     GTATOOLS_OT_check_geometry,
     GTATOOLS_OT_check_ngons,
@@ -6858,13 +7296,24 @@ classes = (
     GTATOOLS_FH_texture_drop,
     GTATOOLS_OT_check_materials,
     GTATOOLS_OT_cleanup_materials,
+    GTATOOLS_OT_sort_materials,
     GTATOOLS_OT_toggle_uv_editor,
     GTATOOLS_OT_toggle_uv_grid,
     GTATOOLS_OT_randomize_uv_grid,
     GTATOOLS_OT_snap_uv_to_grid,
     GTATOOLS_OT_set_uv_align,
     GTATOOLS_PT_main_panel,
+    GTATOOLS_OT_import_dff,
+    GTATOOLS_OT_import_col,
+    GTATOOLS_OT_import_txd,
+    GTATOOLS_OT_file_export_dff,
+    GTATOOLS_OT_file_export_col,
+    GTATOOLS_OT_file_export_txd,
+    GTATOOLS_OT_file_import_dff,
+    GTATOOLS_OT_file_import_col,
+    GTATOOLS_OT_file_import_txd,
     GTATOOLS_PT_export_panel,
+    GTATOOLS_PT_import_panel,
     GTATOOLS_PT_dff_flags_panel,
     GTATOOLS_OT_set_col_surface,
     GTATOOLS_OT_col_surface_menu,
@@ -6885,6 +7334,18 @@ classes = (
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
+
+    # INU property groups
+    bpy.types.Object.inu = bpy.props.PointerProperty(type=INUObjectProps)
+    bpy.types.Material.inu = bpy.props.PointerProperty(type=INUMaterialProps)
+
+    # Sort materials button in material context menu (clean old entries on reload)
+    if hasattr(bpy.types.MATERIAL_MT_context_menu.draw, '_draw_funcs'):
+        draw_funcs = bpy.types.MATERIAL_MT_context_menu.draw._draw_funcs
+        bpy.types.MATERIAL_MT_context_menu.draw._draw_funcs = [
+            f for f in draw_funcs if getattr(f, '__name__', '') != '_draw_sort_materials_menu'
+        ]
+    bpy.types.MATERIAL_MT_context_menu.append(_draw_sort_materials_menu)
 
     bpy.types.Scene.gtatools_lightmap_result = StringProperty(name="Result", default="")
     bpy.types.Scene.gtatools_lightmap_path = StringProperty(name="Lightmap Path", default="lightmaps/lightmap.png")
@@ -6953,6 +7414,19 @@ def register():
         name="Night Max", description="Maximum Night Light value (lit)", default=5, min=0, max=15)
 
     # NVIDIA Texture Tools settings
+    bpy.types.Scene.gtatools_txd_auto_import = BoolProperty(
+        name="Import TXD",
+        description="Auto-import TXD texture dictionary when importing DFF",
+        default=True,
+    )
+
+    bpy.types.Scene.gtatools_txd_import_path = StringProperty(
+        name="TXD Import Folder",
+        description="Custom folder to search for TXD files during DFF import (leave empty for auto-search in DFF folder)",
+        default="",
+        subtype='DIR_PATH'
+    )
+
     bpy.types.Scene.gtatools_nvtt_path = StringProperty(
         name="NVTT Path",
         description="Path to NVIDIA Texture Tools folder (for GPU compression)",
@@ -7128,10 +7602,23 @@ def register():
         kmi = km.keymap_items.new('gtatools.toggle_uv_editor', 'T', 'PRESS', shift=True)
         addon_keymaps.append((km, kmi))
 
+    # File > Export / Import menus
+    bpy.types.TOPBAR_MT_file_export.append(menu_func_export)
+    bpy.types.TOPBAR_MT_file_import.append(menu_func_import)
+
     print("[GTA Tools Panel] Addon registered!")
 
 
 def unregister():
+    # File > Export / Import menus
+    bpy.types.TOPBAR_MT_file_export.remove(menu_func_export)
+    bpy.types.TOPBAR_MT_file_import.remove(menu_func_import)
+
+    del bpy.types.Object.inu
+    del bpy.types.Material.inu
+
+    bpy.types.MATERIAL_MT_context_menu.remove(_draw_sort_materials_menu)
+
     # Remove keymaps
     for km, kmi in addon_keymaps:
         km.keymap_items.remove(kmi)
@@ -7152,6 +7639,8 @@ def unregister():
     del bpy.types.Scene.gtatools_col_day_max
     del bpy.types.Scene.gtatools_col_night_min
     del bpy.types.Scene.gtatools_col_night_max
+    del bpy.types.Scene.gtatools_txd_auto_import
+    del bpy.types.Scene.gtatools_txd_import_path
     del bpy.types.Scene.gtatools_nvtt_path
     del bpy.types.Scene.gtatools_txd_use_gpu
     del bpy.types.Scene.gtatools_show_nvtt_settings

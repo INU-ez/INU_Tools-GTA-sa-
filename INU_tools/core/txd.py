@@ -1,0 +1,450 @@
+# INU_tools.core.txd
+# GTA SA TXD (RenderWare Texture Dictionary) reader.
+# Uses numpy for fast DXT decompression.
+
+import numpy as np
+from struct import unpack_from
+from .rwbinary import BinaryReader
+
+
+# RW chunk types
+CHUNK_STRUCT = 1
+CHUNK_EXTENSION = 3
+CHUNK_TEX_NATIVE = 0x15
+CHUNK_TEX_DICTIONARY = 0x16
+
+# Raster format flags
+RASTER_1555 = 0x0100
+RASTER_565 = 0x0200
+RASTER_4444 = 0x0300
+RASTER_LUM8 = 0x0400
+RASTER_8888 = 0x0500
+RASTER_888 = 0x0600
+RASTER_FORMAT_MASK = 0x0F00
+RASTER_MIPMAP = 0x8000
+RASTER_AUTOMIPMAP = 0x1000
+RASTER_PAL8 = 0x2000
+RASTER_PAL4 = 0x4000
+
+# DXT FourCC codes
+DXT1 = 0x31545844  # 'DXT1'
+DXT3 = 0x33545844  # 'DXT3'
+DXT5 = 0x35545844  # 'DXT5'
+
+
+class TxdTexture:
+    """Single texture extracted from TXD."""
+    __slots__ = ('name', 'mask', 'width', 'height', 'depth',
+                 'raster_format', 'fourcc', 'num_levels',
+                 'pixels')  # pixels: bytes (RGBA, top-to-bottom)
+
+    def __init__(self):
+        self.name = ''
+        self.mask = ''
+        self.width = 0
+        self.height = 0
+        self.depth = 0
+        self.raster_format = 0
+        self.fourcc = 0
+        self.num_levels = 1
+        self.pixels = b''  # RGBA uint8 array
+
+
+# ── Numpy DXT decompression ──────────────────────────────────────
+
+def _rgb565_decode(c):
+    """Vectorized RGB565 → (R, G, B) arrays, each uint8."""
+    r = ((c >> 11) & 0x1F).astype(np.uint16) * 255 // 31
+    g = ((c >> 5) & 0x3F).astype(np.uint16) * 255 // 63
+    b = (c & 0x1F).astype(np.uint16) * 255 // 31
+    return r.astype(np.uint8), g.astype(np.uint8), b.astype(np.uint8)
+
+
+def _build_dxt_color_palettes(c0, c1):
+    """Build 4-entry RGBA palettes for all blocks. Returns (N, 4, 4) uint8 array."""
+    r0, g0, b0 = _rgb565_decode(c0)
+    r1, g1, b1 = _rgb565_decode(c1)
+    n = len(c0)
+
+    # Palette shape: (N, 4, 4) = N blocks, 4 entries, 4 channels (RGBA)
+    pal = np.zeros((n, 4, 4), dtype=np.uint8)
+
+    # Entry 0
+    pal[:, 0, 0] = r0; pal[:, 0, 1] = g0; pal[:, 0, 2] = b0; pal[:, 0, 3] = 255
+    # Entry 1
+    pal[:, 1, 0] = r1; pal[:, 1, 1] = g1; pal[:, 1, 2] = b1; pal[:, 1, 3] = 255
+
+    # Promote to uint16 for interpolation
+    R0 = r0.astype(np.uint16); G0 = g0.astype(np.uint16); B0 = b0.astype(np.uint16)
+    R1 = r1.astype(np.uint16); G1 = g1.astype(np.uint16); B1 = b1.astype(np.uint16)
+
+    opaque = c0 > c1  # DXT1 opaque mode
+
+    # Entry 2 (opaque: 2/3 + 1/3, transparent: 1/2 + 1/2)
+    pal[:, 2, 0] = np.where(opaque, (2*R0 + R1) // 3, (R0 + R1) // 2).astype(np.uint8)
+    pal[:, 2, 1] = np.where(opaque, (2*G0 + G1) // 3, (G0 + G1) // 2).astype(np.uint8)
+    pal[:, 2, 2] = np.where(opaque, (2*B0 + B1) // 3, (B0 + B1) // 2).astype(np.uint8)
+    pal[:, 2, 3] = 255
+
+    # Entry 3 (opaque: 1/3 + 2/3, transparent: 0,0,0,0)
+    pal[:, 3, 0] = np.where(opaque, (R0 + 2*R1) // 3, 0).astype(np.uint8)
+    pal[:, 3, 1] = np.where(opaque, (G0 + 2*G1) // 3, 0).astype(np.uint8)
+    pal[:, 3, 2] = np.where(opaque, (B0 + 2*B1) // 3, 0).astype(np.uint8)
+    pal[:, 3, 3] = np.where(opaque, 255, 0).astype(np.uint8)
+
+    return pal
+
+
+def _decode_color_indices(indices_u32):
+    """Decode 32-bit index word → (N, 16) array of 2-bit indices."""
+    n = len(indices_u32)
+    # 16 pixels per block, each 2 bits
+    idx = np.zeros((n, 16), dtype=np.uint8)
+    for i in range(16):
+        idx[:, i] = (indices_u32 >> (i * 2)) & 3
+    return idx
+
+
+def _scatter_blocks(block_colors, bw, bh, width, height):
+    """Scatter (N, 4, 4, 4) block pixel data into (height, width, 4) image."""
+    # block_colors shape: (N, 16, 4) → reshape to (bh, bw, 4, 4, 4)
+    out = np.zeros((height, width, 4), dtype=np.uint8)
+    block_colors = block_colors.reshape(bh, bw, 4, 4, 4)
+
+    for by in range(bh):
+        for bx in range(bw):
+            y0 = by * 4
+            x0 = bx * 4
+            yend = min(y0 + 4, height)
+            xend = min(x0 + 4, width)
+            out[y0:yend, x0:xend] = block_colors[by, bx, :yend-y0, :xend-x0]
+
+    return out
+
+
+def _decompress_dxt1(data, width, height):
+    """Decompress DXT1 data to RGBA bytes using numpy."""
+    bw = max(1, (width + 3) // 4)
+    bh = max(1, (height + 3) // 4)
+    n_blocks = bw * bh
+    expected = n_blocks * 8
+
+    arr = np.frombuffer(data[:expected], dtype=np.uint8)
+    if len(arr) < expected:
+        arr = np.pad(arr, (0, expected - len(arr)))
+
+    # Reshape: each block = 8 bytes
+    blocks = arr.reshape(n_blocks, 8)
+
+    # Parse c0, c1, indices
+    c0 = blocks[:, 0].astype(np.uint16) | (blocks[:, 1].astype(np.uint16) << 8)
+    c1 = blocks[:, 2].astype(np.uint16) | (blocks[:, 3].astype(np.uint16) << 8)
+    idx_u32 = (blocks[:, 4].astype(np.uint32) |
+               (blocks[:, 5].astype(np.uint32) << 8) |
+               (blocks[:, 6].astype(np.uint32) << 16) |
+               (blocks[:, 7].astype(np.uint32) << 24))
+
+    pal = _build_dxt_color_palettes(c0, c1)  # (N, 4, 4)
+    indices = _decode_color_indices(idx_u32)  # (N, 16)
+
+    # Lookup: for each block and each pixel, pick palette entry
+    # pal[block_i, indices[block_i, pixel_i]] → (N, 16, 4)
+    block_i = np.arange(n_blocks)[:, None]  # (N, 1)
+    colors = pal[block_i, indices]  # (N, 16, 4)
+
+    # Reshape 16 pixels → 4x4
+    colors = colors.reshape(n_blocks, 4, 4, 4)
+
+    out = _scatter_blocks(colors.reshape(n_blocks, 16, 4), bw, bh, width, height)
+    return out.tobytes()
+
+
+def _decompress_dxt3(data, width, height):
+    """Decompress DXT3 data to RGBA bytes using numpy."""
+    bw = max(1, (width + 3) // 4)
+    bh = max(1, (height + 3) // 4)
+    n_blocks = bw * bh
+    expected = n_blocks * 16
+
+    arr = np.frombuffer(data[:expected], dtype=np.uint8)
+    if len(arr) < expected:
+        arr = np.pad(arr, (0, expected - len(arr)))
+
+    blocks = arr.reshape(n_blocks, 16)
+
+    # Alpha block: first 8 bytes (64 bits, 4 bits per pixel, 16 pixels)
+    alpha_bytes = blocks[:, :8]  # (N, 8)
+    # Each byte has 2 x 4-bit alpha values
+    alpha_lo = alpha_bytes & 0x0F
+    alpha_hi = (alpha_bytes >> 4) & 0x0F
+    # Interleave: byte0_lo, byte0_hi, byte1_lo, byte1_hi, ...
+    alpha_4bit = np.zeros((n_blocks, 16), dtype=np.uint8)
+    for i in range(8):
+        alpha_4bit[:, i*2] = alpha_lo[:, i]
+        alpha_4bit[:, i*2+1] = alpha_hi[:, i]
+    alpha_8bit = (alpha_4bit << 4) | alpha_4bit  # 4-bit → 8-bit
+
+    # Color block: bytes 8-15
+    color_block = blocks[:, 8:16]
+    c0 = color_block[:, 0].astype(np.uint16) | (color_block[:, 1].astype(np.uint16) << 8)
+    c1 = color_block[:, 2].astype(np.uint16) | (color_block[:, 3].astype(np.uint16) << 8)
+    idx_u32 = (color_block[:, 4].astype(np.uint32) |
+               (color_block[:, 5].astype(np.uint32) << 8) |
+               (color_block[:, 6].astype(np.uint32) << 16) |
+               (color_block[:, 7].astype(np.uint32) << 24))
+
+    pal = _build_dxt_color_palettes(c0, c1)
+    indices = _decode_color_indices(idx_u32)
+
+    block_i = np.arange(n_blocks)[:, None]
+    colors = pal[block_i, indices]  # (N, 16, 4)
+
+    # Override alpha channel
+    colors[:, :, 3] = alpha_8bit
+
+    colors = colors.reshape(n_blocks, 4, 4, 4)
+    out = _scatter_blocks(colors.reshape(n_blocks, 16, 4), bw, bh, width, height)
+    return out.tobytes()
+
+
+def _decompress_dxt5(data, width, height):
+    """Decompress DXT5 data to RGBA bytes using numpy."""
+    bw = max(1, (width + 3) // 4)
+    bh = max(1, (height + 3) // 4)
+    n_blocks = bw * bh
+    expected = n_blocks * 16
+
+    arr = np.frombuffer(data[:expected], dtype=np.uint8)
+    if len(arr) < expected:
+        arr = np.pad(arr, (0, expected - len(arr)))
+
+    blocks = arr.reshape(n_blocks, 16)
+
+    # Alpha block: bytes 0-7
+    a0 = blocks[:, 0].astype(np.uint16)
+    a1 = blocks[:, 1].astype(np.uint16)
+
+    # 48-bit alpha index data (bytes 2-7)
+    abits = (blocks[:, 2].astype(np.uint64) |
+             (blocks[:, 3].astype(np.uint64) << 8) |
+             (blocks[:, 4].astype(np.uint64) << 16) |
+             (blocks[:, 5].astype(np.uint64) << 24) |
+             (blocks[:, 6].astype(np.uint64) << 32) |
+             (blocks[:, 7].astype(np.uint64) << 40))
+
+    # Build 8-entry alpha LUT per block: (N, 8)
+    alut = np.zeros((n_blocks, 8), dtype=np.uint8)
+    alut[:, 0] = a0.astype(np.uint8)
+    alut[:, 1] = a1.astype(np.uint8)
+
+    hi = a0 > a1
+    # High mode (a0 > a1): 6 interpolated values
+    alut[:, 2] = np.where(hi, (6*a0 + 1*a1) // 7, (4*a0 + 1*a1) // 5).astype(np.uint8)
+    alut[:, 3] = np.where(hi, (5*a0 + 2*a1) // 7, (3*a0 + 2*a1) // 5).astype(np.uint8)
+    alut[:, 4] = np.where(hi, (4*a0 + 3*a1) // 7, (2*a0 + 3*a1) // 5).astype(np.uint8)
+    alut[:, 5] = np.where(hi, (3*a0 + 4*a1) // 7, (1*a0 + 4*a1) // 5).astype(np.uint8)
+    alut[:, 6] = np.where(hi, (2*a0 + 5*a1) // 7, 0).astype(np.uint8)
+    alut[:, 7] = np.where(hi, (1*a0 + 6*a1) // 7, 255).astype(np.uint8)
+
+    # Decode 16 x 3-bit alpha indices
+    alpha_idx = np.zeros((n_blocks, 16), dtype=np.uint8)
+    for i in range(16):
+        alpha_idx[:, i] = ((abits >> (i * 3)) & 7).astype(np.uint8)
+
+    # Lookup alpha values
+    bi = np.arange(n_blocks)[:, None]
+    alpha_vals = alut[bi, alpha_idx]  # (N, 16)
+
+    # Color block: bytes 8-15
+    color_block = blocks[:, 8:16]
+    c0 = color_block[:, 0].astype(np.uint16) | (color_block[:, 1].astype(np.uint16) << 8)
+    c1 = color_block[:, 2].astype(np.uint16) | (color_block[:, 3].astype(np.uint16) << 8)
+    idx_u32 = (color_block[:, 4].astype(np.uint32) |
+               (color_block[:, 5].astype(np.uint32) << 8) |
+               (color_block[:, 6].astype(np.uint32) << 16) |
+               (color_block[:, 7].astype(np.uint32) << 24))
+
+    pal = _build_dxt_color_palettes(c0, c1)
+    indices = _decode_color_indices(idx_u32)
+
+    colors = pal[bi, indices]  # (N, 16, 4)
+    colors[:, :, 3] = alpha_vals
+
+    colors = colors.reshape(n_blocks, 4, 4, 4)
+    out = _scatter_blocks(colors.reshape(n_blocks, 16, 4), bw, bh, width, height)
+    return out.tobytes()
+
+
+def _decode_uncompressed(data, width, height, raster_fmt, depth):
+    """Decode uncompressed raster data to RGBA using numpy."""
+    fmt = raster_fmt & RASTER_FORMAT_MASK
+    n_pixels = width * height
+
+    if fmt == RASTER_8888:
+        arr = np.frombuffer(data[:n_pixels*4], dtype=np.uint8).reshape(-1, 4).copy()
+        # BGRA → RGBA: swap R and B
+        arr[:, [0, 2]] = arr[:, [2, 0]]
+        return arr.tobytes()
+    elif fmt == RASTER_888:
+        arr = np.frombuffer(data[:n_pixels*3], dtype=np.uint8).reshape(-1, 3)
+        out = np.empty((n_pixels, 4), dtype=np.uint8)
+        out[:, 0] = arr[:, 2]  # B→R
+        out[:, 1] = arr[:, 1]  # G
+        out[:, 2] = arr[:, 0]  # R→B
+        out[:, 3] = 255
+        return out.tobytes()
+    elif fmt == RASTER_565:
+        raw = np.frombuffer(data[:n_pixels*2], dtype=np.uint16)
+        out = np.empty((n_pixels, 4), dtype=np.uint8)
+        out[:, 0] = (((raw >> 11) & 0x1F).astype(np.uint16) * 255 // 31).astype(np.uint8)
+        out[:, 1] = (((raw >> 5) & 0x3F).astype(np.uint16) * 255 // 63).astype(np.uint8)
+        out[:, 2] = ((raw & 0x1F).astype(np.uint16) * 255 // 31).astype(np.uint8)
+        out[:, 3] = 255
+        return out.tobytes()
+    elif fmt == RASTER_1555:
+        raw = np.frombuffer(data[:n_pixels*2], dtype=np.uint16)
+        out = np.empty((n_pixels, 4), dtype=np.uint8)
+        out[:, 0] = (((raw >> 10) & 0x1F).astype(np.uint16) * 255 // 31).astype(np.uint8)
+        out[:, 1] = (((raw >> 5) & 0x1F).astype(np.uint16) * 255 // 31).astype(np.uint8)
+        out[:, 2] = ((raw & 0x1F).astype(np.uint16) * 255 // 31).astype(np.uint8)
+        out[:, 3] = np.where(raw >> 15, 255, 0).astype(np.uint8)
+        return out.tobytes()
+    elif fmt == RASTER_4444:
+        raw = np.frombuffer(data[:n_pixels*2], dtype=np.uint16)
+        out = np.empty((n_pixels, 4), dtype=np.uint8)
+        out[:, 0] = (((raw >> 8) & 0x0F).astype(np.uint16) * 255 // 15).astype(np.uint8)
+        out[:, 1] = (((raw >> 4) & 0x0F).astype(np.uint16) * 255 // 15).astype(np.uint8)
+        out[:, 2] = ((raw & 0x0F).astype(np.uint16) * 255 // 15).astype(np.uint8)
+        out[:, 3] = (((raw >> 12) & 0x0F).astype(np.uint16) * 255 // 15).astype(np.uint8)
+        return out.tobytes()
+    else:
+        # Fallback: try 32-bit BGRA
+        if len(data) >= n_pixels * 4:
+            arr = np.frombuffer(data[:n_pixels*4], dtype=np.uint8).reshape(-1, 4).copy()
+            arr[:, [0, 2]] = arr[:, [2, 0]]
+            return arr.tobytes()
+        return b'\x00' * (n_pixels * 4)
+
+
+# ── TXD Reader ──────────────────────────────────────────────────
+
+def _read_chunk_header(r):
+    """Read 12-byte RW chunk header."""
+    ct, cs, cl = r.read('<III')
+    return ct, cs, cl
+
+
+def _read_str32(r):
+    """Read 32-byte null-terminated string."""
+    raw = r.read_bytes(32)
+    end = raw.find(b'\x00')
+    if end == -1:
+        end = 32
+    return raw[:end].decode('ascii', errors='replace')
+
+
+def _read_texture_native(r, size):
+    """Read a single Texture Native chunk's Struct data."""
+    tex = TxdTexture()
+
+    # Struct header
+    ct, cs, cl = _read_chunk_header(r)
+    struct_end = r.pos + cs
+
+    # Platform header
+    platform_id = r.read_one('<I')
+    filter_flags = r.read_one('<I')  # filterMode + uvAddressing combined
+
+    tex.name = _read_str32(r)
+    tex.mask = _read_str32(r)
+
+    # Raster format
+    tex.raster_format = r.read_one('<I')
+    tex.fourcc = r.read_one('<I')  # D3D FourCC or has_alpha
+    tex.width = r.read_one('<H')
+    tex.height = r.read_one('<H')
+    tex.depth = r.read_one('<B')
+    tex.num_levels = r.read_one('<B')
+    raster_type = r.read_one('<B')
+    compression_flag = r.read_one('<B')
+
+    # Palette (if PAL8 flag set)
+    has_palette = bool(tex.raster_format & RASTER_PAL8)
+    palette = None
+    if has_palette:
+        pal_data = r.read_bytes(256 * 4)
+        palette = np.frombuffer(pal_data, dtype=np.uint8).reshape(256, 4)
+
+    # Mip level 0 (we only need the largest)
+    data_size = r.read_one('<I')
+    raw_data = r.read_bytes(data_size)
+
+    # Decompress / decode pixel data
+    w, h = tex.width, tex.height
+
+    if has_palette and palette is not None:
+        # Paletted: each byte is an index into the 256-color palette
+        indices = np.frombuffer(raw_data[:w*h], dtype=np.uint8)
+        tex.pixels = palette[indices].tobytes()
+    elif tex.fourcc == DXT1:
+        tex.pixels = _decompress_dxt1(raw_data, w, h)
+    elif tex.fourcc == DXT3:
+        tex.pixels = _decompress_dxt3(raw_data, w, h)
+    elif tex.fourcc == DXT5:
+        tex.pixels = _decompress_dxt5(raw_data, w, h)
+    else:
+        # Uncompressed
+        tex.pixels = _decode_uncompressed(raw_data, w, h, tex.raster_format, tex.depth)
+
+    r.seek(struct_end)
+
+    # Skip extension
+    if r.pos < size:
+        ct2, cs2, cl2 = _read_chunk_header(r)
+        r.skip(cs2)
+
+    return tex
+
+
+def read_txd(data: bytes) -> list:
+    """
+    Parse TXD binary data.
+    Returns list of TxdTexture objects.
+    """
+    r = BinaryReader(data)
+    textures = []
+
+    # TXD Dictionary header
+    ct, cs, cl = _read_chunk_header(r)
+    if ct != CHUNK_TEX_DICTIONARY:
+        raise ValueError(f"Expected Texture Dictionary (0x16), got 0x{ct:X}")
+
+    txd_end = r.pos + cs
+
+    # Struct: texture count
+    ct, cs, cl = _read_chunk_header(r)
+    tex_count = r.read_one('<H')
+    device_id = r.read_one('<H')
+    r.seek(r.pos + cs - 4)  # skip rest of struct
+
+    # Read textures
+    for _ in range(tex_count):
+        ct, cs, cl = _read_chunk_header(r)
+        chunk_end = r.pos + cs
+
+        if ct == CHUNK_TEX_NATIVE:
+            try:
+                tex = _read_texture_native(r, chunk_end)
+                textures.append(tex)
+            except Exception as e:
+                print(f"[INU_tools TXD] Error reading texture: {e}")
+
+        r.seek(chunk_end)
+
+    return textures
+
+
+def read_txd_file(filepath: str) -> list:
+    """Read a TXD file and return list of TxdTexture."""
+    with open(filepath, 'rb') as f:
+        return read_txd(f.read())
