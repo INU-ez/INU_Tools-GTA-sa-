@@ -174,6 +174,7 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 > | Клавиша | Действие |
 > |---------|----------|
 > | `Shift+T` | Открыть / закрыть UV Editor |
+> | `Shift+A` | Gta sa->Army.dff(ped)/Admiral.dff(car)|
 
 </details>
 

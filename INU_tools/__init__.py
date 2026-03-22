@@ -7830,6 +7830,74 @@ class GTATOOLS_PT_uv_tools_panel(bpy.types.Panel):
 
 
 # =============================================================================
+# ADD MENU > GTA SA (Shift+A)
+# =============================================================================
+
+# Bundled DFF models available in Add > GTA SA menu
+_GTASA_MODELS = {
+    'ADMIRAL': ("Admiral", "admiral.dff"),
+    'ARMY': ("Army", "army.dff"),
+}
+
+
+class GTATOOLS_OT_add_gtasa_model(bpy.types.Operator):
+    """Add a GTA SA model to the scene"""
+    bl_idname = "gtatools.add_gtasa_model"
+    bl_label = "Add GTA SA Model"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    model: EnumProperty(
+        name="Model",
+        items=[(k, v[0], f"Add {v[0]}") for k, v in _GTASA_MODELS.items()],
+    )
+
+    def execute(self, context):
+        from .ops.dff_import import import_dff as inu_import_dff
+
+        info = _GTASA_MODELS.get(self.model)
+        if not info:
+            self.report({'ERROR'}, f"Unknown model: {self.model}")
+            return {'CANCELLED'}
+
+        models_dir = os.path.join(os.path.dirname(__file__), "data", "models")
+        filepath = os.path.join(models_dir, info[1])
+
+        if not os.path.isfile(filepath):
+            self.report({'ERROR'}, f"Model file not found: {filepath}")
+            return {'CANCELLED'}
+
+        try:
+            inu_import_dff(filepath=filepath, context=context)
+            # Move imported objects to 3D cursor position
+            cursor_loc = context.scene.cursor.location.copy()
+            for obj in context.selected_objects:
+                if not obj.parent:
+                    obj.location += cursor_loc
+            self.report({'INFO'}, f"Added {info[0]}")
+        except Exception as e:
+            self.report({'ERROR'}, f"Import error: {str(e)}")
+            return {'CANCELLED'}
+
+        return {'FINISHED'}
+
+
+class VIEW3D_MT_gtasa_add_menu(bpy.types.Menu):
+    """GTA SA models submenu in Add menu"""
+    bl_idname = "VIEW3D_MT_gtasa_add_menu"
+    bl_label = "GTA SA"
+
+    def draw(self, context):
+        layout = self.layout
+        for key, (label, _filename) in _GTASA_MODELS.items():
+            op = layout.operator("gtatools.add_gtasa_model", text=label, icon='MESH_MONKEY')
+            op.model = key
+
+
+def _gtasa_add_menu_draw(self, context):
+    self.layout.menu("VIEW3D_MT_gtasa_add_menu", icon='AUTO')
+
+
+# =============================================================================
 # REGISTRATION
 # =============================================================================
 
@@ -7928,6 +7996,8 @@ classes = (
     GTATOOLS_PT_vertex_paint_panel,
     GTATOOLS_PT_lightmap_panel,
     GTATOOLS_PT_uv_tools_panel,
+    GTATOOLS_OT_add_gtasa_model,
+    VIEW3D_MT_gtasa_add_menu,
 )
 
 
@@ -8206,6 +8276,9 @@ def register():
     bpy.types.TOPBAR_MT_file_export.append(menu_func_export)
     bpy.types.TOPBAR_MT_file_import.append(menu_func_import)
 
+    # Add > GTA SA submenu
+    bpy.types.VIEW3D_MT_add.append(_gtasa_add_menu_draw)
+
     # 2DFX real-time preview handler
     bpy.app.handlers.depsgraph_update_post.append(_on_depsgraph_update_2dfx)
 
@@ -8274,6 +8347,9 @@ def unregister():
     # File > Export / Import menus
     bpy.types.TOPBAR_MT_file_export.remove(menu_func_export)
     bpy.types.TOPBAR_MT_file_import.remove(menu_func_import)
+
+    # Add > GTA SA submenu
+    bpy.types.VIEW3D_MT_add.remove(_gtasa_add_menu_draw)
 
     del bpy.types.Object.inu
     del bpy.types.Material.inu
