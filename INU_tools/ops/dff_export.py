@@ -6,16 +6,43 @@ import os
 import bmesh
 
 from ..core.dff import (
-    DffClump, DffFrame, DffGeometry, DffAtomic,
+    DffClump, DffFrame, DffGeometry, DffAtomic, DffLight,
     DffMaterial, DffTexture, SurfaceProperties,
     Triangle, BoundingSphere, TexCoords, RGBA,
     ExtraVertColors, SkinData, HAnimData, HAnimBone,
     BumpMapEffect, EnvMapEffect, SpecularMaterial, ReflectionMaterial,
+    UserData, UserDataSection,
+    USERDATA_INT, USERDATA_FLOAT, USERDATA_STRING,
+    Extension2dfx, Light2dfx, Particle2dfx, PedAttractor2dfx, SunGlare2dfx,
     GTA_SA_VERSION, write_dff_file,
 )
 
 
 # ── Helpers ──────────────────────────────────────────────────────
+
+def _load_user_data(target) -> UserData:
+    """Load UserData from Blender custom property 'inu_user_data'.
+
+    Returns UserData or None if not present.
+    """
+    raw = target.get('inu_user_data')
+    if not raw:
+        return None
+
+    type_map = {'int': USERDATA_INT, 'float': USERDATA_FLOAT, 'str': USERDATA_STRING}
+    ud = UserData()
+    # IDProperty arrays come back as IDPropertyArray or list
+    sections = list(raw) if hasattr(raw, '__iter__') else []
+    for sec_raw in sections:
+        sec = UserDataSection()
+        sec.name = sec_raw.get('name', '')
+        sec.data_type = type_map.get(sec_raw.get('type', 'na'), 0)
+        data_raw = sec_raw.get('data', [])
+        sec.data = list(data_raw)
+        ud.sections.append(sec)
+
+    return ud if ud.sections else None
+
 
 def _strip_ext(name: str) -> str:
     """Remove file extension from a name (e.g. 'tex.png' → 'tex')."""
@@ -167,6 +194,7 @@ def _build_material(mat) -> DffMaterial:
     dff_mat.env_map = plugins.get('env_map')
     dff_mat.specular = plugins.get('specular')
     dff_mat.reflection = plugins.get('reflection')
+    dff_mat.user_data = _load_user_data(mat)
 
     return dff_mat
 
@@ -415,6 +443,9 @@ def _process_mesh(obj, clump: DffClump, frame_index: int):
     if has_night:
         geom.extra_colors = ExtraVertColors(colors=night_colors)
 
+    # ── User Data PLG (from mesh custom property) ──
+    geom.user_data = _load_user_data(obj.data)
+
     # ── Skin data (armature) ──
     armature_mod = None
     for mod in obj.modifiers:
@@ -512,6 +543,9 @@ def _build_frame(obj, parent_index: int = -1) -> DffFrame:
         rot[2][0], rot[2][1], rot[2][2],
     )
 
+    # User Data PLG (from object custom property)
+    frame.user_data = _load_user_data(obj)
+
     return frame
 
 
@@ -572,6 +606,85 @@ def _export_armature(arm_obj, clump: DffClump, parent_frame: int):
         clump.frames.append(frame)
 
 
+# ── 2DFX export ──────────────────────────────────────────────────
+
+def _collect_2dfx(objects) -> Extension2dfx:
+    """Collect 2DFX effect entries from Empty objects with inu.type == '2DFX'."""
+    ext = Extension2dfx()
+
+    # Find mesh origin to make 2DFX coordinates relative to the model
+    mesh_origin = None
+    for obj in objects:
+        if obj.type == 'MESH':
+            mesh_origin = obj.location.copy()
+            break
+
+    for obj in objects:
+        if obj.type != 'EMPTY':
+            continue
+        inu = getattr(obj, 'inu', None)
+        if not inu or getattr(inu, 'type', '') != '2DFX':
+            continue
+
+        effect_type = getattr(inu, 'effect_2dfx', '')
+        # 2DFX position relative to mesh origin
+        if mesh_origin:
+            loc = (obj.location.x - mesh_origin.x,
+                   obj.location.y - mesh_origin.y,
+                   obj.location.z - mesh_origin.z)
+        else:
+            loc = (obj.location.x, obj.location.y, obj.location.z)
+
+        if effect_type == 'LIGHT':
+            light = Light2dfx(loc=loc)
+            inu = getattr(obj, 'inu', None)
+            if inu and hasattr(inu, 'color_2dfx'):
+                c = inu.color_2dfx
+                light.color = RGBA(int(c[0] * 255), int(c[1] * 255),
+                                   int(c[2] * 255), int(c[3] * 255))
+            else:
+                color_raw = obj.get('2dfx_color', [255, 255, 255, 255])
+                light.color = RGBA(int(color_raw[0]), int(color_raw[1]),
+                                   int(color_raw[2]), int(color_raw[3]))
+            light.corona_far_clip = obj.get('2dfx_corona_far_clip', 0.0)
+            light.pointlight_range = obj.get('2dfx_pointlight_range', 0.0)
+            light.corona_size = obj.get('2dfx_corona_size', 0.0)
+            light.shadow_size = obj.get('2dfx_shadow_size', 0.0)
+            inu = getattr(obj, 'inu', None)
+            light.corona_show_mode = int(inu.show_mode_2dfx) if inu else obj.get('2dfx_corona_show_mode', 0)
+            light.corona_enable_reflection = obj.get('2dfx_corona_enable_reflection', 0)
+            light.corona_flare_type = int(inu.flare_type_2dfx) if inu else obj.get('2dfx_corona_flare_type', 0)
+            light.shadow_color_multiplier = obj.get('2dfx_shadow_color_multiplier', 0)
+            light.flags1 = obj.get('2dfx_flags1', 0)
+            light.corona_tex_name = inu.corona_tex_2dfx if inu else obj.get('2dfx_corona_tex', '')
+            light.shadow_tex_name = inu.shadow_tex_2dfx if inu else obj.get('2dfx_shadow_tex', '')
+            light.shadow_z_distance = obj.get('2dfx_shadow_z_distance', 0)
+            light.flags2 = obj.get('2dfx_flags2', 0)
+            look = obj.get('2dfx_look_direction')
+            if look is not None:
+                light.look_direction = (int(look[0]), int(look[1]), int(look[2]))
+            ext.entries.append(light)
+
+        elif effect_type == 'PARTICLE':
+            particle = Particle2dfx(loc=loc)
+            particle.effect_name = obj.get('2dfx_effect_name', '')
+            ext.entries.append(particle)
+
+        elif effect_type == 'PED_ATTRACTOR':
+            ped = PedAttractor2dfx(loc=loc)
+            ped.attractor_type = obj.get('2dfx_attractor_type', 0)
+            rot = obj.get('2dfx_rotation_matrix', [1,0,0, 0,1,0, 0,0,1])
+            ped.rotation_matrix = tuple(float(v) for v in rot)
+            ped.external_script = obj.get('2dfx_external_script', '')
+            ped.ped_existing_probability = obj.get('2dfx_ped_probability', 0)
+            ext.entries.append(ped)
+
+        elif effect_type == 'SUN_GLARE':
+            ext.entries.append(SunGlare2dfx(loc=loc))
+
+    return ext if ext.entries else None
+
+
 # ── Main export function ─────────────────────────────────────────
 
 def export_dff(filepath: str, objects, version: int = GTA_SA_VERSION):
@@ -620,5 +733,42 @@ def export_dff(filepath: str, objects, version: int = GTA_SA_VERSION):
     # If no frames were created, add a default one
     if not clump.frames:
         clump.frames.append(DffFrame(name="root"))
+
+    # Collect 2DFX effects — from selected objects AND from children of selected meshes
+    all_objects = list(objects)
+    for obj in objects:
+        if obj.type == 'MESH':
+            for child in obj.children:
+                if child not in all_objects:
+                    all_objects.append(child)
+    ext_2dfx = _collect_2dfx(all_objects)
+    if ext_2dfx and clump.geometries:
+        clump.geometries[-1].ext_2dfx = ext_2dfx
+
+        # Create RW Light frames for each Light2dfx entry (like Kam's 3DS Max Omni)
+        light_count = 0
+        for entry in ext_2dfx.entries:
+            if isinstance(entry, Light2dfx):
+                light_count += 1
+                # Add frame for the light (child of root frame 0)
+                light_frame = DffFrame(
+                    name=f"Omni{light_count:03d}",
+                    position=entry.loc,
+                    parent=0,
+                    flags=3,
+                )
+                frame_idx = len(clump.frames)
+                clump.frames.append(light_frame)
+
+                # Add RW Light linked to this frame
+                color_r = entry.color.r / 255.0
+                color_g = entry.color.g / 255.0
+                color_b = entry.color.b / 255.0
+                rw_light = DffLight(
+                    frame_index=frame_idx,
+                    radius=entry.pointlight_range * 10.0,
+                    color=(color_r, color_g, color_b),
+                )
+                clump.lights.append(rw_light)
 
     write_dff_file(filepath, clump)

@@ -9,6 +9,8 @@
 # RenderWare Binary Stream uses a chunked format:
 #   Each chunk = 12-byte header (type:u32, size:u32, version:u32) + data
 
+from __future__ import annotations
+
 from struct import pack, unpack_from, calcsize
 from dataclasses import dataclass, field
 from typing import Optional
@@ -27,6 +29,7 @@ CHUNK_MATERIAL_LIST    = 8
 CHUNK_FRAME_LIST       = 14
 CHUNK_GEOMETRY         = 15
 CHUNK_CLUMP            = 16
+CHUNK_LIGHT            = 18
 CHUNK_ATOMIC           = 20
 CHUNK_GEOMETRY_LIST    = 26
 CHUNK_ANIM_ANIMATION   = 27
@@ -167,6 +170,7 @@ class DffMaterial:
     env_map: Optional[EnvMapEffect] = None
     specular: Optional[SpecularMaterial] = None
     reflection: Optional[ReflectionMaterial] = None
+    user_data: Optional[UserData] = None
 
     def _matfx_bytes(self, lib_id: int) -> bytes:
         """Build Material Effects PLG content."""
@@ -243,6 +247,9 @@ class DffMaterial:
             refl_data = pack('<5f4x', r.scale_x, r.scale_y, r.offset_x, r.offset_y, r.intensity)
             ext_data += _chunk(CHUNK_REFLECTION_MAT, refl_data, lib_id)
 
+        if self.user_data and self.user_data.sections:
+            ext_data += self.user_data.to_bytes(lib_id)
+
         body += _chunk(CHUNK_EXTENSION, ext_data, lib_id)
         return _chunk(CHUNK_MATERIAL, body, lib_id)
 
@@ -265,9 +272,128 @@ class BoundingSphere:
 
 
 @dataclass
+class UserDataSection:
+    """Single named section of user data (int, float, or string array)."""
+    name: str = ""
+    data_type: int = 0   # 0=NA, 1=int, 2=float, 3=string
+    data: list = field(default_factory=list)
+
+USERDATA_NA     = 0
+USERDATA_INT    = 1
+USERDATA_FLOAT  = 2
+USERDATA_STRING = 3
+
+
+@dataclass
+class UserData:
+    """User Data PLG — arbitrary named data on geometry/frame/material."""
+    sections: list = field(default_factory=list)  # list[UserDataSection]
+
+    def to_bytes(self, lib_id: int) -> bytes:
+        """Serialize to RenderWare User Data PLG chunk."""
+        data = pack('<I', len(self.sections))
+        for sec in self.sections:
+            # Name
+            name_bytes = sec.name.encode('ascii', errors='replace')
+            data += pack('<I', len(name_bytes))
+            data += name_bytes
+
+            # Determine type from data if not set
+            dtype = sec.data_type
+            count = len(sec.data)
+            data += pack('<II', dtype, count)
+
+            if dtype == USERDATA_INT:
+                for v in sec.data:
+                    data += pack('<I', v)
+            elif dtype == USERDATA_FLOAT:
+                for v in sec.data:
+                    data += pack('<f', v)
+            elif dtype == USERDATA_STRING:
+                for s in sec.data:
+                    s_bytes = s.encode('ascii', errors='replace')
+                    data += pack('<I', len(s_bytes))
+                    data += s_bytes
+
+        return _chunk(CHUNK_USERDATA_PLG, data, lib_id)
+
+
+@dataclass
 class ExtraVertColors:
     """Night vertex colors (second color layer)."""
     colors: list = field(default_factory=list)  # list[RGBA]
+
+
+# ── 2DFX Effect structures ──────────────────────────────────────
+
+@dataclass
+class Light2dfx:
+    """Light effect (street lights, neon signs, etc.)."""
+    effect_id: int = 0
+    loc: tuple = (0.0, 0.0, 0.0)
+    color: RGBA = field(default_factory=RGBA)
+    corona_far_clip: float = 0.0
+    pointlight_range: float = 0.0
+    corona_size: float = 0.0
+    shadow_size: float = 0.0
+    corona_show_mode: int = 0
+    corona_enable_reflection: int = 0
+    corona_flare_type: int = 0
+    shadow_color_multiplier: int = 0
+    flags1: int = 0
+    corona_tex_name: str = ""
+    shadow_tex_name: str = ""
+    shadow_z_distance: int = 0
+    flags2: int = 0
+    look_direction: Optional[tuple] = None  # (x, y, z) bytes or None
+
+
+@dataclass
+class Particle2dfx:
+    """Particle effect (smoke, fire, etc.)."""
+    effect_id: int = 1
+    loc: tuple = (0.0, 0.0, 0.0)
+    effect_name: str = ""
+
+
+@dataclass
+class PedAttractor2dfx:
+    """Ped attractor (ATM, bench, bus stop, etc.)."""
+    effect_id: int = 3
+    loc: tuple = (0.0, 0.0, 0.0)
+    attractor_type: int = 0
+    rotation_matrix: tuple = (1,0,0, 0,1,0, 0,0,1)  # 3x3 as 9 floats
+    external_script: str = ""
+    ped_existing_probability: int = 0
+
+
+@dataclass
+class SunGlare2dfx:
+    """Sun glare effect on surfaces."""
+    effect_id: int = 4
+    loc: tuple = (0.0, 0.0, 0.0)
+
+
+@dataclass
+class Extension2dfx:
+    """Container for all 2DFX effect entries."""
+    entries: list = field(default_factory=list)  # list of Light2dfx/Particle2dfx/etc.
+
+    def to_bytes(self, lib_id: int) -> bytes:
+        """Serialize 2DFX plugin to RenderWare chunk."""
+        if not self.entries:
+            return b''
+
+        data = pack('<I', len(self.entries))
+
+        for entry in self.entries:
+            # Location (3 floats) + entry_type (u32) + entry_size (u32)
+            entry_data = _write_2dfx_entry(entry)
+            data += pack('<3f', *entry.loc)
+            data += pack('<II', entry.effect_id, len(entry_data))
+            data += entry_data
+
+        return _chunk(CHUNK_2DFXPLG, data, lib_id)
 
 
 @dataclass
@@ -326,6 +452,7 @@ class DffFrame:
     parent: int = -1
     flags: int = 0
     hanim: Optional[HAnimData] = None
+    user_data: Optional[UserData] = None
 
     def header_bytes(self) -> bytes:
         """56 bytes: rotation(36) + position(12) + parent(4) + flags(4)."""
@@ -340,6 +467,8 @@ class DffFrame:
             ext += _chunk(CHUNK_FRAME_NAME, _pad_string(self.name), lib_id)
         if self.hanim:
             ext += self.hanim.to_bytes(lib_id)
+        if self.user_data and self.user_data.sections:
+            ext += self.user_data.to_bytes(lib_id)
         return _chunk(CHUNK_EXTENSION, ext, lib_id)
 
 
@@ -360,6 +489,8 @@ class DffGeometry:
 
     skin: Optional[SkinData] = None
     extra_colors: Optional[ExtraVertColors] = None
+    user_data: Optional[UserData] = None
+    ext_2dfx: Optional[Extension2dfx] = None
 
     def _build_flags(self) -> int:
         flags = GEOM_POSITIONS
@@ -471,6 +602,9 @@ class DffGeometry:
         if self.pipeline:
             ext_data += _chunk(CHUNK_PIPELINE_SET, pack('<I', self.pipeline), lib_id)
 
+        if self.user_data and self.user_data.sections:
+            ext_data += self.user_data.to_bytes(lib_id)
+
         # MatFX indicator on geometry extension (if any material has effects)
         has_matfx = any(
             m.bump_map or m.env_map
@@ -478,6 +612,10 @@ class DffGeometry:
         )
         if has_matfx:
             ext_data += _chunk(CHUNK_MATFX_PLG, pack('<I', 1), lib_id)
+
+        # 2DFX effects (usually on last geometry only)
+        if self.ext_2dfx and self.ext_2dfx.entries:
+            ext_data += self.ext_2dfx.to_bytes(lib_id)
 
         body += _chunk(CHUNK_EXTENSION, ext_data, lib_id)
         return _chunk(CHUNK_GEOMETRY, body, lib_id)
@@ -493,11 +631,23 @@ class DffAtomic:
 
 
 @dataclass
+class DffLight:
+    """RenderWare light in the clump (Omni/Point light for 2DFX)."""
+    frame_index: int = 0
+    radius: float = 200.0
+    color: tuple = (1.0, 1.0, 1.0)
+    direction: float = 0.0
+    light_type: int = 0x80  # rpLIGHTPOINT (128)
+    flags: int = 3          # rpLIGHTLIGHTATOMICS | rpLIGHTLIGHTWORLD
+
+
+@dataclass
 class DffClump:
     """Root DFF structure containing frames, geometries, and atomics."""
     frames: list = field(default_factory=list)       # list[DffFrame]
     geometries: list = field(default_factory=list)    # list[DffGeometry]
     atomics: list = field(default_factory=list)       # list[DffAtomic]
+    lights: list = field(default_factory=list)        # list[DffLight]
     version: int = GTA_SA_VERSION
     collision_data: bytes = b''
 
@@ -507,7 +657,8 @@ class DffClump:
 
         # Clump struct
         num_atomics = len(self.atomics)
-        clump_struct = pack('<III', num_atomics, 0, 0)  # atomics, lights, cameras
+        num_lights = len(self.lights)
+        clump_struct = pack('<III', num_atomics, num_lights, 0)  # atomics, lights, cameras
         body = _chunk(CHUNK_STRUCT, clump_struct, lib_id)
 
         # Frame list
@@ -545,6 +696,24 @@ class DffClump:
 
             atomic_body += _chunk(CHUNK_EXTENSION, atomic_ext, lib_id)
             body += _chunk(CHUNK_ATOMIC, atomic_body, lib_id)
+
+        # Lights (RW Light objects for 2DFX)
+        for light in self.lights:
+            # Frame link struct (precedes the Light chunk in clump)
+            body += _chunk(CHUNK_STRUCT, pack('<I', light.frame_index), lib_id)
+
+            # Light struct: radius(f), color_rgb(3f), direction(f), flags_type(u32)
+            flags_type = (light.light_type << 16) | light.flags
+            light_struct = pack('<f3ffI',
+                                light.radius,
+                                *light.color,
+                                light.direction,
+                                flags_type)
+            light_body = _chunk(CHUNK_STRUCT, light_struct, lib_id)
+            # Light extension (empty)
+            light_body += _chunk(CHUNK_EXTENSION, b'', lib_id)
+
+            body += _chunk(CHUNK_LIGHT, light_body, lib_id)
 
         # Clump extension
         clump_ext = b''
@@ -663,6 +832,8 @@ def _read_material_chunk(r: BinaryReader, size: int, rw_version: int) -> DffMate
                 elif ect == CHUNK_REFLECTION_MAT:
                     vals = r.read('<5f')
                     mat.reflection = ReflectionMaterial(*vals)
+                elif ect == CHUNK_USERDATA_PLG:
+                    mat.user_data = _read_userdata_plugin(r, ecs)
                 else:
                     pass
                 r.seek(plugin_end)
@@ -821,12 +992,49 @@ def _read_geometry_chunk(r: BinaryReader, size: int, rw_version: int) -> DffGeom
                     geom.extra_colors = ec
                 elif ect == CHUNK_PIPELINE_SET:
                     geom.pipeline = r.read_one('<I')
+                elif ect == CHUNK_USERDATA_PLG:
+                    geom.user_data = _read_userdata_plugin(r, ecs)
+                elif ect == CHUNK_2DFXPLG:
+                    geom.ext_2dfx = _read_2dfx_plugin(r, ecs)
                 else:
                     pass
                 r.seek(plugin_end)
 
     r.seek(end)
     return geom
+
+
+def _read_userdata_plugin(r: BinaryReader, size: int) -> UserData:
+    """Read User Data PLG."""
+    start = r.pos
+    ud = UserData()
+    num_sections = r.read_one('<I')
+
+    for _ in range(num_sections):
+        sec = UserDataSection()
+        # Name
+        name_len = r.read_one('<I')
+        if name_len > 0:
+            sec.name = r.read_bytes(name_len).decode('ascii', errors='replace')
+        # Type and count
+        sec.data_type, num_elements = r.read('<II')
+        sec.data = []
+
+        if sec.data_type == USERDATA_INT:
+            for _ in range(num_elements):
+                sec.data.append(r.read_one('<I'))
+        elif sec.data_type == USERDATA_FLOAT:
+            for _ in range(num_elements):
+                sec.data.append(r.read_one('<f'))
+        elif sec.data_type == USERDATA_STRING:
+            for _ in range(num_elements):
+                str_len = r.read_one('<I')
+                sec.data.append(r.read_bytes(str_len).decode('ascii', errors='replace'))
+
+        ud.sections.append(sec)
+
+    r.seek(start + size)
+    return ud
 
 
 def _read_skin_plugin(r: BinaryReader, size: int, num_verts: int) -> SkinData:
@@ -846,6 +1054,108 @@ def _read_skin_plugin(r: BinaryReader, size: int, num_verts: int) -> SkinData:
         skin.bone_matrices.append(r.read('<16f'))
 
     return skin
+
+
+def _write_2dfx_entry(entry) -> bytes:
+    """Serialize a single 2DFX effect entry payload (without header)."""
+    if isinstance(entry, Light2dfx):
+        data = pack('<4B', entry.color.r, entry.color.g, entry.color.b, entry.color.a)
+        data += pack('<ffffBBBBB',
+                     entry.corona_far_clip, entry.pointlight_range,
+                     entry.corona_size, entry.shadow_size,
+                     entry.corona_show_mode, entry.corona_enable_reflection,
+                     entry.corona_flare_type, entry.shadow_color_multiplier,
+                     entry.flags1)
+        # Corona and shadow texture names — 24 bytes each
+        corona = entry.corona_tex_name.encode('ascii', errors='replace')[:24]
+        shadow = entry.shadow_tex_name.encode('ascii', errors='replace')[:24]
+        data += corona + b'\x00' * (24 - len(corona))
+        data += shadow + b'\x00' * (24 - len(shadow))
+        data += pack('<BB', entry.shadow_z_distance, entry.flags2)
+        # Always write 80-byte variant (Kam's / GTA SA standard)
+        if entry.look_direction is not None:
+            data += pack('<BBB2x', *entry.look_direction)
+        else:
+            data += b'\x00' * 5  # 3 bytes look_dir + 2 padding = 80 bytes total
+        return data
+
+    elif isinstance(entry, Particle2dfx):
+        name = entry.effect_name.encode('ascii', errors='replace')[:24]
+        return name + b'\x00' * (24 - len(name))
+
+    elif isinstance(entry, PedAttractor2dfx):
+        data = pack('<I', entry.attractor_type)
+        data += pack('<9f', *entry.rotation_matrix)
+        script = entry.external_script.encode('ascii', errors='replace')[:8]
+        data += script + b'\x00' * (8 - len(script))
+        data += pack('<I', entry.ped_existing_probability)
+        return data
+
+    elif isinstance(entry, SunGlare2dfx):
+        return b''
+
+    return b''
+
+
+def _read_2dfx_plugin(r: BinaryReader, size: int) -> Extension2dfx:
+    """Read 2DFX Plugin (lights, particles, ped attractors, sun glare)."""
+    start = r.pos
+    ext = Extension2dfx()
+    entries_count = r.read_one('<I')
+
+    for _ in range(entries_count):
+        loc = r.read('<3f')
+        entry_type, entry_size = r.read('<II')
+        entry_start = r.pos
+
+        if entry_type == 0:  # Light
+            light = Light2dfx(loc=loc)
+            light.color = RGBA(*r.read('<4B'))
+            (light.corona_far_clip, light.pointlight_range,
+             light.corona_size, light.shadow_size,
+             light.corona_show_mode, light.corona_enable_reflection,
+             light.corona_flare_type, light.shadow_color_multiplier,
+             light.flags1) = r.read('<ffffBBBBB')
+
+            corona_raw = r.read_bytes(24)
+            shadow_raw = r.read_bytes(24)
+            end_c = corona_raw.find(b'\x00')
+            end_s = shadow_raw.find(b'\x00')
+            light.corona_tex_name = corona_raw[:end_c if end_c >= 0 else 24].decode('ascii', errors='replace')
+            light.shadow_tex_name = shadow_raw[:end_s if end_s >= 0 else 24].decode('ascii', errors='replace')
+
+            light.shadow_z_distance, light.flags2 = r.read('<BB')
+
+            # 80-byte variant has look_direction
+            if entry_size > 76:
+                light.look_direction = r.read('<3B')
+
+            ext.entries.append(light)
+
+        elif entry_type == 1:  # Particle
+            particle = Particle2dfx(loc=loc)
+            raw = r.read_bytes(min(24, entry_size))
+            end_p = raw.find(b'\x00')
+            particle.effect_name = raw[:end_p if end_p >= 0 else len(raw)].decode('ascii', errors='replace')
+            ext.entries.append(particle)
+
+        elif entry_type == 3:  # Ped Attractor
+            ped = PedAttractor2dfx(loc=loc)
+            ped.attractor_type = r.read_one('<I')
+            ped.rotation_matrix = r.read('<9f')
+            script_raw = r.read_bytes(8)
+            end_e = script_raw.find(b'\x00')
+            ped.external_script = script_raw[:end_e if end_e >= 0 else 8].decode('ascii', errors='replace')
+            ped.ped_existing_probability = r.read_one('<I')
+            ext.entries.append(ped)
+
+        elif entry_type == 4:  # Sun Glare
+            ext.entries.append(SunGlare2dfx(loc=loc))
+
+        r.seek(entry_start + entry_size)
+
+    r.seek(start + size)
+    return ext
 
 
 def _read_frame_list(r: BinaryReader, size: int) -> list:
@@ -889,6 +1199,8 @@ def _read_frame_list(r: BinaryReader, size: int) -> list:
                     frames[i].name = raw[:nm_end].decode('ascii', errors='replace')
                 elif ect == CHUNK_HANIM_PLG:
                     frames[i].hanim = _read_hanim_plugin(r, ecs)
+                elif ect == CHUNK_USERDATA_PLG:
+                    frames[i].user_data = _read_userdata_plugin(r, ecs)
                 else:
                     pass
                 r.seek(plugin_end)

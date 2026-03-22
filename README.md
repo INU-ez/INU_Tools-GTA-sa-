@@ -20,6 +20,7 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 > - ✅ LOD экспорт/импорт
 > - ✅ TXD экспорт/импорт (DXT сжатие, параллельная обработка, GPU через NVIDIA Texture Tools)
 > - ✅ Export All — массовый экспорт по суффиксам `_DFF` / `_LOD` / `_COL` + автосборка TXD
+> - ✅ LOD экспорт/импорт
 
 </details>
 
@@ -56,6 +57,19 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 > ![Itera_Inu_tools](gif/col_light.gif)
 >
 > </details>
+
+</details>
+
+<details>
+<summary><b>2DFX Effects</b></summary>
+
+> - ✅ Создание 2DFX эффектов (Light, Particle, Ped Attractor, Sun Glare)
+> - ✅ Привязка/отвязка 2DFX к мешу (Attach/Detach) — координаты автоматически пересчитываются относительно меша при экспорте
+> - ✅ Пресеты: Default, OnAllDay, Lamp Post, Lamp Post Coast, BB Pickup, Flashing варианты, Train Crossing, Traffic
+> - ✅ Выпадающие списки для Corona Texture (34 текстуры), Shadow Texture, Show Mode, Flare Type
+> - ✅ Show Mode — режимы отображения (Default, Random Flashing, Flash Rain, Only Rain, No Rain, Flash 5)
+> - ✅ Экспорт 2DFX в DFF (RW Light chunk + 2DFX PLG) — совместимость с MTA SA / GTA SA
+> - ✅ Визуализация всех эффектов и их редактирование в реальном времени
 
 </details>
 

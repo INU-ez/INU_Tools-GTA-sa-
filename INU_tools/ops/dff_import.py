@@ -9,9 +9,31 @@ import mathutils
 
 from ..core.dff import (
     read_dff_file, DffClump, DffGeometry, DffFrame, DffAtomic,
-    RGBA, TexCoords, DffMaterial, DffTexture,
+    RGBA, TexCoords, DffMaterial, DffTexture, UserData,
     GEOM_NORMALS, GEOM_PRELIT, GEOM_TEXTURED, GEOM_TEXTURED2,
+    USERDATA_INT, USERDATA_FLOAT, USERDATA_STRING,
+    Extension2dfx, Light2dfx, Particle2dfx, PedAttractor2dfx, SunGlare2dfx,
 )
+
+
+def _store_user_data(target, user_data: UserData):
+    """Store UserData PLG into Blender custom properties.
+
+    Saves as 'inu_user_data' — a list of dicts, each with
+    'name', 'type' (int/float/str), and 'data' (list of values).
+    """
+    if not user_data or not user_data.sections:
+        return
+
+    type_names = {USERDATA_INT: 'int', USERDATA_FLOAT: 'float', USERDATA_STRING: 'str'}
+    sections = []
+    for sec in user_data.sections:
+        sections.append({
+            'name': sec.name,
+            'type': type_names.get(sec.data_type, 'na'),
+            'data': list(sec.data),
+        })
+    target['inu_user_data'] = sections
 
 
 def _create_blender_material(dff_mat: DffMaterial, index: int) -> bpy.types.Material:
@@ -81,6 +103,10 @@ def _create_blender_material(dff_mat: DffMaterial, index: int) -> bpy.types.Mate
         mat.inu.reflection_offset_x = dff_mat.reflection.offset_x
         mat.inu.reflection_offset_y = dff_mat.reflection.offset_y
         mat.inu.reflection_intensity = dff_mat.reflection.intensity
+
+    # User Data PLG
+    if dff_mat.user_data:
+        _store_user_data(mat, dff_mat.user_data)
 
     return mat
 
@@ -155,6 +181,10 @@ def _build_mesh(geom: DffGeometry, name: str, materials: list) -> bpy.types.Mesh
     bm.free()
     mesh.update()
 
+    # Store geometry user data on mesh
+    if geom.user_data:
+        _store_user_data(mesh, geom.user_data)
+
     return mesh
 
 
@@ -180,6 +210,116 @@ def _set_object_props(obj, geom: DffGeometry):
     # Color flags
     obj.inu.day_cols = bool(geom.prelit_colors)
     obj.inu.night_cols = bool(geom.extra_colors and geom.extra_colors.colors)
+
+
+def _import_2dfx(ext_2dfx: Extension2dfx, collection, base_name: str) -> list:
+    """Создаём Empty-объекты для каждого 2DFX эффекта.
+
+    Каждый эффект хранится как Empty с типом '2DFX' и custom properties.
+    """
+    objects = []
+    if not ext_2dfx or not ext_2dfx.entries:
+        return objects
+
+    for i, entry in enumerate(ext_2dfx.entries):
+        if isinstance(entry, Light2dfx):
+            name = f"{base_name}.2dfx_light.{i}"
+            obj = bpy.data.objects.new(name, None)
+            obj.empty_display_type = 'PLAIN_AXES'
+            obj.empty_display_size = 0.3
+            obj.location = entry.loc
+
+            obj.inu.type = '2DFX'
+            obj.inu.effect_2dfx = 'LIGHT'
+
+            obj.inu.color_2dfx = (entry.color.r / 255.0, entry.color.g / 255.0,
+                                   entry.color.b / 255.0, entry.color.a / 255.0)
+            obj['2dfx_corona_far_clip'] = entry.corona_far_clip
+            obj['2dfx_pointlight_range'] = entry.pointlight_range
+            obj['2dfx_corona_size'] = entry.corona_size
+            obj['2dfx_shadow_size'] = entry.shadow_size
+            obj['2dfx_corona_enable_reflection'] = entry.corona_enable_reflection
+            obj['2dfx_shadow_color_multiplier'] = entry.shadow_color_multiplier
+            obj['2dfx_flags1'] = entry.flags1
+            # Set EnumProperty values for dropdowns
+            try:
+                obj.inu.corona_tex_2dfx = entry.corona_tex_name
+            except TypeError:
+                obj['2dfx_corona_tex'] = entry.corona_tex_name
+            try:
+                obj.inu.shadow_tex_2dfx = entry.shadow_tex_name
+            except TypeError:
+                obj['2dfx_shadow_tex'] = entry.shadow_tex_name
+            try:
+                obj.inu.show_mode_2dfx = str(entry.corona_show_mode)
+            except TypeError:
+                pass
+            try:
+                obj.inu.flare_type_2dfx = str(entry.corona_flare_type)
+            except TypeError:
+                pass
+            obj['2dfx_shadow_z_distance'] = entry.shadow_z_distance
+            obj['2dfx_flags2'] = entry.flags2
+            if entry.look_direction is not None:
+                obj['2dfx_look_direction'] = list(entry.look_direction)
+            # Display precision
+            for key in ('2dfx_corona_far_clip', '2dfx_pointlight_range',
+                        '2dfx_corona_size', '2dfx_shadow_size'):
+                ui = obj.id_properties_ui(key)
+                ui.update(precision=1)
+
+        elif isinstance(entry, Particle2dfx):
+            name = f"{base_name}.2dfx_particle.{i}"
+            obj = bpy.data.objects.new(name, None)
+            obj.empty_display_type = 'CIRCLE'
+            obj.empty_display_size = 0.2
+            obj.location = entry.loc
+
+            obj.inu.type = '2DFX'
+            obj.inu.effect_2dfx = 'PARTICLE'
+
+            obj['2dfx_effect_name'] = entry.effect_name
+
+        elif isinstance(entry, PedAttractor2dfx):
+            name = f"{base_name}.2dfx_ped.{i}"
+            obj = bpy.data.objects.new(name, None)
+            obj.empty_display_type = 'CUBE'
+            obj.empty_display_size = 0.15
+            obj.location = entry.loc
+
+            obj.inu.type = '2DFX'
+            obj.inu.effect_2dfx = 'PED_ATTRACTOR'
+
+            obj['2dfx_attractor_type'] = entry.attractor_type
+            obj['2dfx_rotation_matrix'] = list(entry.rotation_matrix)
+            obj['2dfx_external_script'] = entry.external_script
+            obj['2dfx_ped_probability'] = entry.ped_existing_probability
+
+        elif isinstance(entry, SunGlare2dfx):
+            name = f"{base_name}.2dfx_sunglare.{i}"
+            obj = bpy.data.objects.new(name, None)
+            obj.empty_display_type = 'SPHERE'
+            obj.empty_display_size = 0.1
+            obj.location = entry.loc
+
+            obj.inu.type = '2DFX'
+            obj.inu.effect_2dfx = 'SUN_GLARE'
+
+        else:
+            continue
+
+        collection.objects.link(obj)
+        objects.append(obj)
+
+        # Визуальный превью для Light2dfx
+        if isinstance(entry, Light2dfx):
+            try:
+                from .fx_preview import create_light_preview
+                create_light_preview(obj)
+            except Exception as e:
+                print(f"[INU_tools] 2DFX import preview error: {e}")
+
+    return objects
 
 
 def import_dff(filepath: str, context=None):
@@ -231,6 +371,10 @@ def import_dff(filepath: str, context=None):
         # INU свойства
         _set_object_props(obj, geom)
 
+        # Frame user data → object custom property
+        if frame and frame.user_data:
+            _store_user_data(obj, frame.user_data)
+
         collection.objects.link(obj)
         imported_objects.append(obj)
 
@@ -243,6 +387,20 @@ def import_dff(filepath: str, context=None):
             _set_object_props(obj, geom)
             collection.objects.link(obj)
             imported_objects.append(obj)
+
+    # Импорт 2DFX эффектов (собираем из всех геометрий) → коллекция "2DFX"
+    fx_col = None
+    for geom in clump.geometries:
+        if geom.ext_2dfx and geom.ext_2dfx.entries:
+            if fx_col is None:
+                col_name = "2DFX"
+                if col_name in bpy.data.collections:
+                    fx_col = bpy.data.collections[col_name]
+                else:
+                    fx_col = bpy.data.collections.new(col_name)
+                    bpy.context.scene.collection.children.link(fx_col)
+            fx_objects = _import_2dfx(geom.ext_2dfx, fx_col, base_name)
+            imported_objects.extend(fx_objects)
 
     # Выделяем импортированные объекты
     bpy.ops.object.select_all(action='DESELECT')

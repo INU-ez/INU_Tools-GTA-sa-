@@ -67,6 +67,7 @@ import numpy as np
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from mathutils import Vector
 from bpy.props import StringProperty, BoolProperty, FloatProperty, FloatVectorProperty, IntProperty, CollectionProperty, EnumProperty
+from bpy.app.handlers import persistent
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 
@@ -3026,10 +3027,155 @@ class INUObjectProps(bpy.types.PropertyGroup):
             ('OBJ', 'Object', 'Object will be exported as a mesh or a dummy'),
             ('COL', 'Collision Object', 'Object is a collision object'),
             ('SHA', 'Shadow Object', 'Object is a shadow object'),
+            ('2DFX', '2DFX Effect', 'Object is a 2DFX effect (light, particle, etc.)'),
             ('NON', "Don't export", 'Object will NOT be exported'),
         ],
         name="Type",
         default='OBJ',
+    )
+
+    effect_2dfx : EnumProperty(
+        items=[
+            ('LIGHT', 'Свет', 'Street light / neon / corona effect'),
+            ('PARTICLE', 'Частица', 'Particle effect (smoke, fire, etc.)'),
+            ('PED_ATTRACTOR', 'Ped Attractor', 'Ped attractor point (ATM, bench, etc.)'),
+            ('SUN_GLARE', 'Sun Glare', 'Sun glare reflection on surface'),
+        ],
+        name="2DFX Effect Type",
+        default='LIGHT',
+    )
+
+    def _update_2dfx_preview(self, context):
+        obj = self.id_data  # owner Object
+        if obj and obj.type == 'EMPTY' and self.type == '2DFX' and self.effect_2dfx == 'LIGHT':
+            try:
+                from .ops.fx_preview import sync_preview_from_props
+                sync_preview_from_props(obj)
+            except Exception as e:
+                print(f"[2DFX] Preview update error: {e}")
+
+    color_2dfx : FloatVectorProperty(
+        name="2DFX Color",
+        subtype='COLOR',
+        size=4,
+        min=0.0, max=1.0,
+        default=(1.0, 1.0, 0.784, 1.0),
+        description="Corona and light color",
+        update=_update_2dfx_preview,
+    )
+
+    preset_2dfx : EnumProperty(
+        items=[
+            ('DEFAULT', 'Default', 'Default light settings'),
+            ('ONALLDAY', 'OnAllDay', 'Always visible light'),
+            ('LAMP_POST', 'Lamp Post', 'Standard lamp post'),
+            ('LAMP_POST_COAST', 'Lamp Post Coast', 'Coastal lamp post (warm)'),
+            ('BB_PICKUP', 'BB Pickup', 'Red pickup marker'),
+            ('FLASHING_MAV1', 'Flashing (Maverick1)', 'Red blinking helicopter light'),
+            ('FLASHING_MAV2', 'Flashing (Maverick2)', 'Green blinking helicopter light'),
+            ('FLASHING_TUG', 'Flashing (Tug)', 'Orange blinking tug light'),
+            ('TRAIN_CROSSING', 'Train Crossing', 'Red blinking train crossing'),
+            ('TRAFFIC', 'Traffic', 'Traffic light'),
+        ],
+        name="2DFX Preset",
+        default='DEFAULT',
+    )
+
+    def _update_2dfx_texture(self, context):
+        """Recreate preview when texture changes."""
+        obj = self.id_data
+        if obj and obj.type == 'EMPTY' and self.type == '2DFX' and self.effect_2dfx == 'LIGHT':
+            try:
+                from .ops.fx_preview import remove_preview_children, create_light_preview
+                remove_preview_children(obj)
+                create_light_preview(obj)
+            except Exception as e:
+                print(f"[2DFX] Texture update error: {e}")
+
+    corona_tex_2dfx : EnumProperty(
+        items=[
+            ('coronastar', 'coronastar', ''),
+            ('coronamoon', 'coronamoon', ''),
+            ('coronaringb', 'coronaringb', ''),
+            ('coronareflect', 'coronareflect', ''),
+            ('coronaheadlightline', 'coronaheadlightline', ''),
+            ('headlight', 'headlight', ''),
+            ('headlight1', 'headlight1', ''),
+            ('lockon', 'lockon', ''),
+            ('lockonFire', 'lockonFire', ''),
+            ('lunar', 'lunar', ''),
+            ('roadsignfont', 'roadsignfont', ''),
+            ('particleskid', 'particleskid', ''),
+            ('finishFlag', 'finishFlag', ''),
+            ('handman', 'handman', ''),
+            ('seabd32', 'seabd32', ''),
+            ('shad_exp', 'shad_exp', ''),
+            ('shad_car', 'shad_car', ''),
+            ('shad_bike', 'shad_bike', ''),
+            ('shad_heli', 'shad_heli', ''),
+            ('shad_ped', 'shad_ped', ''),
+            ('shad_rcbaron', 'shad_rcbaron', ''),
+            ('lamp_shad_64', 'lamp_shad_64', ''),
+            ('bloodpool_64', 'bloodpool_64', ''),
+            ('target256', 'target256', ''),
+            ('white', 'white', ''),
+            ('cloud1', 'cloud1', ''),
+            ('cloudhigh', 'cloudhigh', ''),
+            ('cloudmasked', 'cloudmasked', ''),
+            ('carfx1', 'carfx1', ''),
+            ('wincrack_32', 'wincrack_32', ''),
+            ('waterclear256', 'waterclear256', ''),
+            ('waterwake', 'waterwake', ''),
+            ('txgrassbig0', 'txgrassbig0', ''),
+            ('txgrassbig1', 'txgrassbig1', ''),
+        ],
+        name="Corona Texture",
+        default='coronastar',
+        update=_update_2dfx_texture,
+    )
+
+    shadow_tex_2dfx : EnumProperty(
+        items=[
+            ('shad_exp', 'shad_exp', ''),
+            ('shad_car', 'shad_car', ''),
+            ('shad_bike', 'shad_bike', ''),
+            ('shad_heli', 'shad_heli', ''),
+            ('shad_ped', 'shad_ped', ''),
+            ('shad_rcbaron', 'shad_rcbaron', ''),
+            ('lamp_shad_64', 'lamp_shad_64', ''),
+            ('bloodpool_64', 'bloodpool_64', ''),
+            ('coronastar', 'coronastar', ''),
+            ('coronamoon', 'coronamoon', ''),
+            ('coronaringb', 'coronaringb', ''),
+            ('coronareflect', 'coronareflect', ''),
+            ('white', 'white', ''),
+        ],
+        name="Shadow Texture",
+        default='shad_exp',
+    )
+
+    show_mode_2dfx : EnumProperty(
+        items=[
+            ('0', '0 DEFAULT', 'Default behavior'),
+            ('1', '1 RANDOM_FLASHING', 'Random flashing'),
+            ('2', '2 FLASH_RAIN', 'Flashing when raining'),
+            ('3', '3 ONLY_RAIN', 'Only visible in rain'),
+            ('4', '4 NO_RAIN', 'Not visible in rain'),
+            ('5', '5 FLASH_5', 'Flashing variant 2'),
+        ],
+        name="Show Mode",
+        default='0',
+    )
+
+    flare_type_2dfx : EnumProperty(
+        items=[
+            ('0', '0 None', 'No lens flare'),
+            ('1', '1 Type 1', 'Lens flare style 1'),
+            ('2', '2 Type 2', 'Lens flare style 2'),
+            ('3', '3 Type 3', 'Lens flare style 3'),
+        ],
+        name="Flare Type",
+        default='0',
     )
 
     pipeline : EnumProperty(
@@ -3320,9 +3466,11 @@ class GTATOOLS_OT_export_dff(bpy.types.Operator, ExportHelper):
                         prelight_was_on.append(obj)
                         setup_prelight_preview(obj, enable=False)
 
-            # Собираем меши для экспорта
+            # Собираем меши и 2DFX для экспорта
             from .ops.dff_export import export_dff as inu_export_dff
-            dff_objects = [o for o in context.selected_objects if o.type == 'MESH']
+            dff_objects = [o for o in context.selected_objects
+                           if o.type == 'MESH'
+                           or (o.type == 'EMPTY' and getattr(o, 'inu', None) and o.inu.type == '2DFX')]
             inu_export_dff(filepath=self.filepath, objects=dff_objects)
 
             # Восстанавливаем prelight только для тех объектов, где он был
@@ -3526,7 +3674,9 @@ class GTATOOLS_OT_file_export_dff(bpy.types.Operator, ExportHelper):
     def execute(self, context):
         from .ops.dff_export import export_dff as inu_export_dff
         try:
-            dff_objects = [o for o in context.selected_objects if o.type == 'MESH']
+            dff_objects = [o for o in context.selected_objects
+                           if o.type == 'MESH'
+                           or (o.type == 'EMPTY' and getattr(o, 'inu', None) and o.inu.type == '2DFX')]
             inu_export_dff(filepath=self.filepath, objects=dff_objects)
             self.report({'INFO'}, f"Exported DFF: {self.filepath}")
             return {'FINISHED'}
@@ -5856,6 +6006,449 @@ class GTATOOLS_PT_dff_flags_panel(bpy.types.Panel):
         box.prop(settings, "export_binsplit", text="Bin Mesh PLG")
 
 
+# ── 2DFX Light Presets ──
+_2DFX_PRESETS = {
+    'Default': dict(color=[255,255,255,255], corona_size=1.0, corona_far_clip=100.0,
+                    pointlight_range=18.0, corona_tex='coronastar', corona_show_mode=0,
+                    corona_flare_type=0, corona_enable_reflection=0, shadow_size=8.0,
+                    shadow_z_distance=0, shadow_color_multiplier=40, shadow_tex='shad_exp',
+                    flags1=96, flags2=0),
+    'OnAllDay': dict(color=[255,255,255,255], corona_size=1.0, corona_far_clip=100.0,
+                     pointlight_range=18.0, corona_tex='coronastar', corona_show_mode=0,
+                     corona_flare_type=0, corona_enable_reflection=0, shadow_size=8.0,
+                     shadow_z_distance=0, shadow_color_multiplier=40, shadow_tex='shad_exp',
+                     flags1=96, flags2=0),
+    'Lamp Post': dict(color=[255,255,171,255], corona_size=1.5, corona_far_clip=200.0,
+                      pointlight_range=16.0, corona_tex='coronastar', corona_show_mode=0,
+                      corona_flare_type=0, corona_enable_reflection=1, shadow_size=10.0,
+                      shadow_z_distance=0, shadow_color_multiplier=40, shadow_tex='shad_exp',
+                      flags1=64, flags2=0),
+    'Lamp Post Coast': dict(color=[255,217,163,255], corona_size=1.2, corona_far_clip=200.0,
+                            pointlight_range=14.0, corona_tex='coronamoon', corona_show_mode=0,
+                            corona_flare_type=0, corona_enable_reflection=1, shadow_size=8.0,
+                            shadow_z_distance=0, shadow_color_multiplier=40, shadow_tex='shad_exp',
+                            flags1=64, flags2=0),
+    'BB Pickup': dict(color=[255,0,0,255], corona_size=0.8, corona_far_clip=80.0,
+                      pointlight_range=8.0, corona_tex='coronastar', corona_show_mode=0,
+                      corona_flare_type=0, corona_enable_reflection=0, shadow_size=0.0,
+                      shadow_z_distance=0, shadow_color_multiplier=0, shadow_tex='shad_exp',
+                      flags1=96, flags2=0),
+    'Flashing (Maverick1)': dict(color=[255,0,0,255], corona_size=0.5, corona_far_clip=200.0,
+                                 pointlight_range=0.0, corona_tex='coronastar', corona_show_mode=1,
+                                 corona_flare_type=0, corona_enable_reflection=0, shadow_size=0.0,
+                                 shadow_z_distance=0, shadow_color_multiplier=0, shadow_tex='shad_exp',
+                                 flags1=96, flags2=0),
+    'Flashing (Maverick2)': dict(color=[0,255,0,255], corona_size=0.5, corona_far_clip=200.0,
+                                 pointlight_range=0.0, corona_tex='coronastar', corona_show_mode=1,
+                                 corona_flare_type=0, corona_enable_reflection=0, shadow_size=0.0,
+                                 shadow_z_distance=0, shadow_color_multiplier=0, shadow_tex='shad_exp',
+                                 flags1=96, flags2=0),
+    'Flashing (Tug)': dict(color=[255,128,0,255], corona_size=0.4, corona_far_clip=150.0,
+                           pointlight_range=0.0, corona_tex='coronastar', corona_show_mode=1,
+                           corona_flare_type=0, corona_enable_reflection=0, shadow_size=0.0,
+                           shadow_z_distance=0, shadow_color_multiplier=0, shadow_tex='shad_exp',
+                           flags1=96, flags2=0),
+    'Train Crossing': dict(color=[255,0,0,255], corona_size=1.0, corona_far_clip=200.0,
+                           pointlight_range=12.0, corona_tex='coronastar', corona_show_mode=1,
+                           corona_flare_type=0, corona_enable_reflection=1, shadow_size=0.0,
+                           shadow_z_distance=0, shadow_color_multiplier=0, shadow_tex='shad_exp',
+                           flags1=96, flags2=0),
+    'Traffic': dict(color=[255,0,0,255], corona_size=0.7, corona_far_clip=120.0,
+                    pointlight_range=6.0, corona_tex='coronastar', corona_show_mode=0,
+                    corona_flare_type=0, corona_enable_reflection=0, shadow_size=0.0,
+                    shadow_z_distance=0, shadow_color_multiplier=0, shadow_tex='shad_exp',
+                    flags1=96, flags2=0),
+}
+
+_PRESET_NAMES = list(_2DFX_PRESETS.keys())
+
+
+# Map EnumProperty identifiers to preset dict keys
+_PRESET_MAP = {
+    'DEFAULT': 'Default',
+    'ONALLDAY': 'OnAllDay',
+    'LAMP_POST': 'Lamp Post',
+    'LAMP_POST_COAST': 'Lamp Post Coast',
+    'BB_PICKUP': 'BB Pickup',
+    'FLASHING_MAV1': 'Flashing (Maverick1)',
+    'FLASHING_MAV2': 'Flashing (Maverick2)',
+    'FLASHING_TUG': 'Flashing (Tug)',
+    'TRAIN_CROSSING': 'Train Crossing',
+    'TRAFFIC': 'Traffic',
+}
+
+
+class GTATOOLS_OT_apply_2dfx_preset(bpy.types.Operator):
+    """Apply a 2DFX light preset to the active 2DFX object"""
+    bl_idname = "gtatools.apply_2dfx_preset"
+    bl_label = "Apply 2DFX Preset"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        obj = context.active_object
+        if not obj or obj.type != 'EMPTY':
+            self.report({'WARNING'}, "No 2DFX object selected")
+            return {'CANCELLED'}
+        inu = obj.inu
+        preset_key = _PRESET_MAP.get(inu.preset_2dfx, 'Default')
+        p = _2DFX_PRESETS[preset_key]
+
+        inu.color_2dfx = (p['color'][0] / 255.0, p['color'][1] / 255.0,
+                          p['color'][2] / 255.0, p['color'][3] / 255.0)
+        obj['2dfx_corona_size'] = p['corona_size']
+        obj['2dfx_corona_far_clip'] = p['corona_far_clip']
+        obj['2dfx_pointlight_range'] = p['pointlight_range']
+        obj['2dfx_corona_enable_reflection'] = p['corona_enable_reflection']
+        obj['2dfx_shadow_size'] = p['shadow_size']
+        obj['2dfx_shadow_z_distance'] = p['shadow_z_distance']
+        obj['2dfx_shadow_color_multiplier'] = p['shadow_color_multiplier']
+        obj['2dfx_flags1'] = p['flags1']
+        obj['2dfx_flags2'] = p['flags2']
+        # Set EnumProperty values
+        inu.corona_tex_2dfx = p['corona_tex']
+        inu.shadow_tex_2dfx = p['shadow_tex']
+        inu.show_mode_2dfx = str(p['corona_show_mode'])
+        inu.flare_type_2dfx = str(p['corona_flare_type'])
+
+        self.report({'INFO'}, f"Preset '{preset_key}' applied")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_create_2dfx(bpy.types.Operator):
+    """Create a 2DFX effect Empty with default properties"""
+    bl_idname = "gtatools.create_2dfx"
+    bl_label = "Create 2DFX Effect"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    effect_type: EnumProperty(
+        items=[
+            ('LIGHT', 'Light', 'Street light / corona'),
+            ('PARTICLE', 'Particle', 'Particle effect'),
+            ('PED_ATTRACTOR', 'Ped Attractor', 'Ped attractor point'),
+            ('SUN_GLARE', 'Sun Glare', 'Sun glare on surface'),
+        ],
+        default='LIGHT',
+    )
+
+    def execute(self, context):
+        cursor_loc = context.scene.cursor.location
+
+        display_map = {
+            'LIGHT': ('PLAIN_AXES', 0.3),
+            'PARTICLE': ('CIRCLE', 0.2),
+            'PED_ATTRACTOR': ('CUBE', 0.15),
+            'SUN_GLARE': ('SPHERE', 0.1),
+        }
+        display_type, display_size = display_map[self.effect_type]
+
+        name = f"2dfx_{self.effect_type.lower()}"
+        obj = bpy.data.objects.new(name, None)
+        obj.empty_display_type = display_type
+        obj.empty_display_size = display_size
+        obj.location = cursor_loc
+
+        obj.inu.type = '2DFX'
+        obj.inu.effect_2dfx = self.effect_type
+
+        # Создаём дефолтные custom properties
+        if self.effect_type == 'LIGHT':
+            obj.inu.color_2dfx = (1.0, 1.0, 1.0, 1.0)  # white
+            obj['2dfx_corona_far_clip'] = 100.0
+            obj['2dfx_pointlight_range'] = 18.0
+            obj['2dfx_corona_size'] = 1.0
+            obj['2dfx_shadow_size'] = 8.0
+            obj['2dfx_corona_enable_reflection'] = 0
+            obj['2dfx_shadow_color_multiplier'] = 40
+            obj['2dfx_flags1'] = 96  # AT_DAY + AT_NIGHT
+            obj['2dfx_shadow_z_distance'] = 0
+            obj['2dfx_flags2'] = 0
+            # Set display precision for float properties
+            for key in ('2dfx_corona_far_clip', '2dfx_pointlight_range',
+                        '2dfx_corona_size', '2dfx_shadow_size'):
+                ui = obj.id_properties_ui(key)
+                ui.update(precision=1)
+        elif self.effect_type == 'PARTICLE':
+            obj['2dfx_effect_name'] = ""
+        elif self.effect_type == 'PED_ATTRACTOR':
+            obj['2dfx_attractor_type'] = 0
+            obj['2dfx_rotation_matrix'] = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+            obj['2dfx_external_script'] = ""
+            obj['2dfx_ped_probability'] = 0
+
+        # Link to dedicated 2DFX collection (auto-create if missing)
+        col_name = "2DFX"
+        if col_name in bpy.data.collections:
+            fx_col = bpy.data.collections[col_name]
+        else:
+            fx_col = bpy.data.collections.new(col_name)
+            context.scene.collection.children.link(fx_col)
+        fx_col.objects.link(obj)
+
+        # Визуальный превью для Light
+        if self.effect_type == 'LIGHT':
+            from .ops.fx_preview import create_light_preview
+            create_light_preview(obj)
+
+        bpy.ops.object.select_all(action='DESELECT')
+        obj.select_set(True)
+        context.view_layer.objects.active = obj
+
+        self.report({'INFO'}, f"2DFX {self.effect_type} created")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_refresh_2dfx_preview(bpy.types.Operator):
+    """Recreate visual preview (light + corona + shadow) for selected 2DFX"""
+    bl_idname = "gtatools.refresh_2dfx_preview"
+    bl_label = "Refresh Preview"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj and obj.type == 'EMPTY'
+                and getattr(obj, 'inu', None)
+                and obj.inu.type == '2DFX'
+                and obj.inu.effect_2dfx == 'LIGHT')
+
+    def execute(self, context):
+        from .ops.fx_preview import update_light_preview
+        update_light_preview(context.active_object)
+        self.report({'INFO'}, "2DFX preview updated")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_remove_2dfx_preview(bpy.types.Operator):
+    """Remove visual preview children from selected 2DFX"""
+    bl_idname = "gtatools.remove_2dfx_preview"
+    bl_label = "Remove Preview"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj and obj.type == 'EMPTY'
+                and getattr(obj, 'inu', None)
+                and obj.inu.type == '2DFX')
+
+    def execute(self, context):
+        from .ops.fx_preview import remove_preview_children
+        remove_preview_children(context.active_object)
+        self.report({'INFO'}, "2DFX preview removed")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_attach_2dfx(bpy.types.Operator):
+    """Attach 2DFX to a mesh model (make it a child)"""
+    bl_idname = "gtatools.attach_2dfx"
+    bl_label = "Attach to Model"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj and obj.type == 'EMPTY'
+                and getattr(obj, 'inu', None)
+                and obj.inu.type == '2DFX')
+
+    def execute(self, context):
+        fx_obj = context.active_object
+        # Find a selected mesh to attach to
+        mesh_obj = None
+        for obj in context.selected_objects:
+            if obj.type == 'MESH' and obj != fx_obj:
+                mesh_obj = obj
+                break
+        if not mesh_obj:
+            self.report({'WARNING'}, "Select a mesh object together with the 2DFX")
+            return {'CANCELLED'}
+        # Keep world position when parenting
+        fx_obj.parent = mesh_obj
+        fx_obj.matrix_parent_inverse = mesh_obj.matrix_world.inverted()
+        self.report({'INFO'}, f"2DFX attached to '{mesh_obj.name}'")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_detach_2dfx(bpy.types.Operator):
+    """Detach 2DFX from its parent model"""
+    bl_idname = "gtatools.detach_2dfx"
+    bl_label = "Detach from Model"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj and obj.type == 'EMPTY'
+                and getattr(obj, 'inu', None)
+                and obj.inu.type == '2DFX'
+                and obj.parent is not None)
+
+    def execute(self, context):
+        fx_obj = context.active_object
+        parent_name = fx_obj.parent.name
+        # Keep world position when unparenting
+        world_matrix = fx_obj.matrix_world.copy()
+        fx_obj.parent = None
+        fx_obj.matrix_world = world_matrix
+        self.report({'INFO'}, f"2DFX detached from '{parent_name}'")
+        return {'FINISHED'}
+
+
+class GTATOOLS_PT_2dfx_panel(bpy.types.Panel):
+    """2DFX Effects Properties"""
+    bl_label = "2DFX Effects"
+    bl_idname = "GTATOOLS_PT_2dfx_panel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'GTA Tools'
+    bl_parent_id = "GTATOOLS_PT_main_panel"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def _is_2dfx(self, context):
+        obj = context.active_object
+        return (obj and obj.type == 'EMPTY'
+                and getattr(obj, 'inu', None)
+                and obj.inu.type == '2DFX')
+
+    def draw_header(self, context):
+        if self._is_2dfx(context):
+            self.layout.label(text="", icon='CHECKMARK')
+
+    def draw(self, context):
+        layout = self.layout
+        obj = context.active_object
+        is_active = self._is_2dfx(context)
+
+        # ── Кнопки создания (видны всегда) ──
+        box = layout.box()
+        box.label(text="Create Effect:", icon='ADD')
+        row = box.row(align=True)
+        op = row.operator("gtatools.create_2dfx", text="Light", icon='LIGHT_POINT')
+        op.effect_type = 'LIGHT'
+        op = row.operator("gtatools.create_2dfx", text="Particle", icon='PARTICLES')
+        op.effect_type = 'PARTICLE'
+        row = box.row(align=True)
+        op = row.operator("gtatools.create_2dfx", text="Ped Attractor", icon='COMMUNITY')
+        op.effect_type = 'PED_ATTRACTOR'
+        op = row.operator("gtatools.create_2dfx", text="Sun Glare", icon='LIGHT_SUN')
+        op.effect_type = 'SUN_GLARE'
+
+        # ── Статус: счётчик 2DFX в сцене ──
+        fx_count = sum(1 for o in context.scene.objects
+                       if o.type == 'EMPTY' and getattr(o, 'inu', None)
+                       and o.inu.type == '2DFX')
+        layout.label(text=f"2DFX objects in scene: {fx_count}", icon='INFO')
+
+        # ── Если не выбран 2DFX — показываем подсказку ──
+        if not is_active:
+            layout.label(text="Select a 2DFX Empty to edit", icon='RESTRICT_SELECT_ON')
+            return
+
+        # ── Активный 2DFX — зелёная галка в заголовке, свойства ниже ──
+        layout.separator()
+
+        # Обводка-box для активного эффекта
+        main_box = layout.box()
+        header_row = main_box.row()
+        header_row.label(text=f"Active: {obj.name}", icon='CHECKMARK')
+
+        settings = obj.inu
+        main_box.prop(settings, "effect_2dfx", text="Effect Type")
+
+        # Attach/Detach buttons
+        attach_box = main_box.box()
+        if obj.parent and obj.parent.type == 'MESH':
+            row_a = attach_box.row(align=True)
+            row_a.label(text=f"Model: {obj.parent.name}", icon='LINKED')
+            row_a.operator("gtatools.detach_2dfx", text="", icon='X')
+        else:
+            attach_box.operator("gtatools.attach_2dfx", text="Attach to Model", icon='LINK_BLEND')
+            attach_box.label(text="Select mesh + 2DFX, then click", icon='INFO')
+
+        effect = settings.effect_2dfx
+
+        # Preview buttons
+        if effect == 'LIGHT':
+            row = main_box.row(align=True)
+            row.operator("gtatools.refresh_2dfx_preview", text="Refresh Preview", icon='FILE_REFRESH')
+            row.operator("gtatools.remove_2dfx_preview", text="Remove Preview", icon='X')
+
+        if effect == 'LIGHT':
+            # Presets
+            box_p = main_box.box()
+            box_p.label(text="Presets:", icon='PRESET')
+            row_p = box_p.row(align=True)
+            row_p.prop(settings, "preset_2dfx", text="")
+            row_p.operator("gtatools.apply_2dfx_preset", text="Apply", icon='CHECKMARK')
+
+            # Color
+            box = main_box.box()
+            box.label(text="Light Properties:", icon='LIGHT_POINT')
+            box.prop(settings, "color_2dfx", text="Color")
+
+            # Corona
+            col = box.column(align=True)
+            col.prop(obj, '["2dfx_corona_size"]', text="Corona Size")
+            col.prop(obj, '["2dfx_corona_far_clip"]', text="Draw Distance")
+            col.prop(obj, '["2dfx_pointlight_range"]', text="Light Range")
+            col.label(text="Corona Name:")
+            col.prop(settings, "corona_tex_2dfx", text="")
+
+            # Show Mode / Flare / Reflection
+            box2 = main_box.box()
+            col2 = box2.column(align=True)
+            col2.label(text="Show Mode:")
+            col2.prop(settings, "show_mode_2dfx", text="")
+            col2.label(text="Flare Type:")
+            col2.prop(settings, "flare_type_2dfx", text="")
+            col2.prop(obj, '["2dfx_corona_enable_reflection"]', text="Corona Reflection")
+
+            # Shadow
+            box3 = main_box.box()
+            col3 = box3.column(align=True)
+            col3.prop(obj, '["2dfx_shadow_size"]', text="Shadow Size")
+            col3.prop(obj, '["2dfx_shadow_z_distance"]', text="Shadow Distance")
+            col3.prop(obj, '["2dfx_shadow_color_multiplier"]', text="Shadow Multiplier")
+            col3.label(text="Shadow Name:")
+            col3.prop(settings, "shadow_tex_2dfx", text="")
+
+            # Flags
+            box4 = main_box.box()
+            row4 = box4.row(align=True)
+            row4.prop(obj, '["2dfx_flags1"]', text="Flags 1")
+            row4.prop(obj, '["2dfx_flags2"]', text="Flags 2")
+
+            # View Vector
+            if '2dfx_look_direction' in obj:
+                box5 = main_box.box()
+                box5.label(text="View Vector:", icon='EMPTY_ARROWS')
+                box5.prop(obj, '["2dfx_look_direction"]', text="")
+
+
+        elif effect == 'PARTICLE':
+            box = main_box.box()
+            box.label(text="Particle Properties:", icon='PARTICLES')
+            if '2dfx_effect_name' in obj:
+                box.prop(obj, '["2dfx_effect_name"]', text="Effect Name")
+
+        elif effect == 'PED_ATTRACTOR':
+            box = main_box.box()
+            box.label(text="Ped Attractor:", icon='COMMUNITY')
+            if '2dfx_attractor_type' in obj:
+                box.prop(obj, '["2dfx_attractor_type"]', text="Attractor Type")
+            if '2dfx_rotation_matrix' in obj:
+                box.prop(obj, '["2dfx_rotation_matrix"]', text="Rotation Matrix")
+            if '2dfx_external_script' in obj:
+                box.prop(obj, '["2dfx_external_script"]', text="External Script")
+            if '2dfx_ped_probability' in obj:
+                box.prop(obj, '["2dfx_ped_probability"]', text="Ped Probability")
+
+        elif effect == 'SUN_GLARE':
+            box = main_box.box()
+            box.label(text="Sun Glare", icon='LIGHT_SUN')
+            box.label(text="Position only (no extra data)")
+
+
 class GTATOOLS_OT_set_col_surface(bpy.types.Operator):
     """Assign GTA SA surface type to material for COL collision"""
     bl_idname = "gtatools.set_col_surface"
@@ -7315,6 +7908,12 @@ classes = (
     GTATOOLS_PT_export_panel,
     GTATOOLS_PT_import_panel,
     GTATOOLS_PT_dff_flags_panel,
+    GTATOOLS_OT_apply_2dfx_preset,
+    GTATOOLS_OT_create_2dfx,
+    GTATOOLS_OT_attach_2dfx,
+    GTATOOLS_OT_detach_2dfx,
+    GTATOOLS_OT_refresh_2dfx_preview,
+    GTATOOLS_OT_remove_2dfx_preview,
     GTATOOLS_OT_set_col_surface,
     GTATOOLS_OT_col_surface_menu,
     GTATOOLS_PT_col_material_panel,
@@ -7325,6 +7924,7 @@ classes = (
     GTATOOLS_OT_bake_col_light,
     GTATOOLS_OT_clear_col_light_mats,
     GTATOOLS_PT_prelight_col_panel,
+    GTATOOLS_PT_2dfx_panel,
     GTATOOLS_PT_vertex_paint_panel,
     GTATOOLS_PT_lightmap_panel,
     GTATOOLS_PT_uv_tools_panel,
@@ -7606,10 +8206,71 @@ def register():
     bpy.types.TOPBAR_MT_file_export.append(menu_func_export)
     bpy.types.TOPBAR_MT_file_import.append(menu_func_import)
 
+    # 2DFX real-time preview handler
+    bpy.app.handlers.depsgraph_update_post.append(_on_depsgraph_update_2dfx)
+
+    # 2DFX billboard rotation timer — start now and restart on file load
+    from .ops.fx_preview import start_billboard_timer
+    start_billboard_timer()
+    bpy.app.handlers.load_post.append(_on_file_load_restart_timer)
+
     print("[GTA Tools Panel] Addon registered!")
 
 
+@persistent
+def _on_file_load_restart_timer(dummy):
+    """Restart billboard timer after loading a new .blend file."""
+    print("[2DFX] load_post handler fired — scheduling timer restart in 1s...")
+    def _delayed_start():
+        print("[2DFX] Delayed start — restarting billboard timer now")
+        from .ops.fx_preview import start_billboard_timer
+        start_billboard_timer()
+        return None
+    bpy.app.timers.register(_delayed_start, first_interval=1.0)
+
+
+_2dfx_sync_busy = False
+
+@persistent
+def _on_depsgraph_update_2dfx(scene, depsgraph):
+    """Auto-sync 2DFX preview when properties change in UI."""
+    global _2dfx_sync_busy
+    if _2dfx_sync_busy:
+        return
+    obj = bpy.context.active_object
+    if not obj or obj.type != 'EMPTY':
+        return
+    inu = getattr(obj, 'inu', None)
+    if not inu or inu.type != '2DFX' or inu.effect_2dfx != 'LIGHT':
+        return
+    # Only run if this object has preview children
+    has_children = any(
+        getattr(c, 'inu', None) and c.inu.type == 'NON'
+        for c in obj.children
+    )
+    if not has_children:
+        return
+    _2dfx_sync_busy = True
+    try:
+        from .ops.fx_preview import sync_preview_from_props
+        sync_preview_from_props(obj)
+    except Exception:
+        pass
+    finally:
+        _2dfx_sync_busy = False
+
+
 def unregister():
+    # 2DFX billboard timer
+    from .ops.fx_preview import stop_billboard_timer
+    stop_billboard_timer()
+
+    # 2DFX handlers
+    if _on_depsgraph_update_2dfx in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.remove(_on_depsgraph_update_2dfx)
+    if _on_file_load_restart_timer in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_on_file_load_restart_timer)
+
     # File > Export / Import menus
     bpy.types.TOPBAR_MT_file_export.remove(menu_func_export)
     bpy.types.TOPBAR_MT_file_import.remove(menu_func_import)
