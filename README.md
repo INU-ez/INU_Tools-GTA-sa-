@@ -70,6 +70,13 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 > - ✅ Show Mode — режимы отображения (Default, Random Flashing, Flash Rain, Only Rain, No Rain, Flash 5)
 > - ✅ Экспорт 2DFX в DFF (RW Light chunk + 2DFX PLG) — совместимость с MTA SA / GTA SA
 > - ✅ Визуализация всех эффектов и их редактирование в реальном времени
+>
+> <details>
+> <summary><b>Tutorial .gif</b></summary>
+>
+> ![Itera_Inu_tools](gif/2DFX.gif)
+>
+> </details>
 
 </details>
 
