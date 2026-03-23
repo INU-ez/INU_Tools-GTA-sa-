@@ -41,6 +41,7 @@ def _collect_mesh(obj, model: ColModel):
     bm = bmesh.new()
     try:
         bm.from_mesh(mesh)
+        bm.transform(obj.matrix_world)
         bmesh.ops.triangulate(bm, faces=bm.faces[:])
         bm.verts.index_update()
 
@@ -58,11 +59,11 @@ def _collect_mesh(obj, model: ColModel):
                 mat = obj.data.materials[face.material_index]
                 surface = _get_surface_from_material(mat)
 
-            # Vertex indices (reversed winding for correct normals in GTA)
+            # Swap verts[1] and verts[2] for GTA winding order
             verts = list(face.verts)
-            a = verts[2].index + vert_offset
-            b = verts[1].index + vert_offset
-            c = verts[0].index + vert_offset
+            a = verts[0].index + vert_offset
+            b = verts[2].index + vert_offset
+            c = verts[1].index + vert_offset
 
             model.faces.append(ColFace(a, b, c, surface))
     finally:
@@ -75,6 +76,7 @@ def _collect_shadow_mesh(obj, model: ColModel):
     bm = bmesh.new()
     try:
         bm.from_mesh(mesh)
+        bm.transform(obj.matrix_world)
         bmesh.ops.triangulate(bm, faces=bm.faces[:])
         bm.verts.index_update()
 
@@ -89,10 +91,11 @@ def _collect_shadow_mesh(obj, model: ColModel):
                 mat = obj.data.materials[face.material_index]
                 surface = _get_surface_from_material(mat)
 
+            # Swap verts[1] and verts[2] for GTA winding order
             verts = list(face.verts)
-            a = verts[2].index + vert_offset
-            b = verts[1].index + vert_offset
-            c = verts[0].index + vert_offset
+            a = verts[0].index + vert_offset
+            b = verts[2].index + vert_offset
+            c = verts[1].index + vert_offset
 
             model.shadow_faces.append(ColFace(a, b, c, surface))
     finally:

@@ -452,9 +452,6 @@ def _write_col2_body(w: BinaryWriter, model: ColModel):
     tri_planes_off = 0  # Not implemented
 
     # Shadow mesh
-    shadow_verts_off = 0
-    shadow_faces_off = 0
-
     has_shadow = model.version >= 3 and len(model.shadow_faces) > 0
     flags = 0
     flags |= 2 if (model.spheres or model.boxes or model.faces) else 0
@@ -468,6 +465,10 @@ def _write_col2_body(w: BinaryWriter, model: ColModel):
         shadow_faces_off = offset_base + header_size + len(data)
         for f in model.shadow_faces:
             _write_face_v2(data, f)
+    else:
+        # Point to end of data (like DragonFF) — zero offsets can corrupt collision
+        shadow_verts_off = offset_base + header_size + len(data)
+        shadow_faces_off = offset_base + header_size + len(data)
 
     # Now write the header
     w.write('<HHHBxI',

@@ -780,4 +780,12 @@ def export_dff(filepath: str, objects, version: int = GTA_SA_VERSION):
                 )
                 clump.lights.append(rw_light)
 
+    # Embed collision data in DFF (CHUNK_COLLISION_MODEL)
+    col_objects = [obj for obj in objects if obj.type == 'MESH'
+                   and getattr(getattr(obj, 'inu', None), 'type', '') in ('COL', 'SHA')]
+    if col_objects:
+        from .col_export import export_col_bytes
+        model_name = os.path.splitext(os.path.basename(filepath))[0]
+        clump.collision_data = export_col_bytes(col_objects, version=3, model_name=model_name)
+
     write_dff_file(filepath, clump)
