@@ -29,7 +29,9 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 <details>
 <summary><b>Support Itera Tools 3</b></summary>
 
-> - ✅ Функция сохранения материалов на модели для Itera
+> - ✅ Применение Itera материалов (Vertex Lit Linear / Quickstart) из панели аддона
+> - ✅ Удаление Itera материалов и восстановление оригинальных
+> - ✅ Автопоиск библиотеки Itera Tools 3 в Asset Libraries
 >
 > <details>
 > <summary><b>Tutorial .gif</b></summary>
@@ -52,6 +54,7 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 > - ✅ Day/Night — раздельные атрибуты цвета для дня и ночи
 > - ✅ Анализ и предпросмотр вертексных цветов
 > - ✅ Prelight COL — конвертация vertex colors в COL Day/Night Light (авторазбиение материалов по яркости)
+> - ✅ Превью COL Light — визуализация освещения на полигонах с настройками Край/Контраст и числовыми значениями
 >
 > <details>
 > <summary><b>Tutorial .gif</b></summary>
