@@ -104,309 +104,28 @@ def get_locale():
     return 'en'
 
 # Translation dictionary: Russian -> English
-TRANSLATIONS = {
-    # bl_info
-    "Набор инструментов для работы с GTA SA моделями. Requires DragonFF addon":
-        "Toolset for GTA SA models. Requires DragonFF addon",
-
-    # Property descriptions
-    "Выделить найденные проблемные элементы": "Select found problem elements",
-    "Количество колонок в сетке текстуры": "Number of columns in texture grid",
-    "Количество рядов в сетке текстуры": "Number of rows in texture grid",
-    "Позиция UV в ячейке": "UV position in cell",
-    "Полигоны с пересекающимися UV перемещаются вместе": "Polygons with overlapping UVs move together",
-    "Путь к папке NVIDIA Texture Tools (для GPU сжатия)": "Path to NVIDIA Texture Tools folder (for GPU compression)",
-    "Использовать GPU (NVTT) для сжатия текстур": "Use GPU (NVTT) for texture compression",
-    "Показать настройки NVTT": "Show NVTT settings",
-    "Путь к папке с системными текстурами GTA": "Path to GTA system textures folder",
-    "Путь к папке где находится .blend файл": "Path to folder where .blend file is located",
-    "Не экспортировать TXD при Export All": "Do not export TXD with Export All",
-    "Пропустить TXD": "Skip TXD",
-
-    # Enum items (label, description)
-    "Центр": "Center",
-    "По центру ячейки": "Center of cell",
-    "Сверху слева": "Top Left",
-    "В верхнем левом углу": "In top left corner",
-    "Сверху": "Top",
-    "Сверху по центру": "Top center",
-    "Сверху справа": "Top Right",
-    "В верхнем правом углу": "In top right corner",
-    "Слева": "Left",
-    "Слева по центру": "Left center",
-    "Справа": "Right",
-    "Справа по центру": "Right center",
-    "Снизу слева": "Bottom Left",
-    "В нижнем левом углу": "In bottom left corner",
-    "Снизу": "Bottom",
-    "Снизу по центру": "Bottom center",
-    "Снизу справа": "Bottom Right",
-    "В нижнем правом углу": "In bottom right corner",
-
-    # UI text
-    "Пропустить TXD": "Skip TXD",
-    "Статус: Готов": "Status: Ready",
-    "Статус: Не найден": "Status: Not found",
-    "Папка .blend:": ".blend Folder:",
-    "Загрузить текстуры": "Load Textures",
-    "Очистка материалов": "Cleanup Materials",
-    "Проверить материалы": "Check Materials",
-    "Очистить всё": "Clear All",
-    "Отменить": "Undo",
-    "Колонки": "Columns",
-    "Ряды": "Rows",
-    "Скрыть сетку": "Hide Grid",
-    "Показать сетку": "Show Grid",
-    "Позиция": "Position",
-    "Связать полигоны": "Link Polygons",
-    "Рандом": "Random",
-    "Привязать": "Snap",
-
-    # Report messages
-    "Выберите меш объект!": "Select a mesh object!",
-    "Не меш объект": "Not a mesh object",
-    "Геометрия в порядке!": "Geometry is OK!",
-    "висящих вершин": "loose vertices",
-    "висящих рёбер": "loose edges",
-    "N-gons не найдены!": "No N-gons found!",
-    "N-gons (5+ вершин)": "N-gons (5+ vertices)",
-    "Нечего удалять - геометрия чистая!": "Nothing to delete - geometry is clean!",
-    "Удалено:": "Deleted:",
-    "вершин,": "vertices,",
-    "рёбер": "edges",
-    "Выделите модели для экспорта!": "Select models for export!",
-    "Не удалось определить имя модели!": "Could not determine model name!",
-    "Экспортировано:": "Exported:",
-    "Ошибки:": "Errors:",
-    "Найдено:": "Found:",
-    "Среди выделенных не найдено DFF/LOD/COL моделей": "No DFF/LOD/COL models found among selected",
-    "Укажите хотя бы один путь к папке с текстурами!": "Specify at least one path to textures folder!",
-    "Выберите материал в списке!": "Select a material in the list!",
-    "Выберите корректный материал!": "Select a valid material!",
-    "Не удалось загрузить": "Failed to load",
-    "Загружена текстура:": "Texture loaded:",
-    "Текстура уже подключена:": "Texture already connected:",
-    "Текстура не найдена:": "Texture not found:",
-    "Путь установлен": "Path set",
-    "Сначала сохраните .blend файл!": "Save .blend file first!",
-    "Файл не указан!": "File not specified!",
-    "Неподдерживаемый формат:": "Unsupported format:",
-    "Ошибка загрузки:": "Loading error:",
-    "Создан материал:": "Material created:",
-    "Выделите меш объекты!": "Select mesh objects!",
-    "Объектов:": "Objects:",
-    "всего материалов:": "total materials:",
-    "превышен лимит:": "limit exceeded:",
-    "Объединено:": "Merged:",
-    "слотов, удалено:": "slots, removed:",
-    "дубликатов": "duplicates",
-    "Дубликаты материалов не найдены": "No duplicate materials found",
-    "Сортировка материалов": "Sort Materials",
-    "Материалы уже отсортированы": "Materials already sorted",
-    "Отсортировано материалов:": "Materials sorted:",
-    "Сохраните .blend файл сначала!": "Save .blend file first!",
-    "Текстуры с приставкой LP_ не найдены в папке:": "Textures with LP_ prefix not found in folder:",
-    "Не удалось применить лайтмап - нет подходящих материалов": "Could not apply lightmap - no suitable materials",
-    "Настройки сброшены по умолчанию": "Settings reset to default",
-    "Код очищен": "Code cleared",
-    "Сетка UV включена": "UV grid enabled",
-    "Сетка UV выключена": "UV grid disabled",
-    "Укажите количество колонок и рядов!": "Specify number of columns and rows!",
-    "Выделите полигоны!": "Select polygons!",
-    "Рандомизировано:": "Randomized:",
-    "групп": "groups",
-    "полигонов": "polygons",
-    "Привязано:": "Snapped:",
-    "Выберите меш!": "Select a mesh!",
-    "Нет vertex colors!": "No vertex colors!",
-    "Выделено": "Selected",
-    "полигонов": "polygons",
-    "меш(ей)": "mesh(es)",
-
-    # Function docstrings (for bl_description via __doc__)
-    "Проверить геометрию на висящие вершины и рёбра": "Check geometry for loose vertices and edges",
-    "Проверить геометрию на N-gons (полигоны с 5+ вершинами)": "Check geometry for N-gons (polygons with 5+ vertices)",
-    "Удалить висящие вершины и рёбра": "Delete loose vertices and edges",
-    "Экспортировать текстуры в TXD архив": "Export textures to TXD archive",
-    "Экспортировать DFF модель": "Export DFF model",
-    "Экспортировать COL модель коллизии": "Export COL collision model",
-    "Экспорт всех выделенных моделей (DFF + COL + LOD + TXD)": "Export all selected models (DFF + COL + LOD + TXD)",
-    "Определить модели DFF, LOD, COL среди выделенных": "Detect DFF, LOD, COL models among selected",
-    "Применить GTA SA Prelight к выделенному объекту": "Apply GTA SA Prelight to selected object",
-    "Усреднить vertex colors для компланарных граней": "Average vertex colors for coplanar faces",
-    "Сгенерировать код lightmap для выделенного объекта": "Generate lightmap code for selected object",
-    "Копировать результат в буфер обмена": "Copy result to clipboard",
-    "Очистить сгенерированный код": "Clear generated code",
-    "Создать 8 источников света для запекания prelight вокруг объекта": "Create 8 lights for prelight baking around object",
-    "Удалить все источники света prelight": "Remove all prelight lights",
-    "Запечь освещение от Point источников в vertex colors": "Bake lighting from Point sources to vertex colors",
-    "Быстрое запекание vertex colors от Point источников (без теней)": "Quick bake vertex colors from Point sources (no shadows)",
-    "Сбросить настройки запекания по умолчанию": "Reset bake settings to default",
-    "Сбросить настройки Scatter Light по умолчанию": "Reset Scatter Light settings to default",
-    "Анализировать vertex colors выделенного объекта": "Analyze vertex colors of selected object",
-    "Применить смещение яркости (V) к vertex colors": "Apply brightness offset (V) to vertex colors",
-    "Загрузить Lightmap из папки с .blend файлом (текстуры с приставкой LP_)": "Load Lightmap from .blend folder (textures with LP_ prefix)",
-    "Удалить Lightmap из материалов объекта": "Remove Lightmap from object materials",
-    "Создать Day и Night color attributes": "Create Day and Night color attributes",
-    "Переключить превью prelight - показать vertex colors с текстурами": "Toggle prelight preview - show vertex colors with textures",
-    "Кликните на полигон чтобы взять его цвет": "Click on polygon to pick its color",
-    "Залить выделенные грани цветом": "Fill selected faces with color",
-    "Восстановить цвета, изменённые заливкой": "Restore colors changed by fill",
-    "Удалить цвет из списка и восстановить оригинальные цвета": "Delete color from list and restore original colors",
-    "Выделить полигоны с этим цветом": "Select polygons with this color",
-    "Удалить scatter уровень (пересчитать цвета)": "Delete scatter level (recalculate colors)",
-    "Очистить все scatter уровни цвета": "Clear all scatter levels of color",
-    "Рассеять свет от выделенных граней к соседним": "Scatter light from selected faces to neighbors",
-    "Переключить режим выделения граней в Vertex Paint": "Toggle face selection mode in Vertex Paint",
-    "Переключить в Edit Mode для выделения граней": "Switch to Edit Mode for face selection",
-    "Переключить в Vertex Paint Mode": "Switch to Vertex Paint Mode",
-    "Выбрать color attribute и обновить превью prelight": "Select color attribute and update prelight preview",
-    "Добавить новый color attribute": "Add new color attribute",
-    "Удалить активный color attribute": "Delete active color attribute",
-    "Создать color attribute": "Create color attribute",
-    "Удалить color attribute по имени": "Delete color attribute by name",
-    "Загрузить текстуры по именам материалов из указанных папок": "Load textures by material names from specified folders",
-    "Установить путь к папке .blend файла": "Set path to .blend file folder",
-    "Создать материал из перетаскиваемой текстуры": "Create material from dropped texture",
-    "Проверить количество материалов на выделенных объектах": "Check material count on selected objects",
-    "Объединить дубликаты материалов (.001, .002, и т.д.) с оригиналами": "Merge duplicate materials (.001, .002, etc.) with originals",
-    "Показать/скрыть сетку на UV": "Show/hide grid on UV",
-    "Рандомно распределить UV выделенных полигонов по сетке (для окон, вариаций)": "Randomly distribute UV of selected polygons on grid (for windows, variations)",
-    "Привязать UV выделенных полигонов к ближайшей ячейке сетки": "Snap UV of selected polygons to nearest grid cell",
-
-    # Panel docstrings
-    "Главная панель GTA Tools": "GTA Tools main panel",
-    "Панель экспорта GTA моделей": "GTA models export panel",
-    "Панель INU Tools в Properties > Scene": "INU Tools panel in Properties > Scene",
-    "Панель Prelight": "Prelight panel",
-    "Расширенные настройки запекания": "Advanced bake settings",
-    "Панель инструментов Vertex Paint": "Vertex Paint tools panel",
-    "Панель генератора Lightmap": "Lightmap generator panel",
-    "Панель UV инструментов GTA Tools": "GTA Tools UV panel",
-
-    # Other docstrings
-    "Проверить доступность NVIDIA Texture Tools": "Check NVIDIA Texture Tools availability",
-    "Папка NVTT не найдена": "NVTT folder not found",
-    "Сжать текстуру через NVIDIA Texture Tools (GPU)": "Compress texture via NVIDIA Texture Tools (GPU)",
-    "Проверить, подключена ли нода к чему-либо (любой выход)": "Check if node is connected to anything (any output)",
-    "Определить тип модели по суффиксу: LOD, COL, DFF в конце названия": "Determine model type by suffix: LOD, COL, DFF at end of name",
-    "Найти связанные модели (DFF, LOD, COL) по базовому имени": "Find related models (DFF, LOD, COL) by base name",
-    "Найти модели DFF, LOD, COL только среди выделенных объектов": "Find DFF, LOD, COL models only among selected objects",
-    "Получить базовое имя из выделенных моделей": "Get base name from selected models",
-    "Сохранить базовые цвета если ещё не сохранены": "Save base colors if not saved yet",
-    "Пересчитать цвет одного loop: ИТОГ = (База ИЛИ Fill) + Σ Scatter": "Recalculate color of one loop: RESULT = (Base OR Fill) + Σ Scatter",
-    "Пересчитать цвета для указанных loops (или всех если не указано)": "Recalculate colors for specified loops (or all if not specified)",
-    "Добавить Fill слой для указанных loops": "Add Fill layer for specified loops",
-    "Получить список уровней scatter для цвета": "Get list of scatter levels for color",
-    "Удалить Scatter слой и пересчитать цвета": "Delete Scatter layer and recalculate colors",
-    "Удалить все Scatter слои для цвета и пересчитать": "Delete all Scatter layers for color and recalculate",
-    "Удалить Fill цвет и все его Scatter слои, пересчитать": "Delete Fill color and all its Scatter layers, recalculate",
-    "Удалить цвет из списка по индексу": "Delete color from list by index",
-    "Получить Fill цвет выделенных полигонов": "Get Fill color of selected polygons",
-    "Проверить объект на висящие вершины и рёбра (не присоединённые к полигонам)": "Check object for loose vertices and edges (not attached to polygons)",
-    "Элемент списка цветов заливки": "Fill color list item",
-
-    # Material Backup
-    "Сохранить материалы объекта в буфер": "Save object materials to buffer",
-    "Восстановить сохранённые материалы на объект": "Restore saved materials to object",
-    "Материалы сохранены": "Materials saved",
-    "Материалы восстановлены": "Materials restored",
-    "Нет сохранённых материалов!": "No saved materials!",
-    "Материал не найден:": "Material not found:",
-
-    # Post-processing vertex colors
-    "Пост-обработка vertex colors": "Post-process vertex colors",
-    "Сгладить vertex colors между соседними вершинами": "Smooth vertex colors between neighboring vertices",
-    "Применить контраст к vertex colors": "Apply contrast to vertex colors",
-    "Применить яркость к vertex colors": "Apply brightness to vertex colors",
-    "Применить гамма-коррекцию к vertex colors": "Apply gamma correction to vertex colors",
-    "Количество итераций сглаживания": "Number of smoothing iterations",
-    "Сила сглаживания (0 = без изменений, 1 = полное усреднение)": "Smoothing factor (0 = no change, 1 = full average)",
-    "Контраст (1 = без изменений, <1 = меньше, >1 = больше)": "Contrast (1 = no change, <1 = less, >1 = more)",
-    "Яркость смещение (-1..+1)": "Brightness offset (-1..+1)",
-    "Гамма-коррекция (1 = без изменений, <1 = светлее, >1 = темнее)": "Gamma correction (1 = no change, <1 = lighter, >1 = darker)",
-    "Панель пост-обработки vertex colors": "Vertex colors post-processing panel",
-
-    # COL Flags
-    "Выберите COL меш-объект": "Select a COL mesh object",
-    "Нет материалов на объекте": "No materials on object",
-    "Тип поверхности GTA SA для коллизии": "GTA SA surface type for collision",
-    "Назначить surface ID на выбранный материал": "Assign surface ID to selected material",
-    "Surface ID назначен:": "Surface ID assigned:",
-    "COL Surface Materials:": "COL Surface Materials:",
-    "введите запрос для фильтрации": "type to filter",
-
-    # Info tooltips
-    "Текстура короны (светящийся спрайт)": "Corona texture (glowing sprite)",
-    "Текстура тени на земле под источником света": "Shadow texture on ground under light source",
-
-    "None — без pipeline\nBuilding — Day/Night vertex colors (смена освещения по времени суток)\nReflections — отражения на окнах (окна должны быть отдельной моделью)":
-        "None — no pipeline\nBuilding — Day/Night vertex colors (lighting changes by time of day)\nReflections — window reflections (windows must be a separate model)",
-
-    "DFF — модель (меш, материалы, UV)\nCOL — коллизия\nTXD — текстуры\nCheck vertex — висящие вершины и рёбра\nCheck N-gon — полигоны с 5+ вершинами\nCheck Material — лимит 50 материалов\nGPU (NVTT) — сжатие текстур на видеокарте":
-        "DFF — model (mesh, materials, UV)\nCOL — collision\nTXD — textures\nCheck vertex — loose vertices and edges\nCheck N-gon — polygons with 5+ vertices\nCheck Material — 50 material limit\nGPU (NVTT) — texture compression on GPU",
-
-    "DFF — импорт модели с мешем и материалами\nCOL — импорт коллизии\nTXD — импорт текстур\nImport TXD — автоимпорт текстур при импорте DFF":
-        "DFF — import model with mesh and materials\nCOL — import collision\nTXD — import textures\nImport TXD — auto-import textures when importing DFF",
-
-    "Light — уличные фонари, неон, corona\nParticle — дым, огонь, частицы\nPed Attractor — точки притяжения NPC (банкомат, скамейка)\nSun Glare — блик солнца на поверхности":
-        "Light — street lights, neon, corona\nParticle — smoke, fire, particles\nPed Attractor — NPC attraction points (ATM, bench)\nSun Glare — sun glare on surface",
-
-    "Color — цвет короны и света\nCorona Size — размер короны\nDraw Distance — дальность отрисовки\nLight Range — радиус точечного света":
-        "Color — corona and light color\nCorona Size — corona size\nDraw Distance — draw distance\nLight Range — point light radius",
-
-    "DEFAULT — всегда видим\nRANDOM_FLASHING — случайное мерцание\nFLASH_RAIN — мерцает в дождь\nONLY_RAIN — видим только в дождь\nNO_RAIN — не видим в дождь\nFLASH_5 — вариант мерцания 2":
-        "DEFAULT — always visible\nRANDOM_FLASHING — random flashing\nFLASH_RAIN — flashes in rain\nONLY_RAIN — visible only in rain\nNO_RAIN — not visible in rain\nFLASH_5 — flashing variant 2",
-
-    "None — без бликов линзы\nType 1/2/3 — разные стили бликов линзы":
-        "None — no lens flare\nType 1/2/3 — different lens flare styles",
-
-    "Light — динамическое освещение модели\nModulate Material Color — цвет материала влияет на модель\nExport Normals — экспорт нормалей (отключить для map объектов)":
-        "Light — dynamic lighting on model\nModulate Material Color — material color affects model\nExport Normals — export normals (disable for map objects)",
-
-    "Day — дневные вертексные цвета (prelight)\nNight — ночные вертексные цвета (требует Pipeline: Building)":
-        "Day — daytime vertex colors (prelight)\nNight — nighttime vertex colors (requires Pipeline: Building)",
-
-    "UV Map 1 — основная UV развёртка\nUV Map 2 — вторая UV (для lightmap и т.д.)\nBin Mesh PLG — совместимость с просмотрщиками DFF":
-        "UV Map 1 — primary UV map\nUV Map 2 — secondary UV (for lightmap etc.)\nBin Mesh PLG — compatibility with DFF viewers",
-
-    "Day — дневные вертексные цвета\nNight — ночные вертексные цвета\nDay/Night — создать оба атрибута\n+/- — добавить или удалить атрибут":
-        "Day — daytime vertex colors\nNight — nighttime vertex colors\nDay/Night — create both attributes\n+/- — add or remove attribute",
-
-    "V — смещение яркости vertex colors\nПоложительное значение — светлее\nОтрицательное — темнее":
-        "V — brightness offset for vertex colors\nPositive value — brighter\nNegative — darker",
-
-    "Сглаживание vertex colors между соседними вершинами\nIterations — количество проходов\nFactor — сила сглаживания (0-1)":
-        "Smooth vertex colors between neighboring vertices\nIterations — number of passes\nFactor — smoothing strength (0-1)",
-
-    "Контраст vertex colors\n1.0 — без изменений\n< 1.0 — меньше контраст\n> 1.0 — больше контраст":
-        "Vertex colors contrast\n1.0 — no change\n< 1.0 — less contrast\n> 1.0 — more contrast",
-
-    "Яркость vertex colors\n0.0 — без изменений\n> 0 — светлее\n< 0 — темнее":
-        "Vertex colors brightness\n0.0 — no change\n> 0 — brighter\n< 0 — darker",
-
-    "Гамма-коррекция vertex colors\n1.0 — без изменений\n< 1.0 — светлее (тени)\n> 1.0 — темнее (тени)":
-        "Vertex colors gamma correction\n1.0 — no change\n< 1.0 — lighter (shadows)\n> 1.0 — darker (shadows)",
-
-    "Диапазон дневного освещения для COL материалов\nMin/Max — значения от 0 до 15\nЯркость vertex colors конвертируется в этот диапазон":
-        "Day lighting range for COL materials\nMin/Max — values from 0 to 15\nVertex colors brightness is converted to this range",
-
-    "Диапазон ночного освещения для COL материалов\nMin/Max — значения от 0 до 15\nИспользует Night color attribute если есть":
-        "Night lighting range for COL materials\nMin/Max — values from 0 to 15\nUses Night color attribute if available",
-
-    "Запекание:": "Bake:",
-    "Тени": "Shadows",
-    "Запечь": "Bake",
-    "С тенями": "With Shadows",
-    "Тени — включить расчёт теней при запекании\nЗапечь — быстрое запекание без теней\nС тенями — запекание с raycast тенями (медленнее, но точнее)":
-        "Shadows — enable shadow calculation when baking\nBake — fast baking without shadows\nWith Shadows — baking with raycast shadows (slower but more accurate)",
-}
+from .locale import get_translation
 
 def T(text):
-    """Translate text based on Blender UI language"""
-    if get_locale() == 'ru':
-        return text  # Return Russian as-is
-    return TRANSLATIONS.get(text, text)  # Return English translation or original
+    """Translate text based on Blender UI language.
+    Code uses Russian strings as keys. For Russian UI — returns as-is.
+    For other languages — looks up translation in locale/<lang>.py files.
+    Falls back to English (eng.py) if current language not found.
+    """
+    locale = get_locale()
+    if locale and locale.startswith('ru'):
+        return text
+    # Try exact locale first, then fall back to English
+    tr = get_translation(locale)
+    if tr:
+        result = tr.get(text)
+        if result:
+            return result
+    # Fallback to English
+    eng = get_translation('eng')
+    if eng:
+        return eng.get(text, text)
+    return text
 
 
 # =============================================================================
@@ -431,7 +150,7 @@ def make_filter_flags():
 
 
 def check_nvtt_available(nvtt_path):
-    """Check NVIDIA Texture Tools availability"""
+    """Проверить доступность NVIDIA Texture Tools"""
     if not nvtt_path or not os.path.isdir(nvtt_path):
         return False, "Папка NVTT не найдена"
     nvcompress = os.path.join(nvtt_path, "nvcompress.exe")
@@ -441,7 +160,7 @@ def check_nvtt_available(nvtt_path):
 
 
 def compress_with_nvtt(name, image, use_alpha, nvcompress_path):
-    """Compress texture via NVIDIA Texture Tools (GPU)"""
+    """Сжать текстуру через NVIDIA Texture Tools (GPU)"""
     temp_dir = tempfile.gettempdir()
     # Используем безопасное имя файла
     safe_name = "".join(c if c.isalnum() or c in "._-" else "_" for c in name)
@@ -599,7 +318,7 @@ def check_image_has_transparent_pixels(image):
 
 
 def is_node_connected(node):
-    """Check if node is connected to anything (any output)"""
+    """Проверить, подключена ли нода к чему-либо (любой выход)"""
     for output in node.outputs:
         if output.is_linked:
             return True
@@ -1042,7 +761,7 @@ def export_txd(filepath, context, selected_only=False, use_gpu=False):
 # =============================================================================
 
 def get_model_type(obj):
-    """Determine model type by suffix: LOD, COL, DFF at end of name"""
+    """Определить тип модели по суффиксу: LOD, COL, DFF в конце названия"""
     if obj is None:
         return None, None
 
@@ -1072,7 +791,7 @@ def get_model_type(obj):
 
 
 def find_related_models(base_name):
-    """Find related models (DFF, LOD, COL) by base name"""
+    """Найти связанные модели (DFF, LOD, COL) по базовому имени"""
     models = {
         'DFF': None,
         'LOD': None,
@@ -1105,7 +824,7 @@ def find_related_models(base_name):
 
 
 def find_selected_models():
-    """Find DFF, LOD, COL models only among selected objects"""
+    """Найти модели DFF, LOD, COL только среди выделенных объектов"""
     models = {
         'DFF': None,
         'LOD': None,
@@ -1149,7 +868,7 @@ def find_all_selected_model_groups():
 
 
 def get_base_name_from_selected():
-    """Get base name from selected models"""
+    """Получить базовое имя из выделенных моделей"""
     models = find_selected_models()
 
     # Берём имя из первой найденной модели
@@ -1766,7 +1485,7 @@ def encode_uv2_to_color_16bit(obj):
 # =============================================================================
 
 def create_prelight_scene_lights(center, distance=100.0):
-    """Create 8 lights around selected object center for GTA SA prelight baking"""
+    """Создать 8 источников света для запекания prelight вокруг объекта"""
 
     # Color #BCBCBC = RGB(188, 188, 188) = (0.737, 0.737, 0.737)
     light_color = (0.737, 0.737, 0.737)
@@ -1818,7 +1537,7 @@ def create_prelight_scene_lights(center, distance=100.0):
 
 
 def remove_prelight_scene_lights():
-    """Remove all prelight scene lights"""
+    """Удалить все источники света prelight"""
     collection_name = "Prelight_Lights"
     if collection_name in bpy.data.collections:
         collection = bpy.data.collections[collection_name]
@@ -1830,7 +1549,7 @@ def remove_prelight_scene_lights():
 
 
 def bake_vertex_colors_from_lights(obj, use_shadows=True):
-    """Bake lighting from Point lights to vertex colors"""
+    """Запечь освещение от Point источников в vertex colors"""
     if obj is None or obj.type != 'MESH':
         return False, "Select a mesh object!"
 
@@ -1923,7 +1642,7 @@ def bake_vertex_colors_from_lights(obj, use_shadows=True):
 
 
 def bake_vertex_colors_simple(obj, ambient=0.05, intensity_mult=0.008, gamma=1.8, use_shadows=True):
-    """Simple vertex color baking from Point lights"""
+    """Быстрое запекание vertex colors от Point источников (без теней)"""
     if obj is None or obj.type != 'MESH':
         return False, "Select a mesh object!"
 
@@ -2059,7 +1778,7 @@ def apply_brightness_offset(obj, v_offset):
 
 
 def analyze_vertex_colors(obj):
-    """Analyze vertex colors from object to understand lighting values"""
+    """Анализировать vertex colors выделенного объекта"""
     if obj is None or obj.type != 'MESH':
         return None
 
@@ -2418,7 +2137,7 @@ def setup_prelight_preview(obj, enable=True):
 
 
 def fill_selected_faces(obj, color):
-    """Fill selected faces with a color in vertex paint mode"""
+    """Залить выделенные грани цветом в режиме vertex paint"""
     if obj is None or obj.type != 'MESH':
         return False, "Select a mesh object!"
 
@@ -2480,7 +2199,7 @@ _scatter_layers = {}
 
 
 def ensure_base_colors(obj):
-    """Save base colors if not saved yet"""
+    """Сохранить базовые цвета если ещё не сохранены"""
     if obj is None or obj.type != 'MESH':
         return False
 
@@ -2503,7 +2222,7 @@ def ensure_base_colors(obj):
 
 
 def recalculate_loop_color(obj_key, loop_idx):
-    """Recalculate color of one loop: RESULT = (Base OR Fill) + Σ Scatter"""
+    """Пересчитать цвет одного loop: ИТОГ = (База ИЛИ Fill) + Σ Scatter"""
     # Получаем базу
     if obj_key not in _base_colors or loop_idx not in _base_colors[obj_key]:
         return None
@@ -2538,7 +2257,7 @@ def recalculate_loop_color(obj_key, loop_idx):
 
 
 def recalculate_colors(obj, loop_indices=None):
-    """Recalculate colors for specified loops (or all if not specified)"""
+    """Пересчитать цвета для указанных loops (или всех если не указано)"""
     if obj is None or obj.type != 'MESH':
         return False
 
@@ -2563,7 +2282,7 @@ def recalculate_colors(obj, loop_indices=None):
 
 
 def add_fill_layer(obj, color, loop_indices):
-    """Add Fill layer for specified loops"""
+    """Добавить Fill слой для указанных loops"""
     if obj is None:
         return False
 
@@ -2626,7 +2345,7 @@ def add_scatter_layer(obj, color, deltas):
 
 
 def get_scatter_levels(obj, color):
-    """Get list of scatter levels for color"""
+    """Получить список уровней scatter для цвета"""
     if obj is None:
         return []
 
@@ -2642,7 +2361,7 @@ def get_scatter_levels(obj, color):
 
 
 def remove_scatter_layer(obj, color, level):
-    """Delete Scatter layer and recalculate colors"""
+    """Удалить Scatter слой и пересчитать цвета"""
     if obj is None:
         return False, "No object"
 
@@ -2669,7 +2388,7 @@ def remove_scatter_layer(obj, color, level):
 
 
 def clear_scatter_layers(obj, color):
-    """Delete all Scatter layers for color and recalculate"""
+    """Удалить все Scatter слои для цвета и пересчитать"""
     if obj is None:
         return False, "No object"
 
@@ -2696,7 +2415,7 @@ def clear_scatter_layers(obj, color):
 
 
 def remove_fill_color(obj, color):
-    """Delete Fill color and all its Scatter layers, recalculate"""
+    """Удалить Fill цвет и все его Scatter слои, пересчитать"""
     if obj is None:
         return False, "No object"
 
@@ -2728,7 +2447,7 @@ def remove_fill_color(obj, color):
 
 
 def remove_fill_color_by_index(obj, index):
-    """Delete color from list by index"""
+    """Удалить цвет из списка по индексу"""
     if obj is None:
         return False, "No object"
 
@@ -2749,7 +2468,7 @@ def remove_fill_color_by_index(obj, index):
 
 
 def get_selected_faces_color(obj):
-    """Get Fill color of selected polygons"""
+    """Получить Fill цвет выделенных полигонов"""
     if obj is None or obj.type != 'MESH':
         return None
 
@@ -2804,7 +2523,7 @@ def get_selected_faces_color(obj):
 
 
 def fill_selected_faces_with_backup(obj, color):
-    """Fill selected faces with a color using new layer system"""
+    """Залить выделенные грани цветом через систему слоёв"""
     if obj is None or obj.type != 'MESH':
         return False, "Select a mesh object!"
 
@@ -2859,7 +2578,7 @@ def fill_selected_faces_with_backup(obj, color):
 
 
 def restore_filled_faces(obj):
-    """Restore all colors to base (remove fill and scatter layers)"""
+    """Восстановить все цвета к базовым (удалить fill и scatter слои)"""
     if obj is None or obj.type != 'MESH':
         return False, "Select a mesh object!"
 
@@ -3079,7 +2798,7 @@ def scatter_light_from_selected(obj, intensity=1.0, falloff=2.0, iterations=3, r
 # =============================================================================
 
 def check_loose_geometry(obj):
-    """Check object for loose vertices and edges (not attached to polygons)"""
+    """Проверить объект на висящие вершины и рёбра (не присоединённые к полигонам)"""
     if obj is None or obj.type != 'MESH':
         return None, None, "Не меш объект"
 
@@ -3143,7 +2862,7 @@ class INUObjectProps(bpy.types.PropertyGroup):
         size=4,
         min=0.0, max=1.0,
         default=(1.0, 1.0, 0.784, 1.0),
-        description="Corona and light color",
+        description=T("Цвет короны и света"),
         update=_update_2dfx_preview,
     )
 
@@ -3269,32 +2988,32 @@ class INUObjectProps(bpy.types.PropertyGroup):
             ('CUSTOM', 'Custom Pipeline', 'Set a custom pipeline value'),
         ],
         name="Pipeline",
-        description="Rendering pipeline for the engine",
+        description=T("Рендер-пайплайн движка"),
     )
     custom_pipeline : StringProperty(name="Custom Pipeline")
 
     export_normals : BoolProperty(
         default=True,
-        description="Export vertex normals (disable for map objects)",
+        description=T("Экспорт нормалей вершин (отключить для map объектов)"),
     )
     export_binsplit : BoolProperty(
         default=True,
-        description="Export Bin Mesh PLG (increases compatibility with DFF viewers)",
+        description=T("Экспорт Bin Mesh PLG (совместимость с просмотрщиками DFF)"),
     )
 
-    uv_map1 : BoolProperty(default=True, description="Export first UV map")
-    uv_map2 : BoolProperty(default=True, description="Export second UV map")
-    day_cols : BoolProperty(default=True, description="Export day vertex prelight colors")
-    night_cols : BoolProperty(default=True, description="Export night vertex colors")
+    uv_map1 : BoolProperty(default=True, description=T("Экспорт первой UV карты"))
+    uv_map2 : BoolProperty(default=True, description=T("Экспорт второй UV карты"))
+    day_cols : BoolProperty(default=True, description=T("Экспорт дневных vertex colors"))
+    night_cols : BoolProperty(default=True, description=T("Экспорт ночных vertex colors"))
 
-    light : BoolProperty(default=True, description="rpGEOMETRYLIGHT flag")
-    modulate_color : BoolProperty(default=True, description="rpGEOMETRYMODULATEMATERIALCOLOR flag")
+    light : BoolProperty(default=True, description=T("Флаг rpGEOMETRYLIGHT — динамическое освещение"))
+    modulate_color : BoolProperty(default=True, description=T("Флаг rpGEOMETRYMODULATEMATERIALCOLOR — цвет материала влияет на модель"))
 
     # Collision sphere/cone properties
-    col_material : IntProperty(default=12, description="Material for Sphere/Cone")
-    col_flags : IntProperty(default=0, description="Flags for Sphere/Cone")
-    col_brightness : IntProperty(default=0, description="Brightness for Sphere/Cone")
-    col_light : IntProperty(default=0, description="Light for Sphere/Cone")
+    col_material : IntProperty(default=12, description=T("Материал для Sphere/Cone"))
+    col_flags : IntProperty(default=0, description=T("Флаги для Sphere/Cone"))
+    col_brightness : IntProperty(default=0, description=T("Яркость для Sphere/Cone"))
+    col_light : IntProperty(default=0, description=T("Свет для Sphere/Cone"))
 
 
 class INUMaterialProps(bpy.types.PropertyGroup):
@@ -3303,7 +3022,7 @@ class INUMaterialProps(bpy.types.PropertyGroup):
     ambient : FloatProperty(name="Ambient Shading", default=1.0)
 
     # Collision surface
-    col_mat_index : IntProperty(name="Surface ID", default=0, description="COL surface type ID (0-178)")
+    col_mat_index : IntProperty(name="Surface ID", default=0, description=T("ID типа поверхности COL (0-178)"))
     col_flags : IntProperty(name="Flags", default=0)
     col_brightness : IntProperty(name="Brightness", default=0)
     col_light : IntProperty(name="Light", default=0)
@@ -3339,7 +3058,7 @@ class INUMaterialProps(bpy.types.PropertyGroup):
 
 
 class GTATOOLS_FillColorItem(bpy.types.PropertyGroup):
-    """Fill color list item"""
+    """Элемент списка цветов заливки"""
     color: FloatVectorProperty(
         name="Color",
         subtype='COLOR',
@@ -3355,14 +3074,14 @@ class GTATOOLS_FillColorItem(bpy.types.PropertyGroup):
 # =============================================================================
 
 class GTATOOLS_OT_check_geometry(bpy.types.Operator):
-    """Check geometry for loose vertices and edges"""
+    """Проверить геометрию на висящие вершины и рёбра"""
     bl_idname = "gtatools.check_geometry"
     bl_label = "Check Geometry"
     bl_options = {'REGISTER', 'UNDO'}
 
     select_loose: BoolProperty(
         name="Select Loose",
-        description="Select found problem elements",
+        description=T("Выделить найденные проблемные элементы"),
         default=True
     )
 
@@ -3415,7 +3134,7 @@ class GTATOOLS_OT_check_geometry(bpy.types.Operator):
 
 
 class GTATOOLS_OT_check_ngons(bpy.types.Operator):
-    """Check geometry for N-gons (polygons with 5+ vertices)"""
+    """Проверить геометрию на N-gons (полигоны с 5+ вершинами)"""
     bl_idname = "gtatools.check_ngons"
     bl_label = "Check N-gons"
     bl_options = {'REGISTER', 'UNDO'}
@@ -3457,7 +3176,7 @@ class GTATOOLS_OT_check_ngons(bpy.types.Operator):
 
 
 class GTATOOLS_OT_clean_geometry(bpy.types.Operator):
-    """Delete loose vertices and edges"""
+    """Удалить висящие вершины и рёбра"""
     bl_idname = "gtatools.clean_geometry"
     bl_label = "Clean Geometry"
     bl_options = {'REGISTER', 'UNDO'}
@@ -3499,7 +3218,7 @@ class GTATOOLS_OT_clean_geometry(bpy.types.Operator):
 
 
 class GTATOOLS_OT_export_txd(bpy.types.Operator, ExportHelper):
-    """Export textures to TXD archive"""
+    """Экспортировать текстуры в TXD архив"""
     bl_idname = "gtatools.export_txd"
     bl_label = "Export TXD"
     bl_options = {'PRESET'}
@@ -3508,7 +3227,7 @@ class GTATOOLS_OT_export_txd(bpy.types.Operator, ExportHelper):
 
     selected_only: BoolProperty(
         name="Selected Only",
-        description="Export textures only from selected objects",
+        description=T("Экспортировать текстуры только из выделенных объектов"),
         default=False,
     )
 
@@ -3525,7 +3244,7 @@ class GTATOOLS_OT_export_txd(bpy.types.Operator, ExportHelper):
 
 
 class GTATOOLS_OT_export_dff(bpy.types.Operator, ExportHelper):
-    """Export DFF model"""
+    """Экспортировать DFF модель"""
     bl_idname = "gtatools.export_dff"
     bl_label = "Export DFF"
     bl_options = {'PRESET'}
@@ -3574,7 +3293,7 @@ class GTATOOLS_OT_export_dff(bpy.types.Operator, ExportHelper):
 
 
 class GTATOOLS_OT_export_col(bpy.types.Operator, ExportHelper):
-    """Export COL collision model"""
+    """Экспортировать COL модель коллизии"""
     bl_idname = "gtatools.export_col"
     bl_label = "Export COL"
     bl_options = {'PRESET'}
@@ -3638,7 +3357,7 @@ class GTATOOLS_OT_export_col(bpy.types.Operator, ExportHelper):
 
 
 class GTATOOLS_OT_import_dff(bpy.types.Operator):
-    """Import GTA SA DFF model"""
+    """Импорт DFF модели GTA SA"""
     bl_idname = "gtatools.import_dff"
     bl_label = "Import DFF (.dff)"
     bl_options = {'REGISTER', 'UNDO'}
@@ -3697,7 +3416,7 @@ class GTATOOLS_OT_import_dff(bpy.types.Operator):
 
 
 class GTATOOLS_OT_import_col(bpy.types.Operator):
-    """Import GTA SA COL collision model"""
+    """Импорт COL коллизии GTA SA"""
     bl_idname = "gtatools.import_col"
     bl_label = "Import COL (.col)"
     bl_options = {'REGISTER', 'UNDO'}
@@ -3721,7 +3440,7 @@ class GTATOOLS_OT_import_col(bpy.types.Operator):
 
 
 class GTATOOLS_OT_import_txd(bpy.types.Operator):
-    """Import GTA SA TXD texture dictionary"""
+    """Импорт TXD текстур GTA SA"""
     bl_idname = "gtatools.import_txd"
     bl_label = "Import TXD (.txd)"
     bl_options = {'REGISTER', 'UNDO'}
@@ -3747,7 +3466,7 @@ class GTATOOLS_OT_import_txd(bpy.types.Operator):
 # ── File > Export / Import operators (with ExportHelper/ImportHelper) ──
 
 class GTATOOLS_OT_file_export_dff(bpy.types.Operator, ExportHelper):
-    """Export GTA SA DFF model"""
+    """Экспорт DFF модели GTA SA"""
     bl_idname = "gtatools.file_export_dff"
     bl_label = "GTA SA DFF (.dff)"
     bl_options = {'PRESET'}
@@ -3769,7 +3488,7 @@ class GTATOOLS_OT_file_export_dff(bpy.types.Operator, ExportHelper):
 
 
 class GTATOOLS_OT_file_export_col(bpy.types.Operator, ExportHelper):
-    """Export GTA SA COL collision model"""
+    """Экспорт COL коллизии GTA SA"""
     bl_idname = "gtatools.file_export_col"
     bl_label = "GTA SA COL (.col)"
     bl_options = {'PRESET'}
@@ -3789,7 +3508,7 @@ class GTATOOLS_OT_file_export_col(bpy.types.Operator, ExportHelper):
 
 
 class GTATOOLS_OT_file_export_txd(bpy.types.Operator, ExportHelper):
-    """Export GTA SA TXD texture archive"""
+    """Экспорт TXD текстур GTA SA"""
     bl_idname = "gtatools.file_export_txd"
     bl_label = "GTA SA TXD (.txd)"
     bl_options = {'PRESET'}
@@ -3804,7 +3523,7 @@ class GTATOOLS_OT_file_export_txd(bpy.types.Operator, ExportHelper):
 
 
 class GTATOOLS_OT_file_import_dff(bpy.types.Operator, ImportHelper):
-    """Import GTA SA DFF model"""
+    """Импорт DFF модели GTA SA"""
     bl_idname = "gtatools.file_import_dff"
     bl_label = "GTA SA DFF (.dff)"
     bl_options = {'REGISTER', 'UNDO'}
@@ -3861,7 +3580,7 @@ class GTATOOLS_OT_file_import_dff(bpy.types.Operator, ImportHelper):
 
 
 class GTATOOLS_OT_file_import_col(bpy.types.Operator, ImportHelper):
-    """Import GTA SA COL collision model"""
+    """Импорт COL коллизии GTA SA"""
     bl_idname = "gtatools.file_import_col"
     bl_label = "GTA SA COL (.col)"
     bl_options = {'REGISTER', 'UNDO'}
@@ -3886,7 +3605,7 @@ def menu_func_export(self, context):
 
 
 class GTATOOLS_OT_file_import_txd(bpy.types.Operator, ImportHelper):
-    """Import GTA SA TXD texture dictionary"""
+    """Импорт TXD текстур GTA SA"""
     bl_idname = "gtatools.file_import_txd"
     bl_label = "GTA SA TXD (.txd)"
     bl_options = {'REGISTER', 'UNDO'}
@@ -3911,7 +3630,7 @@ def menu_func_import(self, context):
 
 
 class GTATOOLS_OT_export_all(bpy.types.Operator):
-    """Export all selected models (DFF + COL + LOD + TXD) - supports multiple model groups"""
+    """Экспорт всех выделенных моделей (DFF + COL + LOD + TXD)"""
     bl_idname = "gtatools.export_all"
     bl_label = "Export All (DFF+COL+LOD+TXD)"
     bl_options = {'REGISTER'}
@@ -4100,7 +3819,7 @@ def _draw_label_with_info(layout, text, tooltip, icon='NONE'):
 
 
 class GTATOOLS_OT_detect_models(bpy.types.Operator):
-    """Detect DFF, LOD, COL models among selected"""
+    """Определить модели DFF, LOD, COL среди выделенных"""
     bl_idname = "gtatools.detect_models"
     bl_label = "Detect Models"
     bl_options = {'REGISTER'}
@@ -4125,7 +3844,7 @@ class GTATOOLS_OT_detect_models(bpy.types.Operator):
 
 
 class GTATOOLS_OT_prelight(bpy.types.Operator):
-    """Apply GTA SA Prelight to selected object"""
+    """Применить GTA SA Prelight к выделенному объекту"""
     bl_idname = "gtatools.prelight"
     bl_label = "Apply Prelight"
     bl_options = {'REGISTER', 'UNDO'}
@@ -4157,7 +3876,7 @@ class GTATOOLS_OT_prelight(bpy.types.Operator):
 
 
 class GTATOOLS_OT_average_colors(bpy.types.Operator):
-    """Average vertex colors for coplanar faces"""
+    """Усреднить vertex colors для компланарных граней"""
     bl_idname = "gtatools.average_colors"
     bl_label = "Average Colors"
     bl_options = {'REGISTER', 'UNDO'}
@@ -4190,7 +3909,7 @@ class GTATOOLS_OT_average_colors(bpy.types.Operator):
 
 
 class GTATOOLS_OT_lightmap_generate(bpy.types.Operator):
-    """Generate lightmap code for selected object"""
+    """Сгенерировать код lightmap для выделенного объекта"""
     bl_idname = "gtatools.lightmap_generate"
     bl_label = "Generate Lightmap Code"
 
@@ -4251,7 +3970,7 @@ class GTATOOLS_OT_lightmap_generate(bpy.types.Operator):
 
 
 class GTATOOLS_OT_lightmap_copy(bpy.types.Operator):
-    """Copy result to clipboard"""
+    """Копировать результат в буфер обмена"""
     bl_idname = "gtatools.lightmap_copy"
     bl_label = "Copy to Clipboard"
 
@@ -4264,7 +3983,7 @@ class GTATOOLS_OT_lightmap_copy(bpy.types.Operator):
 
 
 class GTATOOLS_OT_lightmap_clear(bpy.types.Operator):
-    """Clear generated code"""
+    """Очистить сгенерированный код"""
     bl_idname = "gtatools.lightmap_clear"
     bl_label = "Clear"
 
@@ -4275,14 +3994,14 @@ class GTATOOLS_OT_lightmap_clear(bpy.types.Operator):
 
 
 class GTATOOLS_OT_create_prelight_lights(bpy.types.Operator):
-    """Create 8 lights for prelight baking around object"""
+    """Создать 8 источников света для запекания prelight вокруг объекта"""
     bl_idname = "gtatools.create_prelight_lights"
     bl_label = "Create Prelight Lights"
     bl_options = {'REGISTER', 'UNDO'}
 
     distance: FloatProperty(
         name="Distance",
-        description="Distance of lights from center",
+        description=T("Расстояние ламп от центра"),
         default=100.0,
         min=1.0,
         max=1000.0
@@ -4304,7 +4023,7 @@ class GTATOOLS_OT_create_prelight_lights(bpy.types.Operator):
 
 
 class GTATOOLS_OT_remove_prelight_lights(bpy.types.Operator):
-    """Remove all prelight lights"""
+    """Удалить все источники света prelight"""
     bl_idname = "gtatools.remove_prelight_lights"
     bl_label = "Remove Prelight Lights"
     bl_options = {'REGISTER', 'UNDO'}
@@ -4318,14 +4037,14 @@ class GTATOOLS_OT_remove_prelight_lights(bpy.types.Operator):
 
 
 class GTATOOLS_OT_bake_vertex_colors(bpy.types.Operator):
-    """Bake lighting from Point sources to vertex colors"""
+    """Запечь освещение от Point источников в vertex colors"""
     bl_idname = "gtatools.bake_vertex_colors"
     bl_label = "Bake Vertex Colors"
     bl_options = {'REGISTER', 'UNDO'}
 
     use_shadows: BoolProperty(
         name="Use Shadows",
-        description="Calculate shadows (slower but more accurate)",
+        description=T("Рассчитать тени (медленнее, но точнее)"),
         default=False
     )
 
@@ -4347,7 +4066,7 @@ class GTATOOLS_OT_bake_vertex_colors(bpy.types.Operator):
 
 
 class GTATOOLS_OT_bake_vertex_colors_simple(bpy.types.Operator):
-    """Quick bake vertex colors from Point sources (no shadows)"""
+    """Быстрое запекание vertex colors от Point источников (без теней)"""
     bl_idname = "gtatools.bake_vertex_colors_simple"
     bl_label = "Bake Vertex Colors (Fast)"
     bl_options = {'REGISTER', 'UNDO'}
@@ -4377,7 +4096,7 @@ class GTATOOLS_OT_bake_vertex_colors_simple(bpy.types.Operator):
 
 
 class GTATOOLS_OT_reset_bake_settings(bpy.types.Operator):
-    """Reset bake settings to default"""
+    """Сбросить настройки запекания по умолчанию"""
     bl_idname = "gtatools.reset_bake_settings"
     bl_label = "Reset to Default"
     bl_options = {'REGISTER', 'UNDO'}
@@ -4392,7 +4111,7 @@ class GTATOOLS_OT_reset_bake_settings(bpy.types.Operator):
 
 
 class GTATOOLS_OT_reset_scatter_settings(bpy.types.Operator):
-    """Reset Scatter Light settings to default"""
+    """Сбросить настройки Scatter Light по умолчанию"""
     bl_idname = "gtatools.reset_scatter_settings"
     bl_label = "Reset"
     bl_options = {'REGISTER', 'UNDO'}
@@ -4408,7 +4127,7 @@ class GTATOOLS_OT_reset_scatter_settings(bpy.types.Operator):
 
 
 class GTATOOLS_OT_analyze_vertex_colors(bpy.types.Operator):
-    """Analyze vertex colors of selected object"""
+    """Анализировать vertex colors выделенного объекта"""
     bl_idname = "gtatools.analyze_vertex_colors"
     bl_label = "Analyze Colors"
 
@@ -4435,7 +4154,7 @@ class GTATOOLS_OT_analyze_vertex_colors(bpy.types.Operator):
 
 
 class GTATOOLS_OT_apply_v_offset(bpy.types.Operator):
-    """Apply brightness offset (V) to vertex colors"""
+    """Применить смещение яркости (V) к vertex colors"""
     bl_idname = "gtatools.apply_v_offset"
     bl_label = "Apply V Offset"
     bl_options = {'REGISTER', 'UNDO'}
@@ -4534,7 +4253,7 @@ class GTATOOLS_OT_vc_gamma(bpy.types.Operator):
 
 
 class GTATOOLS_OT_load_lightmap(bpy.types.Operator):
-    """Load Lightmap from .blend folder (textures with LP_ prefix)"""
+    """Загрузить Lightmap из папки с .blend файлом (текстуры с приставкой LP_)"""
     bl_idname = "gtatools.load_lightmap"
     bl_label = "Load Lightmap"
     bl_options = {'REGISTER', 'UNDO'}
@@ -4689,7 +4408,7 @@ class GTATOOLS_OT_load_lightmap(bpy.types.Operator):
 
 
 class GTATOOLS_OT_remove_lightmap(bpy.types.Operator):
-    """Remove Lightmap from object materials"""
+    """Удалить Lightmap из материалов объекта"""
     bl_idname = "gtatools.remove_lightmap"
     bl_label = "Remove Lightmap"
     bl_options = {'REGISTER', 'UNDO'}
@@ -4769,7 +4488,7 @@ class GTATOOLS_OT_remove_lightmap(bpy.types.Operator):
 
 
 class GTATOOLS_OT_create_day_night(bpy.types.Operator):
-    """Create Day and Night color attributes"""
+    """Создать Day и Night color attributes"""
     bl_idname = "gtatools.create_day_night"
     bl_label = "Create Day/Night"
     bl_options = {'REGISTER', 'UNDO'}
@@ -4810,14 +4529,14 @@ class GTATOOLS_OT_create_day_night(bpy.types.Operator):
 
 
 class GTATOOLS_OT_prelight_preview(bpy.types.Operator):
-    """Toggle prelight preview - show vertex colors with textures"""
+    """Переключить превью prelight - показать vertex colors с текстурами"""
     bl_idname = "gtatools.prelight_preview"
     bl_label = "Toggle Prelight Preview"
     bl_options = {'REGISTER', 'UNDO'}
 
     enable: BoolProperty(
         name="Enable",
-        description="Enable or disable prelight preview",
+        description=T("Включить или выключить превью prelight"),
         default=True
     )
 
@@ -4921,7 +4640,7 @@ class GTATOOLS_OT_restore_materials(bpy.types.Operator):
 
 
 class GTATOOLS_OT_eyedropper_color(bpy.types.Operator):
-    """Click on polygon to pick its color"""
+    """Кликните на полигон чтобы взять его цвет"""
     bl_idname = "gtatools.eyedropper_color"
     bl_label = "Pick Color from Mesh"
     bl_options = {'REGISTER', 'UNDO'}
@@ -5016,7 +4735,7 @@ class GTATOOLS_OT_eyedropper_color(bpy.types.Operator):
 
 
 class GTATOOLS_OT_fill_faces(bpy.types.Operator):
-    """Fill selected faces with color"""
+    """Залить выделенные грани цветом"""
     bl_idname = "gtatools.fill_faces"
     bl_label = "Fill Selected Faces"
     bl_options = {'REGISTER', 'UNDO'}
@@ -5037,7 +4756,7 @@ class GTATOOLS_OT_fill_faces(bpy.types.Operator):
 
 
 class GTATOOLS_OT_restore_fill(bpy.types.Operator):
-    """Restore colors changed by fill"""
+    """Восстановить цвета, изменённые заливкой"""
     bl_idname = "gtatools.restore_fill"
     bl_label = "Restore Fill"
     bl_options = {'REGISTER', 'UNDO'}
@@ -5056,7 +4775,7 @@ class GTATOOLS_OT_restore_fill(bpy.types.Operator):
 
 
 class GTATOOLS_OT_remove_fill_color(bpy.types.Operator):
-    """Delete color from list and restore original colors"""
+    """Удалить цвет из списка и восстановить оригинальные цвета"""
     bl_idname = "gtatools.remove_fill_color"
     bl_label = "Remove Fill Color"
     bl_options = {'REGISTER', 'UNDO'}
@@ -5089,7 +4808,7 @@ class GTATOOLS_OT_remove_fill_color(bpy.types.Operator):
 
 
 class GTATOOLS_OT_select_fill_color(bpy.types.Operator):
-    """Select polygons with this color"""
+    """Выделить полигоны с этим цветом"""
     bl_idname = "gtatools.select_fill_color"
     bl_label = "Select Faces by Color"
     bl_options = {'REGISTER', 'UNDO'}
@@ -5148,7 +4867,7 @@ class GTATOOLS_OT_select_fill_color(bpy.types.Operator):
 
 
 class GTATOOLS_OT_delete_fill_color_level(bpy.types.Operator):
-    """Delete scatter level (recalculate colors)"""
+    """Удалить scatter уровень (пересчитать цвета)"""
     bl_idname = "gtatools.delete_fill_color_level"
     bl_label = "Delete Scatter Level"
     bl_options = {'REGISTER', 'UNDO'}
@@ -5186,7 +4905,7 @@ class GTATOOLS_OT_delete_fill_color_level(bpy.types.Operator):
 
 
 class GTATOOLS_OT_clear_fill_color_levels(bpy.types.Operator):
-    """Clear all scatter levels of color"""
+    """Очистить все scatter уровни цвета"""
     bl_idname = "gtatools.clear_fill_color_levels"
     bl_label = "Clear Scatter Levels"
     bl_options = {'REGISTER', 'UNDO'}
@@ -5223,7 +4942,7 @@ class GTATOOLS_OT_clear_fill_color_levels(bpy.types.Operator):
 
 
 class GTATOOLS_OT_scatter_light(bpy.types.Operator):
-    """Scatter light from selected faces to neighbors"""
+    """Рассеять свет от выделенных граней к соседним"""
     bl_idname = "gtatools.scatter_light"
     bl_label = "Scatter Light"
     bl_options = {'REGISTER', 'UNDO'}
@@ -5294,7 +5013,7 @@ class GTATOOLS_OT_scatter_light(bpy.types.Operator):
 
 
 class GTATOOLS_OT_toggle_face_select(bpy.types.Operator):
-    """Toggle face selection mode in Vertex Paint"""
+    """Переключить режим выделения граней в Vertex Paint"""
     bl_idname = "gtatools.toggle_face_select"
     bl_label = "Toggle Face Selection"
     bl_options = {'REGISTER', 'UNDO'}
@@ -5317,7 +5036,7 @@ class GTATOOLS_OT_toggle_face_select(bpy.types.Operator):
 
 
 class GTATOOLS_OT_switch_to_edit(bpy.types.Operator):
-    """Switch to Edit Mode for face selection"""
+    """Переключить в Edit Mode для выделения граней"""
     bl_idname = "gtatools.switch_to_edit"
     bl_label = "Edit Mode"
     bl_options = {'REGISTER', 'UNDO'}
@@ -5330,7 +5049,7 @@ class GTATOOLS_OT_switch_to_edit(bpy.types.Operator):
 
 
 class GTATOOLS_OT_switch_to_vpaint(bpy.types.Operator):
-    """Switch to Vertex Paint Mode"""
+    """Переключить в Vertex Paint Mode"""
     bl_idname = "gtatools.switch_to_vpaint"
     bl_label = "Vertex Paint Mode"
     bl_options = {'REGISTER', 'UNDO'}
@@ -5342,7 +5061,7 @@ class GTATOOLS_OT_switch_to_vpaint(bpy.types.Operator):
 
 
 class GTATOOLS_OT_select_color_attribute(bpy.types.Operator):
-    """Select color attribute and update prelight preview"""
+    """Выбрать color attribute и обновить превью prelight"""
     bl_idname = "gtatools.select_color_attribute"
     bl_label = "Select Color Attribute"
     bl_options = {'REGISTER', 'UNDO'}
@@ -5385,7 +5104,7 @@ class GTATOOLS_OT_select_color_attribute(bpy.types.Operator):
 
 
 class GTATOOLS_OT_add_color_attribute(bpy.types.Operator):
-    """Add new color attribute"""
+    """Добавить новый color attribute"""
     bl_idname = "gtatools.add_color_attribute"
     bl_label = "Add Color Attribute"
     bl_options = {'REGISTER', 'UNDO'}
@@ -5414,7 +5133,7 @@ class GTATOOLS_OT_add_color_attribute(bpy.types.Operator):
 
 
 class GTATOOLS_OT_remove_color_attribute(bpy.types.Operator):
-    """Delete active color attribute"""
+    """Удалить активный color attribute"""
     bl_idname = "gtatools.remove_color_attribute"
     bl_label = "Remove Color Attribute"
     bl_options = {'REGISTER', 'UNDO'}
@@ -5443,7 +5162,7 @@ class GTATOOLS_OT_remove_color_attribute(bpy.types.Operator):
 
 
 class GTATOOLS_OT_create_color_attr(bpy.types.Operator):
-    """Create color attribute"""
+    """Создать color attribute"""
     bl_idname = "gtatools.create_color_attr"
     bl_label = "Create Color Attribute"
     bl_options = {'REGISTER', 'UNDO'}
@@ -5476,7 +5195,7 @@ class GTATOOLS_OT_create_color_attr(bpy.types.Operator):
 
 
 class GTATOOLS_OT_remove_color_attr(bpy.types.Operator):
-    """Delete color attribute by name"""
+    """Удалить color attribute по имени"""
     bl_idname = "gtatools.remove_color_attr"
     bl_label = "Remove Color Attribute"
     bl_options = {'REGISTER', 'UNDO'}
@@ -5507,7 +5226,7 @@ class GTATOOLS_OT_remove_color_attr(bpy.types.Operator):
 # =============================================================================
 
 class GTATOOLS_OT_load_textures(bpy.types.Operator):
-    """Load textures by material names from specified folders"""
+    """Загрузить текстуры по именам материалов из указанных папок"""
     bl_idname = "gtatools.load_textures"
     bl_label = "Load Textures"
     bl_options = {'REGISTER', 'UNDO'}
@@ -5679,7 +5398,7 @@ class GTATOOLS_OT_load_textures(bpy.types.Operator):
 
 
 class GTATOOLS_OT_set_blend_folder(bpy.types.Operator):
-    """Set path to .blend file folder"""
+    """Установить путь к папке .blend файла"""
     bl_idname = "gtatools.set_blend_folder"
     bl_label = "Set Blend Folder"
     bl_options = {'REGISTER'}
@@ -5694,7 +5413,7 @@ class GTATOOLS_OT_set_blend_folder(bpy.types.Operator):
 
 
 class GTATOOLS_OT_drop_texture_as_material(bpy.types.Operator):
-    """Create material from dropped texture"""
+    """Создать материал из перетаскиваемой текстуры"""
     bl_idname = "gtatools.drop_texture_as_material"
     bl_label = "Drop Texture as Material"
     bl_options = {'REGISTER', 'UNDO'}
@@ -5800,7 +5519,7 @@ class GTATOOLS_FH_texture_drop(bpy.types.FileHandler):
 
 
 class GTATOOLS_OT_check_materials(bpy.types.Operator):
-    """Check material count on selected objects"""
+    """Проверить количество материалов на выделенных объектах"""
     bl_idname = "gtatools.check_materials"
     bl_label = "Check Materials"
 
@@ -5841,7 +5560,7 @@ class GTATOOLS_OT_check_materials(bpy.types.Operator):
 
 
 class GTATOOLS_OT_cleanup_materials(bpy.types.Operator):
-    """Merge duplicate materials (.001, .002, etc.) with originals"""
+    """Объединить дубликаты материалов (.001, .002, и т.д.) с оригиналами"""
     bl_idname = "gtatools.cleanup_materials"
     bl_label = "Cleanup Materials"
     bl_options = {'REGISTER', 'UNDO'}
@@ -5905,7 +5624,7 @@ class GTATOOLS_OT_cleanup_materials(bpy.types.Operator):
 
 
 class GTATOOLS_OT_sort_materials(bpy.types.Operator):
-    """Sort material slots alphabetically by material name"""
+    """Сортировка материалов"""
     bl_idname = "gtatools.sort_materials"
     bl_label = "Sort Materials"
     bl_options = {'REGISTER', 'UNDO'}
@@ -5963,7 +5682,7 @@ class GTATOOLS_OT_sort_materials(bpy.types.Operator):
 # =============================================================================
 
 class GTATOOLS_PT_main_panel(bpy.types.Panel):
-    """GTA Tools main panel"""
+    """Главная панель GTA Tools"""
     bl_label = "GTA Tools"
     bl_idname = "GTATOOLS_PT_main_panel"
     bl_space_type = 'VIEW_3D'
@@ -5976,7 +5695,7 @@ class GTATOOLS_PT_main_panel(bpy.types.Panel):
 
 
 class GTATOOLS_PT_export_panel(bpy.types.Panel):
-    """GTA models export panel"""
+    """Панель экспорта GTA моделей"""
     bl_label = "Export"
     bl_idname = "GTATOOLS_PT_export_panel"
     bl_space_type = 'VIEW_3D'
@@ -6008,7 +5727,7 @@ class GTATOOLS_PT_export_panel(bpy.types.Panel):
 
         # Export All button
         row = layout.row(align=True)
-        row.operator("gtatools.export_all", text="Export All (DFF+COL+LOD+TXD)", icon='EXPORT')
+        row.operator("gtatools.export_all", text=T("Экспорт всего (DFF+COL+LOD+TXD)"), icon='EXPORT')
         row = layout.row(align=True)
         row.prop(context.scene, "gtatools_export_all_dff", text="DFF", toggle=True)
         row.prop(context.scene, "gtatools_export_all_col", text="COL", toggle=True)
@@ -6024,18 +5743,18 @@ class GTATOOLS_PT_export_panel(bpy.types.Panel):
         row.prop_enum(context.scene, "gtatools_export_pipeline", '0x53F20098')
 
         # Individual export buttons
-        _draw_label_with_info(layout, "Export Individual:",
+        _draw_label_with_info(layout, T("Экспорт по одному:"),
             T("DFF — модель (меш, материалы, UV)\nCOL — коллизия\nTXD — текстуры\nCheck vertex — висящие вершины и рёбра\nCheck N-gon — полигоны с 5+ вершинами\nCheck Material — лимит 50 материалов\nGPU (NVTT) — сжатие текстур на видеокарте"))
         row = layout.row(align=True)
         row.operator("gtatools.export_dff", text="DFF", icon='MESH_DATA')
         row.operator("gtatools.export_col", text="COL", icon='MESH_CUBE')
 
         row = layout.row(align=True)
-        row.operator("gtatools.check_geometry", text="Check vertex", icon='VIEWZOOM')
-        row.operator("gtatools.check_ngons", text="Check N-gon", icon='MESH_DATA')
+        row.operator("gtatools.check_geometry", text=T("Проверка вершин"), icon='VIEWZOOM')
+        row.operator("gtatools.check_ngons", text=T("Проверка N-gon"), icon='MESH_DATA')
 
         row = layout.row(align=True)
-        row.operator("gtatools.check_materials", text="Check Material", icon='MATERIAL')
+        row.operator("gtatools.check_materials", text=T("Проверка материалов"), icon='MATERIAL')
 
         row = layout.row(align=True)
         row.operator("gtatools.export_txd", text="TXD", icon='TEXTURE')
@@ -6066,7 +5785,7 @@ class GTATOOLS_PT_import_panel(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
 
-        _draw_label_with_info(layout, "Import Individual:",
+        _draw_label_with_info(layout, T("Импорт по одному:"),
             T("DFF — импорт модели с мешем и материалами\nCOL — импорт коллизии\nTXD — импорт текстур\nImport TXD — автоимпорт текстур при импорте DFF"))
         row = layout.row(align=True)
         row.operator("gtatools.import_dff", text="DFF", icon='MESH_DATA')
@@ -6074,7 +5793,7 @@ class GTATOOLS_PT_import_panel(bpy.types.Panel):
         row.operator("gtatools.import_txd", text="TXD", icon='TEXTURE')
 
         layout.separator()
-        layout.prop(context.scene, "gtatools_txd_auto_import", text="Import TXD")
+        layout.prop(context.scene, "gtatools_txd_auto_import", text=T("Импорт TXD"))
 
 
 # ── 2DFX Light Presets ──
@@ -6150,7 +5869,7 @@ _PRESET_MAP = {
 
 
 class GTATOOLS_OT_apply_2dfx_preset(bpy.types.Operator):
-    """Apply a 2DFX light preset to the active 2DFX object"""
+    """Применить пресет 2DFX к активному объекту"""
     bl_idname = "gtatools.apply_2dfx_preset"
     bl_label = "Apply 2DFX Preset"
     bl_options = {'REGISTER', 'UNDO'}
@@ -6186,7 +5905,7 @@ class GTATOOLS_OT_apply_2dfx_preset(bpy.types.Operator):
 
 
 class GTATOOLS_OT_create_2dfx(bpy.types.Operator):
-    """Create a 2DFX effect Empty with default properties"""
+    """Создать 2DFX эффект с настройками по умолчанию"""
     bl_idname = "gtatools.create_2dfx"
     bl_label = "Create 2DFX Effect"
     bl_options = {'REGISTER', 'UNDO'}
@@ -6269,7 +5988,7 @@ class GTATOOLS_OT_create_2dfx(bpy.types.Operator):
 
 
 class GTATOOLS_OT_refresh_2dfx_preview(bpy.types.Operator):
-    """Recreate visual preview (light + corona + shadow) for selected 2DFX"""
+    """Обновить визуальный превью (свет + корона + тень) для выбранного 2DFX"""
     bl_idname = "gtatools.refresh_2dfx_preview"
     bl_label = "Refresh Preview"
     bl_options = {'REGISTER', 'UNDO'}
@@ -6290,7 +6009,7 @@ class GTATOOLS_OT_refresh_2dfx_preview(bpy.types.Operator):
 
 
 class GTATOOLS_OT_remove_2dfx_preview(bpy.types.Operator):
-    """Remove visual preview children from selected 2DFX"""
+    """Удалить визуальный превью из выбранного 2DFX"""
     bl_idname = "gtatools.remove_2dfx_preview"
     bl_label = "Remove Preview"
     bl_options = {'REGISTER', 'UNDO'}
@@ -6310,7 +6029,7 @@ class GTATOOLS_OT_remove_2dfx_preview(bpy.types.Operator):
 
 
 class GTATOOLS_OT_attach_2dfx(bpy.types.Operator):
-    """Attach 2DFX to a mesh model (make it a child)"""
+    """Привязать 2DFX к модели (сделать дочерним)"""
     bl_idname = "gtatools.attach_2dfx"
     bl_label = "Attach to Model"
     bl_options = {'REGISTER', 'UNDO'}
@@ -6341,7 +6060,7 @@ class GTATOOLS_OT_attach_2dfx(bpy.types.Operator):
 
 
 class GTATOOLS_OT_detach_2dfx(bpy.types.Operator):
-    """Detach 2DFX from its parent model"""
+    """Отвязать 2DFX от родительской модели"""
     bl_idname = "gtatools.detach_2dfx"
     bl_label = "Detach from Model"
     bl_options = {'REGISTER', 'UNDO'}
@@ -6396,14 +6115,14 @@ class GTATOOLS_PT_2dfx_panel(bpy.types.Panel):
             T("Light — уличные фонари, неон, corona\nParticle — дым, огонь, частицы\nPed Attractor — точки притяжения NPC (банкомат, скамейка)\nSun Glare — блик солнца на поверхности"),
             icon='ADD')
         row = box.row(align=True)
-        op = row.operator("gtatools.create_2dfx", text="Light", icon='LIGHT_POINT')
+        op = row.operator("gtatools.create_2dfx", text=T("Свет"), icon='LIGHT_POINT')
         op.effect_type = 'LIGHT'
-        op = row.operator("gtatools.create_2dfx", text="Particle", icon='PARTICLES')
+        op = row.operator("gtatools.create_2dfx", text=T("Частица"), icon='PARTICLES')
         op.effect_type = 'PARTICLE'
         row = box.row(align=True)
-        op = row.operator("gtatools.create_2dfx", text="Ped Attractor", icon='COMMUNITY')
+        op = row.operator("gtatools.create_2dfx", text=T("Ped Attractor"), icon='COMMUNITY')
         op.effect_type = 'PED_ATTRACTOR'
-        op = row.operator("gtatools.create_2dfx", text="Sun Glare", icon='LIGHT_SUN')
+        op = row.operator("gtatools.create_2dfx", text=T("Блик солнца"), icon='LIGHT_SUN')
         op.effect_type = 'SUN_GLARE'
 
         # ── Статус: счётчик 2DFX в сцене ──
@@ -6414,7 +6133,7 @@ class GTATOOLS_PT_2dfx_panel(bpy.types.Panel):
 
         # ── Если не выбран 2DFX — показываем подсказку ──
         if not is_active:
-            layout.label(text="Select a 2DFX Empty to edit", icon='RESTRICT_SELECT_ON')
+            layout.label(text=T("Выберите 2DFX Empty для редактирования"), icon='RESTRICT_SELECT_ON')
             return
 
         # ── Активный 2DFX — зелёная галка в заголовке, свойства ниже ──
@@ -6426,7 +6145,7 @@ class GTATOOLS_PT_2dfx_panel(bpy.types.Panel):
         header_row.label(text=f"Active: {obj.name}", icon='CHECKMARK')
 
         settings = obj.inu
-        main_box.prop(settings, "effect_2dfx", text="Effect Type")
+        main_box.prop(settings, "effect_2dfx", text=T("Тип эффекта"))
 
         # Attach/Detach buttons
         attach_box = main_box.box()
@@ -6435,101 +6154,101 @@ class GTATOOLS_PT_2dfx_panel(bpy.types.Panel):
             row_a.label(text=f"Model: {obj.parent.name}", icon='LINKED')
             row_a.operator("gtatools.detach_2dfx", text="", icon='X')
         else:
-            attach_box.operator("gtatools.attach_2dfx", text="Attach to Model", icon='LINK_BLEND')
-            attach_box.label(text="Select mesh + 2DFX, then click", icon='INFO')
+            attach_box.operator("gtatools.attach_2dfx", text=T("Привязать к модели"), icon='LINK_BLEND')
+            attach_box.label(text=T("Выделите меш + 2DFX, затем нажмите"), icon='INFO')
 
         effect = settings.effect_2dfx
 
         # Preview buttons
         if effect == 'LIGHT':
             row = main_box.row(align=True)
-            row.operator("gtatools.refresh_2dfx_preview", text="Refresh Preview", icon='FILE_REFRESH')
-            row.operator("gtatools.remove_2dfx_preview", text="Remove Preview", icon='X')
+            row.operator("gtatools.refresh_2dfx_preview", text=T("Обновить превью"), icon='FILE_REFRESH')
+            row.operator("gtatools.remove_2dfx_preview", text=T("Удалить превью"), icon='X')
 
         if effect == 'LIGHT':
             # Presets
             box_p = main_box.box()
-            box_p.label(text="Presets:", icon='PRESET')
+            box_p.label(text=T("Пресеты:"), icon='PRESET')
             row_p = box_p.row(align=True)
             row_p.prop(settings, "preset_2dfx", text="")
-            row_p.operator("gtatools.apply_2dfx_preset", text="Apply", icon='CHECKMARK')
+            row_p.operator("gtatools.apply_2dfx_preset", text=T("Применить"), icon='CHECKMARK')
 
             # Color
             box = main_box.box()
-            _draw_label_with_info(box, "Light Properties:",
+            _draw_label_with_info(box, T("Свойства света:"),
                 T("Color — цвет короны и света\nCorona Size — размер короны\nDraw Distance — дальность отрисовки\nLight Range — радиус точечного света"),
                 icon='LIGHT_POINT')
-            box.prop(settings, "color_2dfx", text="Color")
+            box.prop(settings, "color_2dfx", text=T("Цвет:"))
 
             # Corona
             col = box.column(align=True)
-            col.prop(obj, '["2dfx_corona_size"]', text="Corona Size")
-            col.prop(obj, '["2dfx_corona_far_clip"]', text="Draw Distance")
-            col.prop(obj, '["2dfx_pointlight_range"]', text="Light Range")
-            _draw_label_with_info(col, "Corona Name:",
+            col.prop(obj, '["2dfx_corona_size"]', text=T("Размер короны"))
+            col.prop(obj, '["2dfx_corona_far_clip"]', text=T("Дальность отрисовки"))
+            col.prop(obj, '["2dfx_pointlight_range"]', text=T("Радиус света"))
+            _draw_label_with_info(col, T("Имя короны:"),
                 T("Текстура короны (светящийся спрайт)"))
             col.prop(settings, "corona_tex_2dfx", text="")
 
             # Show Mode / Flare / Reflection
             box2 = main_box.box()
             col2 = box2.column(align=True)
-            _draw_label_with_info(col2, "Show Mode:",
+            _draw_label_with_info(col2, T("Режим показа:"),
                 T("DEFAULT — всегда видим\nRANDOM_FLASHING — случайное мерцание\nFLASH_RAIN — мерцает в дождь\nONLY_RAIN — видим только в дождь\nNO_RAIN — не видим в дождь\nFLASH_5 — вариант мерцания 2"))
             col2.prop(settings, "show_mode_2dfx", text="")
-            _draw_label_with_info(col2, "Flare Type:",
+            _draw_label_with_info(col2, T("Тип бликов:"),
                 T("None — без бликов линзы\nType 1/2/3 — разные стили бликов линзы"))
             col2.prop(settings, "flare_type_2dfx", text="")
-            col2.prop(obj, '["2dfx_corona_enable_reflection"]', text="Corona Reflection")
+            col2.prop(obj, '["2dfx_corona_enable_reflection"]', text=T("Отражение короны"))
 
             # Shadow
             box3 = main_box.box()
             col3 = box3.column(align=True)
-            col3.prop(obj, '["2dfx_shadow_size"]', text="Shadow Size")
-            col3.prop(obj, '["2dfx_shadow_z_distance"]', text="Shadow Distance")
-            col3.prop(obj, '["2dfx_shadow_color_multiplier"]', text="Shadow Multiplier")
-            _draw_label_with_info(col3, "Shadow Name:",
+            col3.prop(obj, '["2dfx_shadow_size"]', text=T("Размер тени"))
+            col3.prop(obj, '["2dfx_shadow_z_distance"]', text=T("Дистанция тени"))
+            col3.prop(obj, '["2dfx_shadow_color_multiplier"]', text=T("Множитель тени"))
+            _draw_label_with_info(col3, T("Имя тени:"),
                 T("Текстура тени на земле под источником света"))
             col3.prop(settings, "shadow_tex_2dfx", text="")
 
             # Flags
             box4 = main_box.box()
             row4 = box4.row(align=True)
-            row4.prop(obj, '["2dfx_flags1"]', text="Flags 1")
-            row4.prop(obj, '["2dfx_flags2"]', text="Flags 2")
+            row4.prop(obj, '["2dfx_flags1"]', text=T("Флаги 1"))
+            row4.prop(obj, '["2dfx_flags2"]', text=T("Флаги 2"))
 
             # View Vector
             if '2dfx_look_direction' in obj:
                 box5 = main_box.box()
-                box5.label(text="View Vector:", icon='EMPTY_ARROWS')
+                box5.label(text=T("Вектор направления:"), icon='EMPTY_ARROWS')
                 box5.prop(obj, '["2dfx_look_direction"]', text="")
 
 
         elif effect == 'PARTICLE':
             box = main_box.box()
-            box.label(text="Particle Properties:", icon='PARTICLES')
+            box.label(text=T("Свойства частицы:"), icon='PARTICLES')
             if '2dfx_effect_name' in obj:
-                box.prop(obj, '["2dfx_effect_name"]', text="Effect Name")
+                box.prop(obj, '["2dfx_effect_name"]', text=T("Имя эффекта"))
 
         elif effect == 'PED_ATTRACTOR':
             box = main_box.box()
-            box.label(text="Ped Attractor:", icon='COMMUNITY')
+            box.label(text=T("Точка притяжения:"), icon='COMMUNITY')
             if '2dfx_attractor_type' in obj:
-                box.prop(obj, '["2dfx_attractor_type"]', text="Attractor Type")
+                box.prop(obj, '["2dfx_attractor_type"]', text=T("Тип аттрактора"))
             if '2dfx_rotation_matrix' in obj:
-                box.prop(obj, '["2dfx_rotation_matrix"]', text="Rotation Matrix")
+                box.prop(obj, '["2dfx_rotation_matrix"]', text=T("Матрица поворота"))
             if '2dfx_external_script' in obj:
-                box.prop(obj, '["2dfx_external_script"]', text="External Script")
+                box.prop(obj, '["2dfx_external_script"]', text=T("Внешний скрипт"))
             if '2dfx_ped_probability' in obj:
-                box.prop(obj, '["2dfx_ped_probability"]', text="Ped Probability")
+                box.prop(obj, '["2dfx_ped_probability"]', text=T("Вероятность NPC"))
 
         elif effect == 'SUN_GLARE':
             box = main_box.box()
-            box.label(text="Sun Glare", icon='LIGHT_SUN')
-            box.label(text="Position only (no extra data)")
+            box.label(text=T("Солнечный блик"), icon='LIGHT_SUN')
+            box.label(text=T("Только позиция (без доп. данных)"))
 
 
 class GTATOOLS_OT_set_col_surface(bpy.types.Operator):
-    """Assign GTA SA surface type to material for COL collision"""
+    """Назначить тип поверхности GTA SA для COL коллизии"""
     bl_idname = "gtatools.set_col_surface"
     bl_label = "Set COL Surface"
     bl_options = {'REGISTER', 'UNDO'}
@@ -6549,7 +6268,7 @@ class GTATOOLS_OT_set_col_surface(bpy.types.Operator):
 
 
 class GTATOOLS_OT_col_surface_menu(bpy.types.Operator):
-    """Pick surface type for COL material"""
+    """Выбрать тип поверхности для COL материала"""
     bl_idname = "gtatools.col_surface_menu"
     bl_label = "Surface Type"
     bl_options = {'REGISTER', 'UNDO'}
@@ -6559,7 +6278,7 @@ class GTATOOLS_OT_col_surface_menu(bpy.types.Operator):
     # Search filter
     search: StringProperty(
         name="Search",
-        description="Filter surface types",
+        description=T("Фильтр типов поверхности"),
         default="",
         options={'TEXTEDIT_UPDATE'},
     )
@@ -6629,7 +6348,7 @@ class GTATOOLS_OT_col_surface_menu(bpy.types.Operator):
 
 
 class GTATOOLS_OT_bake_col_light(bpy.types.Operator):
-    """Convert vertex colors to COL Day/Night Light per polygon (splits materials by brightness)"""
+    """Конвертировать vertex colors в COL Day/Night Light (разбиение материалов по яркости)"""
     bl_idname = "gtatools.bake_col_light"
     bl_label = "Bake COL Light"
     bl_options = {'REGISTER', 'UNDO'}
@@ -6766,7 +6485,7 @@ class GTATOOLS_OT_bake_col_light(bpy.types.Operator):
 
 
 class GTATOOLS_OT_clear_col_light_mats(bpy.types.Operator):
-    """Remove COL light material copies created by Bake COL Light"""
+    """Удалить COL light материалы, созданные Bake COL Light"""
     bl_idname = "gtatools.clear_col_light_mats"
     bl_label = "Clear COL Light"
     bl_options = {'REGISTER', 'UNDO'}
@@ -6839,7 +6558,7 @@ class GTATOOLS_OT_clear_col_light_mats(bpy.types.Operator):
 
 
 class GTATOOLS_PT_col_material_panel(bpy.types.Panel):
-    """COL Surface Type selector in Material Properties"""
+    """Выбор типа поверхности COL в свойствах материала"""
     bl_label = "COL Surface Type"
     bl_idname = "GTATOOLS_PT_col_material_panel"
     bl_space_type = 'PROPERTIES'
@@ -6872,15 +6591,15 @@ class GTATOOLS_PT_col_material_panel(bpy.types.Panel):
 
         # Day/Night Light
         row = layout.row(align=True)
-        row.prop(mat.inu, "col_day_light", text="Day Light")
-        row.prop(mat.inu, "col_night_light", text="Night Light")
+        row.prop(mat.inu, "col_day_light", text=T("Дневной свет"))
+        row.prop(mat.inu, "col_night_light", text=T("Ночной свет"))
 
         # Brightness
-        layout.prop(mat.inu, "col_brightness", text="Brightness")
+        layout.prop(mat.inu, "col_brightness", text=T("Яркость"))
 
 
 class GTATOOLS_PT_material_effects_panel(bpy.types.Panel):
-    """Material Effects panel in Material Properties"""
+    """Панель эффектов материала в свойствах материала"""
     bl_label = "GTA SA Material Effects"
     bl_idname = "GTATOOLS_PT_material_effects_panel"
     bl_space_type = 'PROPERTIES'
@@ -6898,56 +6617,56 @@ class GTATOOLS_PT_material_effects_panel(bpy.types.Panel):
         inu = mat.inu
 
         # Ambient
-        layout.prop(inu, "ambient", text="Ambient Shading")
+        layout.prop(inu, "ambient", text=T("Фоновое затенение"))
         layout.separator()
 
         # ── Environment Map ──
         box = layout.box()
         row = box.row()
-        row.prop(inu, "export_env_map", text="Environment Map")
+        row.prop(inu, "export_env_map", text=T("Карта окружения"))
         if inu.export_env_map:
-            box.prop(inu, "env_map_tex", text="Texture")
-            box.prop(inu, "env_map_coef", text="Coefficient")
-            box.prop(inu, "env_map_fb_alpha", text="Use FB Alpha")
+            box.prop(inu, "env_map_tex", text=T("Текстура"))
+            box.prop(inu, "env_map_coef", text=T("Коэффициент"))
+            box.prop(inu, "env_map_fb_alpha", text=T("Использовать FB Alpha"))
 
         # ── Bump Map ──
         box = layout.box()
         row = box.row()
-        row.prop(inu, "export_bump_map", text="Bump Map")
+        row.prop(inu, "export_bump_map", text=T("Карта высот"))
         if inu.export_bump_map:
-            box.prop(inu, "bump_map_tex", text="Height Map Texture")
+            box.prop(inu, "bump_map_tex", text=T("Текстура карты высот"))
 
         # ── Reflection ──
         box = layout.box()
         row = box.row()
-        row.prop(inu, "export_reflection", text="Reflection Material")
+        row.prop(inu, "export_reflection", text=T("Отражение материала"))
         if inu.export_reflection:
             row = box.row(align=True)
-            row.prop(inu, "reflection_scale_x", text="Scale X")
+            row.prop(inu, "reflection_scale_x", text=T("Масштаб X"))
             row.prop(inu, "reflection_scale_y", text="Y")
             row = box.row(align=True)
-            row.prop(inu, "reflection_offset_x", text="Offset X")
+            row.prop(inu, "reflection_offset_x", text=T("Смещение X"))
             row.prop(inu, "reflection_offset_y", text="Y")
-            box.prop(inu, "reflection_intensity", text="Intensity")
+            box.prop(inu, "reflection_intensity", text=T("Интенсивность"))
 
         # ── Specular ──
         box = layout.box()
         row = box.row()
-        row.prop(inu, "export_specular", text="Specular Material")
+        row.prop(inu, "export_specular", text=T("Зеркальный материал"))
         if inu.export_specular:
-            box.prop(inu, "specular_level", text="Specular Level")
-            box.prop(inu, "specular_texture", text="Texture")
+            box.prop(inu, "specular_level", text=T("Уровень зеркальности"))
+            box.prop(inu, "specular_texture", text=T("Текстура"))
 
         # ── UV Animation ──
         box = layout.box()
         row = box.row()
-        row.prop(inu, "export_animation", text="UV Animation")
+        row.prop(inu, "export_animation", text=T("UV Анимация"))
         if inu.export_animation:
-            box.prop(inu, "animation_name", text="Animation Name")
+            box.prop(inu, "animation_name", text=T("Имя анимации"))
 
 
 class GTATOOLS_PT_object_props_panel(bpy.types.Panel):
-    """GTA SA Object Properties panel in Object Properties"""
+    """Панель свойств объекта GTA SA"""
     bl_label = "GTA SA Object"
     bl_idname = "GTATOOLS_PT_object_props_panel"
     bl_space_type = 'PROPERTIES'
@@ -6965,35 +6684,35 @@ class GTATOOLS_PT_object_props_panel(bpy.types.Panel):
         inu = obj.inu
 
         # ── Object Type ──
-        layout.prop(inu, "type", text="Type")
+        layout.prop(inu, "type", text=T("Тип"))
         layout.separator()
 
         # ── DFF Flags (only for mesh objects) ──
         if obj.type == 'MESH':
             box = layout.box()
-            _draw_label_with_info(box, "Geometry Flags:",
+            _draw_label_with_info(box, T("Флаги геометрии:"),
                 T("Light — динамическое освещение модели\nModulate Material Color — цвет материала влияет на модель\nExport Normals — экспорт нормалей (отключить для map объектов)"),
                 icon='PREFERENCES')
-            box.prop(inu, "light", text="Light (rpGEOMETRYLIGHT)")
-            box.prop(inu, "modulate_color", text="Modulate Material Color")
-            box.prop(inu, "export_normals", text="Export Normals")
+            box.prop(inu, "light", text=T("Свет (rpGEOMETRYLIGHT)"))
+            box.prop(inu, "modulate_color", text=T("Цвет материала модулирует"))
+            box.prop(inu, "export_normals", text=T("Экспорт нормалей"))
 
             box = layout.box()
-            _draw_label_with_info(box, "Vertex Colors:",
+            _draw_label_with_info(box, T("Вертексные цвета:"),
                 T("Day — дневные вертексные цвета (prelight)\nNight — ночные вертексные цвета (требует Pipeline: Building)"),
                 icon='COLOR')
-            box.prop(inu, "day_cols", text="Day Vertex Colours")
-            box.prop(inu, "night_cols", text="Night Vertex Colours")
+            box.prop(inu, "day_cols", text=T("Дневные верт. цвета"))
+            box.prop(inu, "night_cols", text=T("Ночные верт. цвета"))
 
             box = layout.box()
-            _draw_label_with_info(box, "UV Maps:",
+            _draw_label_with_info(box, T("UV карты:"),
                 T("UV Map 1 — основная UV развёртка\nUV Map 2 — вторая UV (для lightmap и т.д.)\nBin Mesh PLG — совместимость с просмотрщиками DFF"),
                 icon='UV')
-            box.prop(inu, "uv_map1", text="UV Map 1")
+            box.prop(inu, "uv_map1", text=T("UV карта 1"))
             if inu.uv_map1:
-                box.prop(inu, "uv_map2", text="UV Map 2")
+                box.prop(inu, "uv_map2", text=T("UV карта 2"))
 
-            box.prop(inu, "export_binsplit", text="Bin Mesh PLG")
+            box.prop(inu, "export_binsplit", text=T("Bin Mesh PLG"))
 
 
 def _draw_sort_materials_menu(self, context):
@@ -7003,7 +6722,7 @@ def _draw_sort_materials_menu(self, context):
 
 
 class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
-    """INU Tools panel in Properties > Scene"""
+    """Панель INU Tools в Properties > Scene"""
     bl_label = "INU Tools"
     bl_idname = "GTATOOLS_PT_inu_tools_panel"
     bl_space_type = 'PROPERTIES'
@@ -7016,7 +6735,7 @@ class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
 
         # Path 1 - System textures
         box = layout.box()
-        box.label(text="System Textures:", icon='TEXTURE')
+        box.label(text=T("Системные текстуры:"), icon='TEXTURE')
         box.prop(scene, "gtatools_texture_path1", text="")
 
         # Path 2 - Blend folder
@@ -7038,7 +6757,7 @@ class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
         row = box.row()
         row.prop(scene, "gtatools_show_nvtt_settings",
                  icon='TRIA_DOWN' if scene.gtatools_show_nvtt_settings else 'TRIA_RIGHT',
-                 text="NVTT Settings", emboss=False)
+                 text=T("Настройки NVTT"), emboss=False)
         if scene.gtatools_show_nvtt_settings:
             box.prop(scene, "gtatools_nvtt_path", text="")
             nvtt_path = scene.gtatools_nvtt_path
@@ -7050,7 +6769,7 @@ class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
 
 
 class GTATOOLS_PT_prelight_panel(bpy.types.Panel):
-    """Prelight panel"""
+    """Панель Prelight"""
     bl_label = "Prelight"
     bl_idname = "GTATOOLS_PT_prelight_panel"
     bl_space_type = 'VIEW_3D'
@@ -7066,14 +6785,14 @@ class GTATOOLS_PT_prelight_panel(bpy.types.Panel):
 
         # Setup Lights
         row = layout.row(align=True)
-        row.operator("gtatools.create_prelight_lights", text="Create 8 Lights", icon='LIGHT')
-        row.operator("gtatools.remove_prelight_lights", text="Remove", icon='X')
+        row.operator("gtatools.create_prelight_lights", text=T("Создать 8 ламп"), icon='LIGHT')
+        row.operator("gtatools.remove_prelight_lights", text=T("Удалить"), icon='X')
 
         layout.separator()
 
         # Color Attributes selector
-        _draw_label_with_info(layout, "Color Attributes:",
-            T("Day — дневные вертексные цвета\nNight — ночные вертексные цвета\nDay/Night — создать оба атрибута\n+/- — добавить или удалить атрибут"))
+        _draw_label_with_info(layout, T("Цветовые атрибуты:"),
+            T("Day — дневные вертексные цвета\nNight — ночные вертексные цвета\nDay/Night — создать оба атрибута\n+/- — добавить или удалить атрибут\nSave Materials — сохранить материалы (для Itera Tools)\nRestore — восстановить сохранённые материалы"))
 
         if obj and obj.type == 'MESH':
             mesh = obj.data
@@ -7133,13 +6852,13 @@ class GTATOOLS_PT_prelight_panel(bpy.types.Panel):
         # Material Backup
         layout.separator()
         row = layout.row(align=True)
-        row.operator("gtatools.save_materials", text="Save Materials", icon='FILE_TICK')
-        row.operator("gtatools.restore_materials", text="Restore", icon='LOOP_BACK')
+        row.operator("gtatools.save_materials", text=T("Сохранить материалы"), icon='FILE_TICK')
+        row.operator("gtatools.restore_materials", text=T("Восстановить"), icon='LOOP_BACK')
         if obj and obj.get("gtatools_saved_materials"):
             import json
             data = json.loads(obj["gtatools_saved_materials"])
             count = len(data["materials"]) if isinstance(data, dict) else len(data)
-            layout.label(text=f"Saved: {count} mat(s)", icon='CHECKMARK')
+            layout.label(text=f"{T('Сохранено:')} {count} {T('мат.')}", icon='CHECKMARK')
 
         layout.separator()
 
@@ -7155,16 +6874,16 @@ class GTATOOLS_PT_prelight_panel(bpy.types.Panel):
         layout.separator()
 
         # Adjust Color (V offset)
-        _draw_label_with_info(layout, "Adjust Color:",
+        _draw_label_with_info(layout, T("Настройка цвета:"),
             T("V — смещение яркости vertex colors\nПоложительное значение — светлее\nОтрицательное — темнее"))
         row = layout.row(align=True)
         row.prop(scene, "gtatools_v_offset", text="V")
-        row.operator("gtatools.apply_v_offset", text="Apply", icon='CHECKMARK')
+        row.operator("gtatools.apply_v_offset", text=T("Применить"), icon='CHECKMARK')
 
 
 
 class GTATOOLS_PT_bake_settings_subpanel(bpy.types.Panel):
-    """Advanced bake settings"""
+    """Расширенные настройки запекания"""
     bl_label = "Advanced Settings"
     bl_idname = "GTATOOLS_PT_bake_settings_subpanel"
     bl_space_type = 'VIEW_3D'
@@ -7177,9 +6896,9 @@ class GTATOOLS_PT_bake_settings_subpanel(bpy.types.Panel):
         layout = self.layout
         scene = context.scene
 
-        layout.prop(scene, "gtatools_bake_ambient", text="Ambient", slider=True)
-        layout.prop(scene, "gtatools_bake_intensity", text="Intensity", slider=True)
-        layout.prop(scene, "gtatools_bake_gamma", text="Gamma", slider=True)
+        layout.prop(scene, "gtatools_bake_ambient", text=T("Окружающий"), slider=True)
+        layout.prop(scene, "gtatools_bake_intensity", text=T("Интенсивность"), slider=True)
+        layout.prop(scene, "gtatools_bake_gamma", text=T("Гамма"), slider=True)
 
         layout.separator()
         layout.operator("gtatools.reset_bake_settings", icon='LOOP_BACK')
@@ -7201,44 +6920,44 @@ class GTATOOLS_PT_vc_postprocess_panel(bpy.types.Panel):
 
         # Smooth
         box = layout.box()
-        _draw_label_with_info(box, "Smooth:",
+        _draw_label_with_info(box, T("Сглаживание:"),
             T("Сглаживание vertex colors между соседними вершинами\nIterations — количество проходов\nFactor — сила сглаживания (0-1)"),
             icon='MOD_SMOOTH')
         row = box.row(align=True)
-        row.prop(scene, "gtatools_vc_smooth_iterations", text="Iterations")
-        row.prop(scene, "gtatools_vc_smooth_factor", text="Factor")
-        box.operator("gtatools.vc_smooth", text="Smooth", icon='SMOOTHCURVE')
+        row.prop(scene, "gtatools_vc_smooth_iterations", text=T("Проходы"))
+        row.prop(scene, "gtatools_vc_smooth_factor", text=T("Сила"))
+        box.operator("gtatools.vc_smooth", text=T("Сгладить"), icon='SMOOTHCURVE')
 
         # Contrast
         box = layout.box()
-        _draw_label_with_info(box, "Contrast:",
+        _draw_label_with_info(box, T("Контраст:"),
             T("Контраст vertex colors\n1.0 — без изменений\n< 1.0 — меньше контраст\n> 1.0 — больше контраст"),
             icon='CAMERA_DATA')
         row = box.row(align=True)
-        row.prop(scene, "gtatools_vc_contrast", text="Contrast")
-        row.operator("gtatools.vc_contrast", text="Apply", icon='CHECKMARK')
+        row.prop(scene, "gtatools_vc_contrast", text=T("Контраст"))
+        row.operator("gtatools.vc_contrast", text=T("Применить"), icon='CHECKMARK')
 
         # Brightness
         box = layout.box()
-        _draw_label_with_info(box, "Brightness:",
+        _draw_label_with_info(box, T("Яркость:"),
             T("Яркость vertex colors\n0.0 — без изменений\n> 0 — светлее\n< 0 — темнее"),
             icon='LIGHT_SUN')
         row = box.row(align=True)
-        row.prop(scene, "gtatools_vc_brightness", text="Brightness")
-        row.operator("gtatools.vc_brightness", text="Apply", icon='CHECKMARK')
+        row.prop(scene, "gtatools_vc_brightness", text=T("Яркость"))
+        row.operator("gtatools.vc_brightness", text=T("Применить"), icon='CHECKMARK')
 
         # Gamma
         box = layout.box()
-        _draw_label_with_info(box, "Gamma:",
+        _draw_label_with_info(box, T("Гамма:"),
             T("Гамма-коррекция vertex colors\n1.0 — без изменений\n< 1.0 — светлее (тени)\n> 1.0 — темнее (тени)"),
             icon='FCURVE')
         row = box.row(align=True)
-        row.prop(scene, "gtatools_vc_gamma", text="Gamma")
-        row.operator("gtatools.vc_gamma", text="Apply", icon='CHECKMARK')
+        row.prop(scene, "gtatools_vc_gamma", text=T("Гамма"))
+        row.operator("gtatools.vc_gamma", text=T("Применить"), icon='CHECKMARK')
 
 
 class GTATOOLS_PT_prelight_col_panel(bpy.types.Panel):
-    """Convert vertex colors to COL Day/Night Light"""
+    """Конвертировать vertex colors в COL Day/Night Light"""
     bl_label = "Prelight COL"
     bl_idname = "GTATOOLS_PT_prelight_col_panel"
     bl_space_type = 'VIEW_3D'
@@ -7259,32 +6978,32 @@ class GTATOOLS_PT_prelight_col_panel(bpy.types.Panel):
             night_src = "Night" if "Night" in mesh.color_attributes else day_src
             layout.label(text=f"Day: {day_src} | Night: {night_src}", icon='COLOR')
         else:
-            layout.label(text="No vertex colors", icon='INFO')
+            layout.label(text=T("Нет vertex colors"), icon='INFO')
 
         layout.separator()
 
         # Day range
         box = layout.box()
-        _draw_label_with_info(box, "Day Light:",
+        _draw_label_with_info(box, T("Дневной свет:"),
             T("Диапазон дневного освещения для COL материалов\nMin/Max — значения от 0 до 15\nЯркость vertex colors конвертируется в этот диапазон"),
             icon='LIGHT_SUN')
         row = box.row(align=True)
-        row.prop(scene, "gtatools_col_day_min", text="Min")
-        row.prop(scene, "gtatools_col_day_max", text="Max")
+        row.prop(scene, "gtatools_col_day_min", text=T("Мин."))
+        row.prop(scene, "gtatools_col_day_max", text=T("Макс."))
 
         # Night range
         box = layout.box()
-        _draw_label_with_info(box, "Night Light:",
+        _draw_label_with_info(box, T("Ночной свет:"),
             T("Диапазон ночного освещения для COL материалов\nMin/Max — значения от 0 до 15\nИспользует Night color attribute если есть"),
             icon='SHADING_RENDERED')
         row = box.row(align=True)
-        row.prop(scene, "gtatools_col_night_min", text="Min")
-        row.prop(scene, "gtatools_col_night_max", text="Max")
+        row.prop(scene, "gtatools_col_night_min", text=T("Мин."))
+        row.prop(scene, "gtatools_col_night_max", text=T("Макс."))
 
         layout.separator()
 
         row = layout.row(align=True)
-        row.operator("gtatools.bake_col_light", text="Bake COL Light", icon='RENDER_STILL')
+        row.operator("gtatools.bake_col_light", text=T("Запечь COL Light"), icon='RENDER_STILL')
         row.operator("gtatools.clear_col_light_mats", text="", icon='X')
 
         # Show info about created COL materials
@@ -7292,11 +7011,11 @@ class GTATOOLS_PT_prelight_col_panel(bpy.types.Panel):
             import json
             stored = json.loads(obj.get("gtatools_col_light_mats", "[]"))
             if stored:
-                layout.label(text=f"COL light materials: {len(stored)}", icon='CHECKMARK')
+                layout.label(text=f"{T('COL light материалов:')} {len(stored)}", icon='CHECKMARK')
 
 
 class GTATOOLS_PT_vertex_paint_panel(bpy.types.Panel):
-    """Vertex Paint tools panel"""
+    """Панель инструментов Vertex Paint"""
     bl_label = "Vertex Paint"
     bl_idname = "GTATOOLS_PT_vertex_paint_panel"
     bl_space_type = 'VIEW_3D'
@@ -7315,27 +7034,27 @@ class GTATOOLS_PT_vertex_paint_panel(bpy.types.Panel):
         obj = context.active_object
 
         # Mode switching
-        layout.label(text="Mode:")
+        layout.label(text=T("Режим:"))
         row = layout.row(align=True)
-        row.operator("gtatools.switch_to_edit", text="Edit", icon='EDITMODE_HLT')
-        row.operator("gtatools.switch_to_vpaint", text="Paint", icon='VPAINT_HLT')
+        row.operator("gtatools.switch_to_edit", text=T("Редактор"), icon='EDITMODE_HLT')
+        row.operator("gtatools.switch_to_vpaint", text=T("Рисование"), icon='VPAINT_HLT')
 
         # Face selection toggle (only in Vertex Paint mode)
         if obj and obj.mode == 'VERTEX_PAINT':
             row = layout.row()
             icon = 'RESTRICT_SELECT_OFF' if obj.data.use_paint_mask else 'RESTRICT_SELECT_ON'
-            row.operator("gtatools.toggle_face_select", text="Face Select", icon=icon, depress=obj.data.use_paint_mask)
+            row.operator("gtatools.toggle_face_select", text=T("Выделение граней"), icon=icon, depress=obj.data.use_paint_mask)
 
         layout.separator()
 
         # Fill selected faces
-        layout.label(text="Fill Faces:")
+        layout.label(text=T("Заливка граней:"))
         row = layout.row(align=True)
         row.prop(scene, "gtatools_fill_color", text="")
         row.operator("gtatools.eyedropper_color", text="", icon='EYEDROPPER')
         row = layout.row(align=True)
-        row.operator("gtatools.fill_faces", text="Fill", icon='BRUSH_DATA')
-        row.operator("gtatools.restore_fill", text="Restore", icon='LOOP_BACK')
+        row.operator("gtatools.fill_faces", text=T("Залить"), icon='BRUSH_DATA')
+        row.operator("gtatools.restore_fill", text=T("Восстановить"), icon='LOOP_BACK')
 
         # Список использованных цветов с уровнями
         if obj and hasattr(obj, 'gtatools_fill_colors') and len(obj.gtatools_fill_colors) > 0:
@@ -7387,17 +7106,17 @@ class GTATOOLS_PT_vertex_paint_panel(bpy.types.Panel):
 
         # Scatter light
         row = layout.row()
-        row.label(text="Scatter Light:")
+        row.label(text=T("Рассеянный свет:"))
         row.operator("gtatools.reset_scatter_settings", text="", icon='LOOP_BACK')
-        layout.prop(scene, "gtatools_scatter_intensity", text="Intensity", slider=True)
-        layout.prop(scene, "gtatools_scatter_falloff", text="Falloff", slider=True)
-        layout.prop(scene, "gtatools_scatter_iterations", text="Iterations")
-        layout.prop(scene, "gtatools_scatter_radius", text="Radius (0=auto)", slider=True)
-        layout.operator("gtatools.scatter_light", text="Scatter from Selected", icon='LIGHT_POINT')
+        layout.prop(scene, "gtatools_scatter_intensity", text=T("Интенсивность"), slider=True)
+        layout.prop(scene, "gtatools_scatter_falloff", text=T("Затухание"), slider=True)
+        layout.prop(scene, "gtatools_scatter_iterations", text=T("Итерации"))
+        layout.prop(scene, "gtatools_scatter_radius", text=T("Радиус (0=авто)"), slider=True)
+        layout.operator("gtatools.scatter_light", text=T("Рассеять от выделенных"), icon='LIGHT_POINT')
 
 
 class GTATOOLS_PT_lightmap_panel(bpy.types.Panel):
-    """Lightmap generator panel"""
+    """Панель генератора Lightmap"""
     bl_label = "Lightmap Generator (beta)"
     bl_idname = "GTATOOLS_PT_lightmap_panel"
     bl_space_type = 'VIEW_3D'
@@ -7411,21 +7130,21 @@ class GTATOOLS_PT_lightmap_panel(bpy.types.Panel):
         scene = context.scene
 
         # Load Lightmap texture
-        layout.label(text="Lightmap Texture:")
+        layout.label(text=T("Текстура Lightmap:"))
         row = layout.row(align=True)
-        row.operator("gtatools.load_lightmap", text="Load (LP_)", icon='IMAGE_DATA')
-        row.operator("gtatools.remove_lightmap", text="Remove", icon='X')
+        row.operator("gtatools.load_lightmap", text=T("Загрузить (LP_)"), icon='IMAGE_DATA')
+        row.operator("gtatools.remove_lightmap", text=T("Удалить"), icon='X')
 
         layout.separator()
 
         # Generate code
-        layout.label(text="Generate Code:")
-        layout.operator("gtatools.lightmap_generate", text="Generate", icon='FILE_TEXT')
-        layout.prop(scene, "gtatools_lightmap_path", text="Path")
-        layout.prop(scene, "gtatools_model_id", text="Model ID")
+        layout.label(text=T("Генерация кода:"))
+        layout.operator("gtatools.lightmap_generate", text=T("Генерировать"), icon='FILE_TEXT')
+        layout.prop(scene, "gtatools_lightmap_path", text=T("Путь"))
+        layout.prop(scene, "gtatools_model_id", text=T("ID модели"))
 
         layout.separator()
-        layout.label(text="Result:")
+        layout.label(text=T("Результат:"))
 
         box = layout.box()
         if scene.gtatools_lightmap_result:
@@ -7433,10 +7152,10 @@ class GTATOOLS_PT_lightmap_panel(bpy.types.Panel):
             for line in lines:
                 box.label(text=line)
             row = layout.row(align=True)
-            row.operator("gtatools.lightmap_copy", text="Copy", icon='COPYDOWN')
-            row.operator("gtatools.lightmap_clear", text="Clear", icon='X')
+            row.operator("gtatools.lightmap_copy", text=T("Копировать"), icon='COPYDOWN')
+            row.operator("gtatools.lightmap_clear", text=T("Очистить"), icon='X')
         else:
-            box.label(text="Press button to generate")
+            box.label(text=T("Нажмите кнопку для генерации"))
 
 
 # =============================================================================
@@ -7595,7 +7314,7 @@ class GTATOOLS_OT_toggle_uv_editor(bpy.types.Operator):
 
 
 class GTATOOLS_OT_toggle_uv_grid(bpy.types.Operator):
-    """Show/hide grid on UV"""
+    """Показать/скрыть сетку на UV"""
     bl_idname = "gtatools.toggle_uv_grid"
     bl_label = "Toggle UV Grid"
 
@@ -7744,7 +7463,7 @@ def move_island_uv(island, uv_layer, offset_u, offset_v):
 
 
 class GTATOOLS_OT_randomize_uv_grid(bpy.types.Operator):
-    """Randomly distribute UV of selected polygons on grid (for windows, variations)"""
+    """Рандомно распределить UV выделенных полигонов по сетке (для окон, вариаций)"""
     bl_idname = "gtatools.randomize_uv_grid"
     bl_label = "Randomize UV Grid"
     bl_options = {'REGISTER', 'UNDO'}
@@ -7858,7 +7577,7 @@ class GTATOOLS_OT_randomize_uv_grid(bpy.types.Operator):
 
 
 class GTATOOLS_OT_snap_uv_to_grid(bpy.types.Operator):
-    """Snap UV of selected polygons to nearest grid cell"""
+    """Привязать UV выделенных полигонов к ближайшей ячейке сетки"""
     bl_idname = "gtatools.snap_uv_to_grid"
     bl_label = "Snap UV to Grid"
     bl_options = {'REGISTER', 'UNDO'}
@@ -7994,7 +7713,7 @@ class GTATOOLS_OT_set_uv_align(bpy.types.Operator):
 
 
 class GTATOOLS_PT_uv_tools_panel(bpy.types.Panel):
-    """GTA Tools UV panel"""
+    """Панель UV инструментов GTA Tools"""
     bl_label = "GTA Tools"
     bl_idname = "GTATOOLS_PT_uv_tools_panel"
     bl_space_type = 'IMAGE_EDITOR'
@@ -8007,7 +7726,7 @@ class GTATOOLS_PT_uv_tools_panel(bpy.types.Panel):
 
         # UV Grid Randomizer
         box = layout.box()
-        box.label(text="UV Grid Randomizer", icon='GRID')
+        box.label(text=T("Рандомизатор UV сетки"), icon='GRID')
 
         # Toggle grid visibility button
         global _uv_grid_visible
@@ -8220,7 +7939,12 @@ classes = (
 
 
 def register():
+    # Auto-translate tooltips: docstrings are in Russian,
+    # bl_description is set via T() so locale/eng.py handles English
     for cls in classes:
+        doc = getattr(cls, '__doc__', None)
+        if doc and doc.strip():
+            cls.bl_description = T(doc.strip())
         bpy.utils.register_class(cls)
 
     # INU property groups
@@ -8252,7 +7976,7 @@ def register():
 
     bpy.types.Scene.gtatools_uv_grid_cols = IntProperty(
         name="Columns",
-        description="Number of columns in texture grid",
+        description=T("Количество колонок в сетке текстуры"),
         default=3,
         min=1,
         max=16,
@@ -8260,7 +7984,7 @@ def register():
     )
     bpy.types.Scene.gtatools_uv_grid_rows = IntProperty(
         name="Rows",
-        description="Number of rows in texture grid",
+        description=T("Количество рядов в сетке текстуры"),
         default=2,
         min=1,
         max=16,
@@ -8270,7 +7994,7 @@ def register():
     from bpy.props import EnumProperty
     bpy.types.Scene.gtatools_uv_grid_align = EnumProperty(
         name="Alignment",
-        description="UV position in cell",
+        description=T("Позиция UV в ячейке"),
         items=[
             ('CENTER', "Center", "Center of cell"),
             ('TOP_LEFT', "Top Left", "Top left corner"),
@@ -8287,63 +8011,63 @@ def register():
 
     bpy.types.Scene.gtatools_uv_link_islands = BoolProperty(
         name="Link Polygons",
-        description="Polygons with overlapping UVs move together",
+        description=T("Полигоны с пересекающимися UV перемещаются вместе"),
         default=False
     )
 
     # COL Light settings
     bpy.types.Scene.gtatools_col_day_min = IntProperty(
-        name="Day Min", description="Minimum Day Light value (shadow)", default=10, min=0, max=15)
+        name="Day Min", description=T("Минимальное значение дневного света (тень)"), default=10, min=0, max=15)
     bpy.types.Scene.gtatools_col_day_max = IntProperty(
-        name="Day Max", description="Maximum Day Light value (lit)", default=15, min=0, max=15)
+        name="Day Max", description=T("Максимальное значение дневного света (свет)"), default=15, min=0, max=15)
     bpy.types.Scene.gtatools_col_night_min = IntProperty(
-        name="Night Min", description="Minimum Night Light value (shadow)", default=0, min=0, max=15)
+        name="Night Min", description=T("Минимальное значение ночного света (тень)"), default=0, min=0, max=15)
     bpy.types.Scene.gtatools_col_night_max = IntProperty(
-        name="Night Max", description="Maximum Night Light value (lit)", default=5, min=0, max=15)
+        name="Night Max", description=T("Максимальное значение ночного света (свет)"), default=5, min=0, max=15)
 
     # NVIDIA Texture Tools settings
     bpy.types.Scene.gtatools_txd_auto_import = BoolProperty(
         name="Import TXD",
-        description="Auto-import TXD texture dictionary when importing DFF",
+        description=T("Автоимпорт TXD текстур при импорте DFF"),
         default=True,
     )
 
     bpy.types.Scene.gtatools_txd_import_path = StringProperty(
         name="TXD Import Folder",
-        description="Custom folder to search for TXD files during DFF import (leave empty for auto-search in DFF folder)",
+        description=T("Папка для поиска TXD при импорте DFF (пусто = автопоиск в папке DFF)"),
         default="",
         subtype='DIR_PATH'
     )
 
     bpy.types.Scene.gtatools_nvtt_path = StringProperty(
         name="NVTT Path",
-        description="Path to NVIDIA Texture Tools folder (for GPU compression)",
+        description=T("Путь к папке NVIDIA Texture Tools (для GPU сжатия)"),
         default=r"D:\NVIDIA Corporation\NVIDIA Texture Tools",
         subtype='DIR_PATH'
     )
 
     bpy.types.Scene.gtatools_txd_use_gpu = BoolProperty(
         name="Use GPU",
-        description="Use GPU (NVTT) for texture compression",
+        description=T("Использовать GPU (NVTT) для сжатия текстур"),
         default=False
     )
 
     bpy.types.Scene.gtatools_show_nvtt_settings = BoolProperty(
         name="Show NVTT Settings",
-        description="Show NVTT settings",
+        description=T("Показать настройки NVTT"),
         default=False
     )
 
     # Texture loader paths
     bpy.types.Scene.gtatools_texture_path1 = StringProperty(
         name="System Textures Path",
-        description="Path to GTA system textures folder",
+        description=T("Путь к папке с системными текстурами GTA"),
         default=r"E:\Project MTA\System_textures",
         subtype='DIR_PATH'
     )
     bpy.types.Scene.gtatools_texture_path2 = StringProperty(
         name="Blend Folder Path",
-        description="Path to folder where .blend file is located",
+        description=T("Путь к папке где находится .blend файл"),
         default="",
         subtype='DIR_PATH'
     )
@@ -8351,21 +8075,21 @@ def register():
     # Bake settings (calibrated for 3Ds Max-like output)
     bpy.types.Scene.gtatools_bake_ambient = FloatProperty(
         name="Ambient",
-        description="Base ambient light (lower = darker shadows)",
+        description=T("Базовый рассеянный свет (ниже = темнее тени)"),
         default=0.10,
         min=0.0,
         max=0.5
     )
     bpy.types.Scene.gtatools_bake_intensity = FloatProperty(
         name="Intensity",
-        description="Light intensity multiplier (lower = darker)",
+        description=T("Множитель интенсивности света (ниже = темнее)"),
         default=0.05,
         min=0.0001,
         max=0.5
     )
     bpy.types.Scene.gtatools_bake_gamma = FloatProperty(
         name="Gamma",
-        description="Gamma correction (lower = darker)",
+        description=T("Гамма-коррекция (ниже = темнее)"),
         default=0.50,
         min=0.1,
         max=3.0
@@ -8373,14 +8097,14 @@ def register():
 
     bpy.types.Scene.gtatools_bake_shadows = BoolProperty(
         name="Shadows",
-        description="Enable shadow casting during bake (rays check for occlusion)",
+        description=T("Включить тени при запекании (raycast проверка перекрытий)"),
         default=True
     )
 
     # V offset for night prelight
     bpy.types.Scene.gtatools_v_offset = FloatProperty(
         name="V Offset",
-        description="Brightness offset like 3Ds Max Adjust Color V (-80 for night)",
+        description=T("Смещение яркости как в 3Ds Max Adjust Color V (-80 для ночи)"),
         default=0.0,
         min=-100.0,
         max=100.0
@@ -8435,28 +8159,28 @@ def register():
     # Vertex paint - scatter light settings
     bpy.types.Scene.gtatools_scatter_intensity = FloatProperty(
         name="Intensity",
-        description="Light scatter intensity",
+        description=T("Интенсивность рассеивания света"),
         default=1.0,
         min=0.1,
         max=5.0
     )
     bpy.types.Scene.gtatools_scatter_falloff = FloatProperty(
         name="Falloff",
-        description="How quickly light fades (higher = faster falloff)",
+        description=T("Скорость затухания света (выше = быстрее)"),
         default=1.5,
         min=0.5,
         max=5.0
     )
     bpy.types.Scene.gtatools_scatter_iterations = IntProperty(
         name="Iterations",
-        description="How many neighbor layers to affect",
+        description=T("Количество слоёв соседних граней"),
         default=3,
         min=1,
         max=10
     )
     bpy.types.Scene.gtatools_scatter_radius = FloatProperty(
         name="Radius",
-        description="Search radius for nearby faces (0 = auto based on face size)",
+        description=T("Радиус поиска соседних граней (0 = авто по размеру грани)"),
         default=0.0,
     )
 
@@ -8468,29 +8192,29 @@ def register():
             ('0x53F20098', 'Reflections', 'Window reflections on buildings'),
         ],
         name="Pipeline",
-        description="Rendering pipeline for DFF export",
+        description=T("Рендер-пайплайн для экспорта DFF"),
         default='0x53F2009A',
     )
 
     # Export settings
     bpy.types.Scene.gtatools_export_all_dff = BoolProperty(
         name="Export DFF",
-        description="Export DFF with Export All",
+        description=T("Экспортировать DFF при Export All"),
         default=True
     )
     bpy.types.Scene.gtatools_export_all_col = BoolProperty(
         name="Export COL",
-        description="Export COL with Export All",
+        description=T("Экспортировать COL при Export All"),
         default=True
     )
     bpy.types.Scene.gtatools_export_all_lod = BoolProperty(
         name="Export LOD",
-        description="Export LOD with Export All",
+        description=T("Экспортировать LOD при Export All"),
         default=True
     )
     bpy.types.Scene.gtatools_export_all_txd = BoolProperty(
         name="Export TXD",
-        description="Export TXD with Export All",
+        description=T("Экспортировать TXD при Export All"),
         default=True
     )
 

@@ -6,6 +6,8 @@
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue)
 ![Version](https://img.shields.io/badge/Version-1.5.0-green)
 
+> **[English version](README_eng.md)**
+
 INU_Tools — Blender аддон для работы с моделями GTA San Andreas.
 Предоставляет инструменты экспорта, прелайтинга и подготовки 3D моделей.
 Начиная с v1.5.0 аддон имеет собственный экспорт DFF, COL и TXD (без зависимости от DragonFF).
