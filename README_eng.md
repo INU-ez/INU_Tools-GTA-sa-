@@ -31,13 +31,6 @@ Starting from v1.5.0, the addon has its own DFF, COL, and TXD export (no DragonF
 > - Apply Itera materials (Vertex Lit Linear / Quickstart) from addon panel
 > - Remove Itera materials and restore originals
 > - Auto-detect Itera Tools 3 library in Asset Libraries
->
-> <details>
-> <summary><b>Tutorial .gif</b></summary>
->
-> ![Itera_Inu_tools](gif/Itera_Inu_tools.gif)
->
-> </details>
 
 </details>
 

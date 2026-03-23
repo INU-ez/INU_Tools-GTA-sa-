@@ -32,11 +32,6 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 > - ✅ Удаление Itera материалов и восстановление оригинальных
 > - ✅ Автопоиск библиотеки Itera Tools 3 в Asset Libraries
 >
-> <details>
-> <summary><b>Tutorial .gif</b></summary>
->
-> ![Itera_Inu_tools](gif/Itera_Inu_tools.gif)
->
 > </details>
 
 </details>
