@@ -205,6 +205,70 @@ Name objects with suffixes (`Model_DFF`, `Model_LOD`, `Model_COL`), select them,
 
 </details>
 
+<details>
+<summary><b>Feature Table</b></summary>
+
+| Feature | Status |
+|---------|:------:|
+| **Formats** | |
+| DFF Import/Export | ✅ |
+| COL Import/Export (COL3) | ✅ |
+| TXD Import/Export (DXT, GPU NVTT) | ✅ |
+| LOD Import/Export | ✅ |
+| Export All (batch by suffixes) | ✅ |
+| Embedded COL in DFF | ✅ |
+| Auto-load textures by names | ✅ |
+| IFP (animations) | ❌ |
+| IPL/IDE (map placement) | ❌ |
+| IMG Archive | ❌ |
+| Skinned Mesh (full skeleton) | ❌ |
+| **Materials** | |
+| Environment Map | ✅ |
+| Bump Map | ✅ |
+| Specular | ✅ |
+| UV Animation | ✅ |
+| Reflection Material | ✅ |
+| Dual Texture | ❌ |
+| Blend Mode (Src/Dst) | ❌ |
+| Vertex Alpha channel | ❌ |
+| **2DFX** | |
+| Light (preview + 11 presets) | ✅ |
+| Particle | ✅ |
+| Ped Attractor | ✅ |
+| Sun Glare | ✅ |
+| Road Sign | ❌ |
+| Escalator | ❌ |
+| Cover Point / EnterExit | ❌ |
+| **Lighting (Prelight)** | |
+| Vertex Colors Bake (Fast / Shadows) | ✅ |
+| Raycast shadows | ✅ |
+| Fill Colors (eyedropper + levels) | ✅ |
+| Scatter Light | ✅ |
+| Day/Night attributes | ✅ |
+| Post-Processing (Smooth/Contrast/Gamma) | ✅ |
+| COL Light Bake | ✅ |
+| COL Light Preview (Edge/Contrast) | ✅ |
+| Day↔Night copy | ❌ |
+| VC Smooth between objects | ❌ |
+| **Tools** | |
+| UV Grid Randomizer / Snap | ✅ |
+| Geometry check/cleanup | ✅ |
+| Material cleanup/sorting | ✅ |
+| Drag & Drop textures | ✅ |
+| Itera Tools 3 integration | ✅ |
+| Lightmap Generator (MTA) | ✅ |
+| COL Surface Type (179 types) | ✅ |
+| Hotkeys (Shift+T/A) | ✅ |
+| DFF Flags panel | ✅ |
+| Pipeline (Building/Reflections) | ✅ |
+| Bitmap Manager | ❌ |
+| Water IO | ❌ |
+| CULL Zones | ❌ |
+| Object Explode (mesh split) | ❌ |
+| Vehicle Tools | ❌ |
+
+</details>
+
 ## Credits
 
 Inspired by and partially compatible with:

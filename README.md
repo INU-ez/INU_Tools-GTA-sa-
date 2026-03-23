@@ -207,6 +207,70 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 
 </details>
 
+<details>
+<summary><b>Таблица функций</b></summary>
+
+| Функция | Статус |
+|---------|:------:|
+| **Форматы** | |
+| DFF Import/Export | ✅ |
+| COL Import/Export (COL3) | ✅ |
+| TXD Import/Export (DXT, GPU NVTT) | ✅ |
+| LOD Import/Export | ✅ |
+| Export All (batch по суффиксам) | ✅ |
+| Embedded COL в DFF | ✅ |
+| Автозагрузка текстур по именам | ✅ |
+| IFP (анимации) | ❌ |
+| IPL/IDE (размещение на карте) | ❌ |
+| IMG Archive | ❌ |
+| Skinned Mesh (полный скелет) | ❌ |
+| **Материалы** | |
+| Environment Map | ✅ |
+| Bump Map | ✅ |
+| Specular | ✅ |
+| UV Animation | ✅ |
+| Reflection Material | ✅ |
+| Dual Texture | ❌ |
+| Blend Mode (Src/Dst) | ❌ |
+| Vertex Alpha канал | ❌ |
+| **2DFX** | |
+| Light (превью + 11 пресетов) | ✅ |
+| Particle | ✅ |
+| Ped Attractor | ✅ |
+| Sun Glare | ✅ |
+| Road Sign | ❌ |
+| Escalator | ❌ |
+| Cover Point / EnterExit | ❌ |
+| **Освещение (Prelight)** | |
+| Vertex Colors Bake (Fast / Shadows) | ✅ |
+| Raycast тени | ✅ |
+| Fill Colors (пипетка + уровни) | ✅ |
+| Scatter Light | ✅ |
+| Day/Night атрибуты | ✅ |
+| Post-Processing (Smooth/Contrast/Gamma) | ✅ |
+| COL Light Bake | ✅ |
+| COL Light Preview (Край/Контраст) | ✅ |
+| Day↔Night копирование | ❌ |
+| VC Smooth между объектами | ❌ |
+| **Инструменты** | |
+| UV Grid Randomizer / Snap | ✅ |
+| Проверка/очистка геометрии | ✅ |
+| Очистка/сортировка материалов | ✅ |
+| Drag & Drop текстуры | ✅ |
+| Itera Tools 3 интеграция | ✅ |
+| Lightmap Generator (MTA) | ✅ |
+| COL Surface Type (179 типов) | ✅ |
+| Горячие клавиши (Shift+T/A) | ✅ |
+| DFF Flags панель | ✅ |
+| Pipeline (Building/Reflections) | ✅ |
+| Bitmap Manager | ❌ |
+| Water IO | ❌ |
+| CULL Zones | ❌ |
+| Object Explode (разрезка мешей) | ❌ |
+| Vehicle Tools | ❌ |
+
+</details>
+
 ## Благодарности
 
 Проект вдохновлён и частично совместим с:
@@ -221,3 +285,6 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 #### Лицензия
 
 [GPL-3.0](LICENSE)
+
+
+
