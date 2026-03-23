@@ -43,7 +43,9 @@ def _collect_mesh(obj, model: ColModel):
     bm = bmesh.new()
     try:
         bm.from_mesh(mesh)
-        bm.transform(obj.matrix_world)
+        mat = obj.matrix_world.copy()
+        mat.translation = (0, 0, 0)
+        bm.transform(mat)
         bmesh.ops.triangulate(bm, faces=bm.faces[:])
         bm.verts.index_update()
 
@@ -78,7 +80,9 @@ def _collect_shadow_mesh(obj, model: ColModel):
     bm = bmesh.new()
     try:
         bm.from_mesh(mesh)
-        bm.transform(obj.matrix_world)
+        mat = obj.matrix_world.copy()
+        mat.translation = (0, 0, 0)
+        bm.transform(mat)
         bmesh.ops.triangulate(bm, faces=bm.faces[:])
         bm.verts.index_update()
 

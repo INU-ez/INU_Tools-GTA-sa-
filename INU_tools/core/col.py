@@ -371,9 +371,9 @@ def _write_face_v2(w: BinaryWriter, f: ColFace):
 
 def _write_vertex_compressed(w: BinaryWriter, v: Vec3):
     """Write vertex as int16 * 128."""
-    w.write_i16(int(v.x * 128))
-    w.write_i16(int(v.y * 128))
-    w.write_i16(int(v.z * 128))
+    w.write_i16(max(-32768, min(32767, int(v.x * 128))))
+    w.write_i16(max(-32768, min(32767, int(v.y * 128))))
+    w.write_i16(max(-32768, min(32767, int(v.z * 128))))
 
 
 def _write_vertex_float(w: BinaryWriter, v: Vec3):
