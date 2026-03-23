@@ -4552,6 +4552,38 @@ class GTATOOLS_OT_prelight_preview(bpy.types.Operator):
             return {'CANCELLED'}
 
 
+class GTATOOLS_OT_fix_itera_collection(bpy.types.Operator):
+    """Исправить коллекцию освещения Itera Tools — сделать локальной и привязать к сцене"""
+    bl_idname = "gtatools.fix_itera_collection"
+    bl_label = "Fix Itera Light Collection"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        import bpy
+        col = bpy.data.collections.get("Template Scene - Vertex Lights")
+        if col is None:
+            self.report({'WARNING'}, T("Коллекция 'Template Scene - Vertex Lights' не найдена"))
+            return {'CANCELLED'}
+
+        if col.library:
+            bpy.ops.object.make_local(type='ALL')
+            col = bpy.data.collections.get("Template Scene - Vertex Lights")
+            if col is None:
+                self.report({'ERROR'}, T("Не удалось сделать коллекцию локальной"))
+                return {'CANCELLED'}
+
+        if col.library:
+            col.make_local()
+            for obj in col.objects:
+                obj.make_local()
+
+        if col.name not in context.scene.collection.children:
+            context.scene.collection.children.link(col)
+
+        self.report({'INFO'}, T("Коллекция освещения Itera привязана к сцене"))
+        return {'FINISHED'}
+
+
 class GTATOOLS_OT_save_materials(bpy.types.Operator):
     """Сохранить материалы объекта в буфер"""
     bl_idname = "gtatools.save_materials"
@@ -6860,6 +6892,17 @@ class GTATOOLS_PT_prelight_panel(bpy.types.Panel):
             count = len(data["materials"]) if isinstance(data, dict) else len(data)
             layout.label(text=f"{T('Сохранено:')} {count} {T('мат.')}", icon='CHECKMARK')
 
+        # Fix Itera Collection
+        col = bpy.data.collections.get("Template Scene - Vertex Lights")
+        if col:
+            needs_fix = col.library or col.name not in context.scene.collection.children
+            if needs_fix:
+                layout.operator("gtatools.fix_itera_collection", text=T("Исправить коллекцию Itera"), icon='LIGHT')
+            else:
+                row = layout.row()
+                row.enabled = False
+                row.operator("gtatools.fix_itera_collection", text=T("Коллекция Itera исправлена"), icon='CHECKMARK')
+
         layout.separator()
 
         # Bake Vertex Colors
@@ -7869,6 +7912,7 @@ classes = (
     GTATOOLS_OT_remove_lightmap,
     GTATOOLS_OT_create_day_night,
     GTATOOLS_OT_prelight_preview,
+    GTATOOLS_OT_fix_itera_collection,
     GTATOOLS_OT_save_materials,
     GTATOOLS_OT_restore_materials,
     GTATOOLS_OT_eyedropper_color,

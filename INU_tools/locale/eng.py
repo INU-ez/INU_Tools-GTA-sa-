@@ -203,6 +203,12 @@ LANG = {
     "Элемент списка цветов заливки": "Fill color list item",
 
     # Material Backup
+    "Исправить коллекцию освещения Itera Tools — сделать локальной и привязать к сцене": "Fix Itera Tools light collection — make local and link to scene",
+    "Коллекция 'Template Scene - Vertex Lights' не найдена": "Collection 'Template Scene - Vertex Lights' not found",
+    "Не удалось сделать коллекцию локальной": "Failed to make collection local",
+    "Коллекция освещения Itera привязана к сцене": "Itera light collection linked to scene",
+    "Исправить коллекцию Itera": "Fix Itera Collection",
+    "Коллекция Itera исправлена": "Itera Collection Fixed",
     "Сохранить материалы объекта в буфер": "Save object materials to buffer",
     "Восстановить сохранённые материалы на объект": "Restore saved materials to object",
     "Материалы сохранены": "Materials saved",
