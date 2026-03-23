@@ -4659,10 +4659,13 @@ class GTATOOLS_OT_apply_itera_material(bpy.types.Operator):
             if obj.type != 'MESH':
                 continue
 
-            # Save original materials before replacing
+            # Save original materials + face assignments before replacing
             import json
             if not obj.get("gtatools_saved_materials"):
-                orig = {"materials": [slot.material.name if slot.material else "" for slot in obj.material_slots]}
+                orig = {
+                    "materials": [slot.material.name if slot.material else "" for slot in obj.material_slots],
+                    "face_indices": [p.material_index for p in obj.data.polygons]
+                }
                 obj["gtatools_saved_materials"] = json.dumps(orig)
 
             # Clear existing slots and add Itera material
@@ -4781,16 +4784,23 @@ class GTATOOLS_OT_remove_itera_material(bpy.types.Operator):
             for mod in quickstart_mods:
                 obj.modifiers.remove(mod)
 
-            # Restore saved materials
+            # Restore saved materials + face assignments
             saved = obj.get("gtatools_saved_materials")
             if saved:
                 data = json.loads(saved)
                 names = data["materials"] if isinstance(data, dict) else data
+                face_indices = data.get("face_indices", []) if isinstance(data, dict) else []
 
                 obj.data.materials.clear()
                 for name in names:
                     mat = bpy.data.materials.get(name)
                     obj.data.materials.append(mat)
+
+                # Restore face material assignments
+                if face_indices:
+                    for i, idx in enumerate(face_indices):
+                        if i < len(obj.data.polygons):
+                            obj.data.polygons[i].material_index = idx
 
                 del obj["gtatools_saved_materials"]
                 restored += 1
