@@ -4560,27 +4560,255 @@ class GTATOOLS_OT_fix_itera_collection(bpy.types.Operator):
 
     def execute(self, context):
         import bpy
-        col = bpy.data.collections.get("Template Scene - Vertex Lights")
-        if col is None:
+        # Find all Itera collections (including .001, .002, etc.)
+        itera_cols = [c for c in bpy.data.collections if c.name.startswith("Template Scene - Vertex Lights")]
+        if not itera_cols:
             self.report({'WARNING'}, T("Коллекция 'Template Scene - Vertex Lights' не найдена"))
             return {'CANCELLED'}
 
-        if col.library:
-            bpy.ops.object.make_local(type='ALL')
-            col = bpy.data.collections.get("Template Scene - Vertex Lights")
-            if col is None:
-                self.report({'ERROR'}, T("Не удалось сделать коллекцию локальной"))
+        fixed = 0
+        for col in itera_cols:
+            if col.library:
+                try:
+                    col.make_local()
+                    for obj in col.objects:
+                        obj.make_local()
+                except Exception:
+                    bpy.ops.object.make_local(type='ALL')
+                    col = bpy.data.collections.get(col.name)
+                    if col is None:
+                        continue
+
+            if col.name not in context.scene.collection.children:
+                context.scene.collection.children.link(col)
+                fixed += 1
+
+        self.report({'INFO'}, T("Коллекции Itera привязаны к сцене") + f": {fixed}")
+        return {'FINISHED'}
+
+
+def _find_itera_blend_path():
+    """Find the Itera Tools 3 blend file from Blender asset libraries."""
+    for lib in bpy.context.preferences.filepaths.asset_libraries:
+        if "itera" in lib.name.lower() or "itera" in lib.path.lower():
+            blend_path = os.path.join(lib.path, "Vertex Light 3.0.89.blend")
+            if os.path.isfile(blend_path):
+                return blend_path
+            # Try to find any blend file with "Vertex Light" in name
+            for f in os.listdir(lib.path):
+                if f.startswith("Vertex Light") and f.endswith(".blend"):
+                    return os.path.join(lib.path, f)
+    return None
+
+
+class GTATOOLS_OT_apply_itera_material(bpy.types.Operator):
+    """Применить Itera материал из библиотеки к выделенным объектам"""
+    bl_idname = "gtatools.apply_itera_material"
+    bl_label = "Apply Itera Material"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    preset: EnumProperty(
+        name="Preset",
+        items=[
+            ('VERTEX_LIT_LINEAR', "Vertex Lit Linear UV",
+             T("Линейное освещение вершин с UV текстурой")),
+        ],
+        default='VERTEX_LIT_LINEAR'
+    )
+
+    @classmethod
+    def poll(cls, context):
+        return context.active_object and context.active_object.type == 'MESH'
+
+    def execute(self, context):
+        blend_path = _find_itera_blend_path()
+        if not blend_path:
+            self.report({'ERROR'}, T("Itera Tools 3 не найден в библиотеках ассетов"))
+            return {'CANCELLED'}
+
+        mat_names = {
+            'VERTEX_LIT_LINEAR': "Vertex Lit Linear UV Texture",
+        }
+        target_name = mat_names[self.preset]
+
+        # Check if already loaded
+        itera_mat = bpy.data.materials.get(target_name)
+
+        if itera_mat is None:
+            # Append from blend file (more reliable than libraries.load for assets)
+            try:
+                bpy.ops.wm.append(
+                    filepath=os.path.join(blend_path, "Material", target_name),
+                    directory=os.path.join(blend_path, "Material") + os.sep,
+                    filename=target_name,
+                    link=False,
+                    do_reuse_local_id=True,
+                )
+                itera_mat = bpy.data.materials.get(target_name)
+            except Exception as e:
+                self.report({'ERROR'}, f"{T('Ошибка загрузки:')} {e}")
                 return {'CANCELLED'}
 
-        if col.library:
-            col.make_local()
-            for obj in col.objects:
-                obj.make_local()
+        if itera_mat is None:
+            self.report({'ERROR'}, f"{T('Материал не найден:')} {target_name}")
+            return {'CANCELLED'}
 
-        if col.name not in context.scene.collection.children:
-            context.scene.collection.children.link(col)
+        # Apply to selected mesh objects
+        applied = 0
+        for obj in context.selected_objects:
+            if obj.type != 'MESH':
+                continue
 
-        self.report({'INFO'}, T("Коллекция освещения Itera привязана к сцене"))
+            # Save original materials before replacing
+            import json
+            if not obj.get("gtatools_saved_materials"):
+                orig = {"materials": [slot.material.name if slot.material else "" for slot in obj.material_slots]}
+                obj["gtatools_saved_materials"] = json.dumps(orig)
+
+            # Clear existing slots and add Itera material
+            obj.data.materials.clear()
+            obj.data.materials.append(itera_mat)
+            applied += 1
+
+        self.report({'INFO'}, f"Itera '{self.preset}': {applied} {T('объектов')}")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_apply_itera_quickstart(bpy.types.Operator):
+    """Применить Quickstart Vertex Lightable Surface — модификатор + коллекция со светом"""
+    bl_idname = "gtatools.apply_itera_quickstart"
+    bl_label = "Apply Itera Quickstart"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.active_object and context.active_object.type == 'MESH'
+
+    def execute(self, context):
+        blend_path = _find_itera_blend_path()
+        if not blend_path:
+            self.report({'ERROR'}, T("Itera Tools 3 не найден в библиотеках ассетов"))
+            return {'CANCELLED'}
+
+        ng_name = "Quickstart Vertex Lightable Surface"
+        col_name = "Template Scene - Vertex Lights"
+
+        # Remember selection before append (append can change selection)
+        mesh_objects = [obj for obj in context.selected_objects if obj.type == 'MESH']
+
+        # 1. Load node group if not already in blend
+        node_group = bpy.data.node_groups.get(ng_name)
+        if node_group is None:
+            try:
+                with bpy.data.libraries.load(blend_path, link=False) as (data_from, data_to):
+                    if ng_name in data_from.node_groups:
+                        data_to.node_groups = [ng_name]
+                node_group = bpy.data.node_groups.get(ng_name)
+            except Exception as e:
+                self.report({'ERROR'}, f"{T('Ошибка загрузки node group:')} {e}")
+                return {'CANCELLED'}
+
+        if node_group is None:
+            self.report({'ERROR'}, f"{T('Node group не найден:')} {ng_name}")
+            return {'CANCELLED'}
+
+        # 2. Load light collection if not already present
+        light_col = None
+        for c in bpy.data.collections:
+            if c.name.startswith(col_name):
+                light_col = c
+                break
+
+        if light_col is None:
+            try:
+                with bpy.data.libraries.load(blend_path, link=False) as (data_from, data_to):
+                    if col_name in data_from.collections:
+                        data_to.collections = [col_name]
+                light_col = bpy.data.collections.get(col_name)
+            except Exception:
+                pass
+
+        # 3. Link collection to scene if needed
+        if light_col and light_col.name not in context.scene.collection.children:
+            context.scene.collection.children.link(light_col)
+
+        # 4. Add modifier only to MESH objects (not lights)
+        applied = 0
+        for obj in mesh_objects:
+            # Check if modifier already exists
+            has_mod = any(m.type == 'NODES' and m.node_group and
+                         m.node_group.name == ng_name for m in obj.modifiers)
+            if has_mod:
+                continue
+
+            mod = obj.modifiers.new(name=ng_name, type='NODES')
+            mod.node_group = node_group
+
+            # Set Light Collection input if available
+            if light_col:
+                for item in mod.node_group.interface.items_tree:
+                    if hasattr(item, 'socket_type') and item.socket_type == 'NodeSocketCollection':
+                        mod[item.identifier] = light_col
+                        break
+
+            applied += 1
+
+        self.report({'INFO'}, f"Quickstart: {applied} {T('объектов')}")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_remove_itera_material(bpy.types.Operator):
+    """Убрать Itera материал и восстановить оригинальные"""
+    bl_idname = "gtatools.remove_itera_material"
+    bl_label = "Remove Itera Material"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.active_object and context.active_object.type == 'MESH'
+
+    def execute(self, context):
+        import json
+        restored = 0
+        for obj in context.selected_objects:
+            if obj.type != 'MESH':
+                continue
+
+            # Remove Quickstart modifier
+            quickstart_mods = [m for m in obj.modifiers
+                               if m.type == 'NODES' and m.node_group
+                               and "Quickstart" in m.node_group.name]
+            for mod in quickstart_mods:
+                obj.modifiers.remove(mod)
+
+            # Restore saved materials
+            saved = obj.get("gtatools_saved_materials")
+            if saved:
+                data = json.loads(saved)
+                names = data["materials"] if isinstance(data, dict) else data
+
+                obj.data.materials.clear()
+                for name in names:
+                    mat = bpy.data.materials.get(name)
+                    obj.data.materials.append(mat)
+
+                del obj["gtatools_saved_materials"]
+                restored += 1
+            else:
+                # No saved data — just clear Itera materials
+                itera_names = {"Vertex Lit Linear UV Texture"}
+                to_remove = []
+                for i, slot in enumerate(obj.material_slots):
+                    if slot.material and slot.material.name in itera_names:
+                        to_remove.append(i)
+                for i in reversed(to_remove):
+                    obj.active_material_index = i
+                    bpy.ops.object.material_slot_remove()
+
+            if quickstart_mods:
+                restored += 1
+
+        self.report({'INFO'}, f"{T('Восстановлено:')} {restored} {T('объектов')}")
         return {'FINISHED'}
 
 
@@ -7177,28 +7405,6 @@ class GTATOOLS_PT_prelight_panel(bpy.types.Panel):
             row.operator("gtatools.add_color_attribute", text="", icon='ADD')
             row.operator("gtatools.remove_color_attribute", text="", icon='REMOVE')
 
-        # Material Backup
-        layout.separator()
-        row = layout.row(align=True)
-        row.operator("gtatools.save_materials", text=T("Сохранить материалы"), icon='FILE_TICK')
-        row.operator("gtatools.restore_materials", text=T("Восстановить"), icon='LOOP_BACK')
-        if obj and obj.get("gtatools_saved_materials"):
-            import json
-            data = json.loads(obj["gtatools_saved_materials"])
-            count = len(data["materials"]) if isinstance(data, dict) else len(data)
-            layout.label(text=f"{T('Сохранено:')} {count} {T('мат.')}", icon='CHECKMARK')
-
-        # Fix Itera Collection
-        col = bpy.data.collections.get("Template Scene - Vertex Lights")
-        if col:
-            needs_fix = col.library or col.name not in context.scene.collection.children
-            if needs_fix:
-                layout.operator("gtatools.fix_itera_collection", text=T("Исправить коллекцию Itera"), icon='LIGHT')
-            else:
-                row = layout.row()
-                row.enabled = False
-                row.operator("gtatools.fix_itera_collection", text=T("Коллекция Itera исправлена"), icon='CHECKMARK')
-
         layout.separator()
 
         # Bake Vertex Colors
@@ -7293,6 +7499,46 @@ class GTATOOLS_PT_vc_postprocess_panel(bpy.types.Panel):
         row = box.row(align=True)
         row.prop(scene, "gtatools_vc_gamma", text=T("Гамма"))
         row.operator("gtatools.vc_gamma", text=T("Применить"), icon='CHECKMARK')
+
+
+class GTATOOLS_PT_itera_panel(bpy.types.Panel):
+    """Интеграция с Itera Tools 3 — материалы освещения"""
+    bl_label = "Itera Tools 3"
+    bl_idname = "GTATOOLS_PT_itera_panel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'GTA Tools'
+    bl_parent_id = "GTATOOLS_PT_main_panel"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw(self, context):
+        layout = self.layout
+        obj = context.active_object
+
+        itera_path = _find_itera_blend_path()
+        if not itera_path:
+            layout.label(text=T("Itera не найден в библиотеках ассетов"), icon='ERROR')
+            return
+
+        # Apply presets
+        row = layout.row(align=True)
+        row.operator("gtatools.apply_itera_material", text="Vertex Lit Linear", icon='MATERIAL')
+        row.operator("gtatools.apply_itera_quickstart", text="Quickstart", icon='NODE_MATERIAL')
+
+        layout.operator("gtatools.remove_itera_material", text=T("Убрать Itera"), icon='LOOP_BACK')
+
+        layout.separator()
+
+        # Fix Itera Collection
+        itera_cols = [c for c in bpy.data.collections if c.name.startswith("Template Scene - Vertex Lights")]
+        if itera_cols:
+            needs_fix = any(c.library or c.name not in context.scene.collection.children for c in itera_cols)
+            if needs_fix:
+                layout.operator("gtatools.fix_itera_collection", text=T("Исправить коллекцию Itera"), icon='LIGHT')
+            else:
+                row = layout.row()
+                row.enabled = False
+                row.operator("gtatools.fix_itera_collection", text=T("Коллекция Itera исправлена"), icon='CHECKMARK')
 
 
 class GTATOOLS_PT_prelight_col_panel(bpy.types.Panel):
@@ -8223,6 +8469,9 @@ classes = (
     GTATOOLS_OT_create_day_night,
     GTATOOLS_OT_prelight_preview,
     GTATOOLS_OT_fix_itera_collection,
+    GTATOOLS_OT_apply_itera_material,
+    GTATOOLS_OT_apply_itera_quickstart,
+    GTATOOLS_OT_remove_itera_material,
     GTATOOLS_OT_save_materials,
     GTATOOLS_OT_restore_materials,
     GTATOOLS_OT_eyedropper_color,
@@ -8277,6 +8526,7 @@ classes = (
     GTATOOLS_PT_material_effects_panel,
     GTATOOLS_PT_object_props_panel,
     GTATOOLS_PT_inu_tools_panel,
+    GTATOOLS_PT_itera_panel,
     GTATOOLS_PT_prelight_panel,
     GTATOOLS_PT_bake_settings_subpanel,
     GTATOOLS_PT_vc_postprocess_panel,
@@ -8385,12 +8635,12 @@ def register():
     bpy.types.Scene.gtatools_col_light_edge = FloatProperty(
         name="Edge",
         description=T("Сдвиг границы COL освещения: + расширяет зелёную зону, — сужает"),
-        default=0.0, min=-1.0, max=1.0, step=1,
+        default=0.0, min=-5.0, max=5.0, soft_min=-1.0, soft_max=1.0, step=1,
         update=_col_light_invalidate_preview)
     bpy.types.Scene.gtatools_col_light_contrast = FloatProperty(
         name="Contrast",
         description=T("Контраст: резкость перехода между тёмными и светлыми зонами"),
-        default=0.0, min=0.0, max=1.0, step=1,
+        default=0.0, min=0.0, max=5.0, soft_min=0.0, soft_max=1.0, step=1,
         update=_col_light_invalidate_preview)
     bpy.types.Scene.gtatools_col_light_font_size = IntProperty(
         name="Font Size",
