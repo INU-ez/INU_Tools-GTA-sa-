@@ -28,7 +28,9 @@ Starting from v1.5.0, the addon has its own DFF, COL, and TXD export (no DragonF
 <details>
 <summary><b>Support Itera Tools 3</b></summary>
 
-> - Save materials on model for Itera
+> - Apply Itera materials (Vertex Lit Linear / Quickstart) from addon panel
+> - Remove Itera materials and restore originals
+> - Auto-detect Itera Tools 3 library in Asset Libraries
 >
 > <details>
 > <summary><b>Tutorial .gif</b></summary>
@@ -49,6 +51,7 @@ Starting from v1.5.0, the addon has its own DFF, COL, and TXD export (no DragonF
 > - Day/Night — separate color attributes for day and night
 > - Vertex color analysis and preview
 > - Prelight COL — convert vertex colors to COL Day/Night Light (auto-split materials by brightness)
+> - COL Light Preview — lighting visualization on polygons with Edge/Contrast settings and numeric values
 >
 > <details>
 > <summary><b>Tutorial .gif</b></summary>
@@ -187,7 +190,7 @@ Name objects with suffixes (`Model_DFF`, `Model_LOD`, `Model_COL`), select them,
 
 - **Blender 5.1+**
 - NVIDIA Texture Tools — optional, for GPU texture compression
-- Itera Tools 3 - (https://itera.gumroad.com/l/IteraTools3)
+- Itera Tools 3 — optional, for vertex lighting (https://itera.gumroad.com/l/IteraTools3)
 
 <details>
 <summary><b>Changelog</b></summary>
