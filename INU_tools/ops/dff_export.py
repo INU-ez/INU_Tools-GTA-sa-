@@ -220,8 +220,17 @@ def _get_obj_export_flags(obj) -> dict:
     for key, default in defaults.items():
         if key == 'pipeline':
             pipe_val = getattr(inu, 'pipeline', 'NONE')
+            # If per-object pipeline is NONE, use scene-level setting
             if pipe_val == 'NONE' or pipe_val == '0':
-                result['pipeline'] = 0
+                import bpy as _bpy
+                scene_pipe = getattr(_bpy.context.scene, 'gtatools_export_pipeline', 'NONE')
+                if scene_pipe != 'NONE':
+                    try:
+                        result['pipeline'] = int(scene_pipe, 0)
+                    except ValueError:
+                        result['pipeline'] = 0
+                else:
+                    result['pipeline'] = 0
             elif pipe_val == 'CUSTOM':
                 custom = getattr(inu, 'custom_pipeline', '0')
                 try:

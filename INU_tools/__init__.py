@@ -1,4 +1,22 @@
 # INU_tools(gta_sa) for Blender 4.4+
+# Copyright (C) 2024-2026  INU
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# Material/Object property names are compatible with DragonFF by Parik (GPL-3.0)
+# https://github.com/Parik27/DragonFF
+#
 # Объединённая панель инструментов для работы с GTA SA моделями
 # Включает: Export (DFF, COL, LOD, TXD), Prelight, Lightmap Generator
 
@@ -317,6 +335,71 @@ TRANSLATIONS = {
     "Surface ID назначен:": "Surface ID assigned:",
     "COL Surface Materials:": "COL Surface Materials:",
     "введите запрос для фильтрации": "type to filter",
+
+    # Info tooltips
+    "Текстура короны (светящийся спрайт)": "Corona texture (glowing sprite)",
+    "Текстура тени на земле под источником света": "Shadow texture on ground under light source",
+
+    "None — без pipeline\nBuilding — Day/Night vertex colors (смена освещения по времени суток)\nReflections — отражения на окнах (окна должны быть отдельной моделью)":
+        "None — no pipeline\nBuilding — Day/Night vertex colors (lighting changes by time of day)\nReflections — window reflections (windows must be a separate model)",
+
+    "DFF — модель (меш, материалы, UV)\nCOL — коллизия\nTXD — текстуры\nCheck vertex — висящие вершины и рёбра\nCheck N-gon — полигоны с 5+ вершинами\nCheck Material — лимит 50 материалов\nGPU (NVTT) — сжатие текстур на видеокарте":
+        "DFF — model (mesh, materials, UV)\nCOL — collision\nTXD — textures\nCheck vertex — loose vertices and edges\nCheck N-gon — polygons with 5+ vertices\nCheck Material — 50 material limit\nGPU (NVTT) — texture compression on GPU",
+
+    "DFF — импорт модели с мешем и материалами\nCOL — импорт коллизии\nTXD — импорт текстур\nImport TXD — автоимпорт текстур при импорте DFF":
+        "DFF — import model with mesh and materials\nCOL — import collision\nTXD — import textures\nImport TXD — auto-import textures when importing DFF",
+
+    "Light — уличные фонари, неон, corona\nParticle — дым, огонь, частицы\nPed Attractor — точки притяжения NPC (банкомат, скамейка)\nSun Glare — блик солнца на поверхности":
+        "Light — street lights, neon, corona\nParticle — smoke, fire, particles\nPed Attractor — NPC attraction points (ATM, bench)\nSun Glare — sun glare on surface",
+
+    "Color — цвет короны и света\nCorona Size — размер короны\nDraw Distance — дальность отрисовки\nLight Range — радиус точечного света":
+        "Color — corona and light color\nCorona Size — corona size\nDraw Distance — draw distance\nLight Range — point light radius",
+
+    "DEFAULT — всегда видим\nRANDOM_FLASHING — случайное мерцание\nFLASH_RAIN — мерцает в дождь\nONLY_RAIN — видим только в дождь\nNO_RAIN — не видим в дождь\nFLASH_5 — вариант мерцания 2":
+        "DEFAULT — always visible\nRANDOM_FLASHING — random flashing\nFLASH_RAIN — flashes in rain\nONLY_RAIN — visible only in rain\nNO_RAIN — not visible in rain\nFLASH_5 — flashing variant 2",
+
+    "None — без бликов линзы\nType 1/2/3 — разные стили бликов линзы":
+        "None — no lens flare\nType 1/2/3 — different lens flare styles",
+
+    "Light — динамическое освещение модели\nModulate Material Color — цвет материала влияет на модель\nExport Normals — экспорт нормалей (отключить для map объектов)":
+        "Light — dynamic lighting on model\nModulate Material Color — material color affects model\nExport Normals — export normals (disable for map objects)",
+
+    "Day — дневные вертексные цвета (prelight)\nNight — ночные вертексные цвета (требует Pipeline: Building)":
+        "Day — daytime vertex colors (prelight)\nNight — nighttime vertex colors (requires Pipeline: Building)",
+
+    "UV Map 1 — основная UV развёртка\nUV Map 2 — вторая UV (для lightmap и т.д.)\nBin Mesh PLG — совместимость с просмотрщиками DFF":
+        "UV Map 1 — primary UV map\nUV Map 2 — secondary UV (for lightmap etc.)\nBin Mesh PLG — compatibility with DFF viewers",
+
+    "Day — дневные вертексные цвета\nNight — ночные вертексные цвета\nDay/Night — создать оба атрибута\n+/- — добавить или удалить атрибут":
+        "Day — daytime vertex colors\nNight — nighttime vertex colors\nDay/Night — create both attributes\n+/- — add or remove attribute",
+
+    "V — смещение яркости vertex colors\nПоложительное значение — светлее\nОтрицательное — темнее":
+        "V — brightness offset for vertex colors\nPositive value — brighter\nNegative — darker",
+
+    "Сглаживание vertex colors между соседними вершинами\nIterations — количество проходов\nFactor — сила сглаживания (0-1)":
+        "Smooth vertex colors between neighboring vertices\nIterations — number of passes\nFactor — smoothing strength (0-1)",
+
+    "Контраст vertex colors\n1.0 — без изменений\n< 1.0 — меньше контраст\n> 1.0 — больше контраст":
+        "Vertex colors contrast\n1.0 — no change\n< 1.0 — less contrast\n> 1.0 — more contrast",
+
+    "Яркость vertex colors\n0.0 — без изменений\n> 0 — светлее\n< 0 — темнее":
+        "Vertex colors brightness\n0.0 — no change\n> 0 — brighter\n< 0 — darker",
+
+    "Гамма-коррекция vertex colors\n1.0 — без изменений\n< 1.0 — светлее (тени)\n> 1.0 — темнее (тени)":
+        "Vertex colors gamma correction\n1.0 — no change\n< 1.0 — lighter (shadows)\n> 1.0 — darker (shadows)",
+
+    "Диапазон дневного освещения для COL материалов\nMin/Max — значения от 0 до 15\nЯркость vertex colors конвертируется в этот диапазон":
+        "Day lighting range for COL materials\nMin/Max — values from 0 to 15\nVertex colors brightness is converted to this range",
+
+    "Диапазон ночного освещения для COL материалов\nMin/Max — значения от 0 до 15\nИспользует Night color attribute если есть":
+        "Night lighting range for COL materials\nMin/Max — values from 0 to 15\nUses Night color attribute if available",
+
+    "Запекание:": "Bake:",
+    "Тени": "Shadows",
+    "Запечь": "Bake",
+    "С тенями": "With Shadows",
+    "Тени — включить расчёт теней при запекании\nЗапечь — быстрое запекание без теней\nС тенями — запекание с raycast тенями (медленнее, но точнее)":
+        "Shadows — enable shadow calculation when baking\nBake — fast baking without shadows\nWith Shadows — baking with raycast shadows (slower but more accurate)",
 }
 
 def T(text):
@@ -3181,8 +3264,8 @@ class INUObjectProps(bpy.types.PropertyGroup):
     pipeline : EnumProperty(
         items=[
             ('NONE', 'None', 'Export without setting a pipeline'),
-            ('0x53F20098', 'Buildings', 'Reflection Building Pipeline'),
-            ('0x53F2009A', 'Night Vertex Colors', 'Night Vertex Colors Pipeline'),
+            ('0x53F2009A', 'Building', 'Day/Night vertex colors for buildings'),
+            ('0x53F20098', 'Reflections', 'Window reflections on buildings'),
             ('CUSTOM', 'Custom Pipeline', 'Set a custom pipeline value'),
         ],
         name="Pipeline",
@@ -3988,6 +4071,32 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
             self.report({'WARNING'}, f"{T('Ошибки:')} {'; '.join(errors)}")
 
         return {'FINISHED'}
+
+
+class GTATOOLS_OT_info_tooltip(bpy.types.Operator):
+    """"""
+    bl_idname = "gtatools.info_tooltip"
+    bl_label = ""
+    bl_options = {'INTERNAL'}
+
+    tooltip : StringProperty(default="")
+
+    @classmethod
+    def description(cls, context, properties):
+        return properties.tooltip
+
+    def execute(self, context):
+        return {'CANCELLED'}
+
+
+def _draw_label_with_info(layout, text, tooltip, icon='NONE'):
+    """Draw info icon before label text."""
+    row = layout.row(align=True)
+    sub = row.row(align=True)
+    sub.ui_units_x = 1.3
+    op = sub.operator("gtatools.info_tooltip", text="", icon='INFO')
+    op.tooltip = tooltip
+    row.label(text=text, icon=icon)
 
 
 class GTATOOLS_OT_detect_models(bpy.types.Operator):
@@ -5906,10 +6015,17 @@ class GTATOOLS_PT_export_panel(bpy.types.Panel):
         row.prop(context.scene, "gtatools_export_all_lod", text="LOD", toggle=True)
         row.prop(context.scene, "gtatools_export_all_txd", text="TXD", toggle=True)
 
-        layout.separator()
+        # Pipeline selector
+        _draw_label_with_info(layout, "Pipeline:",
+            T("None — без pipeline\nBuilding — Day/Night vertex colors (смена освещения по времени суток)\nReflections — отражения на окнах (окна должны быть отдельной моделью)"))
+        row = layout.row(align=True)
+        row.prop_enum(context.scene, "gtatools_export_pipeline", 'NONE')
+        row.prop_enum(context.scene, "gtatools_export_pipeline", '0x53F2009A')
+        row.prop_enum(context.scene, "gtatools_export_pipeline", '0x53F20098')
 
         # Individual export buttons
-        layout.label(text="Export Individual:")
+        _draw_label_with_info(layout, "Export Individual:",
+            T("DFF — модель (меш, материалы, UV)\nCOL — коллизия\nTXD — текстуры\nCheck vertex — висящие вершины и рёбра\nCheck N-gon — полигоны с 5+ вершинами\nCheck Material — лимит 50 материалов\nGPU (NVTT) — сжатие текстур на видеокарте"))
         row = layout.row(align=True)
         row.operator("gtatools.export_dff", text="DFF", icon='MESH_DATA')
         row.operator("gtatools.export_col", text="COL", icon='MESH_CUBE')
@@ -5950,7 +6066,8 @@ class GTATOOLS_PT_import_panel(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
 
-        layout.label(text="Import Individual:")
+        _draw_label_with_info(layout, "Import Individual:",
+            T("DFF — импорт модели с мешем и материалами\nCOL — импорт коллизии\nTXD — импорт текстур\nImport TXD — автоимпорт текстур при импорте DFF"))
         row = layout.row(align=True)
         row.operator("gtatools.import_dff", text="DFF", icon='MESH_DATA')
         row.operator("gtatools.import_col", text="COL", icon='MESH_CUBE')
@@ -5958,52 +6075,6 @@ class GTATOOLS_PT_import_panel(bpy.types.Panel):
 
         layout.separator()
         layout.prop(context.scene, "gtatools_txd_auto_import", text="Import TXD")
-
-
-class GTATOOLS_PT_dff_flags_panel(bpy.types.Panel):
-    """DFF Geometry Flags"""
-    bl_label = "DFF Flags"
-    bl_idname = "GTATOOLS_PT_dff_flags_panel"
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category = 'GTA Tools'
-    bl_parent_id = "GTATOOLS_PT_export_panel"
-    bl_options = {'DEFAULT_CLOSED'}
-
-    def draw(self, context):
-        layout = self.layout
-        obj = context.active_object
-
-        if not obj or obj.type != 'MESH':
-            layout.label(text=T("Выберите меш-объект"), icon='INFO')
-            return
-
-        settings = obj.inu
-
-        box = layout.box()
-        box.label(text="Geometry Flags:", icon='PREFERENCES')
-        box.prop(settings, "light", text="Light (rpGEOMETRYLIGHT)")
-        box.prop(settings, "modulate_color", text="Modulate Material Color")
-        box.prop(settings, "export_normals", text="Export Normals")
-
-        box = layout.box()
-        box.label(text="Pipeline:", icon='NODE_MATERIAL')
-        box.prop(settings, "pipeline", text="")
-        if settings.pipeline == 'CUSTOM':
-            box.prop(settings, "custom_pipeline", text="Custom")
-
-        box = layout.box()
-        box.label(text="Vertex Colors:", icon='COLOR')
-        box.prop(settings, "day_cols", text="Day Vertex Colours")
-        box.prop(settings, "night_cols", text="Night Vertex Colours")
-
-        box = layout.box()
-        box.label(text="UV Maps:", icon='UV')
-        box.prop(settings, "uv_map1", text="UV Map 1")
-        if settings.uv_map1:
-            box.prop(settings, "uv_map2", text="UV Map 2")
-
-        box.prop(settings, "export_binsplit", text="Bin Mesh PLG")
 
 
 # ── 2DFX Light Presets ──
@@ -6321,7 +6392,9 @@ class GTATOOLS_PT_2dfx_panel(bpy.types.Panel):
 
         # ── Кнопки создания (видны всегда) ──
         box = layout.box()
-        box.label(text="Create Effect:", icon='ADD')
+        _draw_label_with_info(box, "Create Effect:",
+            T("Light — уличные фонари, неон, corona\nParticle — дым, огонь, частицы\nPed Attractor — точки притяжения NPC (банкомат, скамейка)\nSun Glare — блик солнца на поверхности"),
+            icon='ADD')
         row = box.row(align=True)
         op = row.operator("gtatools.create_2dfx", text="Light", icon='LIGHT_POINT')
         op.effect_type = 'LIGHT'
@@ -6383,7 +6456,9 @@ class GTATOOLS_PT_2dfx_panel(bpy.types.Panel):
 
             # Color
             box = main_box.box()
-            box.label(text="Light Properties:", icon='LIGHT_POINT')
+            _draw_label_with_info(box, "Light Properties:",
+                T("Color — цвет короны и света\nCorona Size — размер короны\nDraw Distance — дальность отрисовки\nLight Range — радиус точечного света"),
+                icon='LIGHT_POINT')
             box.prop(settings, "color_2dfx", text="Color")
 
             # Corona
@@ -6391,15 +6466,18 @@ class GTATOOLS_PT_2dfx_panel(bpy.types.Panel):
             col.prop(obj, '["2dfx_corona_size"]', text="Corona Size")
             col.prop(obj, '["2dfx_corona_far_clip"]', text="Draw Distance")
             col.prop(obj, '["2dfx_pointlight_range"]', text="Light Range")
-            col.label(text="Corona Name:")
+            _draw_label_with_info(col, "Corona Name:",
+                T("Текстура короны (светящийся спрайт)"))
             col.prop(settings, "corona_tex_2dfx", text="")
 
             # Show Mode / Flare / Reflection
             box2 = main_box.box()
             col2 = box2.column(align=True)
-            col2.label(text="Show Mode:")
+            _draw_label_with_info(col2, "Show Mode:",
+                T("DEFAULT — всегда видим\nRANDOM_FLASHING — случайное мерцание\nFLASH_RAIN — мерцает в дождь\nONLY_RAIN — видим только в дождь\nNO_RAIN — не видим в дождь\nFLASH_5 — вариант мерцания 2"))
             col2.prop(settings, "show_mode_2dfx", text="")
-            col2.label(text="Flare Type:")
+            _draw_label_with_info(col2, "Flare Type:",
+                T("None — без бликов линзы\nType 1/2/3 — разные стили бликов линзы"))
             col2.prop(settings, "flare_type_2dfx", text="")
             col2.prop(obj, '["2dfx_corona_enable_reflection"]', text="Corona Reflection")
 
@@ -6409,7 +6487,8 @@ class GTATOOLS_PT_2dfx_panel(bpy.types.Panel):
             col3.prop(obj, '["2dfx_shadow_size"]', text="Shadow Size")
             col3.prop(obj, '["2dfx_shadow_z_distance"]', text="Shadow Distance")
             col3.prop(obj, '["2dfx_shadow_color_multiplier"]', text="Shadow Multiplier")
-            col3.label(text="Shadow Name:")
+            _draw_label_with_info(col3, "Shadow Name:",
+                T("Текстура тени на земле под источником света"))
             col3.prop(settings, "shadow_tex_2dfx", text="")
 
             # Flags
@@ -6800,6 +6879,123 @@ class GTATOOLS_PT_col_material_panel(bpy.types.Panel):
         layout.prop(mat.inu, "col_brightness", text="Brightness")
 
 
+class GTATOOLS_PT_material_effects_panel(bpy.types.Panel):
+    """Material Effects panel in Material Properties"""
+    bl_label = "GTA SA Material Effects"
+    bl_idname = "GTATOOLS_PT_material_effects_panel"
+    bl_space_type = 'PROPERTIES'
+    bl_region_type = 'WINDOW'
+    bl_context = 'material'
+    bl_options = {'DEFAULT_CLOSED'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.material is not None
+
+    def draw(self, context):
+        layout = self.layout
+        mat = context.material
+        inu = mat.inu
+
+        # Ambient
+        layout.prop(inu, "ambient", text="Ambient Shading")
+        layout.separator()
+
+        # ── Environment Map ──
+        box = layout.box()
+        row = box.row()
+        row.prop(inu, "export_env_map", text="Environment Map")
+        if inu.export_env_map:
+            box.prop(inu, "env_map_tex", text="Texture")
+            box.prop(inu, "env_map_coef", text="Coefficient")
+            box.prop(inu, "env_map_fb_alpha", text="Use FB Alpha")
+
+        # ── Bump Map ──
+        box = layout.box()
+        row = box.row()
+        row.prop(inu, "export_bump_map", text="Bump Map")
+        if inu.export_bump_map:
+            box.prop(inu, "bump_map_tex", text="Height Map Texture")
+
+        # ── Reflection ──
+        box = layout.box()
+        row = box.row()
+        row.prop(inu, "export_reflection", text="Reflection Material")
+        if inu.export_reflection:
+            row = box.row(align=True)
+            row.prop(inu, "reflection_scale_x", text="Scale X")
+            row.prop(inu, "reflection_scale_y", text="Y")
+            row = box.row(align=True)
+            row.prop(inu, "reflection_offset_x", text="Offset X")
+            row.prop(inu, "reflection_offset_y", text="Y")
+            box.prop(inu, "reflection_intensity", text="Intensity")
+
+        # ── Specular ──
+        box = layout.box()
+        row = box.row()
+        row.prop(inu, "export_specular", text="Specular Material")
+        if inu.export_specular:
+            box.prop(inu, "specular_level", text="Specular Level")
+            box.prop(inu, "specular_texture", text="Texture")
+
+        # ── UV Animation ──
+        box = layout.box()
+        row = box.row()
+        row.prop(inu, "export_animation", text="UV Animation")
+        if inu.export_animation:
+            box.prop(inu, "animation_name", text="Animation Name")
+
+
+class GTATOOLS_PT_object_props_panel(bpy.types.Panel):
+    """GTA SA Object Properties panel in Object Properties"""
+    bl_label = "GTA SA Object"
+    bl_idname = "GTATOOLS_PT_object_props_panel"
+    bl_space_type = 'PROPERTIES'
+    bl_region_type = 'WINDOW'
+    bl_context = 'object'
+    bl_options = {'DEFAULT_CLOSED'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.object is not None
+
+    def draw(self, context):
+        layout = self.layout
+        obj = context.object
+        inu = obj.inu
+
+        # ── Object Type ──
+        layout.prop(inu, "type", text="Type")
+        layout.separator()
+
+        # ── DFF Flags (only for mesh objects) ──
+        if obj.type == 'MESH':
+            box = layout.box()
+            _draw_label_with_info(box, "Geometry Flags:",
+                T("Light — динамическое освещение модели\nModulate Material Color — цвет материала влияет на модель\nExport Normals — экспорт нормалей (отключить для map объектов)"),
+                icon='PREFERENCES')
+            box.prop(inu, "light", text="Light (rpGEOMETRYLIGHT)")
+            box.prop(inu, "modulate_color", text="Modulate Material Color")
+            box.prop(inu, "export_normals", text="Export Normals")
+
+            box = layout.box()
+            _draw_label_with_info(box, "Vertex Colors:",
+                T("Day — дневные вертексные цвета (prelight)\nNight — ночные вертексные цвета (требует Pipeline: Building)"),
+                icon='COLOR')
+            box.prop(inu, "day_cols", text="Day Vertex Colours")
+            box.prop(inu, "night_cols", text="Night Vertex Colours")
+
+            box = layout.box()
+            _draw_label_with_info(box, "UV Maps:",
+                T("UV Map 1 — основная UV развёртка\nUV Map 2 — вторая UV (для lightmap и т.д.)\nBin Mesh PLG — совместимость с просмотрщиками DFF"),
+                icon='UV')
+            box.prop(inu, "uv_map1", text="UV Map 1")
+            if inu.uv_map1:
+                box.prop(inu, "uv_map2", text="UV Map 2")
+
+            box.prop(inu, "export_binsplit", text="Bin Mesh PLG")
+
+
 def _draw_sort_materials_menu(self, context):
     """Append sort button to material context menu"""
     self.layout.separator()
@@ -6876,7 +7072,8 @@ class GTATOOLS_PT_prelight_panel(bpy.types.Panel):
         layout.separator()
 
         # Color Attributes selector
-        layout.label(text="Color Attributes:")
+        _draw_label_with_info(layout, "Color Attributes:",
+            T("Day — дневные вертексные цвета\nNight — ночные вертексные цвета\nDay/Night — создать оба атрибута\n+/- — добавить или удалить атрибут"))
 
         if obj and obj.type == 'MESH':
             mesh = obj.data
@@ -6947,16 +7144,19 @@ class GTATOOLS_PT_prelight_panel(bpy.types.Panel):
         layout.separator()
 
         # Bake Vertex Colors
+        _draw_label_with_info(layout, T("Запекание:"),
+            T("Тени — включить расчёт теней при запекании\nЗапечь — быстрое запекание без теней\nС тенями — запекание с raycast тенями (медленнее, но точнее)"))
         row = layout.row(align=True)
-        row.prop(scene, "gtatools_bake_shadows", text="Shadows", icon='SHADING_RENDERED', toggle=True)
+        row.prop(scene, "gtatools_bake_shadows", text=T("Тени"), icon='SHADING_RENDERED', toggle=True)
         row = layout.row(align=True)
-        row.operator("gtatools.bake_vertex_colors_simple", text="Fast", icon='RENDER_STILL')
-        row.operator("gtatools.bake_vertex_colors", text="With Shadows", icon='RENDER_RESULT')
+        row.operator("gtatools.bake_vertex_colors_simple", text=T("Запечь"), icon='RENDER_STILL')
+        row.operator("gtatools.bake_vertex_colors", text=T("С тенями"), icon='RENDER_RESULT')
 
         layout.separator()
 
         # Adjust Color (V offset)
-        layout.label(text="Adjust Color:")
+        _draw_label_with_info(layout, "Adjust Color:",
+            T("V — смещение яркости vertex colors\nПоложительное значение — светлее\nОтрицательное — темнее"))
         row = layout.row(align=True)
         row.prop(scene, "gtatools_v_offset", text="V")
         row.operator("gtatools.apply_v_offset", text="Apply", icon='CHECKMARK')
@@ -7001,7 +7201,9 @@ class GTATOOLS_PT_vc_postprocess_panel(bpy.types.Panel):
 
         # Smooth
         box = layout.box()
-        box.label(text="Smooth:", icon='MOD_SMOOTH')
+        _draw_label_with_info(box, "Smooth:",
+            T("Сглаживание vertex colors между соседними вершинами\nIterations — количество проходов\nFactor — сила сглаживания (0-1)"),
+            icon='MOD_SMOOTH')
         row = box.row(align=True)
         row.prop(scene, "gtatools_vc_smooth_iterations", text="Iterations")
         row.prop(scene, "gtatools_vc_smooth_factor", text="Factor")
@@ -7009,21 +7211,27 @@ class GTATOOLS_PT_vc_postprocess_panel(bpy.types.Panel):
 
         # Contrast
         box = layout.box()
-        box.label(text="Contrast:", icon='CAMERA_DATA')
+        _draw_label_with_info(box, "Contrast:",
+            T("Контраст vertex colors\n1.0 — без изменений\n< 1.0 — меньше контраст\n> 1.0 — больше контраст"),
+            icon='CAMERA_DATA')
         row = box.row(align=True)
         row.prop(scene, "gtatools_vc_contrast", text="Contrast")
         row.operator("gtatools.vc_contrast", text="Apply", icon='CHECKMARK')
 
         # Brightness
         box = layout.box()
-        box.label(text="Brightness:", icon='LIGHT_SUN')
+        _draw_label_with_info(box, "Brightness:",
+            T("Яркость vertex colors\n0.0 — без изменений\n> 0 — светлее\n< 0 — темнее"),
+            icon='LIGHT_SUN')
         row = box.row(align=True)
         row.prop(scene, "gtatools_vc_brightness", text="Brightness")
         row.operator("gtatools.vc_brightness", text="Apply", icon='CHECKMARK')
 
         # Gamma
         box = layout.box()
-        box.label(text="Gamma:", icon='FCURVE')
+        _draw_label_with_info(box, "Gamma:",
+            T("Гамма-коррекция vertex colors\n1.0 — без изменений\n< 1.0 — светлее (тени)\n> 1.0 — темнее (тени)"),
+            icon='FCURVE')
         row = box.row(align=True)
         row.prop(scene, "gtatools_vc_gamma", text="Gamma")
         row.operator("gtatools.vc_gamma", text="Apply", icon='CHECKMARK')
@@ -7057,14 +7265,18 @@ class GTATOOLS_PT_prelight_col_panel(bpy.types.Panel):
 
         # Day range
         box = layout.box()
-        box.label(text="Day Light:", icon='LIGHT_SUN')
+        _draw_label_with_info(box, "Day Light:",
+            T("Диапазон дневного освещения для COL материалов\nMin/Max — значения от 0 до 15\nЯркость vertex colors конвертируется в этот диапазон"),
+            icon='LIGHT_SUN')
         row = box.row(align=True)
         row.prop(scene, "gtatools_col_day_min", text="Min")
         row.prop(scene, "gtatools_col_day_max", text="Max")
 
         # Night range
         box = layout.box()
-        box.label(text="Night Light:", icon='SHADING_RENDERED')
+        _draw_label_with_info(box, "Night Light:",
+            T("Диапазон ночного освещения для COL материалов\nMin/Max — значения от 0 до 15\nИспользует Night color attribute если есть"),
+            icon='SHADING_RENDERED')
         row = box.row(align=True)
         row.prop(scene, "gtatools_col_night_min", text="Min")
         row.prop(scene, "gtatools_col_night_max", text="Max")
@@ -7092,6 +7304,10 @@ class GTATOOLS_PT_vertex_paint_panel(bpy.types.Panel):
     bl_category = 'GTA Tools'
     bl_parent_id = "GTATOOLS_PT_main_panel"
     bl_options = {'DEFAULT_CLOSED'}
+
+    @classmethod
+    def poll(cls, context):
+        return False  # Hidden — code kept for future use
 
     def draw(self, context):
         layout = self.layout
@@ -7911,6 +8127,7 @@ classes = (
     GTATOOLS_OT_export_dff,
     GTATOOLS_OT_export_col,
     GTATOOLS_OT_export_all,
+    GTATOOLS_OT_info_tooltip,
     GTATOOLS_OT_detect_models,
     GTATOOLS_OT_prelight,
     GTATOOLS_OT_average_colors,
@@ -7975,7 +8192,6 @@ classes = (
     GTATOOLS_OT_file_import_txd,
     GTATOOLS_PT_export_panel,
     GTATOOLS_PT_import_panel,
-    GTATOOLS_PT_dff_flags_panel,
     GTATOOLS_OT_apply_2dfx_preset,
     GTATOOLS_OT_create_2dfx,
     GTATOOLS_OT_attach_2dfx,
@@ -7985,6 +8201,8 @@ classes = (
     GTATOOLS_OT_set_col_surface,
     GTATOOLS_OT_col_surface_menu,
     GTATOOLS_PT_col_material_panel,
+    GTATOOLS_PT_material_effects_panel,
+    GTATOOLS_PT_object_props_panel,
     GTATOOLS_PT_inu_tools_panel,
     GTATOOLS_PT_prelight_panel,
     GTATOOLS_PT_bake_settings_subpanel,
@@ -8242,6 +8460,18 @@ def register():
         default=0.0,
     )
 
+    # Pipeline selector for export
+    bpy.types.Scene.gtatools_export_pipeline = EnumProperty(
+        items=[
+            ('NONE', 'None', 'No pipeline'),
+            ('0x53F2009A', 'Building', 'Day/Night vertex colors for buildings'),
+            ('0x53F20098', 'Reflections', 'Window reflections on buildings'),
+        ],
+        name="Pipeline",
+        description="Rendering pipeline for DFF export",
+        default='0x53F2009A',
+    )
+
     # Export settings
     bpy.types.Scene.gtatools_export_all_dff = BoolProperty(
         name="Export DFF",
@@ -8383,6 +8613,7 @@ def unregister():
     del bpy.types.Scene.gtatools_show_nvtt_settings
     del bpy.types.Scene.gtatools_texture_path2
     del bpy.types.Scene.gtatools_texture_path1
+    del bpy.types.Scene.gtatools_export_pipeline
     del bpy.types.Scene.gtatools_export_all_dff
     del bpy.types.Scene.gtatools_export_all_col
     del bpy.types.Scene.gtatools_export_all_lod
