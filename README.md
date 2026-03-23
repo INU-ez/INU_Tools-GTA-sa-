@@ -22,7 +22,6 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 > - ✅ LOD экспорт/импорт
 > - ✅ TXD экспорт/импорт (DXT сжатие, параллельная обработка, GPU через NVIDIA Texture Tools)
 > - ✅ Export All — массовый экспорт по суффиксам `_DFF` / `_LOD` / `_COL` + автосборка TXD
-> - ✅ LOD экспорт/импорт
 
 </details>
 
@@ -41,8 +40,6 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 > </details>
 
 </details>
-
-
 
 <details>
 <summary><b>Prelight</b></summary>
@@ -193,7 +190,7 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 
 - **Blender 5.1+**
 - NVIDIA Texture Tools — опционально, для GPU сжатия текстур
-- Itera Tools 3 - (https://itera.gumroad.com/l/IteraTools3)
+- Itera Tools 3 — опционально, для vertex lighting (https://itera.gumroad.com/l/IteraTools3)
 
 <details>
 <summary><b>История изменений</b></summary>
