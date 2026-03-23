@@ -163,9 +163,11 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 ## Использование
 
 Аддон добавляет панели в:
-- **Properties > Scene > INU Tools** — экспорт, текстуры, материалы
-- **View3D > Sidebar (N) > GTA Tools** — геометрия, прелайт, DFF Flags
+- **Properties > Scene > INU Tools** — текстуры, NVTT настройки
+- **Properties > Object > GTA SA Object** — тип объекта (OBJ/COL/SHA/2DFX), DFF Flags, Pipeline, UV Maps
+- **Properties > Material > GTA SA Material Effects** — Environment Map, Bump Map, Reflection, Specular, UV Animation
 - **Properties > Material > COL Surface Type** — выбор типа поверхности коллизии
+- **View3D > Sidebar (N) > GTA Tools** — экспорт/импорт, прелайт, 2DFX, vertex paint
 - **UV Editor > Sidebar (N) > GTA Tools** — UV инструменты
 
 <details>
@@ -207,6 +209,13 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 - **v1.0.0** — Начальная версия
 
 </details>
+
+## Благодарности
+
+Проект вдохновлён и частично совместим с:
+
+- **[DragonFF](https://github.com/Parik27/DragonFF)** (Parik, GPL-3.0) — Blender аддон для RenderWare форматов. INU_tools использует совместимые имена свойств материалов и объектов для удобства перехода между аддонами.
+- **[RenderWare](https://en.wikipedia.org/wiki/RenderWare)** — игровой движок GTA SA, документация форматов DFF/COL/TXD.
 
 #### Авторы
 
