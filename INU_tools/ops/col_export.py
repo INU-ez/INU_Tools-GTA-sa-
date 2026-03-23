@@ -30,7 +30,9 @@ def _get_surface_from_material(mat) -> Surface:
         surface.material = getattr(inu, 'col_mat_index', 0)
         surface.flags = getattr(inu, 'col_flags', 0)
         surface.brightness = getattr(inu, 'col_brightness', 0)
-        surface.light = getattr(inu, 'col_light', 0)
+        day = getattr(inu, 'col_day_light', 0)
+        night = getattr(inu, 'col_night_light', 0)
+        surface.light = (day & 0xF) | ((night & 0xF) << 4)
 
     return surface
 
