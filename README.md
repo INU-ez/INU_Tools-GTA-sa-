@@ -4,7 +4,7 @@
 
 ![Blender](https://img.shields.io/badge/Blender-5.1+-orange?logo=blender)
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue)
-![Version](https://img.shields.io/badge/Version-1.5.0-green)
+![Version](https://img.shields.io/badge/Version-1.5.1-green)
 
 > **[English version](README_eng.md)**
 
@@ -13,6 +13,15 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 Начиная с v1.5.0 аддон имеет собственный экспорт DFF, COL и TXD (без зависимости от DragonFF).
 
 ## Возможности
+
+<details>
+<summary><b>IDE / IPL / IMG</b></summary>
+
+> - ✅ IDE экспорт/импорт — определение моделей, upsert/remove в существующие файлы
+> - ✅ IPL экспорт/импорт — размещение объектов на карте
+> - ✅ IMG Archive — экспорт DFF+TXD+COL прямо в .img архив (VER2)
+
+</details>
 
 <details>
 <summary><b>Export/Import</b></summary>
@@ -190,6 +199,7 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 <details>
 <summary><b>История изменений</b></summary>
 
+- **v1.5.1** — IDE/IPL экспорт/импорт (upsert/remove в существующие файлы); IMG Archive экспорт (DFF+TXD+COL в .img); Dual Texture и Blend Mode; удалён Vertex Alpha (не поддерживается GTA SA)
 - **v1.5.0** — Собственный DFF/COL/TXD импорт и экспорт (без DragonFF); авто-импорт TXD при импорте DFF; numpy DXT декомпрессия; сортировка материалов по имени; аддон переведён в пакетную структуру (`INU_tools/`); исправлены prelight preview при экспорте; совместимость с Blender 5.1
 - **v1.4.8** — Shift+T Раскрытие UV редактора
 - **v1.4.7** — COL Surface Type с группировкой по 13 категориям; Day/Night Light + Brightness в Material Properties; Prelight COL — конвертация vertex colors в COL Light с авторазбиением материалов по яркости (0-15)
@@ -221,8 +231,8 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 | Embedded COL в DFF | ✅ |
 | Автозагрузка текстур по именам | ✅ |
 | IFP (анимации) | ❌ |
-| IPL/IDE (размещение на карте) | ❌ |
-| IMG Archive | ❌ |
+| IPL/IDE (размещение на карте) | ✅ |
+| IMG Archive | ✅ |
 | Skinned Mesh (полный скелет) | ❌ |
 | **Материалы** | |
 | Environment Map | ✅ |
@@ -230,9 +240,8 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 | Specular | ✅ |
 | UV Animation | ✅ |
 | Reflection Material | ✅ |
-| Dual Texture | ❌ |
-| Blend Mode (Src/Dst) | ❌ |
-| Vertex Alpha канал | ❌ |
+| Dual Texture | ✅ |
+| Blend Mode (Src/Dst) | ✅ |
 | **2DFX** | |
 | Light (превью + 11 пресетов) | ✅ |
 | Particle | ✅ |

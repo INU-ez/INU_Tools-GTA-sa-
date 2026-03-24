@@ -10,7 +10,7 @@ from ..core.dff import (
     DffMaterial, DffTexture, SurfaceProperties,
     Triangle, BoundingSphere, TexCoords, RGBA,
     ExtraVertColors, SkinData, HAnimData, HAnimBone,
-    BumpMapEffect, EnvMapEffect, SpecularMaterial, ReflectionMaterial,
+    BumpMapEffect, EnvMapEffect, DualTextureEffect, SpecularMaterial, ReflectionMaterial,
     UserData, UserDataSection,
     USERDATA_INT, USERDATA_FLOAT, USERDATA_STRING,
     Extension2dfx, Light2dfx, Particle2dfx, PedAttractor2dfx, SunGlare2dfx,
@@ -81,7 +81,10 @@ def _read_base_color(mat) -> RGBA:
         bc = principled.inputs.get('Base Color')
         if bc:
             c = bc.default_value
-            return RGBA(int(c[0]*255), int(c[1]*255), int(c[2]*255), int(c[3]*255))
+            # Read alpha from Principled BSDF Alpha input
+            alpha_input = principled.inputs.get('Alpha')
+            alpha = int(alpha_input.default_value * 255) if alpha_input else int(c[3] * 255)
+            return RGBA(int(c[0]*255), int(c[1]*255), int(c[2]*255), alpha)
     if hasattr(mat, 'diffuse_color'):
         c = mat.diffuse_color
         return RGBA(int(c[0]*255), int(c[1]*255), int(c[2]*255), 255)
@@ -176,6 +179,16 @@ def _read_material_plugins(mat) -> dict:
         refl.intensity = getattr(inu, 'reflection_intensity', 0.0)
         plugins['reflection'] = refl
 
+    # Dual Texture / Blend Mode
+    if getattr(inu, 'export_dual_tex', False):
+        dt = DualTextureEffect()
+        dt.src_blend = int(getattr(inu, 'dual_tex_src_blend', '5'))
+        dt.dst_blend = int(getattr(inu, 'dual_tex_dst_blend', '6'))
+        tex_name = getattr(inu, 'dual_tex_texture', '')
+        if tex_name:
+            dt.texture = DffTexture(name=tex_name)
+        plugins['dual_texture'] = dt
+
     return plugins
 
 
@@ -192,6 +205,7 @@ def _build_material(mat) -> DffMaterial:
     plugins = _read_material_plugins(mat)
     dff_mat.bump_map = plugins.get('bump_map')
     dff_mat.env_map = plugins.get('env_map')
+    dff_mat.dual_texture = plugins.get('dual_texture')
     dff_mat.specular = plugins.get('specular')
     dff_mat.reflection = plugins.get('reflection')
     dff_mat.user_data = _load_user_data(mat)
@@ -311,6 +325,17 @@ def _process_mesh(obj, clump: DffClump, frame_index: int):
     eval_obj = obj.evaluated_get(depsgraph)
     mesh = eval_obj.to_mesh(preserve_all_data_layers=True, depsgraph=depsgraph)
 
+    # Read alpha per vertex directly from ORIGINAL mesh color attributes
+    # (workaround: bmesh doesn't read alpha from byte color attrs in Blender 5.x)
+    _mesh_alpha = [{}, {}]  # [day_alpha_by_vert, night_alpha_by_vert]
+    orig_mesh = obj.data
+    for ci, ca in enumerate(orig_mesh.color_attributes[:2]):
+        for li, ld in enumerate(ca.data):
+            vi = orig_mesh.loops[li].vertex_index
+            a = int(ld.color[3] * 255)
+            _mesh_alpha[ci][vi] = a
+    print(f"[DFF Export] _mesh_alpha day samples: {list(_mesh_alpha[0].items())[:10]}")
+
     # Triangulate with bmesh
     bm = bmesh.new()
     bm.from_mesh(mesh)
@@ -411,13 +436,15 @@ def _process_mesh(obj, clump: DffClump, frame_index: int):
 
             if has_day:
                 c = loop[color_layers_bm[0]]
+                alpha = _mesh_alpha[0].get(loop.vert.index, int(c[3]*255))
                 day_colors[out_idx] = RGBA(
-                    int(c[0]*255), int(c[1]*255), int(c[2]*255), int(c[3]*255))
+                    int(c[0]*255), int(c[1]*255), int(c[2]*255), alpha)
 
             if has_night:
                 c = loop[color_layers_bm[1]]
+                alpha = _mesh_alpha[1].get(loop.vert.index, int(c[3]*255))
                 night_colors[out_idx] = RGBA(
-                    int(c[0]*255), int(c[1]*255), int(c[2]*255), int(c[3]*255))
+                    int(c[0]*255), int(c[1]*255), int(c[2]*255), alpha)
 
     # ── Bounding sphere ──
     bb = obj.bound_box
@@ -443,6 +470,16 @@ def _process_mesh(obj, clump: DffClump, frame_index: int):
     geom.triangles = triangles
     geom.uv_layers = uv_data
     geom.prelit_colors = day_colors
+
+    # Auto-detect vertex alpha: if any vertex has alpha < 255,
+    # set material color alpha to 254 to enable alpha blending in GTA SA
+    if day_colors:
+        has_vertex_alpha = any(c.a < 255 for c in day_colors)
+        if has_vertex_alpha:
+            for m in materials:
+                if m.color.a == 255:
+                    m.color = RGBA(m.color.r, m.color.g, m.color.b, 254)
+
     geom.materials = materials
     geom.bounding_sphere = BoundingSphere(center.x, center.y, center.z, radius)
     geom.export_normals = flags['export_normals']

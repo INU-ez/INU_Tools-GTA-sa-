@@ -23,7 +23,7 @@
 bl_info = {
     "name": "INU_tools(gta_sa)",
     "author": "INU",
-    "version": (1, 5, 0),
+    "version": (1, 5, 1),
     "blender": (4, 4, 0),
     "location": "View3D > Sidebar (N) > GTA Tools",
     "description": "Toolset for GTA SA models",
@@ -3009,6 +3009,42 @@ class INUObjectProps(bpy.types.PropertyGroup):
     light : BoolProperty(default=True, description=T("Флаг rpGEOMETRYLIGHT — динамическое освещение"))
     modulate_color : BoolProperty(default=True, description=T("Флаг rpGEOMETRYMODULATEMATERIALCOLOR — цвет материала влияет на модель"))
 
+    # ── IDE / IPL properties ──
+    model_id : IntProperty(
+        name="Model ID",
+        default=0,
+        min=0,
+        description=T("ID модели в GTA SA (IDE/IPL)"),
+    )
+    txd_name : StringProperty(
+        name="TXD Name",
+        default="",
+        description=T("Имя словаря текстур (IDE). По умолчанию = имя модели"),
+    )
+    draw_distance : FloatProperty(
+        name="Draw Distance",
+        default=300.0,
+        min=0.0,
+        description=T("Дальность прорисовки объекта (IDE)"),
+    )
+    ide_flags : IntProperty(
+        name="IDE Flags",
+        default=0,
+        min=0,
+        description=T("Флаги объекта в IDE"),
+    )
+    interior_id : IntProperty(
+        name="Interior ID",
+        default=0,
+        min=0,
+        description=T("ID интерьера для IPL (0 = экстерьер)"),
+    )
+    lod_index : IntProperty(
+        name="LOD Index",
+        default=-1,
+        description=T("Индекс LOD модели в IPL (-1 = нет LOD)"),
+    )
+
     # Collision sphere/cone properties
     col_material : IntProperty(default=12, description=T("Материал для Sphere/Cone"))
     col_flags : IntProperty(default=0, description=T("Флаги для Sphere/Cone"))
@@ -3051,6 +3087,44 @@ class INUMaterialProps(bpy.types.PropertyGroup):
     export_specular : BoolProperty(name="Specular Material")
     specular_level : FloatProperty()
     specular_texture : StringProperty()
+
+    # Dual Texture / Blend Mode
+    export_dual_tex : BoolProperty(name="Dual Texture / Blend Mode")
+    dual_tex_src_blend : EnumProperty(
+        name="Src Blend",
+        items=[
+            ('1', "Zero", ""),
+            ('2', "One", ""),
+            ('3', "Src Color", ""),
+            ('4', "Inv Src Color", ""),
+            ('5', "Src Alpha", ""),
+            ('6', "Inv Src Alpha", ""),
+            ('7', "Dest Alpha", ""),
+            ('8', "Inv Dest Alpha", ""),
+            ('9', "Dest Color", ""),
+            ('10', "Inv Dest Color", ""),
+            ('11', "Src Alpha Sat", ""),
+        ],
+        default='5',
+    )
+    dual_tex_dst_blend : EnumProperty(
+        name="Dst Blend",
+        items=[
+            ('1', "Zero", ""),
+            ('2', "One", ""),
+            ('3', "Src Color", ""),
+            ('4', "Inv Src Color", ""),
+            ('5', "Src Alpha", ""),
+            ('6', "Inv Src Alpha", ""),
+            ('7', "Dest Alpha", ""),
+            ('8', "Inv Dest Alpha", ""),
+            ('9', "Dest Color", ""),
+            ('10', "Inv Dest Color", ""),
+            ('11', "Src Alpha Sat", ""),
+        ],
+        default='6',
+    )
+    dual_tex_texture : StringProperty(name="Dual Texture")
 
     # UV Animation
     export_animation : BoolProperty(name="UV Animation")
@@ -3602,6 +3676,8 @@ def menu_func_export(self, context):
     self.layout.operator(GTATOOLS_OT_file_export_dff.bl_idname)
     self.layout.operator(GTATOOLS_OT_file_export_col.bl_idname)
     self.layout.operator(GTATOOLS_OT_file_export_txd.bl_idname)
+    self.layout.operator(GTATOOLS_OT_file_export_ide.bl_idname)
+    self.layout.operator(GTATOOLS_OT_file_export_ipl.bl_idname)
 
 
 class GTATOOLS_OT_file_import_txd(bpy.types.Operator, ImportHelper):
@@ -3623,10 +3699,472 @@ class GTATOOLS_OT_file_import_txd(bpy.types.Operator, ImportHelper):
             return {'CANCELLED'}
 
 
+# ── IDE / IPL panel operators ──
+
+def _ide_entry_from_obj(obj):
+    """Build IdeObject from a Blender mesh object."""
+    from .core.ide import IdeObject
+    inu = getattr(obj, 'inu', None)
+    name = _clean_model_name_ide(obj.name)
+    model_id = getattr(inu, 'model_id', 0) if inu else 0
+    txd_name = getattr(inu, 'txd_name', '') if inu else ''
+    if not txd_name:
+        txd_name = name
+    draw_dist = getattr(inu, 'draw_distance', 300.0) if inu else 300.0
+    flags = getattr(inu, 'ide_flags', 0) if inu else 0
+    return IdeObject(model_id=model_id, model_name=name,
+                     txd_name=txd_name, draw_distance=draw_dist, flags=flags)
+
+
+def _ipl_entry_from_obj(obj):
+    """Build IplInstance from a Blender mesh object."""
+    from .core.ipl import IplInstance
+    inu = getattr(obj, 'inu', None)
+    name = _clean_model_name_ide(obj.name)
+    model_id = getattr(inu, 'model_id', 0) if inu else 0
+    interior = getattr(inu, 'interior_id', 0) if inu else 0
+    lod_index = getattr(inu, 'lod_index', -1) if inu else -1
+    loc = obj.matrix_world.translation
+    rot = obj.matrix_world.to_quaternion().conjugated()
+    return IplInstance(model_id=model_id, model_name=name,
+                       interior=interior,
+                       pos_x=loc.x, pos_y=loc.y, pos_z=loc.z,
+                       rot_x=rot.x, rot_y=rot.y, rot_z=rot.z, rot_w=rot.w,
+                       lod_index=lod_index)
+
+
+def _clean_model_name_ide(name):
+    if '.' in name:
+        base, suffix = name.rsplit('.', 1)
+        if suffix.isdigit():
+            name = base
+    for sfx in ('_COL', '_col', '_LOD', '_lod', '_SHA', '_sha'):
+        if name.endswith(sfx):
+            name = name[:-len(sfx)]
+            break
+    return name
+
+
+class GTATOOLS_OT_export_to_img(bpy.types.Operator):
+    """Экспортировать DFF + TXD + COL прямо в .img архив"""
+    bl_idname = "gtatools.export_to_img"
+    bl_label = "Export to IMG"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        import tempfile
+        from .core.img import replace_or_add
+        from .ops.dff_export import export_dff as inu_export_dff
+
+        img_path = bpy.path.abspath(context.scene.gtatools_img_path)
+        if not img_path or not os.path.isfile(img_path):
+            self.report({'ERROR'}, T("Укажите путь к .img архиву"))
+            return {'CANCELLED'}
+
+        # Use get_model_type to determine base name (strips _dff, _col, _LOD etc.)
+        models = find_selected_models()
+        main_obj = models.get('DFF') or models.get('COL') or models.get('LOD')
+        if not main_obj:
+            self.report({'ERROR'}, T("Выделите меш объекты"))
+            return {'CANCELLED'}
+
+        _, model_name = get_model_type(main_obj)
+        if not model_name:
+            model_name = main_obj.name
+
+        # Collect objects by type
+        dff_objects = []
+        col_objects = []
+        for o in context.selected_objects:
+            if o.type == 'MESH':
+                mt, _ = get_model_type(o)
+                if mt == 'DFF':
+                    dff_objects.append(o)
+                elif mt == 'COL':
+                    col_objects.append(o)
+                elif mt == 'LOD':
+                    pass  # LOD handled separately if needed
+            elif o.type == 'EMPTY' and getattr(o, 'inu', None) and o.inu.type == '2DFX':
+                dff_objects.append(o)
+
+        results = []
+
+        # ── Disable prelight preview before export ──
+        _prelight_active = getattr(context.scene, '_gtatools_prelight_preview_active', False)
+        if _prelight_active:
+            try:
+                bpy.ops.gtatools.prelight_preview()
+            except Exception:
+                pass
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Export DFF
+            if getattr(context.scene, 'gtatools_img_export_dff', True) and dff_objects:
+                dff_path = os.path.join(tmpdir, model_name + '.dff')
+                try:
+                    inu_export_dff(filepath=dff_path, objects=dff_objects)
+                    with open(dff_path, 'rb') as f:
+                        dff_data = f.read()
+                    status = replace_or_add(img_path, model_name + '.dff', dff_data)
+                    results.append(f"DFF {status}")
+                except Exception as e:
+                    results.append(f"DFF error: {e}")
+
+            # Export COL
+            if getattr(context.scene, 'gtatools_img_export_col', True) and col_objects:
+                from .ops.col_export import export_col as inu_export_col
+                col_path = os.path.join(tmpdir, model_name + '.col')
+                try:
+                    inu_export_col(filepath=col_path, objects=col_objects, version=3)
+                    with open(col_path, 'rb') as f:
+                        col_data = f.read()
+                    status = replace_or_add(img_path, model_name + '.col', col_data)
+                    results.append(f"COL {status}")
+                except Exception as e:
+                    results.append(f"COL error: {e}")
+
+            # Export TXD — only textures from selected objects
+            if getattr(context.scene, 'gtatools_img_export_txd', True):
+                txd_path = os.path.join(tmpdir, model_name + '.txd')
+                try:
+                    use_gpu = getattr(context.scene, 'gtatools_txd_use_gpu', False)
+                    result, msg, _ = export_txd(txd_path, context, True, use_gpu)
+                    if result == {'FINISHED'}:
+                        with open(txd_path, 'rb') as f:
+                            txd_data = f.read()
+                        status = replace_or_add(img_path, model_name + '.txd', txd_data)
+                        results.append(f"TXD {status}")
+                    else:
+                        results.append(f"TXD: {msg}")
+                except Exception as e:
+                    results.append(f"TXD error: {e}")
+
+        # Restore prelight preview
+        if _prelight_active:
+            try:
+                bpy.ops.gtatools.prelight_preview()
+            except Exception:
+                pass
+
+        self.report({'INFO'}, f"IMG: {', '.join(results)}")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_upsert_ide(bpy.types.Operator):
+    """Добавить / обновить запись в существующем IDE файле"""
+    bl_idname = "gtatools.upsert_ide"
+    bl_label = "Add to IDE"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        from .core.ide import upsert_ide
+        filepath = bpy.path.abspath(context.scene.gtatools_ide_path)
+        if not filepath:
+            self.report({'ERROR'}, T("Укажите путь к IDE файлу"))
+            return {'CANCELLED'}
+
+        objs = [o for o in context.selected_objects if o.type == 'MESH']
+        if not objs:
+            self.report({'ERROR'}, T("Выделите меш объекты"))
+            return {'CANCELLED'}
+
+        entries = [_ide_entry_from_obj(o) for o in objs]
+
+        # Validate model IDs
+        zero_ids = [e for e in entries if e.model_id == 0]
+        if zero_ids:
+            self.report({'WARNING'}, f"{len(zero_ids)} {T('объектов с Model ID = 0, задайте ID в свойствах')}")
+
+        updated, added = upsert_ide(filepath, entries)
+        self.report({'INFO'}, f"IDE: {T('обновлено')} {updated}, {T('добавлено')} {added}")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_upsert_ipl(bpy.types.Operator):
+    """Добавить / обновить запись в существующем IPL файле"""
+    bl_idname = "gtatools.upsert_ipl"
+    bl_label = "Add to IPL"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        from .core.ipl import upsert_ipl
+        filepath = bpy.path.abspath(context.scene.gtatools_ipl_path)
+        if not filepath:
+            self.report({'ERROR'}, T("Укажите путь к IPL файлу"))
+            return {'CANCELLED'}
+
+        objs = [o for o in context.selected_objects if o.type == 'MESH']
+        if not objs:
+            self.report({'ERROR'}, T("Выделите меш объекты"))
+            return {'CANCELLED'}
+
+        entries = [_ipl_entry_from_obj(o) for o in objs]
+
+        zero_ids = [e for e in entries if e.model_id == 0]
+        if zero_ids:
+            self.report({'WARNING'}, f"{len(zero_ids)} {T('объектов с Model ID = 0, задайте ID в свойствах')}")
+
+        updated, added = upsert_ipl(filepath, entries)
+        self.report({'INFO'}, f"IPL: {T('обновлено')} {updated}, {T('добавлено')} {added}")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_remove_ide(bpy.types.Operator):
+    """Удалить запись из IDE файла по Model ID"""
+    bl_idname = "gtatools.remove_ide"
+    bl_label = "Remove from IDE"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        from .core.ide import remove_ide
+        filepath = bpy.path.abspath(context.scene.gtatools_ide_path)
+        if not filepath:
+            self.report({'ERROR'}, T("Укажите путь к IDE файлу"))
+            return {'CANCELLED'}
+
+        objs = [o for o in context.selected_objects if o.type == 'MESH']
+        if not objs:
+            self.report({'ERROR'}, T("Выделите меш объекты"))
+            return {'CANCELLED'}
+
+        model_ids = set()
+        for o in objs:
+            inu = getattr(o, 'inu', None)
+            mid = getattr(inu, 'model_id', 0) if inu else 0
+            if mid > 0:
+                model_ids.add(mid)
+
+        if not model_ids:
+            self.report({'ERROR'}, T("Нет объектов с Model ID > 0"))
+            return {'CANCELLED'}
+
+        removed = remove_ide(filepath, model_ids)
+        self.report({'INFO'}, f"IDE: {T('удалено')} {removed}")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_remove_ipl(bpy.types.Operator):
+    """Удалить запись из IPL файла по Model ID"""
+    bl_idname = "gtatools.remove_ipl"
+    bl_label = "Remove from IPL"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        from .core.ipl import remove_ipl
+        filepath = bpy.path.abspath(context.scene.gtatools_ipl_path)
+        if not filepath:
+            self.report({'ERROR'}, T("Укажите путь к IPL файлу"))
+            return {'CANCELLED'}
+
+        objs = [o for o in context.selected_objects if o.type == 'MESH']
+        if not objs:
+            self.report({'ERROR'}, T("Выделите меш объекты"))
+            return {'CANCELLED'}
+
+        model_ids = set()
+        for o in objs:
+            inu = getattr(o, 'inu', None)
+            mid = getattr(inu, 'model_id', 0) if inu else 0
+            if mid > 0:
+                model_ids.add(mid)
+
+        if not model_ids:
+            self.report({'ERROR'}, T("Нет объектов с Model ID > 0"))
+            return {'CANCELLED'}
+
+        removed = remove_ipl(filepath, model_ids)
+        self.report({'INFO'}, f"IPL: {T('удалено')} {removed}")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_export_ide(bpy.types.Operator):
+    """Экспорт IDE (определение объектов GTA SA)"""
+    bl_idname = "gtatools.export_ide"
+    bl_label = "Export IDE (.ide)"
+    bl_options = {'REGISTER'}
+
+    filepath: StringProperty(subtype='FILE_PATH')
+    filter_glob: StringProperty(default="*.ide", options={'HIDDEN'})
+
+    def invoke(self, context, event):
+        if not self.filepath:
+            self.filepath = "model.ide"
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        from .ops.ide_export import export_ide as inu_export_ide
+        try:
+            objs = [o for o in context.selected_objects if o.type == 'MESH']
+            inu_export_ide(filepath=self.filepath, objects=objs)
+            self.report({'INFO'}, f"Exported IDE: {self.filepath}")
+            return {'FINISHED'}
+        except Exception as e:
+            self.report({'ERROR'}, f"IDE export error: {str(e)}")
+            return {'CANCELLED'}
+
+
+class GTATOOLS_OT_export_ipl(bpy.types.Operator):
+    """Экспорт IPL (размещение объектов GTA SA)"""
+    bl_idname = "gtatools.export_ipl"
+    bl_label = "Export IPL (.ipl)"
+    bl_options = {'REGISTER'}
+
+    filepath: StringProperty(subtype='FILE_PATH')
+    filter_glob: StringProperty(default="*.ipl", options={'HIDDEN'})
+
+    def invoke(self, context, event):
+        if not self.filepath:
+            self.filepath = "model.ipl"
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        from .ops.ipl_export import export_ipl as inu_export_ipl
+        try:
+            objs = [o for o in context.selected_objects if o.type == 'MESH']
+            inu_export_ipl(filepath=self.filepath, objects=objs)
+            self.report({'INFO'}, f"Exported IPL: {self.filepath}")
+            return {'FINISHED'}
+        except Exception as e:
+            self.report({'ERROR'}, f"IPL export error: {str(e)}")
+            return {'CANCELLED'}
+
+
+class GTATOOLS_OT_import_ide(bpy.types.Operator):
+    """Импорт IDE (определения объектов GTA SA)"""
+    bl_idname = "gtatools.import_ide"
+    bl_label = "Import IDE (.ide)"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    filepath: StringProperty(subtype='FILE_PATH')
+    filter_glob: StringProperty(default="*.ide", options={'HIDDEN'})
+
+    def invoke(self, context, event):
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        from .ops.ide_import import import_ide as inu_import_ide
+        try:
+            matched = inu_import_ide(filepath=self.filepath, context=context)
+            self.report({'INFO'}, f"IDE: {len(matched)} objects matched")
+            return {'FINISHED'}
+        except Exception as e:
+            self.report({'ERROR'}, f"IDE import error: {str(e)}")
+            return {'CANCELLED'}
+
+
+class GTATOOLS_OT_import_ipl(bpy.types.Operator):
+    """Импорт IPL (размещение объектов GTA SA)"""
+    bl_idname = "gtatools.import_ipl"
+    bl_label = "Import IPL (.ipl)"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    filepath: StringProperty(subtype='FILE_PATH')
+    filter_glob: StringProperty(default="*.ipl", options={'HIDDEN'})
+
+    def invoke(self, context, event):
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        from .ops.ipl_import import import_ipl as inu_import_ipl
+        try:
+            placed = inu_import_ipl(filepath=self.filepath, context=context)
+            self.report({'INFO'}, f"IPL: {len(placed)} objects placed")
+            return {'FINISHED'}
+        except Exception as e:
+            self.report({'ERROR'}, f"IPL import error: {str(e)}")
+            return {'CANCELLED'}
+
+
+# ── File > Export / Import IDE/IPL operators ──
+
+class GTATOOLS_OT_file_export_ide(bpy.types.Operator, ExportHelper):
+    """Экспорт IDE определений GTA SA"""
+    bl_idname = "gtatools.file_export_ide"
+    bl_label = "GTA SA IDE (.ide)"
+    bl_options = {'PRESET'}
+    filename_ext = ".ide"
+    filter_glob: StringProperty(default="*.ide", options={'HIDDEN'})
+
+    def execute(self, context):
+        from .ops.ide_export import export_ide as inu_export_ide
+        try:
+            objs = [o for o in context.selected_objects if o.type == 'MESH']
+            inu_export_ide(filepath=self.filepath, objects=objs)
+            self.report({'INFO'}, f"Exported IDE: {self.filepath}")
+            return {'FINISHED'}
+        except Exception as e:
+            self.report({'ERROR'}, f"IDE export error: {str(e)}")
+            return {'CANCELLED'}
+
+
+class GTATOOLS_OT_file_export_ipl(bpy.types.Operator, ExportHelper):
+    """Экспорт IPL размещения GTA SA"""
+    bl_idname = "gtatools.file_export_ipl"
+    bl_label = "GTA SA IPL (.ipl)"
+    bl_options = {'PRESET'}
+    filename_ext = ".ipl"
+    filter_glob: StringProperty(default="*.ipl", options={'HIDDEN'})
+
+    def execute(self, context):
+        from .ops.ipl_export import export_ipl as inu_export_ipl
+        try:
+            objs = [o for o in context.selected_objects if o.type == 'MESH']
+            inu_export_ipl(filepath=self.filepath, objects=objs)
+            self.report({'INFO'}, f"Exported IPL: {self.filepath}")
+            return {'FINISHED'}
+        except Exception as e:
+            self.report({'ERROR'}, f"IPL export error: {str(e)}")
+            return {'CANCELLED'}
+
+
+class GTATOOLS_OT_file_import_ide(bpy.types.Operator, ImportHelper):
+    """Импорт IDE определений GTA SA"""
+    bl_idname = "gtatools.file_import_ide"
+    bl_label = "GTA SA IDE (.ide)"
+    bl_options = {'REGISTER', 'UNDO'}
+    filename_ext = ".ide"
+    filter_glob: StringProperty(default="*.ide", options={'HIDDEN'})
+
+    def execute(self, context):
+        from .ops.ide_import import import_ide as inu_import_ide
+        try:
+            matched = inu_import_ide(filepath=self.filepath, context=context)
+            self.report({'INFO'}, f"IDE: {len(matched)} objects matched")
+            return {'FINISHED'}
+        except Exception as e:
+            self.report({'ERROR'}, f"IDE import error: {str(e)}")
+            return {'CANCELLED'}
+
+
+class GTATOOLS_OT_file_import_ipl(bpy.types.Operator, ImportHelper):
+    """Импорт IPL размещения GTA SA"""
+    bl_idname = "gtatools.file_import_ipl"
+    bl_label = "GTA SA IPL (.ipl)"
+    bl_options = {'REGISTER', 'UNDO'}
+    filename_ext = ".ipl"
+    filter_glob: StringProperty(default="*.ipl", options={'HIDDEN'})
+
+    def execute(self, context):
+        from .ops.ipl_import import import_ipl as inu_import_ipl
+        try:
+            placed = inu_import_ipl(filepath=self.filepath, context=context)
+            self.report({'INFO'}, f"IPL: {len(placed)} objects placed")
+            return {'FINISHED'}
+        except Exception as e:
+            self.report({'ERROR'}, f"IPL import error: {str(e)}")
+            return {'CANCELLED'}
+
+
 def menu_func_import(self, context):
     self.layout.operator(GTATOOLS_OT_file_import_dff.bl_idname)
     self.layout.operator(GTATOOLS_OT_file_import_col.bl_idname)
     self.layout.operator(GTATOOLS_OT_file_import_txd.bl_idname)
+    self.layout.operator(GTATOOLS_OT_file_import_ide.bl_idname)
+    self.layout.operator(GTATOOLS_OT_file_import_ipl.bl_idname)
 
 
 class GTATOOLS_OT_export_all(bpy.types.Operator):
@@ -5964,6 +6502,76 @@ class GTATOOLS_PT_main_panel(bpy.types.Panel):
         layout.label(text="GTA SA Modding Tools", icon='TOOL_SETTINGS')
 
 
+class GTATOOLS_PT_ide_ipl_panel(bpy.types.Panel):
+    """Панель IDE / IPL для работы с существующими файлами GTA SA"""
+    bl_label = "IDE / IPL"
+    bl_idname = "GTATOOLS_PT_ide_ipl_panel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'GTA Tools'
+    bl_parent_id = "GTATOOLS_PT_main_panel"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw(self, context):
+        layout = self.layout
+        scn = context.scene
+        obj = context.active_object
+
+        # Show active object IDE/IPL props
+        if obj and obj.type == 'MESH':
+            inu = obj.inu
+            box = layout.box()
+            box.label(text=f"{obj.name}", icon='OBJECT_DATA')
+            col = box.column(align=True)
+            col.prop(inu, "model_id", text="Model ID")
+            col.prop(inu, "txd_name", text="TXD")
+            col.prop(inu, "draw_distance", text="Draw Dist")
+            col.prop(inu, "ide_flags", text="Flags")
+            row = box.row(align=True)
+            row.prop(inu, "interior_id", text="Interior")
+            row.prop(inu, "lod_index", text="LOD")
+        else:
+            layout.label(text=T("Выделите меш объект"), icon='INFO')
+
+        layout.separator()
+
+        # IDE section
+        box = layout.box()
+        box.label(text="IDE", icon='TEXT')
+        box.prop(scn, "gtatools_ide_path", text="")
+        row = box.row(align=True)
+        row.operator("gtatools.upsert_ide", text=T("Добавить"), icon='ADD')
+        row.operator("gtatools.remove_ide", text=T("Удалить"), icon='REMOVE')
+        row = box.row(align=True)
+        row.operator("gtatools.import_ide", text=T("Импорт"), icon='IMPORT')
+        row.operator("gtatools.export_ide", text=T("Экспорт"), icon='EXPORT')
+
+        layout.separator()
+
+        # IPL section
+        box = layout.box()
+        box.label(text="IPL", icon='EMPTY_AXIS')
+        box.prop(scn, "gtatools_ipl_path", text="")
+        row = box.row(align=True)
+        row.operator("gtatools.upsert_ipl", text=T("Добавить"), icon='ADD')
+        row.operator("gtatools.remove_ipl", text=T("Удалить"), icon='REMOVE')
+        row = box.row(align=True)
+        row.operator("gtatools.import_ipl", text=T("Импорт"), icon='IMPORT')
+        row.operator("gtatools.export_ipl", text=T("Экспорт"), icon='EXPORT')
+
+        layout.separator()
+
+        # IMG section
+        box = layout.box()
+        box.label(text="IMG", icon='PACKAGE')
+        box.prop(scn, "gtatools_img_path", text="")
+        row = box.row(align=True)
+        row.prop(scn, "gtatools_img_export_dff", text="DFF", toggle=True)
+        row.prop(scn, "gtatools_img_export_col", text="COL", toggle=True)
+        row.prop(scn, "gtatools_img_export_txd", text="TXD", toggle=True)
+        box.operator("gtatools.export_to_img", text=T("Экспорт в IMG"), icon='EXPORT')
+
+
 class GTATOOLS_PT_export_panel(bpy.types.Panel):
     """Панель экспорта GTA моделей"""
     bl_label = "Export"
@@ -6020,6 +6628,10 @@ class GTATOOLS_PT_export_panel(bpy.types.Panel):
         row.operator("gtatools.export_col", text="COL", icon='MESH_CUBE')
 
         row = layout.row(align=True)
+        row.operator("gtatools.export_ide", text="IDE", icon='TEXT')
+        row.operator("gtatools.export_ipl", text="IPL", icon='EMPTY_AXIS')
+
+        row = layout.row(align=True)
         row.operator("gtatools.check_geometry", text=T("Проверка вершин"), icon='VIEWZOOM')
         row.operator("gtatools.check_ngons", text=T("Проверка N-gon"), icon='MESH_DATA')
 
@@ -6056,11 +6668,15 @@ class GTATOOLS_PT_import_panel(bpy.types.Panel):
         layout = self.layout
 
         _draw_label_with_info(layout, T("Импорт по одному:"),
-            T("DFF — импорт модели с мешем и материалами\nCOL — импорт коллизии\nTXD — импорт текстур\nImport TXD — автоимпорт текстур при импорте DFF"))
+            T("DFF — импорт модели с мешем и материалами\nCOL — импорт коллизии\nTXD — импорт текстур\nIDE — определения объектов\nIPL — размещение объектов\nImport TXD — автоимпорт текстур при импорте DFF"))
         row = layout.row(align=True)
         row.operator("gtatools.import_dff", text="DFF", icon='MESH_DATA')
         row.operator("gtatools.import_col", text="COL", icon='MESH_CUBE')
         row.operator("gtatools.import_txd", text="TXD", icon='TEXTURE')
+
+        row = layout.row(align=True)
+        row.operator("gtatools.import_ide", text="IDE", icon='TEXT')
+        row.operator("gtatools.import_ipl", text="IPL", icon='EMPTY_AXIS')
 
         layout.separator()
         layout.prop(context.scene, "gtatools_txd_auto_import", text=T("Импорт TXD"))
@@ -7223,6 +7839,15 @@ class GTATOOLS_PT_material_effects_panel(bpy.types.Panel):
             box.prop(inu, "specular_level", text=T("Уровень зеркальности"))
             box.prop(inu, "specular_texture", text=T("Текстура"))
 
+        # ── Dual Texture / Blend Mode ──
+        box = layout.box()
+        row = box.row()
+        row.prop(inu, "export_dual_tex", text="Blend Mode (Src/Dst)")
+        if inu.export_dual_tex:
+            box.prop(inu, "dual_tex_src_blend", text="Src")
+            box.prop(inu, "dual_tex_dst_blend", text="Dst")
+            box.prop(inu, "dual_tex_texture", text=T("Текстура"))
+
         # ── UV Animation ──
         box = layout.box()
         row = box.row()
@@ -7279,6 +7904,18 @@ class GTATOOLS_PT_object_props_panel(bpy.types.Panel):
                 box.prop(inu, "uv_map2", text=T("UV карта 2"))
 
             box.prop(inu, "export_binsplit", text=T("Bin Mesh PLG"))
+
+            # ── IDE / IPL Properties ──
+            box = layout.box()
+            _draw_label_with_info(box, "IDE / IPL:",
+                T("Model ID — ID модели в GTA SA\nTXD Name — словарь текстур\nDraw Distance — дальность прорисовки\nIDE Flags — флаги объекта\nInterior — ID интерьера (0 = улица)\nLOD Index — индекс LOD модели (-1 = нет)"),
+                icon='WORLD_DATA')
+            box.prop(inu, "model_id", text="Model ID")
+            box.prop(inu, "txd_name", text="TXD Name")
+            box.prop(inu, "draw_distance", text="Draw Distance")
+            box.prop(inu, "ide_flags", text="Flags")
+            box.prop(inu, "interior_id", text="Interior")
+            box.prop(inu, "lod_index", text="LOD Index")
 
 
 def _draw_sort_materials_menu(self, context):
@@ -8522,6 +9159,20 @@ classes = (
     GTATOOLS_OT_file_import_dff,
     GTATOOLS_OT_file_import_col,
     GTATOOLS_OT_file_import_txd,
+    GTATOOLS_OT_export_to_img,
+    GTATOOLS_OT_upsert_ide,
+    GTATOOLS_OT_upsert_ipl,
+    GTATOOLS_OT_remove_ide,
+    GTATOOLS_OT_remove_ipl,
+    GTATOOLS_OT_export_ide,
+    GTATOOLS_OT_export_ipl,
+    GTATOOLS_OT_import_ide,
+    GTATOOLS_OT_import_ipl,
+    GTATOOLS_OT_file_export_ide,
+    GTATOOLS_OT_file_export_ipl,
+    GTATOOLS_OT_file_import_ide,
+    GTATOOLS_OT_file_import_ipl,
+    GTATOOLS_PT_ide_ipl_panel,
     GTATOOLS_PT_export_panel,
     GTATOOLS_PT_import_panel,
     GTATOOLS_OT_apply_2dfx_preset,
@@ -8661,6 +9312,40 @@ def register():
         name="Show Numbers",
         description=T("Показать цифры на полигонах"),
         default=True)
+
+    # IMG archive path
+    bpy.types.Scene.gtatools_img_path = StringProperty(
+        name="IMG Archive",
+        description=T("Путь к .img архиву GTA SA для экспорта моделей"),
+        default="",
+        subtype='FILE_PATH',
+    )
+    bpy.types.Scene.gtatools_img_export_dff = BoolProperty(
+        name="DFF", default=True,
+        description=T("Экспорт DFF в IMG"),
+    )
+    bpy.types.Scene.gtatools_img_export_col = BoolProperty(
+        name="COL", default=True,
+        description=T("Экспорт COL в IMG"),
+    )
+    bpy.types.Scene.gtatools_img_export_txd = BoolProperty(
+        name="TXD", default=True,
+        description=T("Экспорт TXD в IMG"),
+    )
+
+    # IDE / IPL paths
+    bpy.types.Scene.gtatools_ide_path = StringProperty(
+        name="IDE File",
+        description=T("Путь к IDE файлу GTA SA для добавления/обновления записей"),
+        default="",
+        subtype='FILE_PATH',
+    )
+    bpy.types.Scene.gtatools_ipl_path = StringProperty(
+        name="IPL File",
+        description=T("Путь к IPL файлу GTA SA для добавления/обновления записей"),
+        default="",
+        subtype='FILE_PATH',
+    )
 
     # NVIDIA Texture Tools settings
     bpy.types.Scene.gtatools_txd_auto_import = BoolProperty(
@@ -8978,6 +9663,12 @@ def unregister():
     del bpy.types.Scene.gtatools_col_light_contrast
     del bpy.types.Scene.gtatools_col_light_font_size
     del bpy.types.Scene.gtatools_col_light_show_numbers
+    del bpy.types.Scene.gtatools_img_path
+    del bpy.types.Scene.gtatools_img_export_dff
+    del bpy.types.Scene.gtatools_img_export_col
+    del bpy.types.Scene.gtatools_img_export_txd
+    del bpy.types.Scene.gtatools_ide_path
+    del bpy.types.Scene.gtatools_ipl_path
     del bpy.types.Scene.gtatools_txd_auto_import
     del bpy.types.Scene.gtatools_txd_import_path
     del bpy.types.Scene.gtatools_nvtt_path

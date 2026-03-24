@@ -161,6 +161,14 @@ class ReflectionMaterial:
 
 
 @dataclass
+class DualTextureEffect:
+    """Dual Texture (MatFX type 4) — src/dst blend modes."""
+    src_blend: int = 5   # SRCALPHA
+    dst_blend: int = 6   # INVSRCALPHA
+    texture: Optional[DffTexture] = None
+
+
+@dataclass
 class DffMaterial:
     """Single material with optional plugins."""
     color: RGBA = field(default_factory=RGBA)
@@ -168,6 +176,7 @@ class DffMaterial:
     texture: Optional[DffTexture] = None
     bump_map: Optional[BumpMapEffect] = None
     env_map: Optional[EnvMapEffect] = None
+    dual_texture: Optional[DualTextureEffect] = None
     specular: Optional[SpecularMaterial] = None
     reflection: Optional[ReflectionMaterial] = None
     user_data: Optional[UserData] = None
@@ -176,6 +185,7 @@ class DffMaterial:
         """Build Material Effects PLG content."""
         has_bump = self.bump_map is not None
         has_env = self.env_map is not None
+        has_dual = self.dual_texture is not None
 
         if has_bump and has_env:
             effect_type = 3
@@ -183,6 +193,8 @@ class DffMaterial:
             effect_type = 1
         elif has_env:
             effect_type = 2
+        elif has_dual:
+            effect_type = 4
         else:
             return b''
 
@@ -210,6 +222,15 @@ class DffMaterial:
             data += pack('<I', 1 if has_tex else 0)
             if has_tex:
                 data += em.texture.to_bytes(lib_id)
+
+        if has_dual:
+            dt = self.dual_texture
+            data += pack('<I', 4)  # dual texture effect marker
+            data += pack('<II', dt.src_blend, dt.dst_blend)
+            has_tex = dt.texture is not None
+            data += pack('<I', 1 if has_tex else 0)
+            if has_tex:
+                data += dt.texture.to_bytes(lib_id)
 
         if effect_type not in (3, 6):
             data += pack('<I', 0)  # terminator
@@ -607,7 +628,7 @@ class DffGeometry:
 
         # MatFX indicator on geometry extension (if any material has effects)
         has_matfx = any(
-            m.bump_map or m.env_map
+            m.bump_map or m.env_map or m.dual_texture
             for m in self.materials
         )
         if has_matfx:
@@ -689,7 +710,7 @@ class DffClump:
             geom = self.geometries[atomic.geometry_index]
             if geom.skin:
                 atomic_ext += _chunk(0x001F, pack('<II', 0x0116, 1), lib_id)  # Right to Render
-            if any(m.bump_map or m.env_map for m in geom.materials):
+            if any(m.bump_map or m.env_map or m.dual_texture for m in geom.materials):
                 atomic_ext += _chunk(CHUNK_MATFX_PLG, pack('<I', 1), lib_id)
             if geom.pipeline:
                 atomic_ext += _chunk(CHUNK_PIPELINE_SET, pack('<I', geom.pipeline), lib_id)
@@ -889,6 +910,24 @@ def _read_matfx_plugin(r: BinaryReader, size: int, mat: DffMaterial):
                     else:
                         r.skip(cs)
                 mat.env_map = EnvMapEffect(coefficient=coeff, use_fb_alpha=use_fb, texture=env_tex)
+
+    if effect_type == 4:
+        # Dual Texture
+        if r.pos < end:
+            marker = r.read_one('<I')
+            if marker == 4:
+                src_blend = r.read_one('<I')
+                dst_blend = r.read_one('<I')
+                has_tex = r.read_one('<I') if r.pos < end else 0
+                dual_tex = None
+                if has_tex and r.pos < end:
+                    ct, cs, cl = _read_chunk_header(r)
+                    if ct == CHUNK_TEXTURE:
+                        dual_tex = _read_texture_chunk(r, cs)
+                    else:
+                        r.skip(cs)
+                mat.dual_texture = DualTextureEffect(
+                    src_blend=src_blend, dst_blend=dst_blend, texture=dual_tex)
 
     r.seek(end)
 

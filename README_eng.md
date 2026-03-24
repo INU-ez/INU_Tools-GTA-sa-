@@ -4,7 +4,7 @@
 
 ![Blender](https://img.shields.io/badge/Blender-5.1+-orange?logo=blender)
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue)
-![Version](https://img.shields.io/badge/Version-1.5.0-green)
+![Version](https://img.shields.io/badge/Version-1.5.1-green)
 
 > **[Русская версия / Russian version](README.md)**
 
@@ -13,6 +13,15 @@ It provides tools for export, prelighting, and 3D model preparation.
 Starting from v1.5.0, the addon has its own DFF, COL, and TXD export (no DragonFF dependency).
 
 ## Features
+
+<details>
+<summary><b>IDE / IPL / IMG</b></summary>
+
+> - IDE export/import — model definitions, upsert/remove into existing files
+> - IPL export/import — object map placement
+> - IMG Archive — export DFF+TXD+COL directly into .img archives (VER2)
+
+</details>
 
 <details>
 <summary><b>Export/Import</b></summary>
@@ -188,6 +197,7 @@ Name objects with suffixes (`Model_DFF`, `Model_LOD`, `Model_COL`), select them,
 <details>
 <summary><b>Changelog</b></summary>
 
+- **v1.5.1** — IDE/IPL export/import (upsert/remove into existing files); IMG Archive export (DFF+TXD+COL into .img); Dual Texture and Blend Mode; removed Vertex Alpha (not supported by GTA SA)
 - **v1.5.0** — Native DFF/COL/TXD import and export (no DragonFF); auto-import TXD when importing DFF; numpy DXT decompression; material sorting by name; addon converted to package structure (`INU_tools/`); fixed prelight preview on export; Blender 5.1 compatibility
 - **v1.4.8** — Shift+T to toggle UV Editor
 - **v1.4.7** — COL Surface Type with 13 category groups; Day/Night Light + Brightness in Material Properties; Prelight COL — convert vertex colors to COL Light with auto-split materials by brightness (0-15)
@@ -219,8 +229,8 @@ Name objects with suffixes (`Model_DFF`, `Model_LOD`, `Model_COL`), select them,
 | Embedded COL in DFF | ✅ |
 | Auto-load textures by names | ✅ |
 | IFP (animations) | ❌ |
-| IPL/IDE (map placement) | ❌ |
-| IMG Archive | ❌ |
+| IPL/IDE (map placement) | ✅ |
+| IMG Archive | ✅ |
 | Skinned Mesh (full skeleton) | ❌ |
 | **Materials** | |
 | Environment Map | ✅ |
@@ -228,9 +238,8 @@ Name objects with suffixes (`Model_DFF`, `Model_LOD`, `Model_COL`), select them,
 | Specular | ✅ |
 | UV Animation | ✅ |
 | Reflection Material | ✅ |
-| Dual Texture | ❌ |
-| Blend Mode (Src/Dst) | ❌ |
-| Vertex Alpha channel | ❌ |
+| Dual Texture | ✅ |
+| Blend Mode (Src/Dst) | ✅ |
 | **2DFX** | |
 | Light (preview + 11 presets) | ✅ |
 | Particle | ✅ |

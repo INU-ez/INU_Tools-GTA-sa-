@@ -13,11 +13,11 @@ def _create_mesh_from_col(model: ColModel, collection, obj_type: str):
     if obj_type == 'COL':
         vertices = model.vertices
         faces = model.faces
-        suffix = '_COL'
+        suffix = '_col'
     else:
         vertices = model.shadow_vertices
         faces = model.shadow_faces
-        suffix = '_SHA'
+        suffix = '_sha'
 
     if not vertices or not faces:
         return None
@@ -121,6 +121,26 @@ def import_col(filepath: str, context=None):
         for i, sphere in enumerate(model.spheres):
             emp = _create_sphere(sphere, collection, model.model_name or "col", i)
             imported_objects.append(emp)
+
+    # Match position to DFF object with same base name
+    for obj in imported_objects:
+        if obj.type != 'MESH':
+            continue
+        base = obj.name
+        for suffix in ('_col', '_sha', '_COL', '_SHA'):
+            if base.endswith(suffix):
+                base = base[:-len(suffix)]
+                break
+        # Search for matching DFF object
+        for candidate in bpy.data.objects:
+            if candidate == obj or candidate.type != 'MESH':
+                continue
+            cname = candidate.name
+            cname_low = cname.lower()
+            base_low = base.lower()
+            if cname_low == base_low or cname_low == base_low + '_dff':
+                obj.location = candidate.location.copy()
+                break
 
     # Select imported objects
     bpy.ops.object.select_all(action='DESELECT')

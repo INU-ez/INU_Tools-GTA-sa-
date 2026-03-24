@@ -104,6 +104,13 @@ def _create_blender_material(dff_mat: DffMaterial, index: int) -> bpy.types.Mate
         mat.inu.reflection_offset_y = dff_mat.reflection.offset_y
         mat.inu.reflection_intensity = dff_mat.reflection.intensity
 
+    if dff_mat.dual_texture:
+        mat.inu.export_dual_tex = True
+        mat.inu.dual_tex_src_blend = str(dff_mat.dual_texture.src_blend)
+        mat.inu.dual_tex_dst_blend = str(dff_mat.dual_texture.dst_blend)
+        if dff_mat.dual_texture.texture:
+            mat.inu.dual_tex_texture = dff_mat.dual_texture.texture.name
+
     # User Data PLG
     if dff_mat.user_data:
         _store_user_data(mat, dff_mat.user_data)
