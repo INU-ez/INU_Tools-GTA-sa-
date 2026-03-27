@@ -5,6 +5,7 @@
 ![Blender](https://img.shields.io/badge/Blender-5.1+-orange?logo=blender)
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue)
 ![Version](https://img.shields.io/badge/Version-1.5.1-green)
+![Views](https://komarev.com/ghpvc/?username=INU-ez&color=orange&style=flat-square&label=REPO+VIEWS)
 
 > **[English version](README_eng.md)**
 

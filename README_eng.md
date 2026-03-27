@@ -5,6 +5,7 @@
 ![Blender](https://img.shields.io/badge/Blender-5.1+-orange?logo=blender)
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue)
 ![Version](https://img.shields.io/badge/Version-1.5.1-green)
+![Views](https://komarev.com/ghpvc/?username=INU-ez&color=orange&style=flat-square&label=REPO+VIEWS)
 
 > **[Русская версия / Russian version](README.md)**
 
@@ -17,43 +18,43 @@ Starting from v1.5.0, the addon has its own DFF, COL, and TXD export (no DragonF
 <details>
 <summary><b>IDE / IPL / IMG</b></summary>
 
-> - IDE export/import — model definitions, upsert/remove into existing files
-> - IPL export/import — object map placement
-> - IMG Archive — export DFF+TXD+COL directly into .img archives (VER2)
+> - ✅ IDE export/import — model definitions, upsert/remove into existing files
+> - ✅ IPL export/import — object map placement
+> - ✅ IMG Archive — export DFF+TXD+COL directly into .img archives (VER2)
 
 </details>
 
 <details>
 <summary><b>Export/Import</b></summary>
 
-> - DFF export/import (GTA SA v3.6.0.3)
-> - COL export/import (COL3 format)
-> - LOD export/import
-> - TXD export/import (DXT compression, parallel processing, GPU via NVIDIA Texture Tools)
-> - Export All — batch export by suffixes `_DFF` / `_LOD` / `_COL` + automatic TXD assembly
+> - ✅ DFF export/import (GTA SA v3.6.0.3)
+> - ✅ COL export/import (COL3 format)
+> - ✅ LOD export/import
+> - ✅ TXD export/import (DXT compression, parallel processing, GPU via NVIDIA Texture Tools)
+> - ✅ Export All — batch export by suffixes `_DFF` / `_LOD` / `_COL` + automatic TXD assembly
 
 </details>
 
 <details>
 <summary><b>Support Itera Tools 3</b></summary>
 
-> - Apply Itera materials (Vertex Lit Linear / Quickstart) from addon panel
-> - Remove Itera materials and restore originals
-> - Auto-detect Itera Tools 3 library in Asset Libraries
+> - ✅ Apply Itera materials (Vertex Lit Linear / Quickstart) from addon panel
+> - ✅ Remove Itera materials and restore originals
+> - ✅ Auto-detect Itera Tools 3 library in Asset Libraries
 
 </details>
 
 <details>
 <summary><b>Prelight</b></summary>
 
-> - Vertex Colors baking (Fast / With Shadows)
-> - Raycast shadows via depsgraph
-> - Fill Colors — polygon painting with eyedropper and level system
-> - Scatter Light — light scattering with configurable parameters
-> - Day/Night — separate color attributes for day and night
-> - Vertex color analysis and preview
-> - Prelight COL — convert vertex colors to COL Day/Night Light (auto-split materials by brightness)
-> - COL Light Preview — lighting visualization on polygons with Edge/Contrast settings and numeric values
+> - ✅ Vertex Colors baking (Fast / With Shadows)
+> - ✅ Raycast shadows via depsgraph
+> - ✅ Fill Colors — polygon painting with eyedropper and level system
+> - ✅ Scatter Light — light scattering with configurable parameters
+> - ✅ Day/Night — separate color attributes for day and night
+> - ✅ Vertex color analysis and preview
+> - ✅ Prelight COL — convert vertex colors to COL Day/Night Light (auto-split materials by brightness)
+> - ✅ COL Light Preview — lighting visualization on polygons with Edge/Contrast settings and numeric values
 >
 > <details>
 > <summary><b>Tutorial .gif</b></summary>
