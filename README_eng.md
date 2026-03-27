@@ -68,13 +68,13 @@ Starting from v1.5.0, the addon has its own DFF, COL, and TXD export (no DragonF
 <details>
 <summary><b>2DFX Effects</b></summary>
 
-> - Create 2DFX effects (Light, Particle, Ped Attractor, Sun Glare)
-> - Attach/Detach 2DFX to mesh — coordinates are automatically recalculated relative to the mesh on export
-> - Presets: Default, OnAllDay, Lamp Post, Lamp Post Coast, BB Pickup, Flashing variants, Train Crossing, Traffic
-> - Dropdowns for Corona Texture (34 textures), Shadow Texture, Show Mode, Flare Type
-> - Show Mode — display modes (Default, Random Flashing, Flash Rain, Only Rain, No Rain, Flash 5)
-> - 2DFX export to DFF (RW Light chunk + 2DFX PLG) — compatible with MTA SA / GTA SA
-> - Real-time visualization and editing of all effects
+> - ✅ Create 2DFX effects (Light, Particle, Ped Attractor, Sun Glare)
+> - ✅ Attach/Detach 2DFX to mesh — coordinates are automatically recalculated relative to the mesh on export
+> - ✅ Presets: Default, OnAllDay, Lamp Post, Lamp Post Coast, BB Pickup, Flashing variants, Train Crossing, Traffic
+> - ✅ Dropdowns for Corona Texture (34 textures), Shadow Texture, Show Mode, Flare Type
+> - ✅ Show Mode — display modes (Default, Random Flashing, Flash Rain, Only Rain, No Rain, Flash 5)
+> - ✅ 2DFX export to DFF (RW Light chunk + 2DFX PLG) — compatible with MTA SA / GTA SA
+> - ✅ Real-time visualization and editing of all effects
 >
 > <details>
 > <summary><b>Tutorial .gif</b></summary>
@@ -88,20 +88,20 @@ Starting from v1.5.0, the addon has its own DFF, COL, and TXD export (no DragonF
 <details>
 <summary><b>Post-Processing</b></summary>
 
-> - Smooth — smooth vertex colors between neighboring vertices
-> - Contrast — contrast adjustment
-> - Brightness — brightness adjustment
-> - Gamma — gamma correction
+> - ✅ Smooth — smooth vertex colors between neighboring vertices
+> - ✅ Contrast — contrast adjustment
+> - ✅ Brightness — brightness adjustment
+> - ✅ Gamma — gamma correction
 
 </details>
 
 <details>
 <summary><b>UV Editor</b></summary>
 
-> - UV Grid Randomizer — randomize UV positions within grid cells
-> - Snap to Grid — snap UV islands to the nearest cell
-> - 9 alignment points — choose UV position within a cell
-> - Link Polygons — move polygons with overlapping UVs together
+> - ✅ UV Grid Randomizer — randomize UV positions within grid cells
+> - ✅ Snap to Grid — snap UV islands to the nearest cell
+> - ✅ 9 alignment points — choose UV position within a cell
+> - ✅ Link Polygons — move polygons with overlapping UVs together
 >
 > <details>
 > <summary><b>Tutorial .gif</b></summary>
@@ -115,9 +115,9 @@ Starting from v1.5.0, the addon has its own DFF, COL, and TXD export (no DragonF
 <details>
 <summary><b>Geometry & Materials</b></summary>
 
-> - Geometry check — loose vertices, edges, N-gons
-> - Geometry cleanup — remove problematic elements
-> - Material limit check (50 for GTA SA)
+> - ✅ Geometry check — loose vertices, edges, N-gons
+> - ✅ Geometry cleanup — remove problematic elements
+> - ✅ Material limit check (50 for GTA SA)
 >
 > <details>
 > <summary><b>Tutorial .gif</b></summary>
@@ -126,8 +126,8 @@ Starting from v1.5.0, the addon has its own DFF, COL, and TXD export (no DragonF
 >
 > </details>
 
-> - Auto-load textures by material names
-> - Drag & Drop — create materials by dragging images
+> - ✅ Auto-load textures by material names
+> - ✅ Drag & Drop — create materials by dragging images
 >
 > <details>
 > <summary><b>Tutorial .gif</b></summary>
@@ -136,8 +136,8 @@ Starting from v1.5.0, the addon has its own DFF, COL, and TXD export (no DragonF
 >
 > </details>
 
-> - Clean up duplicate materials (.001, .002)
-> - Sort materials by name
+> - ✅ Clean up duplicate materials (.001, .002)
+> - ✅ Sort materials by name
 >
 > <details>
 > <summary><b>Tutorial</b></summary>
@@ -151,9 +151,9 @@ Starting from v1.5.0, the addon has its own DFF, COL, and TXD export (no DragonF
 <details>
 <summary><b>Lightmap Generator</b></summary>
 
-> - MTA script code generation
-> - Copy lightmap settings between objects
-> - V-offset adjustment for texture alignment
+> - ✅ MTA script code generation
+> - ✅ Copy lightmap settings between objects
+> - ✅ V-offset adjustment for texture alignment
 
 The MTA script file link is available in Issues.
 
