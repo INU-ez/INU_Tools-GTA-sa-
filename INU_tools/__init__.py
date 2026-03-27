@@ -6628,10 +6628,6 @@ class GTATOOLS_PT_export_panel(bpy.types.Panel):
         row.operator("gtatools.export_col", text="COL", icon='MESH_CUBE')
 
         row = layout.row(align=True)
-        row.operator("gtatools.export_ide", text="IDE", icon='TEXT')
-        row.operator("gtatools.export_ipl", text="IPL", icon='EMPTY_AXIS')
-
-        row = layout.row(align=True)
         row.operator("gtatools.check_geometry", text=T("Проверка вершин"), icon='VIEWZOOM')
         row.operator("gtatools.check_ngons", text=T("Проверка N-gon"), icon='MESH_DATA')
 
@@ -6673,10 +6669,6 @@ class GTATOOLS_PT_import_panel(bpy.types.Panel):
         row.operator("gtatools.import_dff", text="DFF", icon='MESH_DATA')
         row.operator("gtatools.import_col", text="COL", icon='MESH_CUBE')
         row.operator("gtatools.import_txd", text="TXD", icon='TEXTURE')
-
-        row = layout.row(align=True)
-        row.operator("gtatools.import_ide", text="IDE", icon='TEXT')
-        row.operator("gtatools.import_ipl", text="IPL", icon='EMPTY_AXIS')
 
         layout.separator()
         layout.prop(context.scene, "gtatools_txd_auto_import", text=T("Импорт TXD"))
@@ -7240,6 +7232,29 @@ class GTATOOLS_OT_col_surface_menu(bpy.types.Operator):
 _col_light_preview_handlers = []
 _col_light_preview_active = False
 _col_light_preview_cache = {'key': None, 'faces': []}
+_col_light_transform_watch = {'prev_mat': None, 'cur_mat': None}
+
+
+def _col_light_watch_transform():
+    """Timer: detect when object stops moving and invalidate cache."""
+    if not _col_light_preview_active:
+        return None  # Stop timer
+    obj = bpy.context.active_object
+    if not obj or obj.type != 'MESH':
+        return 0.3
+    watch = _col_light_transform_watch
+    mat = tuple(obj.matrix_world[i][j] for i in range(4) for j in range(4))
+    if watch['cur_mat'] != mat:
+        # Object is still moving — just record current matrix
+        watch['cur_mat'] = mat
+    elif watch['prev_mat'] != mat:
+        # Matrix stabilized (same as last check) — object stopped moving
+        watch['prev_mat'] = mat
+        _col_light_preview_cache['key'] = None
+        for area in bpy.context.screen.areas:
+            if area.type == 'VIEW_3D':
+                area.tag_redraw()
+    return 0.2  # Check every 0.2 sec
 
 
 def _col_light_invalidate_preview(self, context):
@@ -7258,20 +7273,32 @@ def _col_light_get_preview_data(context):
         return []
 
     scene = context.scene
-    night_min = scene.gtatools_col_night_min
-    night_max = scene.gtatools_col_night_max
+    mesh = obj.data
+
+    # Use active color attribute to determine Day or Night range
+    active_attr = mesh.color_attributes.active_color
+    if active_attr is None:
+        return []
+
+    if active_attr.name == "Night":
+        val_min = scene.gtatools_col_night_min
+        val_max = scene.gtatools_col_night_max
+    else:
+        val_min = scene.gtatools_col_day_min
+        val_max = scene.gtatools_col_day_max
+
     edge = getattr(scene, 'gtatools_col_light_edge', 0.0)
     contrast = getattr(scene, 'gtatools_col_light_contrast', 0.0)
+    # Threshold slider: 0=max cutoff, 100=no cutoff. Real threshold = (100 - slider) / 10000
+    _thr_slider = getattr(scene, 'gtatools_col_light_threshold', 0)
+    threshold = (100 - _thr_slider) / 10000.0 if _thr_slider < 100 else 0.0
 
     cache = _col_light_preview_cache
-    key = (id(obj), obj.name, night_min, night_max, edge, contrast, len(obj.data.polygons))
+    key = (id(obj), obj.name, active_attr.name, val_min, val_max, edge, contrast, threshold, len(obj.data.polygons))
     if cache['key'] == key:
         return cache['faces']
 
-    mesh = obj.data
-    night_attr = mesh.color_attributes.get("Night") or mesh.color_attributes.active_color
-    if night_attr is None:
-        return []
+    color_attr = active_attr
 
     # Gamma from edge: positive = expand (gamma<1), negative = contract (gamma>1)
     if edge >= 0:
@@ -7281,13 +7308,13 @@ def _col_light_get_preview_data(context):
 
     # Per-loop brightness
     loop_brightness = []
-    for i in range(len(night_attr.data)):
-        c = night_attr.data[i].color
+    for i in range(len(color_attr.data)):
+        c = color_attr.data[i].color
         loop_brightness.append(max(c[0], c[1], c[2]))
 
     mat_w = obj.matrix_world
 
-    # First pass: compute night_val per polygon
+    # First pass: compute light value per polygon
     poly_vals = {}
     for poly in mesh.polygons:
         avg = 0.0
@@ -7308,8 +7335,14 @@ def _col_light_get_preview_data(context):
             else:
                 avg = 1.0 - 0.5 * (2.0 * (1.0 - avg)) ** k
 
-        value = night_min + avg * (night_max - night_min)
-        poly_vals[poly.index] = min(15, max(0, round(value)))
+        # Threshold: below threshold → 0, above → map to val_min..val_max
+        if threshold > 0.0 and avg < threshold:
+            poly_vals[poly.index] = 0
+        else:
+            if threshold > 0.0 and threshold < 1.0:
+                avg = (avg - threshold) / (1.0 - threshold)
+            value = val_min + avg * (val_max - val_min)
+            poly_vals[poly.index] = min(15, max(0, round(value)))
 
     # Build adjacency: vertex → polygons
     vert_to_polys = {}
@@ -7317,54 +7350,19 @@ def _col_light_get_preview_data(context):
         for vi in poly.vertices:
             vert_to_polys.setdefault(vi, []).append(poly.index)
 
-    # Determine which polygons show text:
-    # For 0 and night_max values, only show within 2 polygons of an edge (transition)
-    # Build neighbor map
-    poly_neighbors = {}
+    # Show text only on border polygons (where value differs from a neighbor)
+    show_text = {}
     for poly in mesh.polygons:
-        neighbors = set()
+        val = poly_vals[poly.index]
+        is_border = False
         for vi in poly.vertices:
             for pi in vert_to_polys.get(vi, []):
-                if pi != poly.index:
-                    neighbors.add(pi)
-        poly_neighbors[poly.index] = neighbors
-
-    # Find border polygons (value 0 or max, with a neighbor of different value)
-    border_polys = set()
-    for poly in mesh.polygons:
-        val = poly_vals[poly.index]
-        if val != 0 and val != night_max:
-            continue
-        for ni in poly_neighbors.get(poly.index, []):
-            if poly_vals.get(ni, val) != val:
-                border_polys.add(poly.index)
+                if pi != poly.index and poly_vals.get(pi, val) != val:
+                    is_border = True
+                    break
+            if is_border:
                 break
-
-    # BFS from border: mark polygons within depth 2 as visible
-    show_text = {}
-    # All non-extreme values always show
-    for poly in mesh.polygons:
-        val = poly_vals[poly.index]
-        if val != 0 and val != night_max:
-            show_text[poly.index] = True
-        else:
-            show_text[poly.index] = False
-
-    # BFS for extreme values from border
-    visited = set()
-    current_level = border_polys.copy()
-    for depth in range(2):
-        next_level = set()
-        for pi in current_level:
-            if pi in visited:
-                continue
-            visited.add(pi)
-            show_text[pi] = True
-            val = poly_vals[pi]
-            for ni in poly_neighbors.get(pi, []):
-                if ni not in visited and poly_vals.get(ni, -1) == val:
-                    next_level.add(ni)
-        current_level = next_level
+        show_text[poly.index] = is_border
 
     # Build face data
     faces = []
@@ -7493,6 +7491,14 @@ class GTATOOLS_OT_preview_col_light(bpy.types.Operator):
                 h2 = bpy.types.SpaceView3D.draw_handler_add(
                     _draw_col_light_text, (), 'WINDOW', 'POST_PIXEL')
                 _col_light_preview_handlers.extend([h1, h2])
+            # Start transform watcher
+            obj = context.active_object
+            if obj:
+                mat = tuple(obj.matrix_world[i][j] for i in range(4) for j in range(4))
+                _col_light_transform_watch['prev_mat'] = mat
+                _col_light_transform_watch['cur_mat'] = mat
+            if not bpy.app.timers.is_registered(_col_light_watch_transform):
+                bpy.app.timers.register(_col_light_watch_transform, first_interval=0.2)
             self.report({'INFO'}, T("Превью COL Light включено"))
         else:
             for h in _col_light_preview_handlers:
@@ -8243,6 +8249,7 @@ class GTATOOLS_PT_prelight_col_panel(bpy.types.Panel):
         if _col_light_preview_active:
             box = layout.box()
             box.prop(scene, "gtatools_col_light_edge", text=T("Край"), slider=True)
+            box.prop(scene, "gtatools_col_light_threshold", text=T("Порог"), slider=True)
             box.prop(scene, "gtatools_col_light_contrast", text=T("Контраст"), slider=True)
             row = box.row(align=True)
             row.prop(scene, "gtatools_col_light_show_numbers", text=T("Цифры"), toggle=True)
@@ -9298,6 +9305,11 @@ def register():
         description=T("Сдвиг границы COL освещения: + расширяет зелёную зону, — сужает"),
         default=0.0, min=-5.0, max=5.0, soft_min=-1.0, soft_max=1.0, step=1,
         update=_col_light_invalidate_preview)
+    bpy.types.Scene.gtatools_col_light_threshold = IntProperty(
+        name="Threshold",
+        description=T("Порог яркости: 0 = без порога, 100 = максимальная отсечка"),
+        default=0, min=0, max=100,
+        update=_col_light_invalidate_preview)
     bpy.types.Scene.gtatools_col_light_contrast = FloatProperty(
         name="Contrast",
         description=T("Контраст: резкость перехода между тёмными и светлыми зонами"),
@@ -9580,7 +9592,6 @@ def _on_file_load_restart_timer(dummy):
 
 _2dfx_sync_busy = False
 
-@persistent
 def _on_depsgraph_update_2dfx(scene, depsgraph):
     """Auto-sync 2DFX preview when properties change in UI."""
     global _2dfx_sync_busy
@@ -9660,6 +9671,7 @@ def unregister():
     del bpy.types.Scene.gtatools_col_night_min
     del bpy.types.Scene.gtatools_col_night_max
     del bpy.types.Scene.gtatools_col_light_edge
+    del bpy.types.Scene.gtatools_col_light_threshold
     del bpy.types.Scene.gtatools_col_light_contrast
     del bpy.types.Scene.gtatools_col_light_font_size
     del bpy.types.Scene.gtatools_col_light_show_numbers
