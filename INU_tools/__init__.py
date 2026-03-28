@@ -23,7 +23,7 @@
 bl_info = {
     "name": "INU_tools(gta_sa)",
     "author": "INU",
-    "version": (1, 5, 1),
+    "version": (1, 5, 2),
     "blender": (4, 4, 0),
     "location": "View3D > Sidebar (N) > GTA Tools",
     "description": "Toolset for GTA SA models",
@@ -4096,7 +4096,6 @@ class GTATOOLS_PT_ide_ipl_panel(bpy.types.Panel):
             box.label(text=f"{obj.name}", icon='OBJECT_DATA')
             col = box.column(align=True)
             col.prop(inu, "model_id", text="Model ID")
-            col.prop(inu, "txd_name", text="TXD")
             col.prop(inu, "draw_distance", text="Draw Dist")
             col.prop(inu, "ide_flags", text="Flags")
             row = box.row(align=True)

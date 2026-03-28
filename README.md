@@ -4,7 +4,7 @@
 
 ![Blender](https://img.shields.io/badge/Blender-5.1+-orange?logo=blender)
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue)
-![Version](https://img.shields.io/badge/Version-1.5.1-green)
+![Version](https://img.shields.io/badge/Version-1.5.2-green)
 ![Views](https://komarev.com/ghpvc/?username=INU-ez&color=orange&style=flat-square&label=REPO+VIEWS)
 
 > **[English version](README_eng.md)**
@@ -200,6 +200,7 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 <details>
 <summary><b>История изменений</b></summary>
 
+- **v1.5.2** — Рефакторинг: модульная структура (tools/, data/); COL Light Preview: активный атрибут Day/Night, порог яркости, цифры только на границах, автообновление при перемещении; Менеджер ID моделей (model_ids.txt); авто-LOD в IDE/IPL/IMG экспорте; Export All с 2DFX; LOD в IMG экспорте; массовый IMG экспорт; VC Smooth между объектами; настраиваемые суффиксы моделей; сортировка материалов в панели; сворачиваемые секции в INU Tools
 - **v1.5.1** — IDE/IPL экспорт/импорт (upsert/remove в существующие файлы); IMG Archive экспорт (DFF+TXD+COL в .img); Dual Texture и Blend Mode; удалён Vertex Alpha (не поддерживается GTA SA)
 - **v1.5.0** — Собственный DFF/COL/TXD импорт и экспорт (без DragonFF); авто-импорт TXD при импорте DFF; numpy DXT декомпрессия; сортировка материалов по имени; аддон переведён в пакетную структуру (`INU_tools/`); исправлены prelight preview при экспорте; совместимость с Blender 5.1
 - **v1.4.8** — Shift+T Раскрытие UV редактора
