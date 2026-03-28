@@ -5122,6 +5122,11 @@ class GTATOOLS_OT_id_manager_release(bpy.types.Operator):
 
     def execute(self, context):
         from .data.id_manager import release_id
+        # Reset model_id on scene objects that use this ID
+        for obj in bpy.data.objects:
+            inu = getattr(obj, 'inu', None)
+            if inu and inu.model_id == self.model_id:
+                inu.model_id = 0
         release_id(self.model_id)
         self.report({'INFO'}, f"ID {self.model_id} {T('освобождён')}")
         return {'FINISHED'}
