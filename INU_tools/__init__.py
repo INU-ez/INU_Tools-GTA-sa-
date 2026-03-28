@@ -1063,12 +1063,20 @@ class GTATOOLS_OT_file_import_txd(bpy.types.Operator, ImportHelper):
 
 # ── IDE / IPL panel operators ──
 
-def _ide_entry_from_obj(obj):
+def _ide_entry_from_obj(obj, auto_id=False):
     """Build IdeObject from a Blender mesh object."""
     from .core.ide import IdeObject
     inu = getattr(obj, 'inu', None)
     name = _clean_model_name_ide(obj.name)
     model_id = getattr(inu, 'model_id', 0) if inu else 0
+
+    # Auto-assign ID from manager if 0
+    if model_id == 0 and auto_id:
+        from .data.id_manager import allocate_id
+        model_id = allocate_id(name)
+        if inu:
+            inu.model_id = model_id
+
     txd_name = getattr(inu, 'txd_name', '') if inu else ''
     if not txd_name:
         txd_name = name
@@ -5046,6 +5054,137 @@ class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
             box.prop(scene, "gtatools_suffix_lod", text="LOD")
             box.prop(scene, "gtatools_suffix_col", text="COL")
 
+        # ID Manager (collapsible)
+        box = layout.box()
+        row = box.row()
+        row.prop(scene, "gtatools_show_id_manager",
+                 icon='TRIA_DOWN' if scene.gtatools_show_id_manager else 'TRIA_RIGHT',
+                 text=T("Менеджер ID"), emboss=False)
+        if scene.gtatools_show_id_manager:
+            from .data.id_manager import get_free_ids, get_used_ids, get_file_path
+
+            free = get_free_ids()
+            used = get_used_ids()
+
+            box.label(text=f"{T('Свободных:')} {len(free)}  |  {T('Занятых:')} {len(used)}", icon='PRESET')
+
+            if free:
+                box.label(text=f"{T('Следующий свободный:')} {free[0]}", icon='FORWARD')
+
+            # Show used IDs
+            if used:
+                sub = box.box()
+                col = sub.column(align=True)
+                for id_num in sorted(used.keys()):
+                    row = col.row(align=True)
+                    row.label(text=f"{id_num} - {used[id_num]}")
+                    op = row.operator("gtatools.id_manager_release", text="", icon='X')
+                    op.model_id = id_num
+
+            # Show free IDs (compact)
+            if free:
+                sub = box.box()
+                text = ", ".join(str(i) for i in sorted(free)[:20])
+                if len(free) > 20:
+                    text += "..."
+                sub.label(text=f"{T('Свободные:')} {text}", icon='DOT')
+
+            row = box.row(align=True)
+            row.operator("gtatools.id_manager_auto_assign", text=T("Назначить ID выделенным"), icon='ADD')
+            row.operator("gtatools.id_manager_clear", text="", icon='TRASH')
+            box.operator("gtatools.id_manager_open_file", text=T("Открыть файл ID"), icon='FILE_TEXT')
+
+
+class GTATOOLS_OT_id_manager_open_file(bpy.types.Operator):
+    """Открыть файл model_ids.txt в текстовом редакторе"""
+    bl_idname = "gtatools.id_manager_open_file"
+    bl_label = "Open ID File"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        from .data.id_manager import get_file_path
+        import subprocess, sys
+        filepath = get_file_path()
+        if sys.platform == 'win32':
+            os.startfile(filepath)
+        else:
+            subprocess.Popen(['xdg-open', filepath])
+        self.report({'INFO'}, f"{T('Открыт:')} {filepath}")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_id_manager_release(bpy.types.Operator):
+    """Освободить ID"""
+    bl_idname = "gtatools.id_manager_release"
+    bl_label = "Release ID"
+    bl_options = {'REGISTER'}
+
+    model_id: IntProperty()
+
+    def execute(self, context):
+        from .data.id_manager import release_id
+        release_id(self.model_id)
+        self.report({'INFO'}, f"ID {self.model_id} {T('освобождён')}")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_id_manager_auto_assign(bpy.types.Operator):
+    """Назначить ID всем выделенным объектам с Model ID = 0"""
+    bl_idname = "gtatools.id_manager_auto_assign"
+    bl_label = "Auto Assign IDs"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        from .data.id_manager import allocate_id
+
+        objs = [o for o in context.selected_objects if o.type == 'MESH']
+        if not objs:
+            self.report({'ERROR'}, T("Выделите меш объекты"))
+            return {'CANCELLED'}
+
+        assigned = 0
+        for obj in objs:
+            inu = getattr(obj, 'inu', None)
+            if not inu:
+                continue
+            if inu.model_id != 0:
+                continue
+
+            model_type, base_name = get_model_type(obj)
+            clean_name = _clean_model_name_ide(obj.name)
+
+            if model_type == 'LOD':
+                # LOD gets name with LOD prefix
+                display_name = "LOD" + clean_name
+            else:
+                display_name = clean_name
+
+            new_id = allocate_id(display_name)
+            if new_id is None:
+                self.report({'ERROR'}, T("Нет свободных ID в model_ids.txt"))
+                return {'CANCELLED'}
+            inu.model_id = new_id
+            assigned += 1
+
+        self.report({'INFO'}, f"{T('Назначено ID:')} {assigned}")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_id_manager_clear(bpy.types.Operator):
+    """Очистить все занятые ID"""
+    bl_idname = "gtatools.id_manager_clear"
+    bl_label = "Clear All IDs"
+    bl_options = {'REGISTER'}
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_confirm(self, event)
+
+    def execute(self, context):
+        from .data.id_manager import clear_all
+        clear_all()
+        self.report({'INFO'}, T("Все ID очищены"))
+        return {'FINISHED'}
+
 
 class GTATOOLS_PT_prelight_panel(bpy.types.Panel):
     """Панель Prelight"""
@@ -5553,6 +5692,10 @@ classes = (
     GTATOOLS_OT_check_materials,
     GTATOOLS_OT_cleanup_materials,
     GTATOOLS_OT_sort_materials,
+    GTATOOLS_OT_id_manager_open_file,
+    GTATOOLS_OT_id_manager_release,
+    GTATOOLS_OT_id_manager_auto_assign,
+    GTATOOLS_OT_id_manager_clear,
     GTATOOLS_OT_toggle_uv_editor,
     GTATOOLS_OT_toggle_uv_grid,
     GTATOOLS_OT_randomize_uv_grid,
@@ -5828,6 +5971,12 @@ def register():
         default="_COL"
     )
 
+    # ID Manager
+    bpy.types.Scene.gtatools_show_id_manager = BoolProperty(
+        name="Show ID Manager",
+        description=T("Показать менеджер ID"),
+        default=False
+    )
     # Texture loader paths
     bpy.types.Scene.gtatools_texture_path1 = StringProperty(
         name="System Textures Path",
@@ -6126,6 +6275,7 @@ def unregister():
     del bpy.types.Scene.gtatools_suffix_dff
     del bpy.types.Scene.gtatools_suffix_lod
     del bpy.types.Scene.gtatools_suffix_col
+    del bpy.types.Scene.gtatools_show_id_manager
     del bpy.types.Scene.gtatools_texture_path2
     del bpy.types.Scene.gtatools_texture_path1
     del bpy.types.Scene.gtatools_export_pipeline
