@@ -7,6 +7,16 @@ import os
 from .. import T
 
 
+def _get_suffixes():
+    """Get custom suffixes from scene settings or use defaults."""
+    scene = bpy.context.scene
+    return {
+        'DFF': getattr(scene, 'gtatools_suffix_dff', '_DFF'),
+        'LOD': getattr(scene, 'gtatools_suffix_lod', '_LOD'),
+        'COL': getattr(scene, 'gtatools_suffix_col', '_COL'),
+    }
+
+
 def get_model_type(obj):
     """Определить тип модели по суффиксу: LOD, COL, DFF в конце названия"""
     if obj is None:
@@ -14,24 +24,18 @@ def get_model_type(obj):
 
     name = obj.name
     name_upper = name.upper()
+    suffixes = _get_suffixes()
 
-    # Проверяем LOD (поддержка: _lod, .lod, LOD, lod)
-    if name_upper.endswith('_LOD') or name_upper.endswith('.LOD'):
-        return 'LOD', name[:-4]
-    if name_upper.endswith('LOD'):
-        return 'LOD', name[:-3]
-
-    # Проверяем COL (поддержка: _col, .col, COL, col)
-    if name_upper.endswith('_COL') or name_upper.endswith('.COL'):
-        return 'COL', name[:-4]
-    if name_upper.endswith('COL'):
-        return 'COL', name[:-3]
-
-    # Проверяем DFF (поддержка: _dff, .dff, DFF, dff)
-    if name_upper.endswith('_DFF') or name_upper.endswith('.DFF'):
-        return 'DFF', name[:-4]
-    if name_upper.endswith('DFF'):
-        return 'DFF', name[:-3]
+    # Check each type against custom suffix (case-insensitive)
+    for model_type in ('LOD', 'COL', 'DFF'):
+        sfx = suffixes[model_type]
+        sfx_upper = sfx.upper()
+        if name_upper.endswith(sfx_upper):
+            return model_type, name[:-len(sfx)]
+        # Also check without separator (e.g. "modelLOD" if suffix is "_LOD")
+        bare = sfx_upper.lstrip('_. ')
+        if bare and sfx_upper != bare and name_upper.endswith(bare):
+            return model_type, name[:-len(bare)]
 
     # Модель без суффикса - считается DFF
     return 'DFF', name

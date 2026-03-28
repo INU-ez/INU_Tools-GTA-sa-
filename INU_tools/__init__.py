@@ -1100,7 +1100,7 @@ def _clean_model_name_ide(name):
         base, suffix = name.rsplit('.', 1)
         if suffix.isdigit():
             name = base
-    for sfx in ('_COL', '_col', '_LOD', '_lod', '_SHA', '_sha'):
+    for sfx in ('_DFF', '_dff', '_COL', '_col', '_LOD', '_lod', '_SHA', '_sha'):
         if name.endswith(sfx):
             name = name[:-len(sfx)]
             break
@@ -1117,103 +1117,93 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
         import tempfile
         from .core.img import replace_or_add
         from .ops.dff_export import export_dff as inu_export_dff
+        from .ops.col_export import export_col as inu_export_col
 
         img_path = bpy.path.abspath(context.scene.gtatools_img_path)
         if not img_path or not os.path.isfile(img_path):
             self.report({'ERROR'}, T("Укажите путь к .img архиву"))
             return {'CANCELLED'}
 
-        # Use get_model_type to determine base name (strips _dff, _col, _LOD etc.)
-        models = find_selected_models()
-        main_obj = models.get('DFF') or models.get('COL') or models.get('LOD')
-        if not main_obj:
+        # Find all model groups among selected
+        model_groups = find_all_selected_model_groups()
+        if not model_groups:
             self.report({'ERROR'}, T("Выделите меш объекты"))
             return {'CANCELLED'}
 
-        _, model_name = get_model_type(main_obj)
-        if not model_name:
-            model_name = main_obj.name
-
-        # Collect objects by type
-        dff_objects = []
-        col_objects = []
-        for o in context.selected_objects:
-            if o.type == 'MESH':
-                mt, _ = get_model_type(o)
-                if mt == 'DFF':
-                    dff_objects.append(o)
-                elif mt == 'COL':
-                    col_objects.append(o)
-                elif mt == 'LOD':
-                    pass  # LOD handled separately if needed
-            elif o.type == 'EMPTY' and getattr(o, 'inu', None) and o.inu.type == '2DFX':
-                dff_objects.append(o)
+        export_dff_flag = getattr(context.scene, 'gtatools_img_export_dff', True)
+        export_col_flag = getattr(context.scene, 'gtatools_img_export_col', True)
+        export_txd_flag = getattr(context.scene, 'gtatools_img_export_txd', True)
+        use_gpu = getattr(context.scene, 'gtatools_txd_use_gpu', False)
 
         results = []
 
-        # ── Disable prelight preview before export ──
-        _prelight_active = getattr(context.scene, '_gtatools_prelight_preview_active', False)
-        if _prelight_active:
-            try:
-                bpy.ops.gtatools.prelight_preview()
-            except Exception:
-                pass
-
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Export DFF
-            if getattr(context.scene, 'gtatools_img_export_dff', True) and dff_objects:
-                dff_path = os.path.join(tmpdir, model_name + '.dff')
-                try:
-                    inu_export_dff(filepath=dff_path, objects=dff_objects)
-                    with open(dff_path, 'rb') as f:
-                        dff_data = f.read()
-                    status = replace_or_add(img_path, model_name + '.dff', dff_data)
-                    results.append(f"DFF {status}")
-                except Exception as e:
-                    results.append(f"DFF error: {e}")
+            for base_name, models in model_groups.items():
+                # Export DFF + attached 2DFX
+                if export_dff_flag and models['DFF']:
+                    dff_path = os.path.join(tmpdir, base_name + '.dff')
+                    try:
+                        dff_objs = [models['DFF']]
+                        for child in models['DFF'].children:
+                            if child.type == 'EMPTY' and getattr(child, 'inu', None) and child.inu.type == '2DFX':
+                                dff_objs.append(child)
+                        inu_export_dff(filepath=dff_path, objects=dff_objs)
+                        with open(dff_path, 'rb') as f:
+                            status = replace_or_add(img_path, base_name + '.dff', f.read())
+                        results.append(f"{base_name}.dff {status}")
+                    except Exception as e:
+                        results.append(f"{base_name}.dff error: {e}")
 
-            # Export COL
-            if getattr(context.scene, 'gtatools_img_export_col', True) and col_objects:
-                from .ops.col_export import export_col as inu_export_col
-                col_path = os.path.join(tmpdir, model_name + '.col')
-                try:
-                    inu_export_col(filepath=col_path, objects=col_objects, version=3)
-                    with open(col_path, 'rb') as f:
-                        col_data = f.read()
-                    status = replace_or_add(img_path, model_name + '.col', col_data)
-                    results.append(f"COL {status}")
-                except Exception as e:
-                    results.append(f"COL error: {e}")
+                # Export LOD as separate DFF
+                if export_dff_flag and models['LOD']:
+                    lod_name = 'LOD' + base_name
+                    lod_path = os.path.join(tmpdir, lod_name + '.dff')
+                    try:
+                        inu_export_dff(filepath=lod_path, objects=[models['LOD']])
+                        with open(lod_path, 'rb') as f:
+                            status = replace_or_add(img_path, lod_name + '.dff', f.read())
+                        results.append(f"{lod_name}.dff {status}")
+                    except Exception as e:
+                        results.append(f"{lod_name}.dff error: {e}")
 
-            # Export TXD — only textures from selected objects
-            if getattr(context.scene, 'gtatools_img_export_txd', True):
-                txd_path = os.path.join(tmpdir, model_name + '.txd')
-                try:
-                    use_gpu = getattr(context.scene, 'gtatools_txd_use_gpu', False)
-                    result, msg, _ = export_txd(txd_path, context, True, use_gpu)
-                    if result == {'FINISHED'}:
-                        with open(txd_path, 'rb') as f:
-                            txd_data = f.read()
-                        status = replace_or_add(img_path, model_name + '.txd', txd_data)
-                        results.append(f"TXD {status}")
-                    else:
-                        results.append(f"TXD: {msg}")
-                except Exception as e:
-                    results.append(f"TXD error: {e}")
+                # Export COL
+                if export_col_flag and models['COL']:
+                    col_path = os.path.join(tmpdir, base_name + '.col')
+                    try:
+                        inu_export_col(filepath=col_path, objects=[models['COL']], version=3)
+                        with open(col_path, 'rb') as f:
+                            status = replace_or_add(img_path, base_name + '.col', f.read())
+                        results.append(f"{base_name}.col {status}")
+                    except Exception as e:
+                        results.append(f"{base_name}.col error: {e}")
 
-        # Restore prelight preview
-        if _prelight_active:
-            try:
-                bpy.ops.gtatools.prelight_preview()
-            except Exception:
-                pass
+                # Export TXD (textures from DFF + LOD)
+                if export_txd_flag and (models['DFF'] or models['LOD']):
+                    txd_path = os.path.join(tmpdir, base_name + '.txd')
+                    try:
+                        # Select only this group's objects for texture collection
+                        bpy.ops.object.select_all(action='DESELECT')
+                        if models['DFF']:
+                            models['DFF'].select_set(True)
+                            context.view_layer.objects.active = models['DFF']
+                        if models['LOD']:
+                            models['LOD'].select_set(True)
+                        result, msg, _ = export_txd(txd_path, context, True, use_gpu)
+                        if result == {'FINISHED'}:
+                            with open(txd_path, 'rb') as f:
+                                status = replace_or_add(img_path, base_name + '.txd', f.read())
+                            results.append(f"{base_name}.txd {status}")
+                        else:
+                            results.append(f"{base_name}.txd: {msg}")
+                    except Exception as e:
+                        results.append(f"{base_name}.txd error: {e}")
 
         self.report({'INFO'}, f"IMG: {', '.join(results)}")
         return {'FINISHED'}
 
 
 class GTATOOLS_OT_upsert_ide(bpy.types.Operator):
-    """Добавить / обновить запись в существующем IDE файле"""
+    """Добавить / обновить запись в существующем IDE файле (авто-LOD)"""
     bl_idname = "gtatools.upsert_ide"
     bl_label = "Add to IDE"
     bl_options = {'REGISTER'}
@@ -1230,7 +1220,44 @@ class GTATOOLS_OT_upsert_ide(bpy.types.Operator):
             self.report({'ERROR'}, T("Выделите меш объекты"))
             return {'CANCELLED'}
 
-        entries = [_ide_entry_from_obj(o) for o in objs]
+        entries = []
+        processed_names = set()
+        for obj in objs:
+            model_type, base_name = get_model_type(obj)
+            if base_name in processed_names:
+                continue
+            processed_names.add(base_name)
+
+            # Add DFF entry
+            dff_obj = obj if model_type == 'DFF' else None
+            lod_obj = obj if model_type == 'LOD' else None
+
+            # Auto-find paired LOD/DFF among selected
+            for o2 in objs:
+                mt2, bn2 = get_model_type(o2)
+                if bn2 == base_name and o2 != obj:
+                    if mt2 == 'LOD':
+                        lod_obj = o2
+                    elif mt2 == 'DFF':
+                        dff_obj = o2
+
+            if dff_obj:
+                entries.append(_ide_entry_from_obj(dff_obj))
+            if lod_obj:
+                lod_entry = _ide_entry_from_obj(lod_obj)
+                # LOD model name: LOD + base_name
+                lod_entry.model_name = "LOD" + base_name
+                # LOD TXD = same as DFF TXD (base_name without suffixes)
+                lod_entry.txd_name = _clean_model_name_ide(base_name)
+                # LOD model_id = DFF model_id + 1 if LOD has no ID
+                if lod_entry.model_id == 0 and dff_obj:
+                    dff_id = getattr(dff_obj.inu, 'model_id', 0)
+                    if dff_id > 0:
+                        lod_entry.model_id = dff_id + 1
+                # LOD draw distance = DFF draw distance + 50 if not set
+                if lod_obj.inu.draw_distance == 300.0 and dff_obj:
+                    lod_entry.draw_distance = dff_obj.inu.draw_distance + 50
+                entries.append(lod_entry)
 
         # Validate model IDs
         zero_ids = [e for e in entries if e.model_id == 0]
@@ -1243,13 +1270,13 @@ class GTATOOLS_OT_upsert_ide(bpy.types.Operator):
 
 
 class GTATOOLS_OT_upsert_ipl(bpy.types.Operator):
-    """Добавить / обновить запись в существующем IPL файле"""
+    """Добавить / обновить запись в существующем IPL файле (авто-LOD привязка)"""
     bl_idname = "gtatools.upsert_ipl"
     bl_label = "Add to IPL"
     bl_options = {'REGISTER'}
 
     def execute(self, context):
-        from .core.ipl import upsert_ipl
+        from .core.ipl import upsert_ipl, read_ipl
         filepath = bpy.path.abspath(context.scene.gtatools_ipl_path)
         if not filepath:
             self.report({'ERROR'}, T("Укажите путь к IPL файлу"))
@@ -1260,14 +1287,74 @@ class GTATOOLS_OT_upsert_ipl(bpy.types.Operator):
             self.report({'ERROR'}, T("Выделите меш объекты"))
             return {'CANCELLED'}
 
-        entries = [_ipl_entry_from_obj(o) for o in objs]
+        # Group objects by base name, find DFF+LOD pairs
+        pairs = {}  # base_name -> {'DFF': obj, 'LOD': obj}
+        for obj in objs:
+            model_type, base_name = get_model_type(obj)
+            if not base_name:
+                continue
+            if base_name not in pairs:
+                pairs[base_name] = {'DFF': None, 'LOD': None}
+            if model_type in ('DFF', 'LOD'):
+                pairs[base_name][model_type] = obj
+
+        # Read existing IPL to count current entries (for LOD index calculation)
+        existing_count = 0
+        if os.path.isfile(filepath):
+            try:
+                existing_ipl = read_ipl(filepath)
+                existing_count = len(existing_ipl.instances)
+            except:
+                pass
+
+        # Build entries: first all LODs, then all DFFs with lod_index pointing to LOD
+        lod_entries = []
+        dff_entries = []
+        lod_index_map = {}  # base_name -> index in IPL
+
+        # Pass 1: collect LOD entries
+        for base_name, pair in pairs.items():
+            if pair['LOD']:
+                lod_entry = _ipl_entry_from_obj(pair['LOD'])
+                lod_entry.model_name = "LOD" + base_name
+                lod_entry.lod_index = -1
+                # Auto-assign LOD model_id = DFF model_id + 1
+                if lod_entry.model_id == 0 and pair['DFF']:
+                    dff_id = getattr(pair['DFF'].inu, 'model_id', 0)
+                    if dff_id > 0:
+                        lod_entry.model_id = dff_id + 1
+                lod_index = existing_count + len(lod_entries)
+                lod_index_map[base_name] = lod_index
+                lod_entries.append(lod_entry)
+
+        # Pass 2: collect DFF entries with lod_index
+        for base_name, pair in pairs.items():
+            if pair['DFF']:
+                dff_entry = _ipl_entry_from_obj(pair['DFF'])
+                if base_name in lod_index_map:
+                    dff_entry.lod_index = lod_index_map[base_name]
+                dff_entries.append(dff_entry)
+            elif not pair['LOD']:
+                # Object without suffix — add as DFF
+                for obj in objs:
+                    mt, bn = get_model_type(obj)
+                    if bn == base_name:
+                        dff_entries.append(_ipl_entry_from_obj(obj))
+                        break
+
+        # Add LODs first, then DFFs (so LOD indices are correct)
+        entries = lod_entries + dff_entries
 
         zero_ids = [e for e in entries if e.model_id == 0]
         if zero_ids:
             self.report({'WARNING'}, f"{len(zero_ids)} {T('объектов с Model ID = 0, задайте ID в свойствах')}")
 
         updated, added = upsert_ipl(filepath, entries)
-        self.report({'INFO'}, f"IPL: {T('обновлено')} {updated}, {T('добавлено')} {added}")
+        lod_count = len(lod_entries)
+        msg = f"IPL: {T('обновлено')} {updated}, {T('добавлено')} {added}"
+        if lod_count:
+            msg += f", LOD: {lod_count}"
+        self.report({'INFO'}, msg)
         return {'FINISHED'}
 
 
@@ -1551,7 +1638,12 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
             dff_path = os.path.join(self.directory, f"{base_name}.dff")
             try:
                 from .ops.dff_export import export_dff as inu_export_dff
-                inu_export_dff(filepath=dff_path, objects=[models['DFF']])
+                # Collect mesh + attached 2DFX objects
+                dff_objects = [models['DFF']]
+                for child in models['DFF'].children:
+                    if child.type == 'EMPTY' and getattr(child, 'inu', None) and child.inu.type == '2DFX':
+                        dff_objects.append(child)
+                inu_export_dff(filepath=dff_path, objects=dff_objects)
                 exported.append(f"{base_name}.dff")
             except Exception as e:
                 errors.append(f"{base_name}.dff: {str(e)}")
@@ -2150,6 +2242,116 @@ class GTATOOLS_OT_vc_gamma(bpy.types.Operator):
         else:
             self.report({'ERROR'}, message)
             return {'CANCELLED'}
+
+
+class GTATOOLS_OT_vc_smooth_between(bpy.types.Operator):
+    """Сгладить vertex colors на стыках между выделенными объектами"""
+    bl_idname = "gtatools.vc_smooth_between"
+    bl_label = "Smooth Between Objects"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    tolerance: FloatProperty(
+        name="Tolerance",
+        description=T("Максимальное расстояние между вершинами для сопоставления"),
+        default=0.001,
+        min=0.0001,
+        max=1.0
+    )
+
+    def execute(self, context):
+        mesh_objects = [o for o in context.selected_objects if o.type == 'MESH']
+        if len(mesh_objects) < 2:
+            self.report({'ERROR'}, T("Выделите минимум 2 меш объекта"))
+            return {'CANCELLED'}
+
+        # Collect all boundary vertex data: (world_pos, obj, loop_indices, color_attr)
+        from mathutils import kdtree
+
+        all_points = []  # [(world_co, obj_index, vert_index)]
+        obj_data = []    # [(obj, color_attr, {vert_idx: [loop_indices]})]
+
+        for oi, obj in enumerate(mesh_objects):
+            mesh = obj.data
+            color_attr = mesh.color_attributes.active_color
+            if color_attr is None:
+                continue
+
+            # Build vert -> loop indices map
+            vert_loops = {}
+            for poly in mesh.polygons:
+                for vi, li in zip(poly.vertices, poly.loop_indices):
+                    vert_loops.setdefault(vi, []).append(li)
+
+            obj_data.append((obj, color_attr, vert_loops))
+
+            mat_w = obj.matrix_world
+            for vi, vert in enumerate(mesh.vertices):
+                world_co = mat_w @ vert.co
+                all_points.append((world_co, len(obj_data) - 1, vi))
+
+        if not obj_data:
+            self.report({'ERROR'}, T("Нет vertex colors"))
+            return {'CANCELLED'}
+
+        # Build KD-tree from all vertices
+        kd = kdtree.KDTree(len(all_points))
+        for i, (co, _, _) in enumerate(all_points):
+            kd.insert(co, i)
+        kd.balance()
+
+        # Find matching vertices and average their colors
+        processed = set()
+        smoothed_count = 0
+        tol = self.tolerance
+
+        for i, (co, oi, vi) in enumerate(all_points):
+            if i in processed:
+                continue
+
+            # Find all vertices at this position
+            matches = kd.find_range(co, tol)
+            if len(matches) < 2:
+                continue
+
+            # Check if matches span multiple objects
+            match_indices = [idx for _, idx, _ in matches]
+            obj_indices = set(all_points[idx][1] for idx in match_indices)
+            if len(obj_indices) < 2:
+                continue
+
+            # Collect all colors from matching vertices
+            colors = []
+            match_data = []  # [(obj_data_index, loop_indices)]
+            for idx in match_indices:
+                _, m_oi, m_vi = all_points[idx]
+                obj, color_attr, vert_loops = obj_data[m_oi]
+                loops = vert_loops.get(m_vi, [])
+                for li in loops:
+                    c = color_attr.data[li].color
+                    colors.append((c[0], c[1], c[2], c[3]))
+                match_data.append((m_oi, loops))
+                processed.add(idx)
+
+            if not colors:
+                continue
+
+            # Average
+            avg = [sum(c[ch] for c in colors) / len(colors) for ch in range(4)]
+
+            # Apply averaged color back
+            for m_oi, loops in match_data:
+                _, color_attr, _ = obj_data[m_oi]
+                for li in loops:
+                    color_attr.data[li].color = avg
+
+            smoothed_count += 1
+
+        # Update meshes
+        for obj, _, _ in obj_data:
+            obj.data.update()
+
+        self.report({'INFO'}, f"{T('Сглажено стыков:')} {smoothed_count}")
+        return {'FINISHED'}
 
 
 class GTATOOLS_OT_load_lightmap(bpy.types.Operator):
@@ -3900,7 +4102,6 @@ class GTATOOLS_PT_ide_ipl_panel(bpy.types.Panel):
         # IDE section
         box = layout.box()
         box.label(text="IDE", icon='TEXT')
-        box.prop(scn, "gtatools_ide_path", text="")
         row = box.row(align=True)
         row.operator("gtatools.upsert_ide", text=T("Добавить"), icon='ADD')
         row.operator("gtatools.remove_ide", text=T("Удалить"), icon='REMOVE')
@@ -3913,7 +4114,6 @@ class GTATOOLS_PT_ide_ipl_panel(bpy.types.Panel):
         # IPL section
         box = layout.box()
         box.label(text="IPL", icon='EMPTY_AXIS')
-        box.prop(scn, "gtatools_ipl_path", text="")
         row = box.row(align=True)
         row.operator("gtatools.upsert_ipl", text=T("Добавить"), icon='ADD')
         row.operator("gtatools.remove_ipl", text=T("Удалить"), icon='REMOVE')
@@ -3926,7 +4126,6 @@ class GTATOOLS_PT_ide_ipl_panel(bpy.types.Panel):
         # IMG section
         box = layout.box()
         box.label(text="IMG", icon='PACKAGE')
-        box.prop(scn, "gtatools_img_path", text="")
         row = box.row(align=True)
         row.prop(scn, "gtatools_img_export_dff", text="DFF", toggle=True)
         row.prop(scn, "gtatools_img_export_col", text="COL", toggle=True)
@@ -3990,19 +4189,23 @@ class GTATOOLS_PT_export_panel(bpy.types.Panel):
         row.operator("gtatools.export_col", text="COL", icon='MESH_CUBE')
 
         row = layout.row(align=True)
-        row.operator("gtatools.check_geometry", text=T("Проверка вершин"), icon='VIEWZOOM')
-        row.operator("gtatools.check_ngons", text=T("Проверка N-gon"), icon='MESH_DATA')
-
-        row = layout.row(align=True)
-        row.operator("gtatools.check_materials", text=T("Проверка материалов"), icon='MATERIAL')
-
-        row = layout.row(align=True)
         row.operator("gtatools.export_txd", text="TXD", icon='TEXTURE')
 
         # GPU/CPU переключатель
         row = layout.row(align=True)
         if hasattr(context.scene, "gtatools_txd_use_gpu"):
             row.prop(context.scene, "gtatools_txd_use_gpu", text="GPU (NVTT)", toggle=True)
+
+        row = layout.row(align=True)
+        row.operator("gtatools.check_geometry", text=T("Проверка вершин"), icon='VIEWZOOM')
+        row.operator("gtatools.check_ngons", text=T("Проверка N-gon"), icon='MESH_DATA')
+
+        row = layout.row(align=True)
+        row.operator("gtatools.check_materials", text=T("Проверка материалов"), icon='MATERIAL')
+        row = layout.row(align=True)
+        row.operator("gtatools.cleanup_materials", text=T("Очистка материалов"), icon='BRUSH_DATA')
+        row = layout.row(align=True)
+        row.operator("gtatools.sort_materials", text=T("Сортировка материалов"), icon='SORTALPHA')
 
         # Проверка NVTT если включен GPU
         if getattr(context.scene, "gtatools_txd_use_gpu", False):
@@ -4786,26 +4989,38 @@ class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
         layout = self.layout
         scene = context.scene
 
-        # Path 1 - System textures
-        box = layout.box()
-        box.label(text=T("Системные текстуры:"), icon='TEXTURE')
-        box.prop(scene, "gtatools_texture_path1", text="")
-
-        # Path 2 - Blend folder
+        # IDE / IPL / IMG paths (collapsible)
         box = layout.box()
         row = box.row()
-        row.label(text=T("Папка .blend:"), icon='FILE_FOLDER')
-        row.operator("gtatools.set_blend_folder", text="", icon='FILE_REFRESH')
-        box.prop(scene, "gtatools_texture_path2", text="")
+        row.prop(scene, "gtatools_show_paths_settings",
+                 icon='TRIA_DOWN' if scene.gtatools_show_paths_settings else 'TRIA_RIGHT',
+                 text=T("IDE / IPL / IMG"), emboss=False)
+        if scene.gtatools_show_paths_settings:
+            box.label(text="IDE", icon='TEXT')
+            box.prop(scene, "gtatools_ide_path", text="")
+            box.label(text="IPL", icon='EMPTY_AXIS')
+            box.prop(scene, "gtatools_ipl_path", text="")
+            box.label(text="IMG", icon='PACKAGE')
+            box.prop(scene, "gtatools_img_path", text="")
 
         layout.separator()
 
-        # Buttons
-        layout.operator("gtatools.load_textures", text=T("Загрузить текстуры"), icon='IMPORT')
-        layout.operator("gtatools.cleanup_materials", text=T("Очистка материалов"), icon='BRUSH_DATA')
+        # Textures (collapsible)
+        box = layout.box()
+        row = box.row()
+        row.prop(scene, "gtatools_show_texture_settings",
+                 icon='TRIA_DOWN' if scene.gtatools_show_texture_settings else 'TRIA_RIGHT',
+                 text=T("Текстуры"), emboss=False)
+        if scene.gtatools_show_texture_settings:
+            box.label(text=T("Системные текстуры:"), icon='TEXTURE')
+            box.prop(scene, "gtatools_texture_path1", text="")
+            row = box.row()
+            row.label(text=T("Папка .blend:"), icon='FILE_FOLDER')
+            row.operator("gtatools.set_blend_folder", text="", icon='FILE_REFRESH')
+            box.prop(scene, "gtatools_texture_path2", text="")
+            box.operator("gtatools.load_textures", text=T("Загрузить текстуры"), icon='IMPORT')
 
-        # NVTT Settings
-        layout.separator()
+        # NVTT Settings (collapsible)
         box = layout.box()
         row = box.row()
         row.prop(scene, "gtatools_show_nvtt_settings",
@@ -4819,6 +5034,17 @@ class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
                 box.label(text=T("Статус: Готов"), icon='CHECKMARK')
             else:
                 box.label(text=T("Статус: Не найден"), icon='ERROR')
+
+        # Suffix settings (collapsible)
+        box = layout.box()
+        row = box.row()
+        row.prop(scene, "gtatools_show_suffix_settings",
+                 icon='TRIA_DOWN' if scene.gtatools_show_suffix_settings else 'TRIA_RIGHT',
+                 text=T("Суффиксы моделей"), emboss=False)
+        if scene.gtatools_show_suffix_settings:
+            box.prop(scene, "gtatools_suffix_dff", text="DFF")
+            box.prop(scene, "gtatools_suffix_lod", text="LOD")
+            box.prop(scene, "gtatools_suffix_col", text="COL")
 
 
 class GTATOOLS_PT_prelight_panel(bpy.types.Panel):
@@ -4996,6 +5222,10 @@ class GTATOOLS_PT_vc_postprocess_panel(bpy.types.Panel):
         row = box.row(align=True)
         row.prop(scene, "gtatools_vc_gamma", text=T("Гамма"))
         row.operator("gtatools.vc_gamma", text=T("Применить"), icon='CHECKMARK')
+
+        # Smooth between objects
+        layout.separator()
+        layout.operator("gtatools.vc_smooth_between", text=T("Сгладить между объектами"), icon='MOD_SMOOTH')
 
 
 class GTATOOLS_PT_itera_panel(bpy.types.Panel):
@@ -5289,6 +5519,7 @@ classes = (
     GTATOOLS_OT_vc_contrast,
     GTATOOLS_OT_vc_brightness,
     GTATOOLS_OT_vc_gamma,
+    GTATOOLS_OT_vc_smooth_between,
     GTATOOLS_OT_load_lightmap,
     GTATOOLS_OT_remove_lightmap,
     GTATOOLS_OT_create_day_night,
@@ -5561,6 +5792,40 @@ def register():
         name="Show NVTT Settings",
         description=T("Показать настройки NVTT"),
         default=False
+    )
+
+    bpy.types.Scene.gtatools_show_texture_settings = BoolProperty(
+        name="Show Texture Settings",
+        description=T("Показать настройки текстур"),
+        default=False
+    )
+
+    bpy.types.Scene.gtatools_show_paths_settings = BoolProperty(
+        name="Show Paths Settings",
+        description=T("Показать пути IDE/IPL/IMG"),
+        default=False
+    )
+
+    # Suffix settings
+    bpy.types.Scene.gtatools_show_suffix_settings = BoolProperty(
+        name="Show Suffix Settings",
+        description=T("Показать настройки суффиксов"),
+        default=False
+    )
+    bpy.types.Scene.gtatools_suffix_dff = StringProperty(
+        name="DFF Suffix",
+        description=T("Суффикс для DFF моделей (например _DFF или DFF)"),
+        default="_DFF"
+    )
+    bpy.types.Scene.gtatools_suffix_lod = StringProperty(
+        name="LOD Suffix",
+        description=T("Суффикс для LOD моделей (например _LOD или LOD)"),
+        default="_LOD"
+    )
+    bpy.types.Scene.gtatools_suffix_col = StringProperty(
+        name="COL Suffix",
+        description=T("Суффикс для COL моделей (например _COL или COL)"),
+        default="_COL"
     )
 
     # Texture loader paths
@@ -5855,6 +6120,12 @@ def unregister():
     del bpy.types.Scene.gtatools_nvtt_path
     del bpy.types.Scene.gtatools_txd_use_gpu
     del bpy.types.Scene.gtatools_show_nvtt_settings
+    del bpy.types.Scene.gtatools_show_texture_settings
+    del bpy.types.Scene.gtatools_show_paths_settings
+    del bpy.types.Scene.gtatools_show_suffix_settings
+    del bpy.types.Scene.gtatools_suffix_dff
+    del bpy.types.Scene.gtatools_suffix_lod
+    del bpy.types.Scene.gtatools_suffix_col
     del bpy.types.Scene.gtatools_texture_path2
     del bpy.types.Scene.gtatools_texture_path1
     del bpy.types.Scene.gtatools_export_pipeline
