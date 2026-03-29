@@ -18,9 +18,13 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 <details>
 <summary><b>IDE / IPL / IMG</b></summary>
 
-> - ✅ IDE экспорт/импорт — определение моделей, upsert/remove в существующие файлы
-> - ✅ IPL экспорт/импорт — размещение объектов на карте
-> - ✅ IMG Archive — экспорт DFF+TXD+COL прямо в .img архив (VER2)
+> - ✅ IDE экспорт/импорт — определение моделей, upsert/remove в существующие файлы, авто-LOD (ID+1, Draw Distance+50)
+> - ✅ IPL экспорт/импорт — размещение объектов на карте, авто-привязка LOD индексов
+> - ✅ IMG Archive — массовый экспорт/импорт DFF+LOD+TXD+COL в .img архив (VER2)
+> - ✅ Импорт из IMG — загрузка моделей из IMG по IDE/IPL с расстановкой по позициям (коллекции Map_DFF/Map_LOD/Map_COL)
+> - ✅ Менеджер ID — список свободных ID в текстовом файле, авто-назначение выделенным объектам
+> - ✅ IDE Флаги — 15 чекбоксов с описаниями (IS_ROAD, IS_TREE, DRAW_LAST и др.)
+> - ✅ Настраиваемые суффиксы моделей (_DFF, _LOD, _COL)
 
 </details>
 
@@ -56,7 +60,8 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 > - ✅ Day/Night — раздельные атрибуты цвета для дня и ночи
 > - ✅ Анализ и предпросмотр вертексных цветов
 > - ✅ Prelight COL — конвертация vertex colors в COL Day/Night Light (авторазбиение материалов по яркости)
-> - ✅ Превью COL Light — визуализация освещения на полигонах с настройками Край/Контраст и числовыми значениями
+> - ✅ Превью COL Light — визуализация освещения на полигонах с настройками Край/Порог/Контраст и числовыми значениями (автообновление при перемещении)
+> - ✅ Пресеты прелайта — сохранение/загрузка настроек запекания (Ambient/Intensity/Gamma/Shadows)
 >
 > <details>
 > <summary><b>Tutorial .gif</b></summary>
@@ -91,6 +96,7 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 <summary><b>Post-Processing</b></summary>
 
 > - ✅ Smooth — сглаживание vertex colors между соседними вершинами
+> - ✅ Smooth между объектами — сглаживание vertex colors на стыках разных объектов
 > - ✅ Contrast — настройка контраста
 > - ✅ Brightness — настройка яркости
 > - ✅ Gamma — гамма-коррекция
@@ -170,7 +176,7 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 ## Использование
 
 Аддон добавляет панели в:
-- **Properties > Scene > INU Tools** — текстуры, NVTT настройки
+- **Properties > Scene > INU Tools** — пути IDE/IPL/IMG, текстуры, NVTT, суффиксы моделей, менеджер ID, пресеты
 - **Properties > Object > GTA SA Object** — тип объекта (OBJ/COL/SHA/2DFX), DFF Flags, Pipeline, UV Maps
 - **Properties > Material > GTA SA Material Effects** — Environment Map, Bump Map, Reflection, Specular, UV Animation
 - **Properties > Material > COL Surface Type** — выбор типа поверхности коллизии
@@ -234,7 +240,11 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 | Автозагрузка текстур по именам | ✅ |
 | IFP (анимации) | ❌ |
 | IPL/IDE (размещение на карте) | ✅ |
-| IMG Archive | ✅ |
+| IMG Archive (экспорт/импорт) | ✅ |
+| Импорт карты из IMG | ✅ |
+| Менеджер ID моделей | ✅ |
+| IDE Флаги (чекбоксы) | ✅ |
+| Настраиваемые суффиксы | ✅ |
 | Skinned Mesh (полный скелет) | ❌ |
 | **Материалы** | |
 | Environment Map | ✅ |
@@ -262,7 +272,8 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 | COL Light Bake | ✅ |
 | COL Light Preview (Край/Контраст) | ✅ |
 | Day↔Night копирование | ❌ |
-| VC Smooth между объектами | ❌ |
+| VC Smooth между объектами | ✅ |
+| Пресеты прелайта | ✅ |
 | **Инструменты** | |
 | UV Grid Randomizer / Snap | ✅ |
 | Проверка/очистка геометрии | ✅ |

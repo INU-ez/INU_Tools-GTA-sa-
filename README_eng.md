@@ -18,9 +18,13 @@ Starting from v1.5.0, the addon has its own DFF, COL, and TXD export (no DragonF
 <details>
 <summary><b>IDE / IPL / IMG</b></summary>
 
-> - ✅ IDE export/import — model definitions, upsert/remove into existing files
-> - ✅ IPL export/import — object map placement
-> - ✅ IMG Archive — export DFF+TXD+COL directly into .img archives (VER2)
+> - ✅ IDE export/import — model definitions, upsert/remove into existing files, auto-LOD (ID+1, Draw Distance+50)
+> - ✅ IPL export/import — object map placement, auto LOD index linking
+> - ✅ IMG Archive — batch export/import DFF+LOD+TXD+COL into .img archives (VER2)
+> - ✅ Import from IMG — load models from IMG using IDE/IPL with positioning (Map_DFF/Map_LOD/Map_COL collections)
+> - ✅ Model ID Manager — free ID list in text file, auto-assign to selected objects
+> - ✅ IDE Flags — 15 checkboxes with descriptions (IS_ROAD, IS_TREE, DRAW_LAST, etc.)
+> - ✅ Customizable model suffixes (_DFF, _LOD, _COL)
 
 </details>
 
@@ -54,7 +58,8 @@ Starting from v1.5.0, the addon has its own DFF, COL, and TXD export (no DragonF
 > - ✅ Day/Night — separate color attributes for day and night
 > - ✅ Vertex color analysis and preview
 > - ✅ Prelight COL — convert vertex colors to COL Day/Night Light (auto-split materials by brightness)
-> - ✅ COL Light Preview — lighting visualization on polygons with Edge/Contrast settings and numeric values
+> - ✅ COL Light Preview — lighting visualization on polygons with Edge/Threshold/Contrast settings and numeric values (auto-update on transform)
+> - ✅ Prelight Presets — save/load bake settings (Ambient/Intensity/Gamma/Shadows)
 >
 > <details>
 > <summary><b>Tutorial .gif</b></summary>
@@ -89,6 +94,7 @@ Starting from v1.5.0, the addon has its own DFF, COL, and TXD export (no DragonF
 <summary><b>Post-Processing</b></summary>
 
 > - ✅ Smooth — smooth vertex colors between neighboring vertices
+> - ✅ Smooth Between Objects — smooth vertex colors at seams between different objects
 > - ✅ Contrast — contrast adjustment
 > - ✅ Brightness — brightness adjustment
 > - ✅ Gamma — gamma correction
@@ -168,7 +174,7 @@ The MTA script file link is available in Issues.
 ## Usage
 
 The addon adds panels to:
-- **Properties > Scene > INU Tools** — textures, NVTT settings
+- **Properties > Scene > INU Tools** — IDE/IPL/IMG paths, textures, NVTT, model suffixes, ID manager, presets
 - **Properties > Object > GTA SA Object** — object type (OBJ/COL/SHA/2DFX), DFF Flags, Pipeline, UV Maps
 - **Properties > Material > GTA SA Material Effects** — Environment Map, Bump Map, Reflection, Specular, UV Animation
 - **Properties > Material > COL Surface Type** — collision surface type selection
@@ -232,7 +238,11 @@ Name objects with suffixes (`Model_DFF`, `Model_LOD`, `Model_COL`), select them,
 | Auto-load textures by names | ✅ |
 | IFP (animations) | ❌ |
 | IPL/IDE (map placement) | ✅ |
-| IMG Archive | ✅ |
+| IMG Archive (export/import) | ✅ |
+| Map Import from IMG | ✅ |
+| Model ID Manager | ✅ |
+| IDE Flags (checkboxes) | ✅ |
+| Customizable suffixes | ✅ |
 | Skinned Mesh (full skeleton) | ❌ |
 | **Materials** | |
 | Environment Map | ✅ |
@@ -260,7 +270,8 @@ Name objects with suffixes (`Model_DFF`, `Model_LOD`, `Model_COL`), select them,
 | COL Light Bake | ✅ |
 | COL Light Preview (Edge/Contrast) | ✅ |
 | Day↔Night copy | ❌ |
-| VC Smooth between objects | ❌ |
+| VC Smooth between objects | ✅ |
+| Prelight Presets | ✅ |
 | **Tools** | |
 | UV Grid Randomizer / Snap | ✅ |
 | Geometry check/cleanup | ✅ |
