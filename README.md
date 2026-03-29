@@ -293,6 +293,8 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 
 </details>
 
+> **[Сравнение с другими инструментами (DragonFF, GTA_Tools, DeniskaMax и др.)](COMPARISON.md)**
+
 ## Благодарности
 
 Проект вдохновлён и частично совместим с:
