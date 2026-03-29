@@ -395,6 +395,39 @@ class INUObjectProps(bpy.types.PropertyGroup):
         min=0,
         description=T("Флаги объекта в IDE"),
     )
+
+    # IDE flag checkboxes with auto-sync to ide_flags
+    def _update_ide_flag(self, context):
+        _FLAG_BITS = [
+            ('flag_is_road', 1), ('flag_draw_last', 4), ('flag_additive', 8),
+            ('flag_no_zbuffer', 64), ('flag_no_shadows', 128),
+            ('flag_glass_1', 512), ('flag_glass_2', 1024),
+            ('flag_garage_door', 2048), ('flag_damagable', 4096),
+            ('flag_is_tree', 8192), ('flag_is_palm', 16384),
+            ('flag_no_flyer_col', 32768), ('flag_is_tag', 1048576),
+            ('flag_no_backface', 2097152), ('flag_breakable', 4194304),
+        ]
+        val = 0
+        for prop, bit in _FLAG_BITS:
+            if getattr(self, prop, False):
+                val |= bit
+        self['ide_flags'] = val
+
+    flag_is_road : BoolProperty(name="IS_ROAD", description="Дорога (1)", default=False, update=_update_ide_flag)
+    flag_draw_last : BoolProperty(name="DRAW_LAST", description="Прозрачный, рисовать последним (4)", default=False, update=_update_ide_flag)
+    flag_additive : BoolProperty(name="ADDITIVE", description="Аддитивный блендинг (8)", default=False, update=_update_ide_flag)
+    flag_no_zbuffer : BoolProperty(name="NO_ZBUFFER_WRITE", description="Не писать в Z-буфер (64)", default=False, update=_update_ide_flag)
+    flag_no_shadows : BoolProperty(name="NO_SHADOWS", description="Не получать тени (128)", default=False, update=_update_ide_flag)
+    flag_glass_1 : BoolProperty(name="GLASS_TYPE_1", description="Стекло разбиваемое (512)", default=False, update=_update_ide_flag)
+    flag_glass_2 : BoolProperty(name="GLASS_TYPE_2", description="Стекло с трещинами (1024)", default=False, update=_update_ide_flag)
+    flag_garage_door : BoolProperty(name="GARAGE_DOOR", description="Дверь гаража (2048)", default=False, update=_update_ide_flag)
+    flag_damagable : BoolProperty(name="DAMAGABLE", description="Разрушаемый (4096)", default=False, update=_update_ide_flag)
+    flag_is_tree : BoolProperty(name="IS_TREE", description="Дерево, качается на ветру (8192)", default=False, update=_update_ide_flag)
+    flag_is_palm : BoolProperty(name="IS_PALM", description="Пальма, качается на ветру (16384)", default=False, update=_update_ide_flag)
+    flag_no_flyer_col : BoolProperty(name="NO_FLYER_COL", description="Нет коллизии с летающим (32768)", default=False, update=_update_ide_flag)
+    flag_is_tag : BoolProperty(name="IS_TAG", description="Граффити тег (1048576)", default=False, update=_update_ide_flag)
+    flag_no_backface : BoolProperty(name="NO_BACKFACE_CULL", description="Рисовать обе стороны (2097152)", default=False, update=_update_ide_flag)
+    flag_breakable : BoolProperty(name="BREAKABLE_STATUE", description="Разрушаемая статуя (4194304)", default=False, update=_update_ide_flag)
     interior_id : IntProperty(
         name="Interior ID",
         default=0,
@@ -4322,7 +4355,32 @@ class GTATOOLS_PT_ide_ipl_panel(bpy.types.Panel):
             col = box.column(align=True)
             col.prop(inu, "model_id", text="Model ID")
             col.prop(inu, "draw_distance", text="Draw Dist")
-            col.prop(inu, "ide_flags", text="Flags")
+
+            # Flags with expandable checkboxes
+            row = box.row(align=True)
+            row.prop(inu, "ide_flags", text="Flags")
+            row.prop(scn, "gtatools_show_ide_flags",
+                     icon='TRIA_DOWN' if scn.gtatools_show_ide_flags else 'TRIA_RIGHT',
+                     text="", emboss=False)
+            if scn.gtatools_show_ide_flags:
+                fbox = box.box()
+                fc = fbox.column(align=True)
+                fc.prop(inu, "flag_is_road")
+                fc.prop(inu, "flag_draw_last")
+                fc.prop(inu, "flag_additive")
+                fc.prop(inu, "flag_no_zbuffer")
+                fc.prop(inu, "flag_no_shadows")
+                fc.prop(inu, "flag_glass_1")
+                fc.prop(inu, "flag_glass_2")
+                fc.prop(inu, "flag_garage_door")
+                fc.prop(inu, "flag_damagable")
+                fc.prop(inu, "flag_is_tree")
+                fc.prop(inu, "flag_is_palm")
+                fc.prop(inu, "flag_no_flyer_col")
+                fc.prop(inu, "flag_is_tag")
+                fc.prop(inu, "flag_no_backface")
+                fc.prop(inu, "flag_breakable")
+
             row = box.row(align=True)
             row.prop(inu, "interior_id", text="Interior")
             row.prop(inu, "lod_index", text="LOD")
@@ -4429,23 +4487,40 @@ class GTATOOLS_PT_export_panel(bpy.types.Panel):
         if hasattr(context.scene, "gtatools_txd_use_gpu"):
             row.prop(context.scene, "gtatools_txd_use_gpu", text="GPU (NVTT)", toggle=True)
 
-        row = layout.row(align=True)
-        row.operator("gtatools.check_geometry", text=T("Проверка вершин"), icon='VIEWZOOM')
-        row.operator("gtatools.check_ngons", text=T("Проверка N-gon"), icon='MESH_DATA')
-
-        row = layout.row(align=True)
-        row.operator("gtatools.check_materials", text=T("Проверка материалов"), icon='MATERIAL')
-        row = layout.row(align=True)
-        row.operator("gtatools.cleanup_materials", text=T("Очистка материалов"), icon='BRUSH_DATA')
-        row = layout.row(align=True)
-        row.operator("gtatools.sort_materials", text=T("Сортировка материалов"), icon='SORTALPHA')
-
         # Проверка NVTT если включен GPU
         if getattr(context.scene, "gtatools_txd_use_gpu", False):
             nvtt_path = context.scene.gtatools_nvtt_path
             available, msg = check_nvtt_available(nvtt_path)
             if not available:
                 layout.label(text=T("Статус: Не найден"), icon='ERROR')
+
+
+class GTATOOLS_PT_check_panel(bpy.types.Panel):
+    """Панель проверки геометрии и материалов"""
+    bl_label = "Check"
+    bl_idname = "GTATOOLS_PT_check_panel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'GTA Tools'
+    bl_parent_id = "GTATOOLS_PT_main_panel"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw(self, context):
+        layout = self.layout
+
+        row = layout.row(align=True)
+        row.operator("gtatools.check_geometry", text=T("Проверка вершин"), icon='VIEWZOOM')
+        row.operator("gtatools.check_ngons", text=T("Проверка N-gon"), icon='MESH_DATA')
+
+        row = layout.row(align=True)
+        row.operator("gtatools.check_materials", text=T("Проверка материалов"), icon='MATERIAL')
+
+        layout.separator()
+
+        row = layout.row(align=True)
+        row.operator("gtatools.cleanup_materials", text=T("Очистка материалов"), icon='BRUSH_DATA')
+        row = layout.row(align=True)
+        row.operator("gtatools.sort_materials", text=T("Сортировка материалов"), icon='SORTALPHA')
 
 
 class GTATOOLS_PT_import_panel(bpy.types.Panel):
@@ -5555,6 +5630,124 @@ class GTATOOLS_PT_bake_settings_subpanel(bpy.types.Panel):
         layout.separator()
         layout.operator("gtatools.reset_bake_settings", icon='LOOP_BACK')
 
+        # Presets
+        layout.separator()
+        box = layout.box()
+        box.label(text=T("Пресеты:"), icon='PRESET')
+        row = box.row(align=True)
+        row.prop(scene, "gtatools_prelight_preset", text="")
+        row.operator("gtatools.prelight_preset_load", text="", icon='IMPORT')
+        row.operator("gtatools.prelight_preset_save", text="", icon='ADD')
+        row.operator("gtatools.prelight_preset_delete", text="", icon='REMOVE')
+
+
+def _presets_dir():
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'presets')
+
+
+def _load_prelight_presets():
+    import json
+    presets = []
+    d = _presets_dir()
+    if not os.path.isdir(d):
+        os.makedirs(d, exist_ok=True)
+    for f in sorted(os.listdir(d)):
+        if f.endswith('.json'):
+            try:
+                with open(os.path.join(d, f), 'r', encoding='utf-8') as fh:
+                    p = json.load(fh)
+                    if 'name' in p:
+                        presets.append(p)
+            except:
+                pass
+    return presets if presets else [{"name": "Default", "ambient": 0.10, "intensity": 0.05, "gamma": 0.50, "shadows": True}]
+
+
+def _save_preset_file(preset):
+    import json
+    d = _presets_dir()
+    os.makedirs(d, exist_ok=True)
+    safe_name = "".join(c if c.isalnum() or c in " _-" else "_" for c in preset['name'])
+    path = os.path.join(d, f"{safe_name}.json")
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(preset, f, indent=2, ensure_ascii=False)
+
+
+def _delete_preset_file(name):
+    d = _presets_dir()
+    safe_name = "".join(c if c.isalnum() or c in " _-" else "_" for c in name)
+    path = os.path.join(d, f"{safe_name}.json")
+    if os.path.isfile(path):
+        os.remove(path)
+
+
+def _get_preset_items(self, context):
+    presets = _load_prelight_presets()
+    items = [(p['name'], p['name'], '') for p in presets]
+    return items if items else [('NONE', 'No presets', '')]
+
+
+class GTATOOLS_OT_prelight_preset_load(bpy.types.Operator):
+    """Загрузить выбранный пресет"""
+    bl_idname = "gtatools.prelight_preset_load"
+    bl_label = "Load Preset"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        scene = context.scene
+        name = scene.gtatools_prelight_preset
+        presets = _load_prelight_presets()
+        for p in presets:
+            if p['name'] == name:
+                scene.gtatools_bake_ambient = p.get('ambient', 0.10)
+                scene.gtatools_bake_intensity = p.get('intensity', 0.05)
+                scene.gtatools_bake_gamma = p.get('gamma', 0.50)
+                scene.gtatools_bake_shadows = p.get('shadows', True)
+                self.report({'INFO'}, f"{T('Пресет загружен:')} {name}")
+                return {'FINISHED'}
+        self.report({'ERROR'}, T("Пресет не найден"))
+        return {'CANCELLED'}
+
+
+class GTATOOLS_OT_prelight_preset_save(bpy.types.Operator):
+    """Сохранить текущие настройки как пресет"""
+    bl_idname = "gtatools.prelight_preset_save"
+    bl_label = "Save Preset"
+    bl_options = {'REGISTER'}
+
+    preset_name: StringProperty(name="Name", default="My Preset")
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self)
+
+    def execute(self, context):
+        scene = context.scene
+
+        new_preset = {
+            "name": self.preset_name,
+            "ambient": scene.gtatools_bake_ambient,
+            "intensity": scene.gtatools_bake_intensity,
+            "gamma": scene.gtatools_bake_gamma,
+            "shadows": scene.gtatools_bake_shadows,
+        }
+
+        _save_preset_file(new_preset)
+        self.report({'INFO'}, f"{T('Пресет сохранён:')} {self.preset_name}")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_prelight_preset_delete(bpy.types.Operator):
+    """Удалить выбранный пресет"""
+    bl_idname = "gtatools.prelight_preset_delete"
+    bl_label = "Delete Preset"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        name = context.scene.gtatools_prelight_preset
+        _delete_preset_file(name)
+        self.report({'INFO'}, f"{T('Пресет удалён:')} {name}")
+        return {'FINISHED'}
+
 
 class GTATOOLS_PT_vc_postprocess_panel(bpy.types.Panel):
     """Панель пост-обработки vertex colors"""
@@ -5896,6 +6089,9 @@ classes = (
     GTATOOLS_OT_bake_vertex_colors,
     GTATOOLS_OT_bake_vertex_colors_simple,
     GTATOOLS_OT_reset_bake_settings,
+    GTATOOLS_OT_prelight_preset_load,
+    GTATOOLS_OT_prelight_preset_save,
+    GTATOOLS_OT_prelight_preset_delete,
     GTATOOLS_OT_reset_scatter_settings,
     GTATOOLS_OT_analyze_vertex_colors,
     GTATOOLS_OT_apply_v_offset,
@@ -5972,6 +6168,7 @@ classes = (
     GTATOOLS_OT_file_import_ipl,
     GTATOOLS_PT_ide_ipl_panel,
     GTATOOLS_PT_export_panel,
+    GTATOOLS_PT_check_panel,
     GTATOOLS_PT_import_panel,
     GTATOOLS_OT_apply_2dfx_preset,
     GTATOOLS_OT_create_2dfx,
@@ -6201,6 +6398,12 @@ def register():
         description=T("Показать настройки суффиксов"),
         default=False
     )
+
+    bpy.types.Scene.gtatools_show_ide_flags = BoolProperty(
+        name="Show IDE Flags",
+        description=T("Показать флаги IDE"),
+        default=False
+    )
     bpy.types.Scene.gtatools_suffix_dff = StringProperty(
         name="DFF Suffix",
         description=T("Суффикс для DFF моделей (например _DFF или DFF)"),
@@ -6264,6 +6467,12 @@ def register():
         name="Shadows",
         description=T("Включить тени при запекании (raycast проверка перекрытий)"),
         default=True
+    )
+
+    bpy.types.Scene.gtatools_prelight_preset = EnumProperty(
+        name="Prelight Preset",
+        items=_get_preset_items,
+        description=T("Выбрать пресет настроек прелайта"),
     )
 
     # V offset for night prelight
@@ -6518,6 +6727,7 @@ def unregister():
     del bpy.types.Scene.gtatools_show_texture_settings
     del bpy.types.Scene.gtatools_show_paths_settings
     del bpy.types.Scene.gtatools_show_suffix_settings
+    del bpy.types.Scene.gtatools_show_ide_flags
     del bpy.types.Scene.gtatools_suffix_dff
     del bpy.types.Scene.gtatools_suffix_lod
     del bpy.types.Scene.gtatools_suffix_col
@@ -6542,6 +6752,7 @@ def unregister():
     del bpy.types.Scene.gtatools_vc_brightness
     del bpy.types.Scene.gtatools_vc_gamma
     del bpy.types.Scene.gtatools_bake_shadows
+    del bpy.types.Scene.gtatools_prelight_preset
     del bpy.types.Scene.gtatools_bake_gamma
     del bpy.types.Scene.gtatools_bake_intensity
     del bpy.types.Scene.gtatools_bake_ambient
