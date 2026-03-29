@@ -291,6 +291,8 @@ Name objects with suffixes (`Model_DFF`, `Model_LOD`, `Model_COL`), select them,
 
 </details>
 
+> **[Comparison with other tools (DragonFF, GTA_Tools, DeniskaMax, etc.)](COMPARISON.md)**
+
 ## Credits
 
 Inspired by and partially compatible with:
