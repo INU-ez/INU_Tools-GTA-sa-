@@ -1115,6 +1115,222 @@ def _clean_model_name_ide(name):
     return name
 
 
+class GTATOOLS_OT_import_from_img(bpy.types.Operator):
+    """Импортировать модели из IMG архива (по списку из IDE/IPL)"""
+    bl_idname = "gtatools.import_from_img"
+    bl_label = "Import from IMG"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    skip_lod: BoolProperty(
+        name="Skip LOD",
+        description=T("Пропустить LOD модели при импорте"),
+        default=False
+    )
+    load_txd: BoolProperty(
+        name="Load TXD",
+        description=T("Загружать TXD текстуры вместе с DFF"),
+        default=True
+    )
+
+    def execute(self, context):
+        import tempfile
+        from .core.img import extract_file, read_directory
+        from .core.ide import read_ide
+        from .core.ipl import read_ipl
+        from .ops.dff_import import import_dff as inu_import_dff
+        from .ops.txd_import import import_txd as inu_import_txd
+        from mathutils import Quaternion
+
+        scene = context.scene
+        img_path = bpy.path.abspath(scene.gtatools_img_path)
+        ide_path = bpy.path.abspath(scene.gtatools_ide_path)
+        ipl_path = bpy.path.abspath(scene.gtatools_ipl_path)
+
+        if not img_path or not os.path.isfile(img_path):
+            self.report({'ERROR'}, T("Укажите путь к IMG архиву в INU Tools"))
+            return {'CANCELLED'}
+
+        # Read IDE for model definitions (optional)
+        ide_models = {}
+        if ide_path and os.path.isfile(ide_path):
+            ide = read_ide(ide_path)
+            for obj in ide.objects:
+                ide_models[obj.model_id] = obj
+
+        # Read IPL for placements
+        instances = []
+        if ipl_path and os.path.isfile(ipl_path):
+            ipl = read_ipl(ipl_path)
+            instances = ipl.instances
+
+        if not instances:
+            self.report({'ERROR'}, T("IPL файл пуст или не указан"))
+            return {'CANCELLED'}
+
+        # Build set of model names to import
+        img_files = {e.name.lower(): e.name for e in read_directory(img_path)}
+
+        # Create collections for DFF, LOD and COL
+        def _get_or_create_collection(name):
+            col = bpy.data.collections.get(name)
+            if not col:
+                col = bpy.data.collections.new(name)
+                context.scene.collection.children.link(col)
+            return col
+
+        dff_collection = _get_or_create_collection("Map_DFF")
+        lod_collection = _get_or_create_collection("Map_LOD")
+        col_collection = _get_or_create_collection("Map_COL")
+
+        wm = context.window_manager
+        wm.progress_begin(0, len(instances))
+
+        imported_count = 0
+        skipped_count = 0
+        errors = []
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Cache: already imported models (name -> list of created objects)
+            imported_models = {}
+
+            for idx, inst in enumerate(instances):
+                wm.progress_update(idx)
+                model_name = inst.model_name
+                is_lod = model_name.upper().startswith('LOD')
+
+                # Skip LOD models if option enabled
+                if self.skip_lod and is_lod:
+                    skipped_count += 1
+                    continue
+
+                # Choose target collection
+                target_collection = lod_collection if is_lod else dff_collection
+
+                dff_filename = model_name + '.dff'
+
+                # Check if DFF exists in IMG
+                if dff_filename.lower() not in img_files:
+                    skipped_count += 1
+                    continue
+
+                # Import DFF (or duplicate if already imported)
+                if model_name in imported_models:
+                    # Duplicate existing objects
+                    new_objects = []
+                    for src_obj in imported_models[model_name]:
+                        new_obj = src_obj.copy()
+                        new_obj.data = src_obj.data.copy()
+                        target_collection.objects.link(new_obj)
+                        new_objects.append(new_obj)
+                else:
+                    # Extract and import DFF
+                    dff_data = extract_file(img_path, img_files[dff_filename.lower()])
+                    if not dff_data:
+                        errors.append(f"{model_name}: DFF extract failed")
+                        continue
+
+                    dff_path = os.path.join(tmpdir, dff_filename)
+                    with open(dff_path, 'wb') as f:
+                        f.write(dff_data)
+
+                    try:
+                        # Remember objects before import
+                        before = set(context.scene.objects)
+                        inu_import_dff(filepath=dff_path, context=context)
+                        after = set(context.scene.objects)
+                        new_objects = list(after - before)
+
+                        # Load TXD if available
+                        if self.load_txd:
+                            # Get TXD name from IDE or use model name
+                            txd_name = model_name
+                            if inst.model_id in ide_models:
+                                txd_name = ide_models[inst.model_id].txd_name
+
+                            txd_filename = txd_name + '.txd'
+                            if txd_filename.lower() in img_files:
+                                txd_data = extract_file(img_path, img_files[txd_filename.lower()])
+                                if txd_data:
+                                    txd_path = os.path.join(tmpdir, txd_filename)
+                                    with open(txd_path, 'wb') as f:
+                                        f.write(txd_data)
+                                    try:
+                                        inu_import_txd(filepath=txd_path)
+                                    except:
+                                        pass
+
+                        # Move imported objects to target collection
+                        for obj in new_objects:
+                            # Remove from all current collections
+                            for c in list(obj.users_collection):
+                                c.objects.unlink(obj)
+                            target_collection.objects.link(obj)
+
+                        # Import COL if available
+                        col_filename = model_name + '.col'
+                        if col_filename.lower() in img_files:
+                            col_data = extract_file(img_path, img_files[col_filename.lower()])
+                            if col_data:
+                                col_path = os.path.join(tmpdir, col_filename)
+                                with open(col_path, 'wb') as f:
+                                    f.write(col_data)
+                                try:
+                                    from .ops.col_import import import_col as inu_import_col
+                                    before_col = set(context.scene.objects)
+                                    inu_import_col(filepath=col_path, context=context)
+                                    after_col = set(context.scene.objects)
+                                    col_objects = list(after_col - before_col)
+                                    col_pos = (inst.pos_x, inst.pos_y, inst.pos_z)
+                                    col_rot = Quaternion((inst.rot_w, inst.rot_x, inst.rot_y, inst.rot_z)).conjugated()
+                                    for co in col_objects:
+                                        for c in list(co.users_collection):
+                                            c.objects.unlink(co)
+                                        col_collection.objects.link(co)
+                                        co.location = col_pos
+                                        co.rotation_mode = 'QUATERNION'
+                                        co.rotation_quaternion = col_rot
+                                except:
+                                    pass
+
+                        imported_models[model_name] = new_objects
+                    except Exception as e:
+                        errors.append(f"{model_name}: {str(e)}")
+                        continue
+
+                # Position and rotate according to IPL
+                pos = (inst.pos_x, inst.pos_y, inst.pos_z)
+                # GTA SA quaternion is stored conjugated
+                rot = Quaternion((inst.rot_w, inst.rot_x, inst.rot_y, inst.rot_z)).conjugated()
+
+                for obj in new_objects:
+                    if obj.type == 'MESH':
+                        obj.location = pos
+                        obj.rotation_mode = 'QUATERNION'
+                        obj.rotation_quaternion = rot
+                        # Set IDE properties
+                        if hasattr(obj, 'inu'):
+                            obj.inu.model_id = inst.model_id
+                            if inst.model_id in ide_models:
+                                ide_obj = ide_models[inst.model_id]
+                                obj.inu.draw_distance = ide_obj.draw_distance
+                                obj.inu.ide_flags = ide_obj.flags
+                                obj.inu.txd_name = ide_obj.txd_name
+
+                imported_count += 1
+
+        wm.progress_end()
+
+        msg = f"{T('Импортировано:')} {imported_count}"
+        if skipped_count:
+            msg += f", {T('пропущено:')} {skipped_count}"
+        if errors:
+            msg += f", {T('ошибок:')} {len(errors)}"
+            for e in errors[:5]:
+                print(f"[Map Import] {e}")
+        self.report({'INFO'}, msg)
+        return {'FINISHED'}
+
+
 class GTATOOLS_OT_export_to_img(bpy.types.Operator):
     """Экспортировать DFF + TXD + COL прямо в .img архив"""
     bl_idname = "gtatools.export_to_img"
@@ -1147,6 +1363,18 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             for base_name, models in model_groups.items():
+                # Export LOD first
+                if export_dff_flag and models['LOD']:
+                    lod_name = 'LOD' + base_name
+                    lod_path = os.path.join(tmpdir, lod_name + '.dff')
+                    try:
+                        inu_export_dff(filepath=lod_path, objects=[models['LOD']])
+                        with open(lod_path, 'rb') as f:
+                            status = replace_or_add(img_path, lod_name + '.dff', f.read())
+                        results.append(f"{lod_name}.dff {status}")
+                    except Exception as e:
+                        results.append(f"{lod_name}.dff error: {e}")
+
                 # Export DFF + attached 2DFX
                 if export_dff_flag and models['DFF']:
                     dff_path = os.path.join(tmpdir, base_name + '.dff')
@@ -1161,18 +1389,6 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
                         results.append(f"{base_name}.dff {status}")
                     except Exception as e:
                         results.append(f"{base_name}.dff error: {e}")
-
-                # Export LOD as separate DFF
-                if export_dff_flag and models['LOD']:
-                    lod_name = 'LOD' + base_name
-                    lod_path = os.path.join(tmpdir, lod_name + '.dff')
-                    try:
-                        inu_export_dff(filepath=lod_path, objects=[models['LOD']])
-                        with open(lod_path, 'rb') as f:
-                            status = replace_or_add(img_path, lod_name + '.dff', f.read())
-                        results.append(f"{lod_name}.dff {status}")
-                    except Exception as e:
-                        results.append(f"{lod_name}.dff error: {e}")
 
                 # Export COL
                 if export_col_flag and models['COL']:
@@ -1306,22 +1522,36 @@ class GTATOOLS_OT_upsert_ipl(bpy.types.Operator):
             if model_type in ('DFF', 'LOD'):
                 pairs[base_name][model_type] = obj
 
-        # Read existing IPL to count current entries (for LOD index calculation)
+        # Read existing IPL to count entries that will remain (excluding ones we'll replace)
         existing_count = 0
         if os.path.isfile(filepath):
             try:
                 existing_ipl = read_ipl(filepath)
-                existing_count = len(existing_ipl.instances)
+                # Collect model IDs we're about to upsert
+                our_ids = set()
+                for pair in pairs.values():
+                    if pair['DFF'] and hasattr(pair['DFF'], 'inu'):
+                        our_ids.add(pair['DFF'].inu.model_id)
+                    if pair['LOD'] and hasattr(pair['LOD'], 'inu'):
+                        our_ids.add(pair['LOD'].inu.model_id)
+                # Count entries that won't be replaced
+                existing_count = sum(1 for inst in existing_ipl.instances if inst.model_id not in our_ids)
             except:
                 pass
 
-        # Build entries: first all LODs, then all DFFs with lod_index pointing to LOD
-        lod_entries = []
-        dff_entries = []
-        lod_index_map = {}  # base_name -> index in IPL
+        # Build entries in pairs: DFF, LOD, DFF, LOD...
+        entries = []
+        entry_index = existing_count
 
-        # Pass 1: collect LOD entries
         for base_name, pair in pairs.items():
+            dff_entry = None
+            lod_entry = None
+
+            if pair['DFF']:
+                dff_entry = _ipl_entry_from_obj(pair['DFF'])
+                dff_idx = entry_index
+                entry_index += 1
+
             if pair['LOD']:
                 lod_entry = _ipl_entry_from_obj(pair['LOD'])
                 lod_entry.model_name = "LOD" + base_name
@@ -1331,37 +1561,32 @@ class GTATOOLS_OT_upsert_ipl(bpy.types.Operator):
                     dff_id = getattr(pair['DFF'].inu, 'model_id', 0)
                     if dff_id > 0:
                         lod_entry.model_id = dff_id + 1
-                lod_index = existing_count + len(lod_entries)
-                lod_index_map[base_name] = lod_index
-                lod_entries.append(lod_entry)
+                lod_idx = entry_index
+                entry_index += 1
 
-        # Pass 2: collect DFF entries with lod_index
-        for base_name, pair in pairs.items():
-            if pair['DFF']:
-                dff_entry = _ipl_entry_from_obj(pair['DFF'])
-                if base_name in lod_index_map:
-                    dff_entry.lod_index = lod_index_map[base_name]
-                dff_entries.append(dff_entry)
-            elif not pair['LOD']:
-                # Object without suffix — add as DFF
+            # Set DFF lod_index pointing to LOD
+            if dff_entry and lod_entry:
+                dff_entry.lod_index = lod_idx
+
+            if dff_entry:
+                entries.append(dff_entry)
+            if lod_entry:
+                entries.append(lod_entry)
+
+            if not pair['DFF'] and not pair['LOD']:
                 for obj in objs:
                     mt, bn = get_model_type(obj)
                     if bn == base_name:
-                        dff_entries.append(_ipl_entry_from_obj(obj))
+                        entries.append(_ipl_entry_from_obj(obj))
+                        entry_index += 1
                         break
-
-        # Add LODs first, then DFFs (so LOD indices are correct)
-        entries = lod_entries + dff_entries
 
         zero_ids = [e for e in entries if e.model_id == 0]
         if zero_ids:
             self.report({'WARNING'}, f"{len(zero_ids)} {T('объектов с Model ID = 0, задайте ID в свойствах')}")
 
         updated, added = upsert_ipl(filepath, entries)
-        lod_count = len(lod_entries)
         msg = f"IPL: {T('обновлено')} {updated}, {T('добавлено')} {added}"
-        if lod_count:
-            msg += f", LOD: {lod_count}"
         self.report({'INFO'}, msg)
         return {'FINISHED'}
 
@@ -4137,6 +4362,7 @@ class GTATOOLS_PT_ide_ipl_panel(bpy.types.Panel):
         row.prop(scn, "gtatools_img_export_dff", text="DFF", toggle=True)
         row.prop(scn, "gtatools_img_export_col", text="COL", toggle=True)
         row.prop(scn, "gtatools_img_export_txd", text="TXD", toggle=True)
+        box.operator("gtatools.import_from_img", text=T("Импорт из IMG"), icon='IMPORT')
         box.operator("gtatools.export_to_img", text=T("Экспорт в IMG"), icon='EXPORT')
 
 
@@ -5146,19 +5372,34 @@ class GTATOOLS_OT_id_manager_auto_assign(bpy.types.Operator):
             self.report({'ERROR'}, T("Выделите меш объекты"))
             return {'CANCELLED'}
 
-        assigned = 0
+        # Group by base_name, order: DFF then LOD per group (skip COL)
+        pairs = {}  # base_name -> {'DFF': obj, 'LOD': obj}
         for obj in objs:
             inu = getattr(obj, 'inu', None)
-            if not inu:
+            if not inu or inu.model_id != 0:
                 continue
-            if inu.model_id != 0:
+            model_type, base_name = get_model_type(obj)
+            if model_type == 'COL':
                 continue
+            if base_name not in pairs:
+                pairs[base_name] = {'DFF': None, 'LOD': None}
+            if model_type in ('DFF', 'LOD'):
+                pairs[base_name][model_type] = obj
 
+        # Build ordered list: DFF, LOD, DFF, LOD...
+        ordered = []
+        for base_name in pairs:
+            if pairs[base_name]['DFF']:
+                ordered.append(pairs[base_name]['DFF'])
+            if pairs[base_name]['LOD']:
+                ordered.append(pairs[base_name]['LOD'])
+
+        assigned = 0
+        for obj in ordered:
             model_type, base_name = get_model_type(obj)
             clean_name = _clean_model_name_ide(obj.name)
 
             if model_type == 'LOD':
-                # LOD gets name with LOD prefix
                 display_name = "LOD" + clean_name
             else:
                 display_name = clean_name
@@ -5167,7 +5408,7 @@ class GTATOOLS_OT_id_manager_auto_assign(bpy.types.Operator):
             if new_id is None:
                 self.report({'ERROR'}, T("Нет свободных ID в model_ids.txt"))
                 return {'CANCELLED'}
-            inu.model_id = new_id
+            obj.inu.model_id = new_id
             assigned += 1
 
         self.report({'INFO'}, f"{T('Назначено ID:')} {assigned}")
@@ -5715,6 +5956,7 @@ classes = (
     GTATOOLS_OT_file_import_dff,
     GTATOOLS_OT_file_import_col,
     GTATOOLS_OT_file_import_txd,
+    GTATOOLS_OT_import_from_img,
     GTATOOLS_OT_export_to_img,
     GTATOOLS_OT_upsert_ide,
     GTATOOLS_OT_upsert_ipl,

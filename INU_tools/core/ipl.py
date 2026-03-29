@@ -194,42 +194,84 @@ def upsert_ipl(filepath: str, entries: list[IplInstance]) -> tuple[int, int]:
 
 
 def remove_ipl(filepath: str, model_ids: set[int]) -> int:
-    """Remove entries with given model_ids from IPL file. Returns count removed."""
+    """Remove entries with given model_ids from IPL file.
+    Recalculates lod_index for remaining entries.
+    Returns count removed."""
     if not os.path.isfile(filepath):
         return 0
 
+    ipl = read_ipl(filepath)
+    original_count = len(ipl.instances)
+
+    # Build index mapping: old_index -> new_index (after removal)
+    removed_indices = set()
+    for i, inst in enumerate(ipl.instances):
+        if inst.model_id in model_ids:
+            removed_indices.add(i)
+
+    if not removed_indices:
+        return 0
+
+    # Build old->new index map
+    index_map = {}
+    new_idx = 0
+    for old_idx in range(original_count):
+        if old_idx not in removed_indices:
+            index_map[old_idx] = new_idx
+            new_idx += 1
+
+    # Filter and remap lod_index
+    new_instances = []
+    for i, inst in enumerate(ipl.instances):
+        if i in removed_indices:
+            continue
+        if inst.lod_index >= 0:
+            if inst.lod_index in index_map:
+                inst.lod_index = index_map[inst.lod_index]
+            else:
+                # LOD was removed — clear reference
+                inst.lod_index = -1
+        new_instances.append(inst)
+
+    # Rewrite file
     with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
         lines = f.readlines()
 
     result_lines = []
     section = None
-    removed = 0
+    inst_written = False
 
     for line in lines:
         stripped = line.strip()
         low = stripped.lower()
 
-        if low == 'end':
+        if low == 'end' and section == 'inst':
+            # Write new inst entries before end
+            if not inst_written:
+                for inst in new_instances:
+                    result_lines.append(
+                        f"{inst.model_id}, {inst.model_name}, {inst.interior}, "
+                        f"{inst.pos_x:f}, {inst.pos_y:f}, {inst.pos_z:f}, "
+                        f"{inst.rot_x:f}, {inst.rot_y:f}, {inst.rot_z:f}, {inst.rot_w:f}, "
+                        f"{inst.lod_index}\n"
+                    )
+                inst_written = True
             section = None
             result_lines.append(line)
             continue
 
-        if low in ('inst', 'cull', 'path', 'grge', 'enex', 'pick',
-                   'jump', 'tcyc', 'auzo', 'mult', 'cars', 'occl', 'zone'):
+        if low in ('inst',):
             section = low
             result_lines.append(line)
             continue
 
         if section == 'inst' and stripped and not stripped.startswith('#'):
-            parsed = _parse_inst_line(stripped)
-            if parsed and parsed.model_id in model_ids:
-                removed += 1
-                continue
+            # Skip old inst lines — we'll write new ones
+            continue
 
         result_lines.append(line)
 
-    if removed > 0:
-        with open(filepath, 'w', encoding='utf-8', newline='\n') as f:
-            f.writelines(result_lines)
+    with open(filepath, 'w', encoding='utf-8', newline='\n') as f:
+        f.writelines(result_lines)
 
-    return removed
+    return len(removed_indices)
