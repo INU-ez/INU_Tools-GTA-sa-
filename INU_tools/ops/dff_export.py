@@ -319,8 +319,23 @@ def _process_mesh(obj, clump: DffClump, frame_index: int):
 
     flags = _get_obj_export_flags(obj)
 
-    # Get evaluated mesh with modifiers applied (except ARMATURE)
+    # Convert FLOAT_COLOR attributes to BYTE_COLOR before export (Itera Tools compatibility)
     import bpy
+    orig_mesh = obj.data
+    for ca in list(orig_mesh.color_attributes):
+        if ca.type == 'FLOAT_COLOR':
+            name = ca.name
+            domain = ca.domain
+            # Read float data
+            float_data = [tuple(d.color) for d in ca.data]
+            # Remove float attr, create byte attr
+            orig_mesh.color_attributes.remove(ca)
+            new_attr = orig_mesh.color_attributes.new(name=name, type='BYTE_COLOR', domain=domain)
+            for i, color in enumerate(float_data):
+                new_attr.data[i].color = color
+            print(f"[DFF Export] Converted '{name}' FLOAT_COLOR → BYTE_COLOR")
+
+    # Get evaluated mesh with modifiers applied (except ARMATURE)
     depsgraph = bpy.context.evaluated_depsgraph_get()
     eval_obj = obj.evaluated_get(depsgraph)
     mesh = eval_obj.to_mesh(preserve_all_data_layers=True, depsgraph=depsgraph)
