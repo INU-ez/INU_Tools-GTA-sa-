@@ -160,7 +160,8 @@ def _build_mesh(geom: DffGeometry, name: str, materials: list) -> bpy.types.Mesh
                 bm.verts[tri.c],
             ])
             face.material_index = tri.material
-            face.smooth = True
+            if hasattr(face, 'smooth'):
+                face.smooth = True
 
             # UV координаты через loops
             for loop in face.loops:
@@ -187,6 +188,11 @@ def _build_mesh(geom: DffGeometry, name: str, materials: list) -> bpy.types.Mesh
     bm.to_mesh(mesh)
     bm.free()
     mesh.update()
+
+    # Smooth shading (compatible 4.1+)
+    if bpy.app.version >= (4, 1, 0):
+        mesh.polygons.foreach_set("use_smooth", [True] * len(mesh.polygons))
+        mesh.update()
 
     # Store geometry user data on mesh
     if geom.user_data:

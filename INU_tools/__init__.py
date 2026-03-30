@@ -2727,12 +2727,20 @@ class GTATOOLS_OT_load_lightmap(bpy.types.Operator):
             lm_tex.label = "Lightmap"
             lm_tex.image = lightmap_image
 
-            # Создаём ноду MixRGB (Multiply)
-            mix_node = nodes.new('ShaderNodeMixRGB')
+            # Создаём ноду Mix (Multiply) — совместимость 4.4+
+            if bpy.app.version >= (4, 0, 0):
+                mix_node = nodes.new('ShaderNodeMix')
+                mix_node.data_type = 'RGBA'
+                mix_node.blend_type = 'MULTIPLY'
+                mix_node.inputs['Factor'].default_value = 1.0
+                _mix_in1, _mix_in2, _mix_out = 'A', 'B', 'Result'
+            else:
+                mix_node = nodes.new('ShaderNodeMixRGB')
+                mix_node.blend_type = 'MULTIPLY'
+                mix_node.inputs['Fac'].default_value = 1.0
+                _mix_in1, _mix_in2, _mix_out = 'Color1', 'Color2', 'Color'
             mix_node.name = "Lightmap_Mix"
             mix_node.label = "Lightmap Mix"
-            mix_node.blend_type = 'MULTIPLY'
-            mix_node.inputs['Fac'].default_value = 1.0
 
             # Позиционируем ноды
             if original_node:
@@ -2748,22 +2756,17 @@ class GTATOOLS_OT_load_lightmap(bpy.types.Operator):
             links.new(uv_node.outputs['UV'], lm_tex.inputs['Vector'])
 
             # Подключаем ноды
-            # Оригинальная текстура -> Color1
             if original_node:
-                links.new(original_socket, mix_node.inputs['Color1'])
+                links.new(original_socket, mix_node.inputs[_mix_in1])
             else:
-                mix_node.inputs['Color1'].default_value = (1, 1, 1, 1)
+                mix_node.inputs[_mix_in1].default_value = (1, 1, 1, 1)
 
-            # Лайтмап -> Color2
-            links.new(lm_tex.outputs['Color'], mix_node.inputs['Color2'])
+            links.new(lm_tex.outputs['Color'], mix_node.inputs[_mix_in2])
 
-            # Подключаем Lightmap_Mix
             if prelight_mix:
-                # Если есть Prelight_Mix - подключаем лайтмап к его входу A
-                links.new(mix_node.outputs['Color'], prelight_mix.inputs['A'])
+                links.new(mix_node.outputs[_mix_out], prelight_mix.inputs['A'])
             else:
-                # Иначе - напрямую к Base Color
-                links.new(mix_node.outputs['Color'], base_color_input)
+                links.new(mix_node.outputs[_mix_out], base_color_input)
 
             applied_count += 1
 
@@ -2817,10 +2820,11 @@ class GTATOOLS_OT_remove_lightmap(bpy.types.Operator):
                 base_color_input = principled.inputs['Base Color']
                 prelight_mix = nodes.get("Prelight_Mix")
 
-                # Находим что было подключено к Color1 (оригинальная текстура)
+                # Находим что было подключено к входу (оригинальная текстура)
+                _in1 = 'A' if 'A' in lm_mix.inputs else 'Color1'
                 original_socket = None
-                if lm_mix.inputs['Color1'].links:
-                    original_link = lm_mix.inputs['Color1'].links[0]
+                if lm_mix.inputs[_in1].links:
+                    original_link = lm_mix.inputs[_in1].links[0]
                     original_socket = original_link.from_socket
 
                 # Удаляем связи с Mix нодой
@@ -3738,7 +3742,10 @@ class GTATOOLS_OT_select_color_attribute(bpy.types.Operator):
             vc_node = nodes.get("Prelight_VertexColor")
 
             if vc_node:
-                vc_node.layer_name = color_name
+                if hasattr(vc_node, 'layer_name'):
+                    vc_node.layer_name = color_name
+                elif hasattr(vc_node, 'attribute_name'):
+                    vc_node.attribute_name = color_name
 
 
 class GTATOOLS_OT_add_color_attribute(bpy.types.Operator):
@@ -3964,7 +3971,8 @@ class GTATOOLS_OT_load_textures(bpy.types.Operator):
             alpha_input = principled.inputs.get('Alpha')
             if alpha_input and not alpha_input.is_linked:
                 links.new(tex_node.outputs['Alpha'], alpha_input)
-                material.blend_method = 'HASHED'
+                if hasattr(material, 'blend_method'):
+                    material.blend_method = 'HASHED'
                 if hasattr(material, 'shadow_method'):
                     material.shadow_method = 'HASHED'
                 if hasattr(material, 'show_transparent_back'):
@@ -4123,7 +4131,8 @@ class GTATOOLS_OT_drop_texture_as_material(bpy.types.Operator):
                 transparent_count = int(np.sum(alpha < 0.95))
                 if transparent_count > 5000:
                     links.new(tex_node.outputs['Alpha'], principled.inputs['Alpha'])
-                    material.blend_method = 'HASHED'
+                    if hasattr(material, 'blend_method'):
+                        material.blend_method = 'HASHED'
                     if hasattr(material, 'shadow_method'):
                         material.shadow_method = 'HASHED'
                     if hasattr(material, 'show_transparent_back'):
@@ -6199,6 +6208,58 @@ classes = (
 )
 
 
+# ── Persistent paths (saved in Blender config, survive addon updates) ──
+
+_PATHS_FILE = None
+
+def _get_paths_file():
+    global _PATHS_FILE
+    if _PATHS_FILE is None:
+        config = bpy.utils.resource_path('USER')
+        d = os.path.join(config, 'config')
+        os.makedirs(d, exist_ok=True)
+        _PATHS_FILE = os.path.join(d, 'inu_tools_paths.json')
+    return _PATHS_FILE
+
+_SAVED_PATH_KEYS = [
+    'gtatools_ide_path', 'gtatools_ipl_path', 'gtatools_img_path',
+    'gtatools_texture_path1', 'gtatools_texture_path2',
+    'gtatools_nvtt_path',
+]
+
+def _save_paths(self, context):
+    """Save paths to config file when any path changes."""
+    import json
+    scene = context.scene
+    data = {}
+    for key in _SAVED_PATH_KEYS:
+        val = getattr(scene, key, '')
+        if val:
+            data[key] = val
+    try:
+        with open(_get_paths_file(), 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2)
+    except:
+        pass
+
+def _load_paths(scene):
+    """Load saved paths from config file into scene properties."""
+    import json
+    path = _get_paths_file()
+    if not os.path.isfile(path):
+        return
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        for key, val in data.items():
+            if key in _SAVED_PATH_KEYS and hasattr(scene, key):
+                cur = getattr(scene, key, '')
+                if not cur:  # Only set if current is empty
+                    setattr(scene, key, val)
+    except:
+        pass
+
+
 def register():
     # Auto-translate tooltips: docstrings are in Russian,
     # bl_description is set via T() so locale/eng.py handles English
@@ -6319,6 +6380,7 @@ def register():
         description=T("Путь к .img архиву GTA SA для экспорта моделей"),
         default="",
         subtype='FILE_PATH',
+        update=_save_paths,
     )
     bpy.types.Scene.gtatools_img_export_dff = BoolProperty(
         name="DFF", default=True,
@@ -6339,12 +6401,14 @@ def register():
         description=T("Путь к IDE файлу GTA SA для добавления/обновления записей"),
         default="",
         subtype='FILE_PATH',
+        update=_save_paths,
     )
     bpy.types.Scene.gtatools_ipl_path = StringProperty(
         name="IPL File",
         description=T("Путь к IPL файлу GTA SA для добавления/обновления записей"),
         default="",
         subtype='FILE_PATH',
+        update=_save_paths,
     )
 
     # NVIDIA Texture Tools settings
@@ -6365,7 +6429,8 @@ def register():
         name="NVTT Path",
         description=T("Путь к папке NVIDIA Texture Tools (для GPU сжатия)"),
         default=r"D:\NVIDIA Corporation\NVIDIA Texture Tools",
-        subtype='DIR_PATH'
+        subtype='DIR_PATH',
+        update=_save_paths,
     )
 
     bpy.types.Scene.gtatools_txd_use_gpu = BoolProperty(
@@ -6431,13 +6496,15 @@ def register():
         name="System Textures Path",
         description=T("Путь к папке с системными текстурами GTA"),
         default=r"E:\Project MTA\System_textures",
-        subtype='DIR_PATH'
+        subtype='DIR_PATH',
+        update=_save_paths,
     )
     bpy.types.Scene.gtatools_texture_path2 = StringProperty(
         name="Blend Folder Path",
         description=T("Путь к папке где находится .blend файл"),
         default="",
-        subtype='DIR_PATH'
+        subtype='DIR_PATH',
+        update=_save_paths,
     )
 
     # Bake settings (calibrated for 3Ds Max-like output)
@@ -6614,11 +6681,21 @@ def register():
     from .ops.fx_preview import start_billboard_timer
     start_billboard_timer()
     bpy.app.handlers.load_post.append(_on_file_load_restart_timer)
+    bpy.app.handlers.load_post.append(_on_file_load_restore_paths)
+
+    # Load paths for current scene
+    _load_paths(bpy.context.scene)
 
     print("[GTA Tools Panel] Addon registered!")
 
 
 @persistent
+@persistent
+def _on_file_load_restore_paths(dummy):
+    """Restore saved paths after loading a .blend file."""
+    _load_paths(bpy.context.scene)
+
+
 def _on_file_load_restart_timer(dummy):
     """Restart billboard timer after loading a new .blend file."""
     print("[2DFX] load_post handler fired — scheduling timer restart in 1s...")
@@ -6670,6 +6747,8 @@ def unregister():
         bpy.app.handlers.depsgraph_update_post.remove(_on_depsgraph_update_2dfx)
     if _on_file_load_restart_timer in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(_on_file_load_restart_timer)
+    if _on_file_load_restore_paths in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_on_file_load_restore_paths)
 
     # File > Export / Import menus
     bpy.types.TOPBAR_MT_file_export.remove(menu_func_export)

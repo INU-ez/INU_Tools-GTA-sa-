@@ -39,8 +39,13 @@ class GTASAPrelight:
         bm.edges.ensure_lookup_table()
         bm.faces.ensure_lookup_table()
 
-        for edge in bm.edges:
-            edge.smooth = True
+        # Mark sharp edges (compatible with 4.4+)
+        if hasattr(bm.edges[0] if bm.edges else None, 'smooth'):
+            # Blender < 4.1 — use edge.smooth
+            for edge in bm.edges:
+                edge.smooth = True
+        else:
+            pass  # 4.1+ — sharp via attribute below
 
         sharp_count = 0
         for edge in bm.edges:
@@ -53,16 +58,56 @@ class GTASAPrelight:
             dot = max(-1.0, min(1.0, dot))
             angle = math.acos(dot)
             if angle >= self.split_angle:
-                edge.smooth = False
+                if hasattr(edge, 'smooth'):
+                    edge.smooth = False
                 sharp_count += 1
 
-        bm.to_mesh(mesh)
-        bm.free()
+        # Blender 4.1+: set sharp_edge attribute
+        if bpy.app.version >= (4, 1, 0) and sharp_count > 0:
+            bm.to_mesh(mesh)
+            # Use sharp_edge attribute
+            if 'sharp_edge' not in mesh.attributes:
+                mesh.attributes.new('sharp_edge', 'BOOLEAN', 'EDGE')
+            sharp_attr = mesh.attributes['sharp_edge']
+            bm2 = bmesh.new()
+            bm2.from_mesh(mesh)
+            bm2.edges.ensure_lookup_table()
+            bm2.faces.ensure_lookup_table()
+            for edge in bm2.edges:
+                if len(edge.link_faces) != 2:
+                    continue
+                face1, face2 = edge.link_faces[0], edge.link_faces[1]
+                dot = face1.normal.dot(face2.normal)
+                dot = max(-1.0, min(1.0, dot))
+                angle = math.acos(dot)
+                if angle >= self.split_angle:
+                    sharp_attr.data[edge.index].value = True
+            bm2.free()
 
-        edge_split = self.obj.modifiers.new(name="EdgeSplit_Prelight", type='EDGE_SPLIT')
-        edge_split.use_edge_angle = False
-        edge_split.use_edge_sharp = True
-        bpy.ops.object.modifier_apply(modifier=edge_split.name)
+        if bpy.app.version < (4, 1, 0):
+            bm.to_mesh(mesh)
+            bm.free()
+        else:
+            if not hasattr(self, '_bm2_used'):
+                bm.to_mesh(mesh)
+                bm.free()
+
+        # Split edges by sharp marks (compatible 4.4+)
+        if bpy.app.version >= (4, 1, 0):
+            # Use Split Edges by sharp attribute
+            bpy.context.view_layer.objects.active = self.obj
+            bpy.ops.object.mode_set(mode='EDIT')
+            bpy.ops.mesh.select_all(action='SELECT')
+            try:
+                bpy.ops.mesh.split_normals()
+            except:
+                pass
+            bpy.ops.object.mode_set(mode='OBJECT')
+        else:
+            edge_split = self.obj.modifiers.new(name="EdgeSplit_Prelight", type='EDGE_SPLIT')
+            edge_split.use_edge_angle = False
+            edge_split.use_edge_sharp = True
+            bpy.ops.object.modifier_apply(modifier=edge_split.name)
 
     def group_coplanar_faces(self, bm, normal_threshold=0.01):
         face_groups = []
@@ -838,17 +883,31 @@ def setup_prelight_preview(obj, enable=True):
 
             # If already has prelight setup - just update values
             if mix_node and vc_node and bright_node:
-                vc_node.layer_name = color_name
+                # Set color attribute name (compatible with both node types)
+                if hasattr(vc_node, 'layer_name'):
+                    vc_node.layer_name = color_name
+                elif hasattr(vc_node, 'attribute_name'):
+                    vc_node.attribute_name = color_name
                 bright_node.inputs['B'].default_value = (0.0, 0.0, 0.0, 0.0)
                 continue
 
-            # Create Vertex Color node
+            # Create Color Attribute node (compatible 4.4+)
             if not vc_node:
-                vc_node = nodes.new('ShaderNodeVertexColor')
+                if bpy.app.version >= (4, 0, 0):
+                    vc_node = nodes.new('ShaderNodeAttribute')
+                    vc_node.attribute_type = 'GEOMETRY'
+                    vc_node.attribute_name = color_name
+                else:
+                    vc_node = nodes.new('ShaderNodeVertexColor')
+                    vc_node.layer_name = color_name
                 vc_node.name = "Prelight_VertexColor"
                 vc_node.label = "Prelight"
                 vc_node.location = (principled.location.x - 500, principled.location.y - 200)
-            vc_node.layer_name = color_name
+            else:
+                if hasattr(vc_node, 'layer_name'):
+                    vc_node.layer_name = color_name
+                elif hasattr(vc_node, 'attribute_name'):
+                    vc_node.attribute_name = color_name
 
             # Create Brightness node (+ brightness offset)
             if not bright_node:
