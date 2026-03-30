@@ -6267,7 +6267,12 @@ def register():
         doc = getattr(cls, '__doc__', None)
         if doc and doc.strip():
             cls.bl_description = T(doc.strip())
-        bpy.utils.register_class(cls)
+        try:
+            bpy.utils.register_class(cls)
+        except ValueError:
+            # Already registered (addon reload without restart)
+            bpy.utils.unregister_class(cls)
+            bpy.utils.register_class(cls)
 
     # INU property groups
     bpy.types.Object.inu = bpy.props.PointerProperty(type=INUObjectProps)
@@ -6683,8 +6688,14 @@ def register():
     bpy.app.handlers.load_post.append(_on_file_load_restart_timer)
     bpy.app.handlers.load_post.append(_on_file_load_restore_paths)
 
-    # Load paths for current scene
-    _load_paths(bpy.context.scene)
+    # Deferred load paths (context.scene not available during register)
+    def _deferred_load_paths():
+        try:
+            _load_paths(bpy.context.scene)
+        except:
+            pass
+        return None
+    bpy.app.timers.register(_deferred_load_paths, first_interval=0.5)
 
     print("[GTA Tools Panel] Addon registered!")
 
