@@ -2307,19 +2307,25 @@ class GTATOOLS_OT_bake_vertex_colors(bpy.types.Operator):
     )
 
     def execute(self, context):
-        obj = context.active_object
-        scene = context.scene
-        success, message = bake_vertex_colors_from_lights(obj, self.use_shadows)
+        mesh_objects = [o for o in context.selected_objects if o.type == 'MESH']
+        if not mesh_objects:
+            self.report({'ERROR'}, T("Выделите меш объекты"))
+            return {'CANCELLED'}
 
-        if success:
-            # Сброс сохранённого v_offset для активного color attribute (UI остаётся)
-            if obj.data.color_attributes.active_color:
-                prop_name = f"v_offset_{obj.data.color_attributes.active_color.name}"
-                obj[prop_name] = 0.0
-            self.report({'INFO'}, message)
+        baked = 0
+        for obj in mesh_objects:
+            success, message = bake_vertex_colors_from_lights(obj, self.use_shadows)
+            if success:
+                if obj.data.color_attributes.active_color:
+                    prop_name = f"v_offset_{obj.data.color_attributes.active_color.name}"
+                    obj[prop_name] = 0.0
+                baked += 1
+
+        if baked:
+            self.report({'INFO'}, f"Baked from lights: {baked} objects")
             return {'FINISHED'}
         else:
-            self.report({'ERROR'}, message)
+            self.report({'ERROR'}, T("Нет vertex colors"))
             return {'CANCELLED'}
 
 
@@ -2330,8 +2336,11 @@ class GTATOOLS_OT_bake_vertex_colors_simple(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        obj = context.active_object
         scene = context.scene
+        mesh_objects = [o for o in context.selected_objects if o.type == 'MESH']
+        if not mesh_objects:
+            self.report({'ERROR'}, T("Выделите меш объекты"))
+            return {'CANCELLED'}
 
         # Get settings from panel
         ambient = scene.gtatools_bake_ambient
@@ -2339,17 +2348,21 @@ class GTATOOLS_OT_bake_vertex_colors_simple(bpy.types.Operator):
         gamma = scene.gtatools_bake_gamma
         use_shadows = scene.gtatools_bake_shadows
 
-        success, message = bake_vertex_colors_simple(obj, ambient, intensity, gamma, use_shadows)
+        baked = 0
+        for obj in mesh_objects:
+            success, message = bake_vertex_colors_simple(obj, ambient, intensity, gamma, use_shadows)
+            if success:
+                if obj.data.color_attributes.active_color:
+                    prop_name = f"v_offset_{obj.data.color_attributes.active_color.name}"
+                    obj[prop_name] = 0.0
+                baked += 1
 
-        if success:
-            # Сброс сохранённого v_offset для активного color attribute (UI остаётся)
-            if obj.data.color_attributes.active_color:
-                prop_name = f"v_offset_{obj.data.color_attributes.active_color.name}"
-                obj[prop_name] = 0.0
-            self.report({'INFO'}, message)
+        if baked:
+            attr_name = mesh_objects[0].data.color_attributes.active_color.name if mesh_objects[0].data.color_attributes.active_color else "?"
+            self.report({'INFO'}, f"Baked to '{attr_name}' from {baked} objects")
             return {'FINISHED'}
         else:
-            self.report({'ERROR'}, message)
+            self.report({'ERROR'}, T("Нет vertex colors"))
             return {'CANCELLED'}
 
 
@@ -2866,37 +2879,34 @@ class GTATOOLS_OT_create_day_night(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        obj = context.active_object
-        if obj is None or obj.type != 'MESH':
-            self.report({'ERROR'}, "Select a mesh object!")
+        mesh_objects = [o for o in context.selected_objects if o.type == 'MESH']
+        if not mesh_objects:
+            self.report({'ERROR'}, "Select mesh object(s)!")
             return {'CANCELLED'}
 
-        mesh = obj.data
-        created = []
+        total_created = 0
+        for obj in mesh_objects:
+            mesh = obj.data
 
-        # Create Day attribute if not exists
-        if "Day" not in mesh.color_attributes:
-            attr = mesh.color_attributes.new(name="Day", type='BYTE_COLOR', domain='CORNER')
-            for i in range(len(attr.data)):
-                attr.data[i].color = (1.0, 1.0, 1.0, 1.0)
-            created.append("Day")
+            # Create Day attribute if not exists
+            if "Day" not in mesh.color_attributes:
+                attr = mesh.color_attributes.new(name="Day", type='BYTE_COLOR', domain='CORNER')
+                for i in range(len(attr.data)):
+                    attr.data[i].color = (1.0, 1.0, 1.0, 1.0)
+                total_created += 1
 
-        # Create Night attribute if not exists
-        if "Night" not in mesh.color_attributes:
-            attr = mesh.color_attributes.new(name="Night", type='BYTE_COLOR', domain='CORNER')
-            for i in range(len(attr.data)):
-                attr.data[i].color = (1.0, 1.0, 1.0, 1.0)
-            created.append("Night")
+            # Create Night attribute if not exists
+            if "Night" not in mesh.color_attributes:
+                attr = mesh.color_attributes.new(name="Night", type='BYTE_COLOR', domain='CORNER')
+                for i in range(len(attr.data)):
+                    attr.data[i].color = (1.0, 1.0, 1.0, 1.0)
+                total_created += 1
 
-        # Set Day as active
-        if "Day" in mesh.color_attributes:
-            mesh.color_attributes.active_color = mesh.color_attributes["Day"]
+            # Set Day as active
+            if "Day" in mesh.color_attributes:
+                mesh.color_attributes.active_color = mesh.color_attributes["Day"]
 
-        if created:
-            self.report({'INFO'}, f"Created: {', '.join(created)}")
-        else:
-            self.report({'INFO'}, "Day and Night already exist")
-
+        self.report({'INFO'}, f"Day/Night: {len(mesh_objects)} objects, {total_created} attributes created")
         return {'FINISHED'}
 
 
@@ -2913,9 +2923,27 @@ class GTATOOLS_OT_prelight_preview(bpy.types.Operator):
     )
 
     def execute(self, context):
+        mesh_objects = [o for o in context.selected_objects if o.type == 'MESH']
+        if not mesh_objects:
+            # Fallback to active object
+            obj = context.active_object
+            if obj and obj.type == 'MESH':
+                mesh_objects = [obj]
+
+        count = 0
+        for obj in mesh_objects:
+            success, message = setup_prelight_preview(obj, self.enable)
+            if success:
+                count += 1
+
+        if count:
+            state = "enabled" if self.enable else "disabled"
+            self.report({'INFO'}, f"Prelight preview {state} on {count} materials")
+            return {'FINISHED'}
+
+        # Single object error
         obj = context.active_object
         success, message = setup_prelight_preview(obj, self.enable)
-
         if success:
             self.report({'INFO'}, message)
             return {'FINISHED'}
@@ -2998,6 +3026,10 @@ class GTATOOLS_OT_apply_itera_material(bpy.types.Operator):
             self.report({'ERROR'}, T("Itera Tools 3 не найден в библиотеках ассетов"))
             return {'CANCELLED'}
 
+        # Remember selection before append (append can change selection)
+        saved_selected = [obj for obj in context.selected_objects]
+        saved_active = context.active_object
+
         mat_names = {
             'VERTEX_LIT_LINEAR': "Vertex Lit Linear UV Texture",
         }
@@ -3021,13 +3053,20 @@ class GTATOOLS_OT_apply_itera_material(bpy.types.Operator):
                 self.report({'ERROR'}, f"{T('Ошибка загрузки:')} {e}")
                 return {'CANCELLED'}
 
+            # Restore selection after append
+            bpy.ops.object.select_all(action='DESELECT')
+            for obj in saved_selected:
+                obj.select_set(True)
+            if saved_active:
+                context.view_layer.objects.active = saved_active
+
         if itera_mat is None:
             self.report({'ERROR'}, f"{T('Материал не найден:')} {target_name}")
             return {'CANCELLED'}
 
         # Apply to selected mesh objects
         applied = 0
-        for obj in context.selected_objects:
+        for obj in saved_selected:
             if obj.type != 'MESH':
                 continue
 
