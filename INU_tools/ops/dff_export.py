@@ -323,7 +323,8 @@ def _process_mesh(obj, clump: DffClump, frame_index: int):
     import bpy
     orig_mesh = obj.data
     for ca in list(orig_mesh.color_attributes):
-        if ca.type == 'FLOAT_COLOR':
+        ca_type = getattr(ca, 'data_type', None) or getattr(ca, 'type', None)
+        if ca_type in ('FLOAT_COLOR', 'COLOR'):
             name = ca.name
             domain = ca.domain
             # Read float data
