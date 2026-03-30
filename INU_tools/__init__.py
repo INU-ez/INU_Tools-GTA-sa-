@@ -2114,22 +2114,27 @@ class GTATOOLS_OT_prelight(bpy.types.Operator):
     ambient_color: FloatVectorProperty(name="Ambient Color", subtype='COLOR', default=(0.5, 0.5, 0.5), min=0.0, max=1.0)
 
     def execute(self, context):
-        obj = context.active_object
-        if obj is None or obj.type != 'MESH':
-            self.report({'ERROR'}, "Select a mesh object!")
+        mesh_objects = [o for o in context.selected_objects if o.type == 'MESH']
+        if not mesh_objects:
+            mesh_objects = [context.active_object] if context.active_object and context.active_object.type == 'MESH' else []
+        if not mesh_objects:
+            self.report({'ERROR'}, "Select mesh object(s)!")
             return {'CANCELLED'}
 
-        prelight = GTASAPrelight(
-            obj,
-            split_angle=self.split_angle,
-            normal_threshold=self.normal_threshold,
-            top_color=tuple(self.top_color),
-            bottom_color=tuple(self.bottom_color),
-            ambient_color=tuple(self.ambient_color)
-        )
-        prelight.run()
+        count = 0
+        for obj in mesh_objects:
+            prelight = GTASAPrelight(
+                obj,
+                split_angle=self.split_angle,
+                normal_threshold=self.normal_threshold,
+                top_color=tuple(self.top_color),
+                bottom_color=tuple(self.bottom_color),
+                ambient_color=tuple(self.ambient_color)
+            )
+            prelight.run()
+            count += 1
 
-        self.report({'INFO'}, "Prelight applied!")
+        self.report({'INFO'}, f"Prelight applied: {count} objects")
         return {'FINISHED'}
 
 
@@ -2147,18 +2152,24 @@ class GTATOOLS_OT_average_colors(bpy.types.Operator):
     )
 
     def execute(self, context):
-        obj = context.active_object
-        if obj is None or obj.type != 'MESH':
-            self.report({'ERROR'}, "Select a mesh object!")
+        mesh_objects = [o for o in context.selected_objects if o.type == 'MESH']
+        if not mesh_objects:
+            mesh_objects = [context.active_object] if context.active_object and context.active_object.type == 'MESH' else []
+        if not mesh_objects:
+            self.report({'ERROR'}, "Select mesh object(s)!")
             return {'CANCELLED'}
 
         if context.mode != 'OBJECT':
             bpy.ops.object.mode_set(mode='OBJECT')
 
-        success = average_colors_on_coplanar_faces(obj, self.normal_threshold)
+        count = 0
+        for obj in mesh_objects:
+            success = average_colors_on_coplanar_faces(obj, self.normal_threshold)
+            if success:
+                count += 1
 
-        if success:
-            self.report({'INFO'}, "Colors averaged!")
+        if count:
+            self.report({'INFO'}, f"Colors averaged: {count} objects")
         else:
             self.report({'ERROR'}, "Failed to average colors!")
             return {'CANCELLED'}
@@ -2431,18 +2442,17 @@ class GTATOOLS_OT_apply_v_offset(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        obj = context.active_object
-        scene = context.scene
-        v_offset = scene.gtatools_v_offset
-
-        success, message = apply_brightness_offset(obj, v_offset)
-
-        if success:
-            self.report({'INFO'}, message)
-            return {'FINISHED'}
-        else:
-            self.report({'ERROR'}, message)
-            return {'CANCELLED'}
+        mesh_objects = [o for o in context.selected_objects if o.type == 'MESH']
+        if not mesh_objects:
+            mesh_objects = [context.active_object] if context.active_object and context.active_object.type == 'MESH' else []
+        v_offset = context.scene.gtatools_v_offset
+        count = 0
+        for obj in mesh_objects:
+            success, _ = apply_brightness_offset(obj, v_offset)
+            if success:
+                count += 1
+        self.report({'INFO'}, f"V Offset: {count} objects")
+        return {'FINISHED'} if count else {'CANCELLED'}
 
 
 class GTATOOLS_OT_vc_smooth(bpy.types.Operator):
@@ -2452,18 +2462,18 @@ class GTATOOLS_OT_vc_smooth(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        obj = context.active_object
-        scene = context.scene
-        iterations = scene.gtatools_vc_smooth_iterations
-        factor = scene.gtatools_vc_smooth_factor
-
-        success, message = smooth_vertex_colors(obj, iterations, factor)
-        if success:
-            self.report({'INFO'}, message)
-            return {'FINISHED'}
-        else:
-            self.report({'ERROR'}, message)
-            return {'CANCELLED'}
+        mesh_objects = [o for o in context.selected_objects if o.type == 'MESH']
+        if not mesh_objects:
+            mesh_objects = [context.active_object] if context.active_object and context.active_object.type == 'MESH' else []
+        iterations = context.scene.gtatools_vc_smooth_iterations
+        factor = context.scene.gtatools_vc_smooth_factor
+        count = 0
+        for obj in mesh_objects:
+            success, _ = smooth_vertex_colors(obj, iterations, factor)
+            if success:
+                count += 1
+        self.report({'INFO'}, f"Smooth: {count} objects")
+        return {'FINISHED'} if count else {'CANCELLED'}
 
 
 class GTATOOLS_OT_vc_contrast(bpy.types.Operator):
@@ -2473,16 +2483,17 @@ class GTATOOLS_OT_vc_contrast(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        obj = context.active_object
+        mesh_objects = [o for o in context.selected_objects if o.type == 'MESH']
+        if not mesh_objects:
+            mesh_objects = [context.active_object] if context.active_object and context.active_object.type == 'MESH' else []
         contrast = context.scene.gtatools_vc_contrast
-
-        success, message = adjust_vertex_colors_contrast(obj, contrast)
-        if success:
-            self.report({'INFO'}, message)
-            return {'FINISHED'}
-        else:
-            self.report({'ERROR'}, message)
-            return {'CANCELLED'}
+        count = 0
+        for obj in mesh_objects:
+            success, _ = adjust_vertex_colors_contrast(obj, contrast)
+            if success:
+                count += 1
+        self.report({'INFO'}, f"Contrast: {count} objects")
+        return {'FINISHED'} if count else {'CANCELLED'}
 
 
 class GTATOOLS_OT_vc_brightness(bpy.types.Operator):
@@ -2492,16 +2503,17 @@ class GTATOOLS_OT_vc_brightness(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        obj = context.active_object
+        mesh_objects = [o for o in context.selected_objects if o.type == 'MESH']
+        if not mesh_objects:
+            mesh_objects = [context.active_object] if context.active_object and context.active_object.type == 'MESH' else []
         brightness = context.scene.gtatools_vc_brightness
-
-        success, message = adjust_vertex_colors_brightness(obj, brightness)
-        if success:
-            self.report({'INFO'}, message)
-            return {'FINISHED'}
-        else:
-            self.report({'ERROR'}, message)
-            return {'CANCELLED'}
+        count = 0
+        for obj in mesh_objects:
+            success, _ = adjust_vertex_colors_brightness(obj, brightness)
+            if success:
+                count += 1
+        self.report({'INFO'}, f"Brightness: {count} objects")
+        return {'FINISHED'} if count else {'CANCELLED'}
 
 
 class GTATOOLS_OT_vc_gamma(bpy.types.Operator):
@@ -2511,16 +2523,18 @@ class GTATOOLS_OT_vc_gamma(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        obj = context.active_object
+        mesh_objects = [o for o in context.selected_objects if o.type == 'MESH']
+        if not mesh_objects:
+            mesh_objects = [context.active_object] if context.active_object and context.active_object.type == 'MESH' else []
         gamma = context.scene.gtatools_vc_gamma
 
-        success, message = adjust_vertex_colors_gamma(obj, gamma)
-        if success:
-            self.report({'INFO'}, message)
-            return {'FINISHED'}
-        else:
-            self.report({'ERROR'}, message)
-            return {'CANCELLED'}
+        count = 0
+        for obj in mesh_objects:
+            success, _ = adjust_vertex_colors_gamma(obj, gamma)
+            if success:
+                count += 1
+        self.report({'INFO'}, f"Gamma: {count} objects")
+        return {'FINISHED'} if count else {'CANCELLED'}
 
 
 class GTATOOLS_OT_vc_smooth_between(bpy.types.Operator):
@@ -3750,24 +3764,26 @@ class GTATOOLS_OT_select_color_attribute(bpy.types.Operator):
     attribute_name: StringProperty(name="Attribute Name")
 
     def execute(self, context):
-        obj = context.active_object
-        if obj is None or obj.type != 'MESH':
-            self.report({'ERROR'}, "Select a mesh object!")
+        mesh_objects = [o for o in context.selected_objects if o.type == 'MESH']
+        if not mesh_objects:
+            obj = context.active_object
+            if obj and obj.type == 'MESH':
+                mesh_objects = [obj]
+
+        if not mesh_objects:
+            self.report({'ERROR'}, "Select mesh object(s)!")
             return {'CANCELLED'}
 
-        mesh = obj.data
-        if self.attribute_name not in mesh.color_attributes:
-            self.report({'ERROR'}, f"Attribute '{self.attribute_name}' not found!")
-            return {'CANCELLED'}
+        switched = 0
+        for obj in mesh_objects:
+            mesh = obj.data
+            if self.attribute_name in mesh.color_attributes:
+                color_attr = mesh.color_attributes[self.attribute_name]
+                mesh.color_attributes.active_color = color_attr
+                self.update_prelight_preview(obj, self.attribute_name)
+                switched += 1
 
-        # Set as active color attribute
-        color_attr = mesh.color_attributes[self.attribute_name]
-        mesh.color_attributes.active_color = color_attr
-
-        # Update prelight preview on materials
-        self.update_prelight_preview(obj, self.attribute_name)
-
-        self.report({'INFO'}, f"Active: {self.attribute_name}")
+        self.report({'INFO'}, f"Active: {self.attribute_name} ({switched} objects)")
         return {'FINISHED'}
 
     def update_prelight_preview(self, obj, color_name):
@@ -3879,7 +3895,7 @@ class GTATOOLS_OT_create_color_attr(bpy.types.Operator):
 
 
 class GTATOOLS_OT_remove_color_attr(bpy.types.Operator):
-    """Удалить color attribute по имени"""
+    """Удалить color attribute по имени на всех выделенных объектах"""
     bl_idname = "gtatools.remove_color_attr"
     bl_label = "Remove Color Attribute"
     bl_options = {'REGISTER', 'UNDO'}
@@ -3887,21 +3903,29 @@ class GTATOOLS_OT_remove_color_attr(bpy.types.Operator):
     attr_name: StringProperty(default="")
 
     def execute(self, context):
-        obj = context.active_object
-        if obj is None or obj.type != 'MESH':
-            self.report({'ERROR'}, "Select a mesh object!")
+        mesh_objects = [o for o in context.selected_objects if o.type == 'MESH']
+        if not mesh_objects:
+            obj = context.active_object
+            if obj and obj.type == 'MESH':
+                mesh_objects = [obj]
+
+        if not mesh_objects:
+            self.report({'ERROR'}, "Select mesh object(s)!")
             return {'CANCELLED'}
 
-        mesh = obj.data
+        removed = 0
+        for obj in mesh_objects:
+            mesh = obj.data
+            if self.attr_name in mesh.color_attributes:
+                attr = mesh.color_attributes[self.attr_name]
+                mesh.color_attributes.remove(attr)
+                removed += 1
 
-        if self.attr_name not in mesh.color_attributes:
+        if removed:
+            self.report({'INFO'}, f"Removed '{self.attr_name}' from {removed} objects")
+        else:
             self.report({'ERROR'}, f"{self.attr_name} not found")
             return {'CANCELLED'}
-
-        attr = mesh.color_attributes[self.attr_name]
-        mesh.color_attributes.remove(attr)
-
-        self.report({'INFO'}, f"Removed: {self.attr_name}")
         return {'FINISHED'}
 
 
