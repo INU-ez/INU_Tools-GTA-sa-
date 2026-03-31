@@ -4,7 +4,7 @@
 
 ![Blender](https://img.shields.io/badge/Blender-5.1+-orange?logo=blender)
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue)
-![Version](https://img.shields.io/badge/Version-1.5.2-green)
+![Version](https://img.shields.io/badge/Version-1.5.3-green)
 ![Views](https://komarev.com/ghpvc/?username=INU-ez&color=orange&style=flat-square&label=REPO+VIEWS)
 
 > **[Русская версия / Russian version](README.md)**
@@ -165,6 +165,38 @@ The MTA script file link is available in Issues.
 
 </details>
 
+<details>
+<summary><b>Water IO</b></summary>
+
+> - ✅ Import/export water.dat
+> - ✅ waterclear256 texture with flow animation
+> - ✅ Water types: Default/Shallow, Visible/Invisible
+> - ✅ Snap to grid (x4), stitch edges
+> - ✅ Export Water collection
+
+</details>
+
+<details>
+<summary><b>Characters (Skinned DFF)</b></summary>
+
+> - ✅ Import DFF with skeleton (Armature), vertex weights, bone matrices
+> - ✅ Export skinned DFF (byte-perfect round-trip)
+> - ✅ IFP animations: import ped.ifp (294+ animations), search, apply to skeleton
+> - ✅ Compatible with Kams Script DFF and original game models
+
+</details>
+
+<details>
+<summary><b>Path IO</b></summary>
+
+> - ✅ Import/export paths.ipl (vehicle/ped paths for gta.dat)
+> - ✅ Import/export tracks.dat (train tracks, stations)
+> - ✅ Import NODES.dat (compiled path nodes)
+> - ✅ Create paths, convert curves/edges to paths
+> - ✅ Auto-split into 12-node groups
+
+</details>
+
 ## Installation
 
 1. Download the `INU_tools/` folder (or zip archive)
@@ -204,6 +236,7 @@ Name objects with suffixes (`Model_DFF`, `Model_LOD`, `Model_COL`), select them,
 <details>
 <summary><b>Changelog</b></summary>
 
+- **v1.5.3** — Skinned DFF import/export: skeleton, vertex weights, bone matrices; IFP animations: import 294+ anims from ped.ifp, apply to skeleton, search selector; Water IO: import/export water.dat, waterclear256 texture, flow animation, water types; Path IO: import/export paths.ipl, tracks.dat, NODES.dat, create/convert paths; Bin Mesh PLG — correct material indices for skinned models; user config in INU_Preset folder (preserved on updates); Blender 5.1 compatibility (layered actions API); fixed SkinPLG reader (bones_used, num_used, max_weights)
 - **v1.5.2** — Refactoring: modular structure (tools/, data/); COL Light Preview: active Day/Night attribute, brightness threshold, border-only numbers, auto-update on transform; Model ID Manager (model_ids.txt); auto-LOD in IDE/IPL/IMG export; Export All with 2DFX; LOD in IMG export; batch IMG export; VC Smooth between objects; customizable model suffixes; material sorting in panel; collapsible sections in INU Tools
 - **v1.5.1** — IDE/IPL export/import (upsert/remove into existing files); IMG Archive export (DFF+TXD+COL into .img); Dual Texture and Blend Mode; removed Vertex Alpha (not supported by GTA SA)
 - **v1.5.0** — Native DFF/COL/TXD import and export (no DragonFF); auto-import TXD when importing DFF; numpy DXT decompression; material sorting by name; addon converted to package structure (`INU_tools/`); fixed prelight preview on export; Blender 5.1 compatibility
@@ -236,7 +269,7 @@ Name objects with suffixes (`Model_DFF`, `Model_LOD`, `Model_COL`), select them,
 | Export All (batch by suffixes) | ✅ |
 | Embedded COL in DFF | ✅ |
 | Auto-load textures by names | ✅ |
-| IFP (animations) | ❌ |
+| IFP (animations) | ✅ |
 | IPL/IDE (map placement) | ✅ |
 | IMG Archive (export/import) | ✅ |
 | Map Import from IMG | ✅ |
@@ -284,7 +317,7 @@ Name objects with suffixes (`Model_DFF`, `Model_LOD`, `Model_COL`), select them,
 | DFF Flags panel | ✅ |
 | Pipeline (Building/Reflections) | ✅ |
 | Bitmap Manager | ❌ |
-| Water IO | ❌ |
+| Water IO | ✅ |
 | CULL Zones | ❌ |
 | Object Explode (mesh split) | ❌ |
 | Vehicle Tools | ❌ |

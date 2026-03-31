@@ -4,7 +4,7 @@
 
 ![Blender](https://img.shields.io/badge/Blender-5.1+-orange?logo=blender)
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue)
-![Version](https://img.shields.io/badge/Version-1.5.2-green)
+![Version](https://img.shields.io/badge/Version-1.5.3-green)
 ![Views](https://komarev.com/ghpvc/?username=INU-ez&color=orange&style=flat-square&label=REPO+VIEWS)
 
 > **[English version](README_eng.md)**
@@ -167,6 +167,38 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 
 </details>
 
+<details>
+<summary><b>Water IO</b></summary>
+
+> - ✅ Импорт/экспорт water.dat
+> - ✅ Текстура waterclear256 с анимацией течения
+> - ✅ Типы воды: Обычная/Мелкая, Видимая/Невидимая
+> - ✅ Привязка к сетке (x4), сшивание краёв
+> - ✅ Экспорт коллекции Water
+
+</details>
+
+<details>
+<summary><b>Персонажи (Skinned DFF)</b></summary>
+
+> - ✅ Импорт DFF с скелетом (Armature), vertex weights, bone matrices
+> - ✅ Экспорт skinned DFF (round-trip с побайтовой точностью)
+> - ✅ IFP анимации: импорт ped.ifp (294+ анимаций), поиск, применение к скелету
+> - ✅ Совместимость с Kams Script DFF и оригинальными игровыми моделями
+
+</details>
+
+<details>
+<summary><b>Path IO</b></summary>
+
+> - ✅ Импорт/экспорт paths.ipl (авто/пешеходные пути для gta.dat)
+> - ✅ Импорт/экспорт tracks.dat (ж/д пути, станции)
+> - ✅ Импорт NODES.dat (скомпилированные пути)
+> - ✅ Создание путей, конвертация кривых/рёбер в пути
+> - ✅ Автоматическое разбиение на группы по 12 нод
+
+</details>
+
 ## Установка
 
 1. Скачайте папку `INU_tools/` (или zip-архив)
@@ -206,6 +238,7 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 <details>
 <summary><b>История изменений</b></summary>
 
+- **v1.5.3** — Импорт/экспорт персонажей (skinned DFF): скелет, vertex weights, bone matrices; IFP анимации: импорт 294+ анимаций из ped.ifp, применение к скелету, выбор через поиск; Water IO: импорт/экспорт water.dat, текстура waterclear256, анимация течения, типы воды; Path IO: импорт/экспорт paths.ipl, tracks.dat, NODES.dat, создание/конвертация путей; Bin Mesh PLG — корректные material indices для skinned моделей; пользовательские настройки в INU_Preset (не удаляются при обновлении); совместимость Blender 5.1 (layered actions API); исправлен SkinPLG reader (bones_used, num_used, max_weights)
 - **v1.5.2** — Рефакторинг: модульная структура (tools/, data/); COL Light Preview: активный атрибут Day/Night, порог яркости, цифры только на границах, автообновление при перемещении; Менеджер ID моделей (model_ids.txt); авто-LOD в IDE/IPL/IMG экспорте; Export All с 2DFX; LOD в IMG экспорте; массовый IMG экспорт; VC Smooth между объектами; настраиваемые суффиксы моделей; сортировка материалов в панели; сворачиваемые секции в INU Tools
 - **v1.5.1** — IDE/IPL экспорт/импорт (upsert/remove в существующие файлы); IMG Archive экспорт (DFF+TXD+COL в .img); Dual Texture и Blend Mode; удалён Vertex Alpha (не поддерживается GTA SA)
 - **v1.5.0** — Собственный DFF/COL/TXD импорт и экспорт (без DragonFF); авто-импорт TXD при импорте DFF; numpy DXT декомпрессия; сортировка материалов по имени; аддон переведён в пакетную структуру (`INU_tools/`); исправлены prelight preview при экспорте; совместимость с Blender 5.1
@@ -238,7 +271,7 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 | Export All (batch по суффиксам) | ✅ |
 | Embedded COL в DFF | ✅ |
 | Автозагрузка текстур по именам | ✅ |
-| IFP (анимации) | ❌ |
+| IFP (анимации) | ✅ |
 | IPL/IDE (размещение на карте) | ✅ |
 | IMG Archive (экспорт/импорт) | ✅ |
 | Импорт карты из IMG | ✅ |
@@ -286,7 +319,7 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 | DFF Flags панель | ✅ |
 | Pipeline (Building/Reflections) | ✅ |
 | Bitmap Manager | ❌ |
-| Water IO | ❌ |
+| Water IO | ✅ |
 | CULL Zones | ❌ |
 | Object Explode (разрезка мешей) | ❌ |
 | Vehicle Tools | ❌ |

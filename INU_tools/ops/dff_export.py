@@ -336,10 +336,20 @@ def _process_mesh(obj, clump: DffClump, frame_index: int):
                 new_attr.data[i].color = color
             print(f"[DFF Export] Converted '{name}' FLOAT_COLOR → BYTE_COLOR")
 
-    # Get evaluated mesh with modifiers applied (except ARMATURE)
+    # Get evaluated mesh with modifiers applied (disable ARMATURE first)
+    arm_mods = []
+    for mod in obj.modifiers:
+        if mod.type == 'ARMATURE' and mod.show_viewport:
+            mod.show_viewport = False
+            arm_mods.append(mod)
+
     depsgraph = bpy.context.evaluated_depsgraph_get()
     eval_obj = obj.evaluated_get(depsgraph)
     mesh = eval_obj.to_mesh(preserve_all_data_layers=True, depsgraph=depsgraph)
+
+    # Re-enable ARMATURE modifiers
+    for mod in arm_mods:
+        mod.show_viewport = True
 
     # Read alpha per vertex directly from ORIGINAL mesh color attributes
     # (workaround: bmesh doesn't read alpha from byte color attrs in Blender 5.x)
@@ -365,8 +375,13 @@ def _process_mesh(obj, clump: DffClump, frame_index: int):
     if flags['uv_map1']:
         max_uv = 1
         if flags['uv_map2'] and len(bm.loops.layers.uv) > 1:
+            # Only use 2nd UV if it actually has different data (not auto-generated)
             max_uv = 2
     max_uv = min(max_uv, len(bm.loops.layers.uv))
+    # For skinned meshes: respect original UV count stored on object
+    orig_uv_count = obj.get('dff_num_uv_layers', 0)
+    if orig_uv_count > 0:
+        max_uv = min(max_uv, orig_uv_count)
 
     uv_layers_bm = [bm.loops.layers.uv[i] for i in range(max_uv)]
 
@@ -522,14 +537,39 @@ def _process_mesh(obj, clump: DffClump, frame_index: int):
 
         skin = SkinData(num_bones=len(bones))
 
-        # Bone matrices (inverse bind matrices)
-        for bone in bones:
-            inv_mat = bone.matrix_local.inverted().transposed()
-            flat = []
-            for row in range(4):
-                for col in range(4):
-                    flat.append(inv_mat[row][col])
-            skin.bone_matrices.append(flat)
+        # Bone matrices — use original if available (round-trip)
+        import json
+        orig_matrices = None
+        raw = obj.get('dff_bone_matrices')
+        if raw:
+            try:
+                orig_matrices = json.loads(raw)
+            except Exception:
+                pass
+
+        if orig_matrices and len(orig_matrices) == len(bones):
+            skin.bone_matrices = orig_matrices
+            # Restore original skin header
+            skin.num_used = obj.get('dff_skin_num_used', 0)
+            skin.max_weights = obj.get('dff_skin_max_weights', 4)
+            raw_bu = obj.get('dff_skin_bones_used')
+            if raw_bu:
+                try:
+                    if isinstance(raw_bu, str):
+                        skin.bones_used = json.loads(raw_bu)
+                    else:
+                        skin.bones_used = list(raw_bu)
+                except Exception as e:
+                    print(f"[DFF Export] bones_used error: {e}, raw_bu type={type(raw_bu)}")
+            print(f"[DFF Export] Using original skin: num_used={skin.num_used}, bones_used={skin.bones_used[:5]}...")
+        else:
+            print(f"[DFF Export] Computing bone_matrices from Blender (orig={len(orig_matrices) if orig_matrices else 'None'}, bones={len(bones)})")
+            for bone in bones:
+                inv_mat = bone.matrix_local.inverted().transposed()
+                mat = []
+                for row in range(4):
+                    mat.append([inv_mat[row][col] for col in range(4)])
+                skin.bone_matrices.append(mat)
 
         # Vertex weights
         for v_idx in range(num_original):
@@ -571,6 +611,16 @@ def _process_mesh(obj, clump: DffClump, frame_index: int):
                 skin.bone_indices.append((0, 0, 0, 0))
                 skin.bone_weights.append((0.0, 0.0, 0.0, 0.0))
 
+        # Compute bones_used only if not restored from original
+        if not skin.bones_used:
+            used_set = set()
+            for indices in skin.bone_indices:
+                for bi in indices:
+                    used_set.add(bi)
+            skin.bones_used = sorted(used_set)
+            skin.num_used = len(skin.bones_used)
+            skin.max_weights = 4
+
         geom.skin = skin
 
     # ── Add to clump ──
@@ -588,22 +638,35 @@ def _process_mesh(obj, clump: DffClump, frame_index: int):
 # ── Frame building ───────────────────────────────────────────────
 
 def _build_frame(obj, parent_index: int = -1) -> DffFrame:
-    """Create a DffFrame from a Blender object."""
+    """Create a DffFrame from a Blender object.
+
+    Uses stored original frame data for round-trip fidelity if available.
+    """
     frame = DffFrame()
     frame.name = _strip_ext(obj.name)
     frame.parent = parent_index
 
-    # Local transform
-    loc = obj.matrix_local.to_translation()
-    frame.position = (loc.x, loc.y, loc.z)
+    # Use original frame data if available (round-trip)
+    orig_rot = obj.get('dff_frame_rot')
+    orig_pos = obj.get('dff_frame_pos')
+    orig_flags = obj.get('dff_frame_flags', 0)
+    frame.write_name = obj.get('dff_frame_write_name', False)
 
-    # 3x3 rotation matrix (transposed for RenderWare)
-    rot = obj.matrix_local.to_3x3().transposed()
-    frame.rotation = (
-        rot[0][0], rot[0][1], rot[0][2],
-        rot[1][0], rot[1][1], rot[1][2],
-        rot[2][0], rot[2][1], rot[2][2],
-    )
+    if orig_rot and orig_pos:
+        frame.rotation = tuple(orig_rot)
+        frame.position = tuple(orig_pos)
+        frame.flags = orig_flags
+    else:
+        # Fallback: compute from Blender transform
+        loc = obj.matrix_local.to_translation()
+        frame.position = (loc.x, loc.y, loc.z)
+
+        rot = obj.matrix_local.to_3x3().transposed()
+        frame.rotation = (
+            rot[0][0], rot[0][1], rot[0][2],
+            rot[1][0], rot[1][1], rot[1][2],
+            rot[2][0], rot[2][1], rot[2][2],
+        )
 
     # User Data PLG (from object custom property)
     frame.user_data = _load_user_data(obj)
@@ -614,31 +677,61 @@ def _build_frame(obj, parent_index: int = -1) -> DffFrame:
 # ── Armature export ──────────────────────────────────────────────
 
 def _export_armature(arm_obj, clump: DffClump, parent_frame: int):
-    """Export armature bones as frames with HAnimPLG."""
+    """Export armature bones as frames with HAnimPLG.
+
+    Uses stored original frame data from armature['dff_frame_data'] for round-trip fidelity.
+    """
+    import json
     bones = arm_obj.data.bones
+
+    # Load original frame data if available
+    orig_data = {}
+    raw_json = arm_obj.get('dff_frame_data')
+    if raw_json:
+        try:
+            orig_data = json.loads(raw_json)
+            print(f"[DFF Export] Loaded dff_frame_data: {len(orig_data)} bones")
+        except Exception as e:
+            print(f"[DFF Export] Failed to load dff_frame_data: {e}")
+    else:
+        print(f"[DFF Export] No dff_frame_data on armature")
 
     for i, bone in enumerate(bones):
         frame = DffFrame()
         frame.name = bone.name
 
-        # Bone transform
-        if bone.parent:
-            mat = bone.parent.matrix_local.inverted() @ bone.matrix_local
+        # Use original frame data if available (round-trip)
+        bone_id = str(bone.get('bone_id', 0))
+        orig = orig_data.get(bone_id)
+
+        if orig:
+            frame.rotation = tuple(orig['rot'])
+            frame.position = tuple(orig['pos'])
+            frame.flags = orig.get('flags', 0)
+            frame.write_name = bool(orig.get('write_name', False))
+            if i < 3:
+                print(f"[DFF Export] Bone '{bone.name}' write_name={frame.write_name} (raw={orig.get('write_name')})")
         else:
-            mat = bone.matrix_local
+            # Fallback: compute from Blender bone (new model, not round-trip)
+            frame.write_name = True
+            if bone.parent:
+                mat = bone.parent.matrix_local.inverted() @ bone.matrix_local
+            else:
+                mat = bone.matrix_local
 
-        loc = mat.to_translation()
-        rot = mat.to_3x3().transposed()
+            loc = mat.to_translation()
+            rot = mat.to_3x3().transposed()
 
-        frame.position = (loc.x, loc.y, loc.z)
-        frame.rotation = (
-            rot[0][0], rot[0][1], rot[0][2],
-            rot[1][0], rot[1][1], rot[1][2],
-            rot[2][0], rot[2][1], rot[2][2],
-        )
-
-        # Parent frame
-        if i == 0:
+            frame.position = (loc.x, loc.y, loc.z)
+            frame.rotation = (
+                rot[0][0], rot[0][1], rot[0][2],
+                rot[1][0], rot[1][1], rot[1][2],
+                rot[2][0], rot[2][1], rot[2][2],
+            )
+        # Parent frame — use original if available
+        if orig and 'parent' in orig:
+            frame.parent = orig['parent']
+        elif i == 0:
             frame.parent = parent_frame
         else:
             parent_bone = bone.parent
@@ -649,21 +742,24 @@ def _export_armature(arm_obj, clump: DffClump, parent_frame: int):
                 frame.parent = parent_frame
 
         # HAnimPLG
-        bone_id = bone.get('bone_id', 0)
-        bone_type = bone.get('type', 0)
+        bone_id_int = bone.get('bone_id', 0)
+        bone_type = bone.get('bone_type', 0)
+        bone_index = orig.get('index', i) if orig else bone.get('bone_index', i)
 
         if i == 0:
             # Root bone gets full bone list
-            hanim = HAnimData(bone_id=bone_id)
+            hanim = HAnimData(bone_id=bone_id_int)
             for j, b in enumerate(bones):
+                b_id = str(b.get('bone_id', 0))
+                b_orig = orig_data.get(b_id)
                 hanim.bones.append(HAnimBone(
                     bone_id=b.get('bone_id', 0),
-                    index=j,
-                    bone_type=b.get('type', 0),
+                    index=b_orig.get('index', j) if b_orig else b.get('bone_index', j),
+                    bone_type=b.get('bone_type', 0),
                 ))
             frame.hanim = hanim
         else:
-            frame.hanim = HAnimData(bone_id=bone_id)
+            frame.hanim = HAnimData(bone_id=bone_id_int)
 
         clump.frames.append(frame)
 
@@ -777,6 +873,7 @@ def export_dff(filepath: str, objects, version: int = GTA_SA_VERSION):
         # Create frame for this object
         frame = _build_frame(obj)
         frame_idx = len(clump.frames)
+
         clump.frames.append(frame)
 
         # Check if object has armature
@@ -787,10 +884,39 @@ def export_dff(filepath: str, objects, version: int = GTA_SA_VERSION):
                 break
 
         if arm_obj:
-            _export_armature(arm_obj, clump, frame_idx)
+            # Use raw DFF sections for round-trip if available
+            import base64
+            raw_fl = arm_obj.get('dff_raw_frame_list')
+            raw_gl = arm_obj.get('dff_raw_geometry_list')
+            raw_at = arm_obj.get('dff_raw_atomics')
 
-        # Process mesh
-        _process_mesh(obj, clump, frame_idx)
+            if raw_fl:
+                try:
+                    clump.raw_frame_list = base64.b64decode(raw_fl)
+                    clump.frames.clear()
+                    print(f"[DFF Export] Using raw frame list ({len(clump.raw_frame_list)} bytes)")
+                except Exception:
+                    _export_armature(arm_obj, clump, frame_idx)
+            else:
+                _export_armature(arm_obj, clump, frame_idx)
+
+            if raw_gl:
+                try:
+                    clump.raw_geometry_list = base64.b64decode(raw_gl)
+                    print(f"[DFF Export] Using raw geometry list ({len(clump.raw_geometry_list)} bytes)")
+                except Exception:
+                    pass
+
+            if raw_at:
+                try:
+                    clump.raw_atomics = base64.b64decode(raw_at)
+                    print(f"[DFF Export] Using raw atomics ({len(clump.raw_atomics)} bytes)")
+                except Exception:
+                    pass
+
+        # Process mesh (skip if using raw geometry for round-trip)
+        if not clump.raw_geometry_list:
+            _process_mesh(obj, clump, frame_idx)
 
     # If no frames were created, add a default one
     if not clump.frames:

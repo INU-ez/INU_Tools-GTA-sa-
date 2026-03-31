@@ -10,6 +10,7 @@ import mathutils
 from ..core.dff import (
     read_dff_file, DffClump, DffGeometry, DffFrame, DffAtomic,
     RGBA, TexCoords, DffMaterial, DffTexture, UserData,
+    SkinData, HAnimData, HAnimBone,
     GEOM_NORMALS, GEOM_PRELIT, GEOM_TEXTURED, GEOM_TEXTURED2,
     USERDATA_INT, USERDATA_FLOAT, USERDATA_STRING,
     Extension2dfx, Light2dfx, Particle2dfx, PedAttractor2dfx, SunGlare2dfx,
@@ -62,6 +63,22 @@ def _create_blender_material(dff_mat: DffMaterial, index: int) -> bpy.types.Mate
     # Устанавливаем цвет из DFF
     c = dff_mat.color
     bsdf.inputs['Base Color'].default_value = (c.r / 255.0, c.g / 255.0, c.b / 255.0, 1.0)
+
+    # Connect texture if available
+    if tex_name:
+        img = bpy.data.images.get(tex_name)
+        if not img:
+            # Try with common extensions
+            for ext in ('.png', '.bmp', '.tga', '.dds', '.jpg'):
+                img = bpy.data.images.get(tex_name + ext)
+                if img:
+                    break
+        if img:
+            tex_node = nodes.new('ShaderNodeTexImage')
+            tex_node.image = img
+            tex_node.location = (bsdf.location.x - 300, bsdf.location.y)
+            tree.links.new(tex_node.outputs['Color'], bsdf.inputs['Base Color'])
+            tree.links.new(tex_node.outputs['Alpha'], bsdf.inputs['Alpha'])
 
     # Specular = 0 для GTA моделей
     if 'Specular IOR Level' in bsdf.inputs:
@@ -188,6 +205,13 @@ def _build_mesh(geom: DffGeometry, name: str, materials: list) -> bpy.types.Mesh
     bm.to_mesh(mesh)
     bm.free()
     mesh.update()
+
+    # Debug: material assignment stats
+    mat_counts = {}
+    for poly in mesh.polygons:
+        mat_counts[poly.material_index] = mat_counts.get(poly.material_index, 0) + 1
+    print(f"[INU] Mesh '{name}': {len(mesh.materials)} materials, "
+          f"{len(mesh.polygons)} faces, mat_indices: {mat_counts}")
 
     # Smooth shading (compatible 4.1+)
     if bpy.app.version >= (4, 1, 0):
@@ -335,6 +359,216 @@ def _import_2dfx(ext_2dfx: Extension2dfx, collection, base_name: str) -> list:
     return objects
 
 
+def _has_skeleton(clump: DffClump) -> bool:
+    """Check if DFF has skeleton (HAnimData on any frame)."""
+    return any(f.hanim and f.hanim.bones for f in clump.frames)
+
+
+def _get_skinned_data(clump: DffClump):
+    """Find the first geometry with SkinData."""
+    for geom in clump.geometries:
+        if geom.skin:
+            return geom.skin
+    return None
+
+
+def _align_roll(vec, vecz, tarz):
+    """Calculate bone roll to align Z axis (from DragonFF)."""
+    import math
+    sine_roll = vec.normalized().dot(vecz.normalized().cross(tarz.normalized()))
+    if 1 < abs(sine_roll):
+        sine_roll /= abs(sine_roll)
+    if 0 < vecz.dot(tarz):
+        return math.asin(sine_roll)
+    elif 0 < sine_roll:
+        return -math.asin(sine_roll) + math.pi
+    else:
+        return -math.asin(sine_roll) - math.pi
+
+
+def _build_armature(clump: DffClump, name: str):
+    """Create Blender Armature from DFF frame hierarchy + HAnimData + SkinData.
+
+    Follows DragonFF approach: bone_matrices from SkinData → transposed → inverted → transform.
+    Returns (armature_object, bone_names_list).
+    """
+    arm_data = bpy.data.armatures.new(f"{name}_Armature")
+    arm_obj = bpy.data.objects.new(f"{name}_Armature", arm_data)
+    bpy.context.collection.objects.link(arm_obj)
+    bpy.context.view_layer.objects.active = arm_obj
+    arm_obj.select_set(True)
+
+    # Find root hanim frame (the one with the bone list)
+    hanim_root_frame = None
+    hanim_root_idx = 0
+    for i, frame in enumerate(clump.frames):
+        if frame.hanim and frame.hanim.bones:
+            hanim_root_frame = frame
+            hanim_root_idx = i
+            break
+
+    if not hanim_root_frame:
+        print(f"[INU] No HAnimData root found in {name}")
+        return arm_obj, []
+
+    # Build bone_id → frame_index mapping
+    bone_id_to_frame_idx = {}
+    for i, frame in enumerate(clump.frames):
+        if frame.hanim:
+            bone_id_to_frame_idx[frame.hanim.bone_id] = i
+
+    # Get skin data for bone matrices
+    skin = _get_skinned_data(clump)
+
+    print(f"[INU] Building armature: {len(hanim_root_frame.hanim.bones)} bones, "
+          f"skin={'yes' if skin else 'no'}, "
+          f"bone_matrices={len(skin.bone_matrices) if skin else 0}")
+
+    # Enter edit mode
+    bpy.ops.object.mode_set(mode='EDIT')
+    edit_bones = arm_data.edit_bones
+
+    bone_names = []
+    bone_list = {}  # frame_index → (edit_bone, has_connected_child)
+
+    for bone_idx, hbone in enumerate(hanim_root_frame.hanim.bones):
+        frame_idx = bone_id_to_frame_idx.get(hbone.bone_id)
+        if frame_idx is None:
+            print(f"[INU] Bone id={hbone.bone_id} has no matching frame, skipping")
+            bone_names.append(f"Bone_{hbone.bone_id}")
+            continue
+
+        frame = clump.frames[frame_idx]
+        bone_name = frame.name if frame.name else f"Bone_{hbone.bone_id}"
+
+        e_bone = edit_bones.new(bone_name)
+        e_bone.tail = (0, 0.05, 0)  # Prevent auto-deletion
+        e_bone['bone_id'] = hbone.bone_id
+        e_bone['bone_type'] = hbone.bone_type
+        e_bone['bone_index'] = hbone.index
+        e_bone['dff_frame_flags'] = frame.flags
+        bone_names.append(bone_name)
+
+        print(f"[INU]   Bone[{bone_idx}] '{bone_name}' id={hbone.bone_id} "
+              f"index={hbone.index} frame={frame_idx} parent={frame.parent}")
+
+        # Apply bone matrix from SkinData (exactly like DragonFF)
+        if skin and hbone.index < len(skin.bone_matrices):
+            matrix = mathutils.Matrix(skin.bone_matrices[hbone.index]).transposed()
+            if abs(matrix.determinant()) > 1e-8:
+                matrix.invert()
+            else:
+                matrix.identity()
+
+            e_bone.transform(matrix, scale=True, roll=False)
+            e_bone.roll = _align_roll(
+                e_bone.vector, e_bone.z_axis,
+                matrix.to_3x3() @ mathutils.Vector((0, 0, 1))
+            )
+        else:
+            # Fallback: frame rotation/position
+            rot = frame.rotation
+            pos = frame.position
+            matrix = mathutils.Matrix((
+                (rot[0], rot[3], rot[6]),
+                (rot[1], rot[4], rot[7]),
+                (rot[2], rot[5], rot[8]),
+            ))
+            e_bone.matrix = (
+                mathutils.Matrix.Translation(pos) @
+                matrix.transposed().to_4x4()
+            )
+
+        # Parent relationship (like DragonFF: frame.parent >= root frame_index and in bone_list)
+        if frame.parent >= hanim_root_idx and frame.parent in bone_list:
+            e_bone.parent = bone_list[frame.parent][0]
+            if skin is None:
+                e_bone.matrix = bone_list[frame.parent][0].matrix @ e_bone.matrix
+
+        # Key by frame_index (like DragonFF: bone_list[self.bones[bone.id]['index']])
+        bone_list[frame_idx] = (e_bone, False)
+
+    bpy.ops.object.mode_set(mode='OBJECT')
+
+    # Store ALL original frame data on armature object as JSON for round-trip export
+    import json
+    frame_data = {}
+    for hbone in hanim_root_frame.hanim.bones:
+        fi = bone_id_to_frame_idx.get(hbone.bone_id)
+        if fi is None:
+            continue
+        f = clump.frames[fi]
+        frame_data[str(hbone.bone_id)] = {
+            'rot': list(f.rotation),
+            'pos': list(f.position),
+            'flags': f.flags,
+            'parent': f.parent,
+            'index': hbone.index,
+            'write_name': f.write_name,
+        }
+        print(f"[INU]   save bone_id={hbone.bone_id} frame={fi} name='{f.name}' write_name={f.write_name}")
+    arm_obj['dff_frame_data'] = json.dumps(frame_data)
+
+    # Save raw DFF section bytes for perfect round-trip
+    import base64
+    if hasattr(clump.frames[0], '_raw_frame_list'):
+        arm_obj['dff_raw_frame_list'] = base64.b64encode(clump.frames[0]._raw_frame_list).decode('ascii')
+    if clump.raw_geometry_list:
+        arm_obj['dff_raw_geometry_list'] = base64.b64encode(clump.raw_geometry_list).decode('ascii')
+    if clump.raw_atomics:
+        arm_obj['dff_raw_atomics'] = base64.b64encode(clump.raw_atomics).decode('ascii')
+
+    print(f"[INU] Armature created: {len(bone_names)} bones")
+    return arm_obj, bone_names
+
+
+def _apply_skin_weights(obj, geom, arm_obj, bone_names):
+    """Apply SkinData vertex weights to mesh object and parent to armature.
+
+    DragonFF approach: create numbered vertex groups first, then rename to bone names.
+    """
+    skin = geom.skin
+    if not skin:
+        return
+
+    print(f"[INU] Applying skin weights to '{obj.name}': "
+          f"{skin.num_bones} bones, {len(skin.bone_indices)} verts")
+
+    # Create vertex groups (one per bone, in order)
+    for _ in range(skin.num_bones):
+        obj.vertex_groups.new()
+
+    # Assign weights by index (like DragonFF)
+    for vi in range(min(len(obj.data.vertices), len(skin.bone_indices))):
+        indices = skin.bone_indices[vi]
+        weights = skin.bone_weights[vi]
+
+        for bi in range(4):
+            bone_idx = indices[bi]
+            weight = weights[bi]
+            if weight > 0.0 and bone_idx < skin.num_bones:
+                obj.vertex_groups[bone_idx].add([vi], weight, 'ADD')
+
+    # Rename vertex groups to bone names
+    for i, bname in enumerate(bone_names):
+        if i < len(obj.vertex_groups):
+            obj.vertex_groups[i].name = bname
+
+    # Store original bone_matrices for round-trip export
+    import json
+    obj['dff_bone_matrices'] = json.dumps(skin.bone_matrices)
+    obj['dff_skin_num_used'] = skin.num_used
+    obj['dff_skin_max_weights'] = skin.max_weights
+    obj['dff_skin_bones_used'] = json.dumps(skin.bones_used)
+
+    # Parent mesh to armature with Armature modifier
+    obj.parent = arm_obj
+    mod = obj.modifiers.new(name="Armature", type='ARMATURE')
+    mod.object = arm_obj
+
+    print(f"[INU] Skin weights applied, {len(obj.vertex_groups)} vertex groups")
+
+
 def import_dff(filepath: str, context=None):
     """
     Импорт DFF файла в Blender.
@@ -369,8 +603,8 @@ def import_dff(filepath: str, context=None):
         # Создаём объект
         obj = bpy.data.objects.new(obj_name, mesh)
 
-        # Трансформация из фрейма
-        if frame:
+        # Трансформация из фрейма (skip for skinned meshes — armature handles it)
+        if frame and not geom.skin:
             rot = frame.rotation
             pos = frame.position
             matrix = mathutils.Matrix((
@@ -383,6 +617,15 @@ def import_dff(filepath: str, context=None):
 
         # INU свойства
         _set_object_props(obj, geom)
+        # Store original UV layer count for round-trip
+        obj['dff_num_uv_layers'] = len(geom.uv_layers)
+
+        # Store original frame data for round-trip export
+        if frame:
+            obj['dff_frame_flags'] = frame.flags
+            obj['dff_frame_rot'] = list(frame.rotation)
+            obj['dff_frame_pos'] = list(frame.position)
+            obj['dff_frame_write_name'] = frame.write_name
 
         # Frame user data → object custom property
         if frame and frame.user_data:
@@ -400,6 +643,30 @@ def import_dff(filepath: str, context=None):
             _set_object_props(obj, geom)
             collection.objects.link(obj)
             imported_objects.append(obj)
+
+    # Skeleton: create Armature + apply skin weights if DFF has bones
+    if _has_skeleton(clump):
+        try:
+            arm_obj, bone_names = _build_armature(clump, base_name)
+            imported_objects.append(arm_obj)
+
+            # Apply skin weights to skinned mesh objects
+            for atomic in clump.atomics:
+                gi = atomic.geometry_index
+                if gi >= len(clump.geometries):
+                    continue
+                geom = clump.geometries[gi]
+                if geom.skin:
+                    fi = atomic.frame_index
+                    frame = clump.frames[fi] if fi < len(clump.frames) else None
+                    obj_name = frame.name if (frame and frame.name) else f"{base_name}_{gi}"
+                    obj = bpy.data.objects.get(obj_name)
+                    if obj and obj.type == 'MESH':
+                        _apply_skin_weights(obj, geom, arm_obj, bone_names)
+        except Exception as e:
+            import traceback
+            print(f"[INU_tools] Skeleton import error: {e}")
+            traceback.print_exc()
 
     # Импорт 2DFX эффектов (собираем из всех геометрий) → коллекция "2DFX"
     fx_col = None

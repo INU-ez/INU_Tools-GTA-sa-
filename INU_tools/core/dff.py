@@ -421,12 +421,20 @@ class Extension2dfx:
 class SkinData:
     """Bone skinning data for a geometry."""
     num_bones: int = 0
+    num_used: int = 0              # Number of used bones
+    max_weights: int = 4           # Max weights per vertex
+    bones_used: list = field(default_factory=list)  # List of used bone indices
     bone_indices: list = field(default_factory=list)   # per-vertex: list[(b0,b1,b2,b3)]
     bone_weights: list = field(default_factory=list)    # per-vertex: list[(w0,w1,w2,w3)]
-    bone_matrices: list = field(default_factory=list)   # per-bone: list[16 floats]
+    bone_matrices: list = field(default_factory=list)   # per-bone: list[4x4 floats]
 
     def to_bytes(self, lib_id: int) -> bytes:
-        data = pack('<B3x', self.num_bones)
+        oldver = (self.num_used == 0)
+        data = pack('<3Bx', self.num_bones, self.num_used, self.max_weights)
+
+        # bones_used array
+        for bu in self.bones_used:
+            data += pack('<B', bu)
 
         for indices in self.bone_indices:
             data += pack('<4B', *indices)
@@ -435,8 +443,10 @@ class SkinData:
             data += pack('<4f', *weights)
 
         for matrix in self.bone_matrices:
-            data += pack('<4x')  # padding
-            data += pack('<16f', *matrix)
+            if oldver:
+                data += pack('<4x')  # 0xDEADDEAD marker in old format
+            flat = matrix[0] + matrix[1] + matrix[2] + matrix[3]
+            data += pack('<16f', *flat)
 
         return _chunk(CHUNK_SKIN_PLG, data, lib_id)
 
@@ -474,6 +484,7 @@ class DffFrame:
     flags: int = 0
     hanim: Optional[HAnimData] = None
     user_data: Optional[UserData] = None
+    write_name: bool = False  # Only True if original DFF had Frame Name chunk
 
     def header_bytes(self) -> bytes:
         """56 bytes: rotation(36) + position(12) + parent(4) + flags(4)."""
@@ -484,7 +495,7 @@ class DffFrame:
 
     def extension_bytes(self, lib_id: int) -> bytes:
         ext = b''
-        if self.name and self.name != "unknown":
+        if self.write_name and self.name and self.name != "unknown":
             ext += _chunk(CHUNK_FRAME_NAME, _pad_string(self.name), lib_id)
         if self.hanim:
             ext += self.hanim.to_bytes(lib_id)
@@ -671,6 +682,9 @@ class DffClump:
     lights: list = field(default_factory=list)        # list[DffLight]
     version: int = GTA_SA_VERSION
     collision_data: bytes = b''
+    raw_frame_list: bytes = b''  # Raw frame list bytes for round-trip
+    raw_geometry_list: bytes = b''  # Raw geometry list bytes for round-trip
+    raw_atomics: bytes = b''  # Raw atomic bytes for round-trip
 
     def to_bytes(self) -> bytes:
         lib_id = make_library_id(self.version)
@@ -678,45 +692,54 @@ class DffClump:
 
         # Clump struct
         num_atomics = len(self.atomics)
+        if num_atomics == 0 and self.raw_atomics:
+            num_atomics = 1  # At least 1 atomic in raw data
         num_lights = len(self.lights)
-        clump_struct = pack('<III', num_atomics, num_lights, 0)  # atomics, lights, cameras
+        clump_struct = pack('<III', num_atomics, num_lights, 0)
         body = _chunk(CHUNK_STRUCT, clump_struct, lib_id)
 
-        # Frame list
-        frame_struct = pack('<I', len(self.frames))
-        for frame in self.frames:
-            frame_struct += frame.header_bytes()
-        frame_body = _chunk(CHUNK_STRUCT, frame_struct, lib_id)
-        for frame in self.frames:
-            frame_body += frame.extension_bytes(lib_id)
-        body += _chunk(CHUNK_FRAME_LIST, frame_body, lib_id)
+        # Frame list — use raw bytes for perfect round-trip if available
+        if self.raw_frame_list:
+            body += _chunk(CHUNK_FRAME_LIST, self.raw_frame_list, lib_id)
+        else:
+            frame_struct = pack('<I', len(self.frames))
+            for frame in self.frames:
+                frame_struct += frame.header_bytes()
+            frame_body = _chunk(CHUNK_STRUCT, frame_struct, lib_id)
+            for frame in self.frames:
+                frame_body += frame.extension_bytes(lib_id)
+            body += _chunk(CHUNK_FRAME_LIST, frame_body, lib_id)
 
-        # Geometry list
-        geom_struct = pack('<I', len(self.geometries))
-        geom_body = _chunk(CHUNK_STRUCT, geom_struct, lib_id)
-        for geom in self.geometries:
-            geom_body += geom.to_bytes(lib_id, rw_version)
-        body += _chunk(CHUNK_GEOMETRY_LIST, geom_body, lib_id)
+        # Geometry list — use raw bytes for round-trip if available
+        if self.raw_geometry_list:
+            body += self.raw_geometry_list
+        else:
+            geom_struct = pack('<I', len(self.geometries))
+            geom_body = _chunk(CHUNK_STRUCT, geom_struct, lib_id)
+            for geom in self.geometries:
+                geom_body += geom.to_bytes(lib_id, rw_version)
+            body += _chunk(CHUNK_GEOMETRY_LIST, geom_body, lib_id)
 
-        # Atomics
-        for atomic in self.atomics:
-            atomic_struct = pack('<IIII',
-                atomic.frame_index, atomic.geometry_index,
-                atomic.flags, atomic.unused)
-            atomic_body = _chunk(CHUNK_STRUCT, atomic_struct, lib_id)
+        # Atomics — use raw for round-trip if available
+        if self.raw_atomics:
+            body += self.raw_atomics
+        else:
+            for atomic in self.atomics:
+                atomic_struct = pack('<IIII',
+                    atomic.frame_index, atomic.geometry_index,
+                    atomic.flags, atomic.unused)
+                atomic_body = _chunk(CHUNK_STRUCT, atomic_struct, lib_id)
 
-            # Atomic extensions
-            atomic_ext = b''
-            geom = self.geometries[atomic.geometry_index]
-            if geom.skin:
-                atomic_ext += _chunk(0x001F, pack('<II', 0x0116, 1), lib_id)  # Right to Render
-            if any(m.bump_map or m.env_map or m.dual_texture for m in geom.materials):
-                atomic_ext += _chunk(CHUNK_MATFX_PLG, pack('<I', 1), lib_id)
-            if geom.pipeline:
-                atomic_ext += _chunk(CHUNK_PIPELINE_SET, pack('<I', geom.pipeline), lib_id)
+                # Atomic extensions
+                atomic_ext = b''
+                geom = self.geometries[atomic.geometry_index]
+                if geom.skin:
+                    atomic_ext += _chunk(0x001F, pack('<II', 0x0116, 1), lib_id)  # Right to Render
+                if any(m.bump_map or m.env_map or m.dual_texture for m in geom.materials):
+                    atomic_ext += _chunk(CHUNK_MATFX_PLG, pack('<I', 1), lib_id)
 
-            atomic_body += _chunk(CHUNK_EXTENSION, atomic_ext, lib_id)
-            body += _chunk(CHUNK_ATOMIC, atomic_body, lib_id)
+                atomic_body += _chunk(CHUNK_EXTENSION, atomic_ext, lib_id)
+                body += _chunk(CHUNK_ATOMIC, atomic_body, lib_id)
 
         # Lights (RW Light objects for 2DFX)
         for light in self.lights:
@@ -1020,7 +1043,7 @@ def _read_geometry_chunk(r: BinaryReader, size: int, rw_version: int) -> DffGeom
                 ect, ecs, ecl = _read_chunk_header(r)
                 plugin_end = r.pos + ecs
                 if ect == CHUNK_BIN_MESH_PLG:
-                    pass  # skip, we have triangles
+                    _read_bin_mesh_plg(r, ecs, geom)
                 elif ect == CHUNK_SKIN_PLG:
                     geom.skin = _read_skin_plugin(r, ecs, len(geom.vertices))
                 elif ect == CHUNK_EXTRA_COLORS:
@@ -1076,21 +1099,84 @@ def _read_userdata_plugin(r: BinaryReader, size: int) -> UserData:
     return ud
 
 
-def _read_skin_plugin(r: BinaryReader, size: int, num_verts: int) -> SkinData:
-    """Read Skin PLG."""
-    skin = SkinData()
-    skin.num_bones = r.read_one('<B')
-    r.skip(3)  # padding
+def _read_bin_mesh_plg(r: BinaryReader, size: int, geom: 'DffGeometry'):
+    """Read Binary Mesh PLG and update triangle material indices."""
+    start = r.pos
+    flags = r.read_one('<I')       # 0 = trilist, 1 = tristrip
+    num_splits = r.read_one('<I')
+    total_indices = r.read_one('<I')
 
+    # Build vertex→triangle lookup for material assignment
+    # Map (v0,v1,v2) → triangle index for fast lookup
+    tri_lookup = {}
+    for ti, tri in enumerate(geom.triangles):
+        key = tuple(sorted((tri.a, tri.b, tri.c)))
+        tri_lookup[key] = ti
+
+    for _ in range(num_splits):
+        num_indices = r.read_one('<I')
+        mat_idx = r.read_one('<I')
+
+        if flags == 0:
+            # Triangle list: every 3 indices = one triangle
+            for _ in range(num_indices // 3):
+                i0, i1, i2 = r.read('<3I')
+                key = tuple(sorted((i0, i1, i2)))
+                ti = tri_lookup.get(key)
+                if ti is not None:
+                    geom.triangles[ti].material = mat_idx
+        else:
+            # Triangle strip: skip (read indices but don't process)
+            indices = [r.read_one('<I') for _ in range(num_indices)]
+            for j in range(len(indices) - 2):
+                if j % 2 == 0:
+                    i0, i1, i2 = indices[j], indices[j+1], indices[j+2]
+                else:
+                    i0, i1, i2 = indices[j], indices[j+2], indices[j+1]
+                if i0 == i1 or i1 == i2 or i0 == i2:
+                    continue  # degenerate
+                key = tuple(sorted((i0, i1, i2)))
+                ti = tri_lookup.get(key)
+                if ti is not None:
+                    geom.triangles[ti].material = mat_idx
+
+    r.seek(start + size)
+
+
+def _read_skin_plugin(r: BinaryReader, size: int, num_verts: int) -> SkinData:
+    """Read Skin PLG (matching DragonFF format)."""
+    skin = SkinData()
+    start = r.pos
+
+    # Header: num_bones, num_used_bones, max_weights_per_vertex, padding
+    skin.num_bones, skin.num_used, skin.max_weights = r.read('<3B')
+    r.skip(1)  # padding byte
+
+    # Read bones_used array
+    oldver = (skin.num_used == 0)
+    if skin.num_used > 0:
+        for _ in range(skin.num_used):
+            skin.bones_used.append(r.read_one('<B'))
+
+    # Vertex bone indices (4 bytes per vertex)
     for _ in range(num_verts):
         skin.bone_indices.append(r.read('<4B'))
 
+    # Vertex bone weights (4 floats per vertex)
     for _ in range(num_verts):
         skin.bone_weights.append(r.read('<4f'))
 
+    # Bone matrices (inverse bind pose)
     for _ in range(skin.num_bones):
-        r.skip(4)  # padding
-        skin.bone_matrices.append(r.read('<16f'))
+        if oldver:
+            r.skip(4)  # 0xDEADDEAD marker in old format
+        raw = list(r.read('<16f'))
+        # Clear last column, set [15]=1 (proper affine matrix)
+        raw[3] = 0.0
+        raw[7] = 0.0
+        raw[11] = 0.0
+        raw[15] = 1.0
+        skin.bone_matrices.append([raw[0:4], raw[4:8], raw[8:12], raw[12:16]])
 
     return skin
 
@@ -1200,6 +1286,12 @@ def _read_2dfx_plugin(r: BinaryReader, size: int) -> Extension2dfx:
 def _read_frame_list(r: BinaryReader, size: int) -> list:
     """Read Frame List chunk. Returns list of DffFrame."""
     end = r.pos + size
+    # Save raw bytes for round-trip export
+    start_pos = r.pos
+    r.seek(end)
+    raw_bytes = r.data[start_pos:end]
+    r.seek(start_pos)
+
     frames = []
 
     # Struct
@@ -1236,6 +1328,8 @@ def _read_frame_list(r: BinaryReader, size: int) -> list:
                     if nm_end == -1:
                         nm_end = len(raw)
                     frames[i].name = raw[:nm_end].decode('ascii', errors='replace')
+                    frames[i].write_name = True
+                    print(f"[DFF Parse] Frame[{i}] has name chunk: '{frames[i].name}' (size={ecs})")
                 elif ect == CHUNK_HANIM_PLG:
                     frames[i].hanim = _read_hanim_plugin(r, ecs)
                 elif ect == CHUNK_USERDATA_PLG:
@@ -1248,6 +1342,9 @@ def _read_frame_list(r: BinaryReader, size: int) -> list:
             r.skip(cs)
 
     r.seek(end)
+    # Attach raw bytes for round-trip
+    for f in frames:
+        f._raw_frame_list = raw_bytes
     return frames
 
 
@@ -1298,6 +1395,9 @@ def read_dff(data: bytes) -> DffClump:
             clump.frames = _read_frame_list(r, cs)
 
         elif ct == CHUNK_GEOMETRY_LIST:
+            # Save raw geometry list for round-trip
+            clump.raw_geometry_list = r.data[r.pos - 12:chunk_end]  # include chunk header
+
             # Struct: geometry count
             gct, gcs, gcl = _read_chunk_header(r)
             geom_list_ver = _decode_library_id(gcl)[0]
@@ -1314,6 +1414,9 @@ def read_dff(data: bytes) -> DffClump:
                     r.skip(gcs2)
 
         elif ct == CHUNK_ATOMIC:
+            # Save raw atomic for round-trip
+            clump.raw_atomics += r.data[r.pos - 12:chunk_end]
+
             atom_end = r.pos + cs
             act, acs, acl = _read_chunk_header(r)
             if act == CHUNK_STRUCT:

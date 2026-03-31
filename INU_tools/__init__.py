@@ -23,7 +23,7 @@
 bl_info = {
     "name": "INU_tools(gta_sa)",
     "author": "INU",
-    "version": (1, 5, 2),
+    "version": (1, 5, 3),
     "blender": (4, 4, 0),
     "location": "View3D > Sidebar (N) > GTA Tools",
     "description": "Toolset for GTA SA models",
@@ -4496,6 +4496,657 @@ class GTATOOLS_PT_ide_ipl_panel(bpy.types.Panel):
         box.operator("gtatools.export_to_img", text=T("Экспорт в IMG"), icon='EXPORT')
 
 
+
+class GTATOOLS_OT_import_water(bpy.types.Operator):
+    """Импорт water.dat"""
+    bl_idname = "gtatools.import_water"
+    bl_label = "Import Water"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    filepath: StringProperty(subtype='FILE_PATH')
+    filter_glob: StringProperty(default="*.dat", options={'HIDDEN'})
+
+    def invoke(self, context, event):
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        from .ops.water_import import import_water
+        try:
+            objects = import_water(filepath=self.filepath, context=context)
+            self.report({'INFO'}, f"Water: {len(objects)} objects imported")
+            return {'FINISHED'}
+        except Exception as e:
+            self.report({'ERROR'}, f"Water import error: {str(e)}")
+            return {'CANCELLED'}
+
+
+class GTATOOLS_OT_export_water(bpy.types.Operator):
+    """Экспорт water.dat"""
+    bl_idname = "gtatools.export_water"
+    bl_label = "Export Water"
+    bl_options = {'REGISTER'}
+
+    filepath: StringProperty(subtype='FILE_PATH')
+    filter_glob: StringProperty(default="*.dat", options={'HIDDEN'})
+
+    def invoke(self, context, event):
+        if not self.filepath:
+            self.filepath = "water.dat"
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        from .ops.water_export import export_water
+        try:
+            objects = [o for o in context.selected_objects if o.type == 'MESH']
+            if not objects:
+                col = bpy.data.collections.get("Water")
+                if col:
+                    objects = [o for o in col.objects if o.type == 'MESH']
+            count = export_water(filepath=self.filepath, objects=objects)
+            self.report({'INFO'}, f"Water: {count} polygons exported")
+            return {'FINISHED'}
+        except Exception as e:
+            self.report({'ERROR'}, f"Water export error: {str(e)}")
+            return {'CANCELLED'}
+
+
+# =============================================================================
+# PATH IO OPERATORS
+# =============================================================================
+
+class GTATOOLS_OT_import_flight(bpy.types.Operator):
+    """Импорт flight.dat — маршруты полётов"""
+    bl_idname = "gtatools.import_flight"
+    bl_label = "Import Flight Paths"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    filepath: StringProperty(subtype='FILE_PATH')
+    filter_glob: StringProperty(default="*.dat", options={'HIDDEN'})
+
+    def invoke(self, context, event):
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        from .ops.path_import import import_flight
+        try:
+            objects = import_flight(filepath=self.filepath, context=context)
+            self.report({'INFO'}, f"Flight: {len(objects)} paths imported")
+            return {'FINISHED'}
+        except Exception as e:
+            self.report({'ERROR'}, f"Flight import error: {str(e)}")
+            return {'CANCELLED'}
+
+
+class GTATOOLS_OT_export_flight(bpy.types.Operator):
+    """Экспорт flight.dat — маршруты полётов"""
+    bl_idname = "gtatools.export_flight"
+    bl_label = "Export Flight Paths"
+    bl_options = {'REGISTER'}
+
+    filepath: StringProperty(subtype='FILE_PATH')
+    filter_glob: StringProperty(default="*.dat", options={'HIDDEN'})
+
+    def invoke(self, context, event):
+        if not self.filepath:
+            self.filepath = "flight.dat"
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        from .ops.path_export import export_flight
+        try:
+            objects = [o for o in context.selected_objects
+                       if o.type == 'CURVE' and o.get('path_type') == 'flight']
+            count = export_flight(filepath=self.filepath, objects=objects)
+            self.report({'INFO'}, f"Flight: {count} paths exported")
+            return {'FINISHED'}
+        except Exception as e:
+            self.report({'ERROR'}, f"Flight export error: {str(e)}")
+            return {'CANCELLED'}
+
+
+class GTATOOLS_OT_import_track(bpy.types.Operator):
+    """Импорт tracks.dat — железнодорожные пути"""
+    bl_idname = "gtatools.import_track"
+    bl_label = "Import Train Track"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    filepath: StringProperty(subtype='FILE_PATH')
+    filter_glob: StringProperty(default="*.dat", options={'HIDDEN'})
+
+    def invoke(self, context, event):
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        from .ops.path_import import import_track
+        try:
+            objects = import_track(filepath=self.filepath, context=context)
+            self.report({'INFO'}, f"Track: {len(objects[0].data.splines[0].points) if objects else 0} nodes imported")
+            return {'FINISHED'}
+        except Exception as e:
+            self.report({'ERROR'}, f"Track import error: {str(e)}")
+            return {'CANCELLED'}
+
+
+class GTATOOLS_OT_export_track(bpy.types.Operator):
+    """Экспорт tracks.dat — железнодорожные пути"""
+    bl_idname = "gtatools.export_track"
+    bl_label = "Export Train Track"
+    bl_options = {'REGISTER'}
+
+    filepath: StringProperty(subtype='FILE_PATH')
+    filter_glob: StringProperty(default="*.dat", options={'HIDDEN'})
+
+    def invoke(self, context, event):
+        if not self.filepath:
+            self.filepath = "tracks.dat"
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        from .ops.path_export import export_track
+        try:
+            obj = None
+            for o in context.selected_objects:
+                if o.type == 'CURVE' and o.get('path_type') == 'track':
+                    obj = o
+                    break
+            if not obj:
+                col = bpy.data.collections.get("Train Tracks")
+                if col:
+                    for o in col.objects:
+                        if o.type == 'CURVE' and o.get('path_type') == 'track':
+                            obj = o
+                            break
+            count = export_track(filepath=self.filepath, obj=obj)
+            self.report({'INFO'}, f"Track: {count} nodes exported")
+            return {'FINISHED'}
+        except Exception as e:
+            self.report({'ERROR'}, f"Track export error: {str(e)}")
+            return {'CANCELLED'}
+
+
+class GTATOOLS_OT_import_nodes(bpy.types.Operator):
+    """Импорт nodes.dat — пешеходные/авто пути"""
+    bl_idname = "gtatools.import_nodes"
+    bl_label = "Import Path Nodes"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    filepath: StringProperty(subtype='FILE_PATH')
+    filter_glob: StringProperty(default="*.dat", options={'HIDDEN'})
+
+    def invoke(self, context, event):
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        from .ops.path_import import import_nodes
+        try:
+            objects = import_nodes(filepath=self.filepath, context=context)
+            total = sum(len(o.data.vertices) for o in objects if o.type == 'MESH')
+            self.report({'INFO'}, f"Nodes: {total} nodes imported")
+            return {'FINISHED'}
+        except Exception as e:
+            self.report({'ERROR'}, f"Nodes import error: {str(e)}")
+            return {'CANCELLED'}
+
+
+class GTATOOLS_OT_export_nodes(bpy.types.Operator):
+    """Экспорт nodes.dat — пешеходные/авто пути"""
+    bl_idname = "gtatools.export_nodes"
+    bl_label = "Export Path Nodes"
+    bl_options = {'REGISTER'}
+
+    filepath: StringProperty(subtype='FILE_PATH')
+    filter_glob: StringProperty(default="*.dat", options={'HIDDEN'})
+
+    def invoke(self, context, event):
+        if not self.filepath:
+            self.filepath = "nodes0.dat"
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        from .ops.path_export import export_nodes
+        try:
+            objects = [o for o in context.selected_objects
+                       if o.type == 'MESH' and o.get('path_type', '').startswith('nodes_')]
+            count = export_nodes(filepath=self.filepath, objects=objects)
+            self.report({'INFO'}, f"Nodes: {count} nodes exported")
+            return {'FINISHED'}
+        except Exception as e:
+            self.report({'ERROR'}, f"Nodes export error: {str(e)}")
+            return {'CANCELLED'}
+
+
+class GTATOOLS_OT_import_paths_ipl(bpy.types.Operator):
+    """Импорт paths.ipl — пути для gta.dat"""
+    bl_idname = "gtatools.import_paths_ipl"
+    bl_label = "Import Paths IPL"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    filepath: StringProperty(subtype='FILE_PATH')
+    filter_glob: StringProperty(default="*.ipl", options={'HIDDEN'})
+
+    def invoke(self, context, event):
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        from .ops.path_import import import_paths_ipl
+        try:
+            objects = import_paths_ipl(filepath=self.filepath, context=context)
+            self.report({'INFO'}, f"Paths IPL: {len(objects)} groups imported")
+            return {'FINISHED'}
+        except Exception as e:
+            self.report({'ERROR'}, f"Paths IPL import error: {str(e)}")
+            return {'CANCELLED'}
+
+
+class GTATOOLS_OT_export_paths_ipl(bpy.types.Operator):
+    """Экспорт paths.ipl — пути для gta.dat"""
+    bl_idname = "gtatools.export_paths_ipl"
+    bl_label = "Export Paths IPL"
+    bl_options = {'REGISTER'}
+
+    filepath: StringProperty(subtype='FILE_PATH')
+    filter_glob: StringProperty(default="*.ipl", options={'HIDDEN'})
+
+    def invoke(self, context, event):
+        if not self.filepath:
+            self.filepath = "paths_custom.ipl"
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        from .ops.path_export import export_paths_ipl
+        try:
+            # Selected objects first, then fall back to "Path IPL" collection
+            objects = [o for o in context.selected_objects
+                       if o.type == 'CURVE' and o.get('path_type') == 'path_ipl']
+            if not objects:
+                col = bpy.data.collections.get("Path IPL")
+                if col:
+                    objects = [o for o in col.objects
+                               if o.type == 'CURVE' and o.get('path_type') == 'path_ipl']
+            count = export_paths_ipl(filepath=self.filepath, objects=objects)
+            self.report({'INFO'}, f"Paths IPL: {count} groups exported")
+            return {'FINISHED'}
+        except Exception as e:
+            self.report({'ERROR'}, f"Paths IPL export error: {str(e)}")
+            return {'CANCELLED'}
+
+
+class GTATOOLS_OT_convert_to_path(bpy.types.Operator):
+    """Конвертировать кривую или рёбра меша в путь paths.ipl"""
+    bl_idname = "gtatools.convert_to_path"
+    bl_label = "Convert to Path"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    group_type: EnumProperty(
+        name="Type",
+        items=[
+            ('1', T("Авто"), ""),
+            ('0', T("Пешеходный"), ""),
+        ],
+        default='1',
+    )
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        if not obj:
+            return False
+        if obj.type == 'CURVE':
+            return True
+        if obj.type == 'MESH':
+            # Allow only if no faces (edges/verts only)
+            return len(obj.data.polygons) == 0
+        return False
+
+    def execute(self, context):
+        obj = context.active_object
+        is_veh = self.group_type == '1'
+
+        if obj.type == 'MESH':
+            # Convert edges-only mesh to curve first
+            if len(obj.data.polygons) > 0:
+                self.report({'ERROR'}, T("Нельзя конвертировать меш с полигонами"))
+                return {'CANCELLED'}
+
+            # Convert to curve
+            bpy.ops.object.select_all(action='DESELECT')
+            obj.select_set(True)
+            context.view_layer.objects.active = obj
+            bpy.ops.object.convert(target='CURVE')
+            obj = context.active_object  # Now it's a curve
+
+        if obj.type != 'CURVE':
+            self.report({'ERROR'}, "Not a curve")
+            return {'CANCELLED'}
+
+        # Set path properties
+        obj['path_type'] = 'path_ipl'
+        obj['group_type'] = int(self.group_type)
+        obj['group_index'] = 0
+        obj['external_index'] = -1
+
+        # Count real points
+        total_pts = sum(len(s.points) if s.type == 'POLY' else len(s.bezier_points)
+                        for s in obj.data.splines)
+        for i in range(total_pts):
+            obj[f'pn_{i}_type'] = 2
+            obj[f'pn_{i}_link'] = (i + 1) if i < total_pts - 1 else -1
+            obj[f'pn_{i}_area'] = 0
+            obj[f'pn_{i}_unk'] = 0.0
+            obj[f'pn_{i}_width'] = 1
+            obj[f'pn_{i}_ll'] = 1
+            obj[f'pn_{i}_rl'] = 1
+            obj[f'pn_{i}_mw'] = 0
+            obj[f'pn_{i}_flags'] = 1
+            obj[f'pn_{i}_spawn'] = 0
+        obj['pn_count'] = total_pts
+
+        # Apply curve style
+        from .ops.path_import import _setup_path_curve
+        _setup_path_curve(obj.data)
+
+        # Material
+        mat_name = 'VehiclePath_IPL_Mat' if is_veh else 'PedPath_IPL_Mat'
+        color = (0.0, 0.5, 1.0, 0.8) if is_veh else (0.0, 1.0, 0.3, 0.8)
+        mat = bpy.data.materials.get(mat_name)
+        if not mat:
+            mat = bpy.data.materials.new(mat_name)
+            mat.use_nodes = True
+            for n in mat.node_tree.nodes:
+                if n.type == 'BSDF_PRINCIPLED':
+                    n.inputs['Base Color'].default_value = color
+                    break
+            mat.diffuse_color = color
+        if not obj.data.materials:
+            obj.data.materials.append(mat)
+
+        # Move to Path IPL collection
+        col = bpy.data.collections.get("Path IPL")
+        if not col:
+            col = bpy.data.collections.new("Path IPL")
+            context.scene.collection.children.link(col)
+        # Unlink from current collections
+        for c in obj.users_collection:
+            c.objects.unlink(obj)
+        col.objects.link(obj)
+
+        label = T("Авто") if is_veh else T("Пешеходный")
+        self.report({'INFO'}, f"{obj.name} → {label} path ({total_pts} pts)")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_add_path_ipl(bpy.types.Operator):
+    """Создать новый путь для paths.ipl"""
+    bl_idname = "gtatools.add_path_ipl"
+    bl_label = "Add Path (IPL)"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    group_type: EnumProperty(
+        name="Type",
+        items=[
+            ('1', T("Авто"), T("Автомобильный путь")),
+            ('0', T("Пешеходный"), T("Пешеходный путь")),
+        ],
+        default='1',
+    )
+
+    def execute(self, context):
+        is_veh = self.group_type == '1'
+        prefix = "VehPath" if is_veh else "PedPath"
+
+        curve = bpy.data.curves.new(f"{prefix}_new", type='CURVE')
+        curve.dimensions = '3D'
+        spline = curve.splines.new('POLY')
+        spline.points.add(1)
+        loc = context.scene.cursor.location
+        spline.points[0].co = (loc.x, loc.y, loc.z, 1.0)
+        spline.points[1].co = (loc.x + 30, loc.y, loc.z, 1.0)
+
+        obj = bpy.data.objects.new(f"{prefix}_new", curve)
+        obj['path_type'] = 'path_ipl'
+        obj['group_type'] = int(self.group_type)
+        obj['group_index'] = 0
+        obj['external_index'] = -1
+
+        # Default node props for 2 internal nodes
+        for i in range(2):
+            obj[f'pn_{i}_type'] = 2  # internal
+            obj[f'pn_{i}_link'] = (i + 1) if i < 1 else -1
+            obj[f'pn_{i}_area'] = 0
+            obj[f'pn_{i}_unk'] = 0.0
+            obj[f'pn_{i}_width'] = 1
+            obj[f'pn_{i}_ll'] = 1
+            obj[f'pn_{i}_rl'] = 1
+            obj[f'pn_{i}_mw'] = 0
+            obj[f'pn_{i}_flags'] = 1
+            obj[f'pn_{i}_spawn'] = 0
+        obj['pn_count'] = 2
+
+        from .ops.path_import import _setup_path_curve
+        _setup_path_curve(curve)
+        mat_name = 'VehiclePath_IPL_Mat' if is_veh else 'PedPath_IPL_Mat'
+        color = (0.0, 0.5, 1.0, 0.8) if is_veh else (0.0, 1.0, 0.3, 0.8)
+        mat = bpy.data.materials.get(mat_name)
+        if not mat:
+            mat = bpy.data.materials.new(mat_name)
+            mat.use_nodes = True
+            for n in mat.node_tree.nodes:
+                if n.type == 'BSDF_PRINCIPLED':
+                    n.inputs['Base Color'].default_value = color
+                    break
+            mat.diffuse_color = color
+        curve.materials.append(mat)
+
+        col = bpy.data.collections.get("Path IPL")
+        if not col:
+            col = bpy.data.collections.new("Path IPL")
+            context.scene.collection.children.link(col)
+        col.objects.link(obj)
+
+        context.view_layer.objects.active = obj
+        obj.select_set(True)
+
+        label = T("Авто") if is_veh else T("Пешеходный")
+        self.report({'INFO'}, f"{label} path created. Edit in Edit Mode, max 12 points")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_add_track(bpy.types.Operator):
+    """Создать новый ж/д путь (кривая)"""
+    bl_idname = "gtatools.add_track"
+    bl_label = "Add Train Track"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        curve = bpy.data.curves.new("Track_New", type='CURVE')
+        curve.dimensions = '3D'
+        spline = curve.splines.new('POLY')
+        # Start with 2 points at cursor
+        spline.points.add(1)
+        loc = context.scene.cursor.location
+        spline.points[0].co = (loc.x, loc.y, loc.z, 1.0)
+        spline.points[1].co = (loc.x + 50, loc.y, loc.z, 1.0)
+        spline.use_cyclic_u = True
+
+        obj = bpy.data.objects.new("Track_New", curve)
+        obj['path_type'] = 'track'
+        obj['station_indices'] = '[]'
+
+        from .ops.path_import import _setup_path_curve
+        _setup_path_curve(curve)
+
+        # Material
+        mat = bpy.data.materials.get('TrainTrack_Mat')
+        if not mat:
+            mat = bpy.data.materials.new('TrainTrack_Mat')
+            mat.use_nodes = True
+            for n in mat.node_tree.nodes:
+                if n.type == 'BSDF_PRINCIPLED':
+                    n.inputs['Base Color'].default_value = (0.6, 0.3, 0.0, 0.8)
+                    break
+            mat.diffuse_color = (0.6, 0.3, 0.0, 0.8)
+        curve.materials.append(mat)
+
+        col = bpy.data.collections.get("Train Tracks")
+        if not col:
+            col = bpy.data.collections.new("Train Tracks")
+            context.scene.collection.children.link(col)
+        col.objects.link(obj)
+
+        context.view_layer.objects.active = obj
+        obj.select_set(True)
+
+        self.report({'INFO'}, T("Ж/д путь создан. Редактируйте в Edit Mode"))
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_add_vehicle_path(bpy.types.Operator):
+    """Создать новый автомобильный путь (меш с вершинами)"""
+    bl_idname = "gtatools.add_vehicle_path"
+    bl_label = "Add Vehicle Path"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        mesh = bpy.data.meshes.new("VehiclePath_New")
+        loc = context.scene.cursor.location
+        verts = [(loc.x, loc.y, loc.z), (loc.x + 20, loc.y, loc.z)]
+        edges = [(0, 1)]
+        mesh.from_pydata(verts, edges, [])
+        mesh.update()
+
+        obj = bpy.data.objects.new("VehiclePath_New", mesh)
+        obj['path_type'] = 'nodes_vehicle'
+
+        # Store default node props
+        for i in range(2):
+            obj[f'node_{i}_link'] = 0
+            obj[f'node_{i}_area'] = 0
+            obj[f'node_{i}_id'] = i
+            obj[f'node_{i}_width'] = 4
+            obj[f'node_{i}_type'] = 0
+            obj[f'node_{i}_flags'] = 0
+
+        mat = bpy.data.materials.get('VehicleNode_Mat')
+        if not mat:
+            mat = bpy.data.materials.new('VehicleNode_Mat')
+            mat.use_nodes = True
+            for n in mat.node_tree.nodes:
+                if n.type == 'BSDF_PRINCIPLED':
+                    n.inputs['Base Color'].default_value = (0.0, 0.5, 1.0, 0.8)
+                    break
+            mat.diffuse_color = (0.0, 0.5, 1.0, 0.8)
+        mesh.materials.append(mat)
+
+        col = bpy.data.collections.get("Path Nodes")
+        if not col:
+            col = bpy.data.collections.new("Path Nodes")
+            context.scene.collection.children.link(col)
+        col.objects.link(obj)
+
+        context.view_layer.objects.active = obj
+        obj.select_set(True)
+
+        self.report({'INFO'}, T("Авто путь создан. Добавляйте вершины в Edit Mode"))
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_add_ped_path(bpy.types.Operator):
+    """Создать новый пешеходный путь (меш с вершинами)"""
+    bl_idname = "gtatools.add_ped_path"
+    bl_label = "Add Ped Path"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        mesh = bpy.data.meshes.new("PedPath_New")
+        loc = context.scene.cursor.location
+        verts = [(loc.x, loc.y, loc.z), (loc.x + 10, loc.y, loc.z)]
+        edges = [(0, 1)]
+        mesh.from_pydata(verts, edges, [])
+        mesh.update()
+
+        obj = bpy.data.objects.new("PedPath_New", mesh)
+        obj['path_type'] = 'nodes_ped'
+
+        for i in range(2):
+            obj[f'node_{i}_link'] = 0
+            obj[f'node_{i}_area'] = 0
+            obj[f'node_{i}_id'] = i
+            obj[f'node_{i}_width'] = 2
+            obj[f'node_{i}_type'] = 0
+            obj[f'node_{i}_flags'] = 0
+
+        mat = bpy.data.materials.get('PedNode_Mat')
+        if not mat:
+            mat = bpy.data.materials.new('PedNode_Mat')
+            mat.use_nodes = True
+            for n in mat.node_tree.nodes:
+                if n.type == 'BSDF_PRINCIPLED':
+                    n.inputs['Base Color'].default_value = (0.0, 1.0, 0.3, 0.8)
+                    break
+            mat.diffuse_color = (0.0, 1.0, 0.3, 0.8)
+        mesh.materials.append(mat)
+
+        col = bpy.data.collections.get("Path Nodes")
+        if not col:
+            col = bpy.data.collections.new("Path Nodes")
+            context.scene.collection.children.link(col)
+        col.objects.link(obj)
+
+        context.view_layer.objects.active = obj
+        obj.select_set(True)
+
+        self.report({'INFO'}, T("Пешеходный путь создан. Добавляйте вершины в Edit Mode"))
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_mark_station(bpy.types.Operator):
+    """Отметить/снять выбранные точки кривой как станции (flag=1)"""
+    bl_idname = "gtatools.mark_station"
+    bl_label = "Toggle Station"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj and obj.type == 'CURVE' and obj.get('path_type') == 'track'
+                and context.mode == 'EDIT_CURVE')
+
+    def execute(self, context):
+        obj = context.active_object
+        raw = obj.get('station_indices', '[]')
+        try:
+            stations = set(eval(raw))
+        except Exception:
+            stations = set()
+
+        # Toggle selected points
+        idx = 0
+        toggled = 0
+        for spline in obj.data.splines:
+            for point in spline.points:
+                if point.select:
+                    if idx in stations:
+                        stations.discard(idx)
+                    else:
+                        stations.add(idx)
+                    toggled += 1
+                idx += 1
+
+        obj['station_indices'] = str(sorted(stations))
+        self.report({'INFO'}, f"{toggled} points toggled, {len(stations)} stations total")
+        return {'FINISHED'}
+
+
 class GTATOOLS_PT_export_panel(bpy.types.Panel):
     """Панель экспорта GTA моделей"""
     bl_label = "Export"
@@ -5714,7 +6365,9 @@ class GTATOOLS_PT_bake_settings_subpanel(bpy.types.Panel):
 
 
 def _presets_dir():
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'presets')
+    d = os.path.join(_get_user_config_dir(), 'presets')
+    os.makedirs(d, exist_ok=True)
+    return d
 
 
 def _load_prelight_presets():
@@ -6134,6 +6787,506 @@ class GTATOOLS_PT_lightmap_panel(bpy.types.Panel):
             box.label(text=T("Нажмите кнопку для генерации"))
 
 
+class GTATOOLS_OT_add_water(bpy.types.Operator):
+    """Создать водный полигон с параметрами GTA SA"""
+    bl_idname = "gtatools.add_water"
+    bl_label = "Add Water Plane"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    size: FloatProperty(name="Size", default=100.0, min=4.0)
+    subdivisions: IntProperty(name="Subdivisions", default=0, min=0, max=10)
+    water_flag: EnumProperty(
+        name="Water Type",
+        items=[
+            ('0', T("Обычная / Невидимая"), T("Глубокая вода, не отображается (подводные зоны)")),
+            ('1', T("Обычная / Видимая"), T("Глубокая вода с волнами (океан, реки)")),
+            ('2', T("Мелкая / Невидимая"), T("Мелкая вода, не отображается (анимация хождения по воде)")),
+            ('3', T("Мелкая / Видимая"), T("Мелкая вода, отображается (лужи, пруды)")),
+        ],
+        default='1',
+    )
+    wave_height: FloatProperty(name="Wave Height", default=0.1, min=0.0, max=10.0)
+    speed: FloatProperty(name="Speed", default=0.05, min=0.0, max=5.0)
+
+    def execute(self, context):
+        import bmesh
+
+        mesh = bpy.data.meshes.new("Water")
+        bm = bmesh.new()
+
+        # Create water parameter layers
+        speed_x_layer = bm.verts.layers.float.new('water_speed_x')
+        speed_y_layer = bm.verts.layers.float.new('water_speed_y')
+        speed_z_layer = bm.verts.layers.float.new('water_speed_z')
+        wave_layer = bm.verts.layers.float.new('water_wave_height')
+
+        s = self.size / 2.0
+        z = context.scene.cursor.location.z
+
+        # Create base quad
+        v1 = bm.verts.new((-s, -s, z))
+        v2 = bm.verts.new((s, -s, z))
+        v3 = bm.verts.new((s, s, z))
+        v4 = bm.verts.new((-s, s, z))
+
+        for v in [v1, v2, v3, v4]:
+            v[speed_x_layer] = 0.0
+            v[speed_y_layer] = 0.0
+            v[speed_z_layer] = self.speed
+            v[wave_layer] = self.wave_height
+
+        bm.faces.new([v1, v2, v3, v4])
+
+        # Subdivide if needed
+        if self.subdivisions > 0:
+            bmesh.ops.subdivide_edges(bm, edges=bm.edges[:], cuts=self.subdivisions)
+            for v in bm.verts:
+                v[speed_x_layer] = 0.0
+                v[speed_y_layer] = 0.0
+                v[speed_z_layer] = self.speed
+                v[wave_layer] = self.wave_height
+
+        # Generate planar UV from XY coordinates
+        uv_layer = bm.loops.layers.uv.new('UVMap')
+        uv_scale = 1.0 / 100.0
+        for face in bm.faces:
+            for loop in face.loops:
+                loop[uv_layer].uv = (loop.vert.co.x * uv_scale, loop.vert.co.y * uv_scale)
+
+        bm.to_mesh(mesh)
+        bm.free()
+
+        obj = bpy.data.objects.new("Water", mesh)
+        obj['water_flag'] = int(self.water_flag)
+
+        # Water material with texture
+        from .ops.water_import import _get_water_material
+        mat = _get_water_material()
+        mesh.materials.append(mat)
+
+        # Add to Water collection
+        water_col = bpy.data.collections.get("Water")
+        if not water_col:
+            water_col = bpy.data.collections.new("Water")
+            context.scene.collection.children.link(water_col)
+        water_col.objects.link(obj)
+
+        # Position at cursor XY
+        obj.location.x = context.scene.cursor.location.x
+        obj.location.y = context.scene.cursor.location.y
+
+        self.report({'INFO'}, f"Water plane created ({self.size}x{self.size})")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_water_snap_grid(bpy.types.Operator):
+    """Привязать вершины воды к кратным 4 координатам (требование GTA SA)"""
+    bl_idname = "gtatools.water_snap_grid"
+    bl_label = "Snap to Grid (x4)"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        count = 0
+        for obj in context.selected_objects:
+            if obj.type != 'MESH':
+                continue
+            mesh = obj.data
+            mat_w = obj.matrix_world
+            for vert in mesh.vertices:
+                co = mat_w @ vert.co
+                new_x = round(co.x / 4.0) * 4.0
+                new_y = round(co.y / 4.0) * 4.0
+                inv = mat_w.inverted()
+                from mathutils import Vector
+                new_co = inv @ Vector((new_x, new_y, co.z))
+                vert.co = new_co
+                count += 1
+            mesh.update()
+        self.report({'INFO'}, f"{T('Привязано вершин:')} {count}")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_water_set_params(bpy.types.Operator):
+    """Задать параметры воды для выделенных объектов"""
+    bl_idname = "gtatools.water_set_params"
+    bl_label = "Set Water Parameters"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        scene = context.scene
+        flag = int(scene.gtatools_water_flag)
+        speed_x = scene.gtatools_water_speed_x
+        speed_y = scene.gtatools_water_speed_y
+        speed_z = scene.gtatools_water_speed_z
+        wave = scene.gtatools_water_wave_height
+
+        import bmesh
+        count = 0
+        for obj in context.selected_objects:
+            if obj.type != 'MESH':
+                continue
+            obj['water_flag'] = flag
+            mesh = obj.data
+            bm = bmesh.new()
+            bm.from_mesh(mesh)
+
+            sx = bm.verts.layers.float.get('water_speed_x') or bm.verts.layers.float.new('water_speed_x')
+            sy = bm.verts.layers.float.get('water_speed_y') or bm.verts.layers.float.new('water_speed_y')
+            sz = bm.verts.layers.float.get('water_speed_z') or bm.verts.layers.float.new('water_speed_z')
+            wh = bm.verts.layers.float.get('water_wave_height') or bm.verts.layers.float.new('water_wave_height')
+
+            for v in bm.verts:
+                v[sx] = speed_x
+                v[sy] = speed_y
+                v[sz] = speed_z
+                v[wh] = wave
+
+            bm.to_mesh(mesh)
+            bm.free()
+            count += 1
+
+        self.report({'INFO'}, f"{T('Параметры воды:')} {count} objects")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_water_stitch(bpy.types.Operator):
+    """Сшить края двух водных плоскостей (выровнять ближайшие вершины)"""
+    bl_idname = "gtatools.water_stitch"
+    bl_label = "Stitch Water Edges"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    threshold: FloatProperty(name="Threshold", default=1.0, min=0.01, max=50.0)
+
+    def execute(self, context):
+        from mathutils import kdtree
+
+        mesh_objects = [o for o in context.selected_objects if o.type == 'MESH']
+        if len(mesh_objects) < 2:
+            self.report({'ERROR'}, T("Выделите минимум 2 меш объекта"))
+            return {'CANCELLED'}
+
+        # Collect all boundary vertices (edges with only 1 face)
+        all_boundary = []  # [(world_co, obj, vert_index)]
+
+        for obj in mesh_objects:
+            mesh = obj.data
+            mat_w = obj.matrix_world
+
+            # Find boundary vertices
+            vert_face_count = [0] * len(mesh.vertices)
+            for poly in mesh.polygons:
+                for vi in poly.vertices:
+                    vert_face_count[vi] += 1
+
+            for edge in mesh.edges:
+                edge_faces = 0
+                for poly in mesh.polygons:
+                    verts = list(poly.vertices)
+                    if edge.vertices[0] in verts and edge.vertices[1] in verts:
+                        edge_faces += 1
+                if edge_faces == 1:  # boundary edge
+                    for vi in edge.vertices:
+                        co = mat_w @ mesh.vertices[vi].co
+                        all_boundary.append((co, obj, vi))
+
+        if not all_boundary:
+            self.report({'WARNING'}, T("Нет граничных вершин"))
+            return {'CANCELLED'}
+
+        # Match boundary vertices between objects
+        stitched = 0
+        for i, (co1, obj1, vi1) in enumerate(all_boundary):
+            for j, (co2, obj2, vi2) in enumerate(all_boundary):
+                if obj1 == obj2 or j <= i:
+                    continue
+                dist = (co1 - co2).length
+                if dist < self.threshold:
+                    # Average position
+                    avg = (co1 + co2) / 2.0
+                    inv1 = obj1.matrix_world.inverted()
+                    inv2 = obj2.matrix_world.inverted()
+                    obj1.data.vertices[vi1].co = inv1 @ avg
+                    obj2.data.vertices[vi2].co = inv2 @ avg
+                    stitched += 1
+
+        for obj in mesh_objects:
+            obj.data.update()
+
+        self.report({'INFO'}, f"{T('Сшито вершин:')} {stitched}")
+        return {'FINISHED'}
+
+
+class GTATOOLS_PT_water_panel(bpy.types.Panel):
+    """Панель Water IO"""
+    bl_label = "Water"
+    bl_idname = "GTATOOLS_PT_water_panel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'GTA Tools'
+    bl_parent_id = "GTATOOLS_PT_main_panel"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw(self, context):
+        layout = self.layout
+        scene = context.scene
+
+        # Import / Export
+        row = layout.row(align=True)
+        row.operator("gtatools.import_water", text=T("Импорт"), icon='IMPORT')
+        row.operator("gtatools.export_water", text=T("Экспорт"), icon='EXPORT')
+
+        layout.separator()
+
+        # Add water
+        layout.operator("gtatools.add_water", text=T("Добавить воду"), icon='SHADING_RENDERED')
+
+        layout.separator()
+
+        # Water parameters
+        box = layout.box()
+        box.label(text=T("Параметры воды:"), icon='PREFERENCES')
+        flag_labels = {
+            '0': T("Обычная / Невидимая"),
+            '1': T("Обычная / Видимая"),
+            '2': T("Мелкая / Невидимая"),
+            '3': T("Мелкая / Видимая"),
+        }
+        box.prop_menu_enum(scene, "gtatools_water_flag", text=flag_labels.get(scene.gtatools_water_flag, "?"))
+        box.label(text=T("Скорость течения:"))
+        row = box.row(align=True)
+        row.prop(scene, "gtatools_water_speed_x", text="X")
+        row.prop(scene, "gtatools_water_speed_y", text="Y")
+        row.prop(scene, "gtatools_water_speed_z", text="Z")
+        box.prop(scene, "gtatools_water_wave_height", text=T("Волны"))
+        box.operator("gtatools.water_set_params", text=T("Применить"), icon='CHECKMARK')
+
+        layout.separator()
+
+        # Tools
+        box = layout.box()
+        box.label(text=T("Инструменты:"), icon='TOOL_SETTINGS')
+        box.operator("gtatools.water_snap_grid", text=T("Привязка к сетке (x4)"), icon='SNAP_GRID')
+        box.operator("gtatools.water_stitch", text=T("Сшить края"), icon='AUTOMERGE_ON')
+
+        # Show active object water info
+        obj = context.active_object
+        if obj and obj.type == 'MESH' and 'water_flag' in obj:
+            layout.separator()
+            box = layout.box()
+            flag = obj.get('water_flag', -1)
+            flag_names = {
+                0: "Default / Invisible",
+                1: "Default / Visible",
+                2: "Shallow / Invisible",
+                3: "Shallow / Visible",
+            }
+            box.label(text=f"{obj.name}: {flag_names.get(flag, '?')} (flag={flag})", icon='INFO')
+
+
+# =============================================================================
+# IFP (ANIMATION) OPERATORS
+# =============================================================================
+
+class GTATOOLS_OT_import_ifp(bpy.types.Operator):
+    """Импорт IFP — анимации GTA SA"""
+    bl_idname = "gtatools.import_ifp"
+    bl_label = "Import IFP"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    filepath: StringProperty(subtype='FILE_PATH')
+    filter_glob: StringProperty(default="*.ifp", options={'HIDDEN'})
+
+    def invoke(self, context, event):
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        from .ops.ifp_import import import_ifp
+        try:
+            actions = import_ifp(filepath=self.filepath, context=context)
+            self.report({'INFO'}, f"IFP: {len(actions)} animations imported")
+            return {'FINISHED'}
+        except Exception as e:
+            self.report({'ERROR'}, f"IFP import error: {str(e)}")
+            return {'CANCELLED'}
+
+
+class GTATOOLS_OT_export_ifp(bpy.types.Operator):
+    """Экспорт IFP — анимации GTA SA"""
+    bl_idname = "gtatools.export_ifp"
+    bl_label = "Export IFP"
+    bl_options = {'REGISTER'}
+
+    filepath: StringProperty(subtype='FILE_PATH')
+    filter_glob: StringProperty(default="*.ifp", options={'HIDDEN'})
+    package_name: StringProperty(name="Package", default="custom")
+
+    def invoke(self, context, event):
+        if not self.filepath:
+            self.filepath = "custom.ifp"
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        from .ops.ifp_export import export_ifp
+        try:
+            count = export_ifp(filepath=self.filepath, package_name=self.package_name)
+            self.report({'INFO'}, f"IFP: {count} animations exported")
+            return {'FINISHED'}
+        except Exception as e:
+            self.report({'ERROR'}, f"IFP export error: {str(e)}")
+            return {'CANCELLED'}
+
+
+class GTATOOLS_OT_apply_ifp(bpy.types.Operator):
+    """Применить IFP анимацию к выделенному скелету"""
+    bl_idname = "gtatools.apply_ifp"
+    bl_label = "Apply IFP Animation"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj and obj.type == 'ARMATURE' and
+                context.scene.gtatools_ifp_action != '')
+
+    def execute(self, context):
+        from .ops.ifp_import import apply_ifp_action
+        name = context.scene.gtatools_ifp_action
+        armature = context.active_object
+
+        if not armature or armature.type != 'ARMATURE':
+            self.report({'ERROR'}, T("Выделите скелет (Armature)"))
+            return {'CANCELLED'}
+
+        ok, msg = apply_ifp_action(name, armature, context)
+        if ok:
+            self.report({'INFO'}, msg)
+            return {'FINISHED'}
+        else:
+            self.report({'ERROR'}, msg)
+            return {'CANCELLED'}
+
+
+class GTATOOLS_PT_anim_panel(bpy.types.Panel):
+    """Панель анимаций IFP"""
+    bl_label = T("Анимации")
+    bl_idname = "GTATOOLS_PT_anim_panel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'GTA Tools'
+    bl_parent_id = "GTATOOLS_PT_main_panel"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw(self, context):
+        layout = self.layout
+
+        box = layout.box()
+        box.label(text=T("Анимации IFP (GTA SA):"), icon='ACTION')
+        row = box.row(align=True)
+        row.operator("gtatools.import_ifp", text=T("Импорт"), icon='IMPORT')
+        row.operator("gtatools.export_ifp", text=T("Экспорт"), icon='EXPORT')
+
+        # IFP actions list
+        ifp_actions = [a for a in bpy.data.actions if a.get('ifp_source')]
+        if ifp_actions:
+            box.label(text=f"{len(ifp_actions)} {T('анимаций загружено')}")
+
+            obj = context.active_object
+            if obj and obj.type == 'ARMATURE':
+                # Dropdown with search
+                box.prop_search(context.scene, "gtatools_ifp_action", bpy.data, "actions",
+                                text=T("Анимация"), icon='ACTION')
+                box.operator("gtatools.apply_ifp", text=T("Применить анимацию"), icon='PLAY')
+
+                if obj.animation_data and obj.animation_data.action:
+                    action = obj.animation_data.action
+                    box.label(text=f"{T('Текущая')}: {action.name}", icon='ARMATURE_DATA')
+            else:
+                box.label(text=T("Выделите скелет для применения"), icon='INFO')
+
+
+class GTATOOLS_PT_paths_panel(bpy.types.Panel):
+    """Панель Path IO"""
+    bl_label = T("Пути")
+    bl_idname = "GTATOOLS_PT_paths_panel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'GTA Tools'
+    bl_parent_id = "GTATOOLS_PT_main_panel"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw(self, context):
+        layout = self.layout
+
+        # Convert to path button (top)
+        obj = context.active_object
+        if obj and (obj.type == 'CURVE' or (obj.type == 'MESH' and len(obj.data.polygons) == 0)):
+            if obj.get('path_type') != 'path_ipl':
+                layout.operator("gtatools.convert_to_path", text=T("Конвертировать в путь"), icon='CURVE_PATH')
+
+        # Paths IPL (main — for gta.dat)
+        box = layout.box()
+        box.label(text=T("Пути (paths.ipl):"), icon='TRACKING')
+        row = box.row(align=True)
+        row.operator("gtatools.import_paths_ipl", text=T("Импорт"), icon='IMPORT')
+        row.operator("gtatools.export_paths_ipl", text=T("Экспорт"), icon='EXPORT')
+        box.operator("gtatools.add_path_ipl", text=T("Создать путь"), icon='ADD')
+
+        layout.separator()
+
+        # Train tracks
+        box = layout.box()
+        box.label(text=T("Ж/д пути:"), icon='CON_FOLLOWPATH')
+        row = box.row(align=True)
+        row.operator("gtatools.import_track", text=T("Импорт"), icon='IMPORT')
+        row.operator("gtatools.export_track", text=T("Экспорт"), icon='EXPORT')
+        box.operator("gtatools.add_track", text=T("Создать ж/д путь"), icon='ADD')
+        obj = context.active_object
+        if (obj and obj.type == 'CURVE' and obj.get('path_type') == 'track'
+                and context.mode == 'EDIT_CURVE'):
+            box.operator("gtatools.mark_station", text=T("Станция (вкл/выкл)"), icon='DECORATE_KEYFRAME')
+
+        layout.separator()
+
+        # Compiled nodes (NODES*.DAT)
+        box = layout.box()
+        box.label(text=T("Скомпилированные (NODES):"), icon='FILE_CACHE')
+        row = box.row(align=True)
+        row.operator("gtatools.import_nodes", text=T("Импорт"), icon='IMPORT')
+        row.operator("gtatools.export_nodes", text=T("Экспорт"), icon='EXPORT')
+
+        # Info about selected path object
+        obj = context.active_object
+        if obj and 'path_type' in obj:
+            layout.separator()
+            box = layout.box()
+            pt = obj.get('path_type', '')
+            type_names = {
+                'track': T("Ж/д путь"),
+                'path_ipl': T("Путь IPL"),
+                'nodes_vehicle': T("Авто пути"),
+                'nodes_ped': T("Пешеходные пути"),
+                'nodes_navi': T("Навигационные точки"),
+            }
+            label = type_names.get(pt, pt)
+            if pt == 'path_ipl':
+                gt = obj.get('group_type', 1)
+                gt_label = T("Авто") if gt == 1 else T("Пешеходный")
+                count = sum(len(s.points) for s in obj.data.splines)
+                box.label(text=f"{obj.name}: {gt_label} ({count}/12 pts)", icon='INFO')
+            elif obj.type == 'CURVE':
+                count = sum(len(s.points) for s in obj.data.splines)
+                stations = obj.get('station_indices', '[]')
+                try:
+                    num_st = len(eval(stations))
+                except Exception:
+                    num_st = 0
+                box.label(text=f"{obj.name}: {label} ({count} pts, {num_st} stations)", icon='INFO')
+            elif obj.type == 'MESH':
+                box.label(text=f"{obj.name}: {label} ({len(obj.data.vertices)} nodes)", icon='INFO')
+
+
 # =============================================================================
 # =============================================================================
 # REGISTRATION
@@ -6225,6 +7378,27 @@ classes = (
     GTATOOLS_OT_file_import_col,
     GTATOOLS_OT_file_import_txd,
     GTATOOLS_OT_import_from_img,
+    GTATOOLS_OT_import_water,
+    GTATOOLS_OT_export_water,
+    GTATOOLS_OT_add_water,
+    GTATOOLS_OT_water_snap_grid,
+    GTATOOLS_OT_water_set_params,
+    GTATOOLS_OT_water_stitch,
+    GTATOOLS_OT_import_track,
+    GTATOOLS_OT_export_track,
+    GTATOOLS_OT_import_nodes,
+    GTATOOLS_OT_export_nodes,
+    GTATOOLS_OT_import_ifp,
+    GTATOOLS_OT_export_ifp,
+    GTATOOLS_OT_apply_ifp,
+    GTATOOLS_OT_import_paths_ipl,
+    GTATOOLS_OT_export_paths_ipl,
+    GTATOOLS_OT_convert_to_path,
+    GTATOOLS_OT_add_path_ipl,
+    GTATOOLS_OT_add_track,
+    GTATOOLS_OT_add_vehicle_path,
+    GTATOOLS_OT_add_ped_path,
+    GTATOOLS_OT_mark_station,
     GTATOOLS_OT_export_to_img,
     GTATOOLS_OT_upsert_ide,
     GTATOOLS_OT_upsert_ipl,
@@ -6265,6 +7439,9 @@ classes = (
     GTATOOLS_PT_2dfx_panel,
     GTATOOLS_PT_vertex_paint_panel,
     GTATOOLS_PT_lightmap_panel,
+    GTATOOLS_PT_water_panel,
+    GTATOOLS_PT_anim_panel,
+    GTATOOLS_PT_paths_panel,
     GTATOOLS_PT_uv_tools_panel,
     GTATOOLS_OT_add_gtasa_model,
     VIEW3D_MT_gtasa_add_menu,
@@ -6275,13 +7452,19 @@ classes = (
 
 _PATHS_FILE = None
 
+def _get_user_config_dir():
+    """Get INU_Preset folder next to the addon folder (not inside it)."""
+    addon_dir = os.path.dirname(os.path.abspath(__file__))  # .../addons/INU_tools
+    addons_dir = os.path.dirname(addon_dir)                  # .../addons/
+    d = os.path.join(addons_dir, 'INU_Preset')
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
 def _get_paths_file():
     global _PATHS_FILE
     if _PATHS_FILE is None:
-        config = bpy.utils.resource_path('USER')
-        d = os.path.join(config, 'config')
-        os.makedirs(d, exist_ok=True)
-        _PATHS_FILE = os.path.join(d, 'inu_tools_paths.json')
+        _PATHS_FILE = os.path.join(_get_user_config_dir(), 'paths.json')
     return _PATHS_FILE
 
 _SAVED_PATH_KEYS = [
@@ -6316,9 +7499,7 @@ def _load_paths(scene):
             data = json.load(f)
         for key, val in data.items():
             if key in _SAVED_PATH_KEYS and hasattr(scene, key):
-                cur = getattr(scene, key, '')
-                if not cur:  # Only set if current is empty
-                    setattr(scene, key, val)
+                setattr(scene, key, val)
     except:
         pass
 
@@ -6573,6 +7754,37 @@ def register():
         default="",
         subtype='DIR_PATH',
         update=_save_paths,
+    )
+
+    # IFP action selector
+    bpy.types.Scene.gtatools_ifp_action = StringProperty(
+        name="IFP Action",
+        description="Select IFP animation to apply",
+    )
+
+    # Water settings
+    bpy.types.Scene.gtatools_water_flag = EnumProperty(
+        name="Water Type",
+        description="Water polygon visibility and depth type",
+        items=[
+            ('0', T("Обычная / Невидимая"), T("Глубокая вода, не отображается (подводные зоны)")),
+            ('1', T("Обычная / Видимая"), T("Глубокая вода с волнами (океан, реки)")),
+            ('2', T("Мелкая / Невидимая"), T("Мелкая вода, не отображается (анимация хождения по воде)")),
+            ('3', T("Мелкая / Видимая"), T("Мелкая вода, отображается (лужи, пруды)")),
+        ],
+        default='1',
+    )
+    bpy.types.Scene.gtatools_water_speed_x = FloatProperty(
+        name="Speed X", default=0.0, min=-5.0, max=5.0
+    )
+    bpy.types.Scene.gtatools_water_speed_y = FloatProperty(
+        name="Speed Y", default=0.0, min=-5.0, max=5.0
+    )
+    bpy.types.Scene.gtatools_water_speed_z = FloatProperty(
+        name="Speed Z", default=0.05, min=-5.0, max=5.0
+    )
+    bpy.types.Scene.gtatools_water_wave_height = FloatProperty(
+        name="Wave Height", default=0.1, min=0.0, max=10.0
     )
 
     # Bake settings (calibrated for 3Ds Max-like output)
@@ -6908,6 +8120,12 @@ def unregister():
     del bpy.types.Scene.gtatools_prelight_preset
     del bpy.types.Scene.gtatools_bake_gamma
     del bpy.types.Scene.gtatools_bake_intensity
+    del bpy.types.Scene.gtatools_ifp_action
+    del bpy.types.Scene.gtatools_water_flag
+    del bpy.types.Scene.gtatools_water_speed_x
+    del bpy.types.Scene.gtatools_water_speed_y
+    del bpy.types.Scene.gtatools_water_speed_z
+    del bpy.types.Scene.gtatools_water_wave_height
     del bpy.types.Scene.gtatools_bake_ambient
     del bpy.types.Scene.gtatools_vc_analysis
     del bpy.types.Scene.gtatools_lightmap_result
