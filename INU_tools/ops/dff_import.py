@@ -619,6 +619,11 @@ def import_dff(filepath: str, context=None):
         _set_object_props(obj, geom)
         # Store original UV layer count for round-trip
         obj['dff_num_uv_layers'] = len(geom.uv_layers)
+        obj['dff_orig_vert_count'] = len(obj.data.vertices)
+        # Store original geometry flags for round-trip
+        obj['dff_geom_flags'] = geom._import_flags if hasattr(geom, '_import_flags') else 0
+        # Store mesh frame index from atomic (needed for skinned export with edited geometry)
+        obj['dff_mesh_frame_index'] = fi
 
         # Store original frame data for round-trip export
         if frame:

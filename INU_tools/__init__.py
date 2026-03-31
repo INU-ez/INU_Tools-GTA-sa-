@@ -686,6 +686,45 @@ class GTATOOLS_OT_clean_geometry(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class GTATOOLS_OT_clear_raw_dff(bpy.types.Operator):
+    """Очистить сохранённые raw DFF данные для экспорта отредактированной геометрии"""
+    bl_idname = "gtatools.clear_raw_dff"
+    bl_label = "Clear Raw DFF Data"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        obj = context.active_object
+        if obj is None:
+            self.report({'ERROR'}, T("Нет активного объекта!"))
+            return {'CANCELLED'}
+
+        # Find armature (from mesh or directly)
+        arm_obj = None
+        if obj.type == 'MESH':
+            for mod in obj.modifiers:
+                if mod.type == 'ARMATURE' and mod.object:
+                    arm_obj = mod.object
+                    break
+        elif obj.type == 'ARMATURE':
+            arm_obj = obj
+
+        if arm_obj is None:
+            self.report({'ERROR'}, T("Не найден Armature!"))
+            return {'CANCELLED'}
+
+        cleared = []
+        for key in ('dff_raw_geometry_list', 'dff_raw_atomics'):
+            if key in arm_obj:
+                del arm_obj[key]
+                cleared.append(key)
+
+        if cleared:
+            self.report({'INFO'}, f"Cleared: {', '.join(cleared)}")
+        else:
+            self.report({'INFO'}, "No raw DFF data to clear")
+        return {'FINISHED'}
+
+
 class GTATOOLS_OT_export_txd(bpy.types.Operator, ExportHelper):
     """Экспортировать текстуры в TXD архив"""
     bl_idname = "gtatools.export_txd"
@@ -5202,6 +5241,7 @@ class GTATOOLS_PT_export_panel(bpy.types.Panel):
         row.operator("gtatools.export_dff", text="DFF", icon='MESH_DATA')
         row.operator("gtatools.export_col", text="COL", icon='MESH_CUBE')
 
+
         row = layout.row(align=True)
         row.operator("gtatools.export_txd", text="TXD", icon='TEXTURE')
 
@@ -7202,6 +7242,7 @@ class GTATOOLS_PT_anim_panel(bpy.types.Panel):
                 if obj.animation_data and obj.animation_data.action:
                     action = obj.animation_data.action
                     box.label(text=f"{T('Текущая')}: {action.name}", icon='ARMATURE_DATA')
+
             else:
                 box.label(text=T("Выделите скелет для применения"), icon='INFO')
 
@@ -7298,6 +7339,7 @@ classes = (
     GTATOOLS_FillColorItem,
     GTATOOLS_OT_check_geometry,
     GTATOOLS_OT_check_ngons,
+    GTATOOLS_OT_clear_raw_dff,
     GTATOOLS_OT_export_txd,
     GTATOOLS_OT_export_dff,
     GTATOOLS_OT_export_col,

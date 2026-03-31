@@ -401,10 +401,13 @@ def _process_mesh(obj, clump: DffClump, frame_index: int):
     # Vertex data lists (will grow as we split)
     positions = []
     normals_list = []
+    # Track original bmesh vertex index for each output vertex (for skin data)
+    split_origin = []
 
     for v in bm.verts:
         positions.append((v.co.x, v.co.y, v.co.z))
         normals_list.append((v.normal.x, v.normal.y, v.normal.z))
+        split_origin.append(v.index)
 
     # Maps: BMLoop object → vertex index in output
     # Use loop objects (not loop.index) to avoid stale/duplicate index issues
@@ -427,6 +430,7 @@ def _process_mesh(obj, clump: DffClump, frame_index: int):
                 new_idx = len(positions)
                 positions.append((vert.co.x, vert.co.y, vert.co.z))
                 normals_list.append((vert.normal.x, vert.normal.y, vert.normal.z))
+                split_origin.append(vert.index)
                 for loop in group:
                     loop_vert_map[loop] = new_idx
 
@@ -477,14 +481,23 @@ def _process_mesh(obj, clump: DffClump, frame_index: int):
                 night_colors[out_idx] = RGBA(
                     int(c[0]*255), int(c[1]*255), int(c[2]*255), alpha)
 
-    # ── Bounding sphere ──
-    bb = obj.bound_box
-    center = mathutils.Vector((0, 0, 0))
-    for corner in bb:
-        center += mathutils.Vector(corner)
-    center /= 8.0
-    center = obj.matrix_world @ center
-    radius = 1.732 * max(obj.dimensions) / 2.0
+    # ── Bounding sphere (from actual vertex positions, local space) ──
+    if positions:
+        xs = [p[0] for p in positions]
+        ys = [p[1] for p in positions]
+        zs = [p[2] for p in positions]
+        cx = (min(xs) + max(xs)) / 2.0
+        cy = (min(ys) + max(ys)) / 2.0
+        cz = (min(zs) + max(zs)) / 2.0
+        radius = 0.0
+        for p in positions:
+            d = ((p[0] - cx)**2 + (p[1] - cy)**2 + (p[2] - cz)**2) ** 0.5
+            if d > radius:
+                radius = d
+        center = mathutils.Vector((cx, cy, cz))
+    else:
+        center = mathutils.Vector((0, 0, 0))
+        radius = 0.0
 
     # ── Materials ──
     materials = []
@@ -496,6 +509,7 @@ def _process_mesh(obj, clump: DffClump, frame_index: int):
 
     # ── Build geometry ──
     geom = DffGeometry()
+    geom.original_flags = obj.get('dff_geom_flags', 0)
     geom.vertices = positions
     geom.normals = normals_list
     geom.triangles = triangles
@@ -571,7 +585,9 @@ def _process_mesh(obj, clump: DffClump, frame_index: int):
                     mat.append([inv_mat[row][col] for col in range(4)])
                 skin.bone_matrices.append(mat)
 
-        # Vertex weights
+        # Vertex weights — build per-original-vertex first, then expand for splits
+        bone_name_to_idx = {name: i for i, name in enumerate(bone_names)}
+        orig_skin = []  # per original bmesh vertex: (indices, weights)
         for v_idx in range(num_original):
             vert = mesh.vertices[v_idx]
             bone_idx = [0, 0, 0, 0]
@@ -580,8 +596,8 @@ def _process_mesh(obj, clump: DffClump, frame_index: int):
             entries = []
             for g in vert.groups:
                 vg = obj.vertex_groups[g.group]
-                if vg.name in bone_names:
-                    bi = bone_names.index(vg.name)
+                bi = bone_name_to_idx.get(vg.name)
+                if bi is not None:
                     entries.append((bi, g.weight))
 
             entries.sort(key=lambda x: -x[1])
@@ -594,29 +610,35 @@ def _process_mesh(obj, clump: DffClump, frame_index: int):
             if total > 0:
                 bone_wgt = [w / total for w in bone_wgt]
 
-            skin.bone_indices.append(tuple(bone_idx))
-            skin.bone_weights.append(tuple(bone_wgt))
-
-        # For split vertices, copy from original
-        for v_idx in range(num_original, num_verts):
-            # Find original vertex this was cloned from
-            # The position matches, so find it
-            pos = positions[v_idx]
-            for orig_idx in range(num_original):
-                if positions[orig_idx] == pos:
-                    skin.bone_indices.append(skin.bone_indices[orig_idx])
-                    skin.bone_weights.append(skin.bone_weights[orig_idx])
+            # Kams: root bone (index 0) must be last in the 4-slot array
+            for i in range(3):  # check slots 0,1,2
+                if bone_idx[i] == 0 and bone_wgt[i] > 0:
+                    bone_idx[i], bone_idx[3] = bone_idx[3], bone_idx[i]
+                    bone_wgt[i], bone_wgt[3] = bone_wgt[3], bone_wgt[i]
                     break
+
+            orig_skin.append((tuple(bone_idx), tuple(bone_wgt)))
+
+        # Map to output vertices using split_origin (O(n))
+        for v_idx in range(num_verts):
+            orig_idx = split_origin[v_idx]
+            if orig_idx < len(orig_skin):
+                skin.bone_indices.append(orig_skin[orig_idx][0])
+                skin.bone_weights.append(orig_skin[orig_idx][1])
             else:
                 skin.bone_indices.append((0, 0, 0, 0))
                 skin.bone_weights.append((0.0, 0.0, 0.0, 0.0))
 
         # Compute bones_used only if not restored from original
+        # Kams: bones_used excludes bone 0 (root) and only counts non-zero weight entries
         if not skin.bones_used:
             used_set = set()
-            for indices in skin.bone_indices:
-                for bi in indices:
-                    used_set.add(bi)
+            for vi in range(len(skin.bone_indices)):
+                indices = skin.bone_indices[vi]
+                weights = skin.bone_weights[vi]
+                for slot in range(4):
+                    if indices[slot] != 0 and weights[slot] > 0:
+                        used_set.add(indices[slot])
             skin.bones_used = sorted(used_set)
             skin.num_used = len(skin.bones_used)
             skin.max_weights = 4
@@ -630,6 +652,16 @@ def _process_mesh(obj, clump: DffClump, frame_index: int):
         frame_index=frame_index,
         geometry_index=geom_idx,
     ))
+
+    # Debug summary
+    print(f"[DFF Export] _process_mesh: verts={num_verts} tris={len(triangles)} "
+          f"uv_layers={max_uv} has_skin={geom.skin is not None} "
+          f"frame_index={frame_index} geom_flags=0x{geom._build_flags():X}")
+    if geom.skin:
+        skin = geom.skin
+        print(f"[DFF Export]   SkinPLG: bones={skin.num_bones} used={skin.num_used} "
+              f"max_w={skin.max_weights} bones_used={skin.bones_used[:10]} "
+              f"vert_count={len(skin.bone_indices)} matrices={len(skin.bone_matrices)}")
 
     bm.free()
     eval_obj.to_mesh_clear()
@@ -714,6 +746,9 @@ def _export_armature(arm_obj, clump: DffClump, parent_frame: int):
         else:
             # Fallback: compute from Blender bone (new model, not round-trip)
             frame.write_name = True
+            # SA skinned: root bone frame flags = 0x20003, others = 0
+            if i == 0:
+                frame.flags = 0x20003
             if bone.parent:
                 mat = bone.parent.matrix_local.inverted() @ bone.matrix_local
             else:
@@ -884,11 +919,10 @@ def export_dff(filepath: str, objects, version: int = GTA_SA_VERSION):
                 break
 
         if arm_obj:
-            # Use raw DFF sections for round-trip if available
+            # Skinned DFF: always rebuild geometry from Blender mesh,
+            # but keep raw frame list for skeleton round-trip
             import base64
             raw_fl = arm_obj.get('dff_raw_frame_list')
-            raw_gl = arm_obj.get('dff_raw_geometry_list')
-            raw_at = arm_obj.get('dff_raw_atomics')
 
             if raw_fl:
                 try:
@@ -900,23 +934,26 @@ def export_dff(filepath: str, objects, version: int = GTA_SA_VERSION):
             else:
                 _export_armature(arm_obj, clump, frame_idx)
 
-            if raw_gl:
-                try:
-                    clump.raw_geometry_list = base64.b64decode(raw_gl)
-                    print(f"[DFF Export] Using raw geometry list ({len(clump.raw_geometry_list)} bytes)")
-                except Exception:
-                    pass
+        # Determine correct frame index for mesh atomic
+        if clump.raw_frame_list:
+            # Raw frame list used — get mesh frame index from import or parse from raw
+            stored_fi = obj.get('dff_mesh_frame_index', -1)
+            if stored_fi >= 0:
+                mesh_frame_idx = stored_fi
+            else:
+                # Fallback: mesh frame is always last in skinned DFFs
+                from struct import unpack_from
+                if len(clump.raw_frame_list) >= 16:
+                    frame_count = unpack_from('<I', clump.raw_frame_list, 12)[0]
+                    mesh_frame_idx = frame_count - 1
+                    print(f"[DFF Export] Parsed frame_count={frame_count} from raw, mesh frame={mesh_frame_idx}")
+                else:
+                    mesh_frame_idx = frame_idx
+            print(f"[DFF Export] Skinned mesh: frame_index={mesh_frame_idx}")
+        else:
+            mesh_frame_idx = frame_idx
 
-            if raw_at:
-                try:
-                    clump.raw_atomics = base64.b64decode(raw_at)
-                    print(f"[DFF Export] Using raw atomics ({len(clump.raw_atomics)} bytes)")
-                except Exception:
-                    pass
-
-        # Process mesh (skip if using raw geometry for round-trip)
-        if not clump.raw_geometry_list:
-            _process_mesh(obj, clump, frame_idx)
+        _process_mesh(obj, clump, mesh_frame_idx)
 
     # If no frames were created, add a default one
     if not clump.frames:

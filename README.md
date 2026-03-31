@@ -1,6 +1,6 @@
 ![image alt](https://github.com/INU-ez/INU_Tools-GTA-sa-/blob/5e82d62dd40105c557ef9cb6be261bb70b63d3a2/logo.jpg)
 
-# INU_Tools (GTA SA)
+# INU_Tools (GTA SA) BETA v1
 
 ![Blender](https://img.shields.io/badge/Blender-5.1+-orange?logo=blender)
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue)

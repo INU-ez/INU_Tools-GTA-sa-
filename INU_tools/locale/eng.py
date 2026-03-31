@@ -705,4 +705,11 @@ LANG = {
     "Текущая": "Current",
     "Выделите скелет для применения": "Select armature to apply",
     "Выделите скелет (Armature)": "Select an armature",
+    "Разблокировать редактирование": "Unlock Editing",
+    "Редактирование разблокировано. Геометрия будет пересчитана при экспорте": "Editing unlocked. Geometry will be rebuilt on export",
+    "Экспорт: побайтовая копия": "Export: byte-perfect copy",
+    "Редактирование разблокировано": "Editing unlocked",
+    "Экспорт: пересчёт геометрии": "Export: geometry rebuild",
+    "Скин: побайтовая копия": "Skin: byte-perfect copy",
+    "Скин: пересчёт геометрии": "Skin: geometry rebuild",
 }

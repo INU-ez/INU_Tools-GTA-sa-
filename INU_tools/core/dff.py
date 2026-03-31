@@ -448,6 +448,10 @@ class SkinData:
             flat = matrix[0] + matrix[1] + matrix[2] + matrix[3]
             data += pack('<16f', *flat)
 
+        # SA version: 3 trailing zero floats (skin bounds/padding)
+        if not oldver:
+            data += pack('<3f', 0.0, 0.0, 0.0)
+
         return _chunk(CHUNK_SKIN_PLG, data, lib_id)
 
 
@@ -519,16 +523,47 @@ class DffGeometry:
     write_bin_mesh: bool = True
     pipeline: int = 0
 
+    original_flags: int = 0  # original geometry flags from import (for round-trip)
+
     skin: Optional[SkinData] = None
     extra_colors: Optional[ExtraVertColors] = None
     user_data: Optional[UserData] = None
     ext_2dfx: Optional[Extension2dfx] = None
 
     def _build_flags(self) -> int:
+        num_uv = len(self.uv_layers)
+
+        if self.original_flags:
+            # Start from original flags, but update data-dependent bits
+            flags = self.original_flags & 0xFFFF
+
+            # Update UV flags based on actual data
+            flags &= ~(GEOM_TEXTURED | GEOM_TEXTURED2)
+            if num_uv == 1:
+                flags |= GEOM_TEXTURED
+            elif num_uv >= 2:
+                flags |= GEOM_TEXTURED2
+
+            # Update prelit based on actual data
+            if self.prelit_colors:
+                flags |= GEOM_PRELIT
+            else:
+                flags &= ~GEOM_PRELIT
+
+            # Update normals
+            if self.export_normals and self.normals:
+                flags |= GEOM_NORMALS
+            else:
+                flags &= ~GEOM_NORMALS
+
+            flags = (flags & 0xFFFF) | ((num_uv & 0xFF) << 16)
+            return flags
+
         flags = GEOM_POSITIONS
-        if self.uv_layers:
+        if num_uv == 1:
             flags |= GEOM_TEXTURED
-        if len(self.uv_layers) > 1:
+        elif num_uv >= 2:
+            # Kams: UV2 sets TEXTURED2 only, clears TEXTURED
             flags |= GEOM_TEXTURED2
         if self.prelit_colors:
             flags |= GEOM_PRELIT
@@ -537,7 +572,6 @@ class DffGeometry:
         flags |= GEOM_LIGHT | GEOM_MOD_COLOR
 
         # UV layer count in bits 16-23
-        num_uv = len(self.uv_layers)
         flags |= (num_uv & 0xFF) << 16
 
         return flags
@@ -735,6 +769,7 @@ class DffClump:
                 geom = self.geometries[atomic.geometry_index]
                 if geom.skin:
                     atomic_ext += _chunk(0x001F, pack('<II', 0x0116, 1), lib_id)  # Right to Render
+                    atomic_ext += _chunk(0x0120, pack('<I', 0), lib_id)  # Node Name PLG (required for SA skinned)
                 if any(m.bump_map or m.env_map or m.dual_texture for m in geom.materials):
                     atomic_ext += _chunk(CHUNK_MATFX_PLG, pack('<I', 1), lib_id)
 
@@ -966,6 +1001,7 @@ def _read_geometry_chunk(r: BinaryReader, size: int, rw_version: int) -> DffGeom
     struct_end = r.pos + cs
 
     flags, num_tris, num_verts, morph_count = r.read('<IIII')
+    geom._import_flags = flags  # store original flags for round-trip
     geom.export_normals = bool(flags & GEOM_NORMALS)
 
     # Old RW versions store surface properties inline
