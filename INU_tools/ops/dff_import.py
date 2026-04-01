@@ -73,12 +73,14 @@ def _create_blender_material(dff_mat: DffMaterial, index: int) -> bpy.types.Mate
                 img = bpy.data.images.get(tex_name + ext)
                 if img:
                     break
+        # Always create Image Texture node (for later cache loading)
+        tex_node = nodes.new('ShaderNodeTexImage')
+        tex_node.label = tex_name
+        tex_node.location = (bsdf.location.x - 300, bsdf.location.y)
+        tree.links.new(tex_node.outputs['Color'], bsdf.inputs['Base Color'])
+        tree.links.new(tex_node.outputs['Alpha'], bsdf.inputs['Alpha'])
         if img:
-            tex_node = nodes.new('ShaderNodeTexImage')
             tex_node.image = img
-            tex_node.location = (bsdf.location.x - 300, bsdf.location.y)
-            tree.links.new(tex_node.outputs['Color'], bsdf.inputs['Base Color'])
-            tree.links.new(tex_node.outputs['Alpha'], bsdf.inputs['Alpha'])
 
     # Specular = 0 для GTA моделей
     if 'Specular IOR Level' in bsdf.inputs:

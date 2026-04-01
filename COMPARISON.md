@@ -4,7 +4,7 @@
 
 | Инструмент | Платформа | Автор | Функций |
 |------------|-----------|-------|--------:|
-| **INU_Tools** | Blender 5.1+ | INU | ~130 |
+| **INU_Tools** | Blender 5.1+ | INU | ~145 |
 | **DragonFF** | Blender 4.x | Parik | ~132 |
 | **GTA_Tools(GF)** | 3ds Max | Kam / Goldfish | ~150 |
 | **DeniskaMax** | 3ds Max | Deniska | ~54 |
@@ -24,13 +24,13 @@
 | TXD Import | ✅ | ✅ | — | — | — | — | — |
 | IDE Import | ✅ | — | ✅ | — | — | — | — |
 | IPL Import | ✅ | ✅ (map) | ✅ | — | — | — | — |
-| IFP Import (анимации) | ❌ | — | ✅ | — | — | — | — |
-| Water Import | ❌ | — | ✅ | — | ✅ | — | — |
-| Path Import | ❌ | — | — | ✅ | — | — | ✅ |
+| IFP Import (анимации) | ✅ | — | ✅ | — | — | — | — |
+| Water Import | ✅ | — | ✅ | — | ✅ | — | — |
+| Path Import | ✅ | — | — | ✅ | — | — | ✅ |
 | Map Import (IMG) | ✅ | ✅ | ✅ | — | — | — | — |
-| Cull Zone Import | ❌ | ✅ | ✅ | ✅ | — | — | — |
-| Occlusion Import | ❌ | — | — | ✅ | — | — | — |
-| ZON Import | ❌ | — | ✅ | — | — | — | — |
+| Cull Zone Import | ✅ | ✅ | ✅ | ✅ | — | — | — |
+| Occlusion Import | ✅ | — | — | ✅ | — | — | — |
+| ZON Import | ✅ | — | ✅ | — | — | — | — |
 | BSP Import (Manhunt) | ❌ | — | ✅ | — | — | — | — |
 | **EXPORT** | | | | | | | |
 | DFF Export | ✅ | ✅ | ✅ | ✅ | — | — | — |
@@ -40,12 +40,12 @@
 | IPL Export | ✅ | ✅ (cull) | ✅ | — | — | ✅ | — |
 | IMG Archive Export/Import | ✅ | — | — | — | — | — | — |
 | Export All (batch) | ✅ | ✅ (mass) | ✅ (mass) | ✅ (multi) | — | — | — |
-| IFP Export (анимации) | ❌ | — | ✅ | ✅ | — | — | — |
-| Water Export | ❌ | — | ✅ | — | ✅ | — | — |
-| Path Export | ❌ | — | — | ✅ | — | — | ✅ |
-| ZON Export | ❌ | — | ✅ | — | — | — | — |
-| Cull Zone Export | ❌ | ✅ | ✅ | ✅ | — | — | — |
-| Occlusion Export | ❌ | — | — | ✅ | — | — | — |
+| IFP Export (анимации) | ✅ | — | ✅ | ✅ | — | — | — |
+| Water Export | ✅ | — | ✅ | — | ✅ | — | — |
+| Path Export | ✅ | — | — | ✅ | — | — | ✅ |
+| ZON Export | ✅ | — | ✅ | — | — | — | — |
+| Cull Zone Export | ✅ | ✅ | ✅ | ✅ | — | — | — |
+| Occlusion Export | ✅ | — | — | ✅ | — | — | — |
 | **МАТЕРИАЛЫ** | | | | | | | |
 | Environment Map | ✅ | ✅ | ✅ | — | — | — | — |
 | Bump Map | ✅ | ✅ | ✅ | — | — | — | — |
@@ -99,12 +99,12 @@
 | Bone Management | ❌ | ✅ | ✅ | — | — | — | — |
 | **MAP** | | | | | | | |
 | Map Import (IMG→scene) | ✅ | ✅ | ✅ | — | — | — | — |
-| Cull Zones IO | ❌ | ✅ | ✅ | ✅ | — | — | — |
-| Occlusion IO | ❌ | — | ✅ | ✅ | — | — | — |
-| Water IO | ❌ | — | ✅ | — | ✅ | — | — |
-| Path IO | ❌ | — | — | ✅ | — | — | ✅ |
-| ZON IO | ❌ | — | ✅ | — | — | — | — |
-| Map Objects (Garage/Cars/...) | ❌ | — | ✅ | — | — | — | — |
+| Cull Zones IO | ✅ | ✅ | ✅ | ✅ | — | — | — |
+| Occlusion IO | ✅ | — | ✅ | ✅ | — | — | — |
+| Water IO | ✅ | — | ✅ | — | ✅ | — | — |
+| Path IO | ✅ | — | — | ✅ | — | — | ✅ |
+| ZON IO | ✅ | — | ✅ | — | — | — | — |
+| Map Objects (Garage/Cars/...) | ✅ | — | ✅ | — | — | — | — |
 | **ИНТЕГРАЦИЯ** | | | | | | | |
 | Itera Tools 3 | ✅ | — | — | — | — | — | — |
 | Lightmap Generator (MTA) | ✅ | — | — | — | — | — | — |
@@ -121,12 +121,7 @@
 
 | Функция | Где есть | Сложность |
 |---------|----------|-----------|
-| IFP Animation IO | GTA_Tools, DeniskaMax | Высокая |
-| Water IO | WaterIO, GTA_Tools | Средняя |
-| Path IO | ZZPuma, DeniskaMax | Высокая |
 | Skinned Mesh | DragonFF, GTA_Tools | Высокая |
-| Cull Zones IO | DragonFF, GTA_Tools, DeniskaMax | Средняя |
-| Occlusion IO | GTA_Tools, DeniskaMax | Низкая |
 | Road Sign 2DFX | DragonFF | Средняя |
 | Escalator 2DFX | DragonFF | Средняя |
 | Cover/Trigger Point 2DFX | DragonFF | Низкая |
@@ -136,6 +131,5 @@
 | Bitmap Manager | GTA_Tools | Низкая |
 | Sprite Sheet UV Animator | DragonFF, DeniskaMax | Низкая |
 | Day↔Night копирование | GTA_Tools, DeniskaMax | Низкая |
-| ZON IO | GTA_Tools | Низкая |
 | Face Groups (COL) | DragonFF | Средняя |
 | Object Explode | GTA_Tools | Средняя |

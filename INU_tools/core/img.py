@@ -68,6 +68,118 @@ def extract_file(img_path: str, entry_name: str) -> bytes | None:
     return None
 
 
+class ImgReader:
+    """Keeps IMG file open for fast sequential/random reads.
+    Use as context manager for automatic cleanup.
+
+    Usage:
+        with ImgReader("gta3.img") as img:
+            data = img.read("building01.dff")
+            img.extract_all_to(output_dir)  # batch extract
+    """
+
+    def __init__(self, filepath: str):
+        self.filepath = filepath
+        self._f = None
+        self._entries: list[ImgEntry] = []
+        self._lookup: dict[str, ImgEntry] = {}
+
+    def __enter__(self):
+        self.open()
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+
+    def open(self):
+        self._f = open(self.filepath, 'rb')
+        magic = self._f.read(4)
+        if magic != MAGIC:
+            self._f.close()
+            raise ValueError(f"Not a VER2 IMG archive (got {magic!r})")
+        num = struct.unpack('<I', self._f.read(4))[0]
+        self._entries = []
+        self._lookup = {}
+        for _ in range(num):
+            raw = self._f.read(DIR_ENTRY_SIZE)
+            if len(raw) < DIR_ENTRY_SIZE:
+                break
+            off, sz = struct.unpack_from('<II', raw, 0)
+            name_bytes = raw[8:8 + NAME_SIZE]
+            name = name_bytes.split(b'\x00', 1)[0].decode('ascii', errors='replace')
+            entry = ImgEntry(name=name, offset=off, size=sz)
+            self._entries.append(entry)
+            self._lookup[name.lower()] = entry
+
+    def close(self):
+        if self._f:
+            self._f.close()
+            self._f = None
+
+    @property
+    def entries(self) -> list[ImgEntry]:
+        return self._entries
+
+    def read(self, entry_name: str) -> bytes | None:
+        """Read a single file by name (fast — no directory re-read)."""
+        e = self._lookup.get(entry_name.lower())
+        if not e:
+            return None
+        self._f.seek(e.offset * SECTOR)
+        return self._f.read(e.size * SECTOR)
+
+    def extract_all_to(self, output_dir: str,
+                       extensions: set[str] | None = None,
+                       skip_existing: bool = True) -> dict[str, int]:
+        """Batch extract files to output_dir in one sequential pass.
+
+        Args:
+            output_dir: directory to write files to
+            extensions: set of extensions to extract (e.g. {'.dff', '.col'}),
+                       None = extract all
+            skip_existing: skip files that already exist on disk
+
+        Returns dict with counts: {'dff': N, 'col': N, 'txd': N, 'other': N, 'skipped': N}
+        """
+        import os
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Sort entries by offset for sequential disk read
+        sorted_entries = sorted(self._entries, key=lambda e: e.offset)
+
+        counts = {'dff': 0, 'col': 0, 'txd': 0, 'other': 0, 'skipped': 0}
+
+        for entry in sorted_entries:
+            low = entry.name.lower()
+            ext = '.' + low.rsplit('.', 1)[-1] if '.' in low else ''
+
+            if extensions and ext not in extensions:
+                continue
+
+            out_path = os.path.join(output_dir, entry.name)
+            if skip_existing and os.path.isfile(out_path):
+                counts['skipped'] += 1
+                continue
+
+            self._f.seek(entry.offset * SECTOR)
+            data = self._f.read(entry.size * SECTOR)
+
+            # Trim padding (sector-aligned, may have trailing zeros)
+            with open(out_path, 'wb') as out:
+                out.write(data)
+
+            if ext == '.dff':
+                counts['dff'] += 1
+            elif ext == '.col':
+                counts['col'] += 1
+            elif ext == '.txd':
+                counts['txd'] += 1
+            else:
+                counts['other'] += 1
+
+        return counts
+
+
 # ── Writing / Replacing ────────────────────────────────────────────
 
 def replace_or_add(img_path: str, filename: str, data: bytes) -> str:

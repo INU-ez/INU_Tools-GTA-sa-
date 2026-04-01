@@ -1,19 +1,31 @@
 """
 GTA SA IPL (Item Placement) file reader/writer.
 
-IPL ``inst`` section line format (SA):
-  ID, ModelName, Interior, PosX, PosY, PosZ, RotX, RotY, RotZ, RotW, LOD
+Sections:
+  inst  — object instances
+  cull  — cull zones
+  grge  — garages
+  enex  — entrance/exit markers
+  pick  — pickups
+  cars  — parked vehicles / car generators
+  auzo  — audio zones (box or sphere)
+  jump  — stunt jumps
+  occl  — occlusion zones
+  tcyc  — time cycle modifiers
 
-Rotation is a quaternion stored as (X, Y, Z, W).
+Also supports binary IPL (``bnry`` header) for inst and cars.
 
 No Blender dependency — pure Python.
 """
 
 from __future__ import annotations
 import os
+import struct
 from dataclasses import dataclass, field
 from typing import Optional
 
+
+# ── Data classes ──────────────────────────────────────────────────────
 
 @dataclass
 class IplInstance:
@@ -32,17 +44,534 @@ class IplInstance:
 
 
 @dataclass
+class IplCull:
+    """Cull zone from IPL ``cull`` section (11 or 14 fields)."""
+    center_x: float = 0.0
+    center_y: float = 0.0
+    center_z: float = 0.0
+    unknown1: float = 0.0
+    length: float = 0.0      # Y dimension
+    bottom: float = 0.0      # absolute Z bottom
+    width: float = 0.0       # X dimension
+    unknown2: float = 0.0
+    top: float = 0.0         # absolute Z top
+    flag: int = 0
+    unknown3: float = 0.0
+    # Mirror parameters (optional, 14-field format)
+    mirror_vx: Optional[float] = None
+    mirror_vy: Optional[float] = None
+    mirror_vz: Optional[float] = None
+    mirror_cm: Optional[float] = None
+
+    @property
+    def has_mirror(self) -> bool:
+        return self.mirror_vx is not None
+
+
+@dataclass
+class IplGarage:
+    """Garage from IPL ``grge`` section (11 fields)."""
+    pos_x: float = 0.0
+    pos_y: float = 0.0
+    pos_z: float = 0.0
+    line_x: float = 0.0
+    line_y: float = 0.0
+    cube_x: float = 0.0
+    cube_y: float = 0.0
+    cube_z: float = 0.0
+    flags: int = 0
+    garage_type: int = 0
+    name: str = ""
+
+
+@dataclass
+class IplEnex:
+    """Entry/exit marker from IPL ``enex`` section (18 fields)."""
+    x1: float = 0.0
+    y1: float = 0.0
+    z1: float = 0.0
+    enter_angle: float = 0.0
+    size_x: float = 0.0
+    size_y: float = 0.0
+    size_z: float = 0.0
+    x2: float = 0.0
+    y2: float = 0.0
+    z2: float = 0.0
+    exit_angle: float = 0.0
+    target_interior: int = 0
+    flags: int = 0
+    name: str = ""
+    sky: int = 0
+    num_peds: int = 0
+    time_on: int = 0
+    time_off: int = 0
+
+
+@dataclass
+class IplPickup:
+    """Pickup from IPL ``pick`` section (4 fields)."""
+    pickup_id: int = 0
+    pos_x: float = 0.0
+    pos_y: float = 0.0
+    pos_z: float = 0.0
+
+
+@dataclass
+class IplCar:
+    """Parked vehicle from IPL ``cars`` section (12 fields)."""
+    pos_x: float = 0.0
+    pos_y: float = 0.0
+    pos_z: float = 0.0
+    angle: float = 0.0
+    car_id: int = -1
+    primary_color: int = -1
+    secondary_color: int = -1
+    force_spawn: int = 0
+    alarm: int = 0
+    door_lock: int = 0
+    unknown1: int = 0
+    unknown2: int = 0
+
+
+@dataclass
+class IplAuzo:
+    """Audio zone from IPL ``auzo`` section (box=9 or sphere=7 fields)."""
+    name: str = ""
+    audio_id: int = 0
+    switch: int = 0
+    # Box format
+    x1: float = 0.0
+    y1: float = 0.0
+    z1: float = 0.0
+    x2: float = 0.0
+    y2: float = 0.0
+    z2: float = 0.0
+    # Sphere format
+    radius: Optional[float] = None
+
+    @property
+    def is_sphere(self) -> bool:
+        return self.radius is not None
+
+
+@dataclass
+class IplJump:
+    """Stunt jump from IPL ``jump`` section (16 fields)."""
+    start_lower_x: float = 0.0
+    start_lower_y: float = 0.0
+    start_lower_z: float = 0.0
+    start_upper_x: float = 0.0
+    start_upper_y: float = 0.0
+    start_upper_z: float = 0.0
+    target_lower_x: float = 0.0
+    target_lower_y: float = 0.0
+    target_lower_z: float = 0.0
+    target_upper_x: float = 0.0
+    target_upper_y: float = 0.0
+    target_upper_z: float = 0.0
+    camera_x: float = 0.0
+    camera_y: float = 0.0
+    camera_z: float = 0.0
+    reward: int = 0
+
+
+@dataclass
+class IplOccl:
+    """Occlusion zone from IPL ``occl`` section (10 fields)."""
+    mid_x: float = 0.0
+    mid_y: float = 0.0
+    bottom_z: float = 0.0
+    width_x: float = 0.0
+    width_y: float = 0.0
+    height: float = 0.0
+    rotation: float = 0.0
+    unknown1: float = 0.0
+    unknown2: float = 0.0
+    unknown3: int = 0
+
+
+@dataclass
+class IplTcyc:
+    """Time cycle modifier from IPL ``tcyc`` section (up to 12 fields)."""
+    x1: float = 0.0
+    y1: float = 0.0
+    z1: float = 0.0
+    x2: float = 0.0
+    y2: float = 0.0
+    z2: float = 0.0
+    far_clip: int = 0
+    extra_color: int = 0
+    extra_color_intensity: float = 0.0
+    falloff_dist: float = 100.0
+    unused: float = 0.0
+    lod_dist_mult: float = 1.0
+
+
+@dataclass
+class IplZone:
+    """Map zone from IPL ``zone`` section (9 fields)."""
+    name: str = ""
+    zone_type: int = 0
+    x1: float = 0.0
+    y1: float = 0.0
+    z1: float = 0.0
+    x2: float = 0.0
+    y2: float = 0.0
+    z2: float = 0.0
+    level: int = 0
+
+
+@dataclass
 class IplFile:
-    """Collection of IPL entries."""
+    """Collection of all IPL entries."""
     instances: list[IplInstance] = field(default_factory=list)
+    culls: list[IplCull] = field(default_factory=list)
+    garages: list[IplGarage] = field(default_factory=list)
+    enexs: list[IplEnex] = field(default_factory=list)
+    pickups: list[IplPickup] = field(default_factory=list)
+    cars: list[IplCar] = field(default_factory=list)
+    auzos: list[IplAuzo] = field(default_factory=list)
+    jumps: list[IplJump] = field(default_factory=list)
+    occls: list[IplOccl] = field(default_factory=list)
+    tcycs: list[IplTcyc] = field(default_factory=list)
+    zones: list[IplZone] = field(default_factory=list)
+
+
+# ── Parsing helpers ───────────────────────────────────────────────────
+
+def _p(parts: list, idx: int, conv=float, default=0):
+    """Safe field access with conversion."""
+    try:
+        return conv(parts[idx].strip())
+    except (IndexError, ValueError):
+        return default
+
+
+def _ps(parts: list, idx: int, default: str = "") -> str:
+    """Safe string field access."""
+    try:
+        return parts[idx].strip().strip('"')
+    except IndexError:
+        return default
+
+
+def _parse_inst_line(line: str) -> Optional[IplInstance]:
+    parts = [p.strip() for p in line.split(',')]
+    try:
+        if len(parts) < 11:
+            return None
+        return IplInstance(
+            model_id=int(parts[0]), model_name=parts[1],
+            interior=int(parts[2]),
+            pos_x=float(parts[3]), pos_y=float(parts[4]), pos_z=float(parts[5]),
+            rot_x=float(parts[6]), rot_y=float(parts[7]),
+            rot_z=float(parts[8]), rot_w=float(parts[9]),
+            lod_index=int(parts[10]),
+        )
+    except (ValueError, IndexError):
+        return None
+
+
+def _parse_cull_line(line: str) -> Optional[IplCull]:
+    parts = [p.strip() for p in line.split(',')]
+    try:
+        if len(parts) < 10:
+            return None
+        c = IplCull(
+            center_x=float(parts[0]), center_y=float(parts[1]), center_z=float(parts[2]),
+            unknown1=float(parts[3]),
+            length=float(parts[4]), bottom=float(parts[5]),
+            width=float(parts[6]), unknown2=float(parts[7]),
+            top=float(parts[8]), flag=int(parts[9]),
+        )
+        if len(parts) >= 14:
+            c.mirror_vx = float(parts[10])
+            c.mirror_vy = float(parts[11])
+            c.mirror_vz = float(parts[12])
+            c.mirror_cm = float(parts[13])
+        elif len(parts) >= 11:
+            c.unknown3 = float(parts[10])
+        return c
+    except (ValueError, IndexError):
+        return None
+
+
+def _parse_grge_line(line: str) -> Optional[IplGarage]:
+    parts = [p.strip() for p in line.split(',')]
+    try:
+        if len(parts) < 11:
+            return None
+        return IplGarage(
+            pos_x=float(parts[0]), pos_y=float(parts[1]), pos_z=float(parts[2]),
+            line_x=float(parts[3]), line_y=float(parts[4]),
+            cube_x=float(parts[5]), cube_y=float(parts[6]), cube_z=float(parts[7]),
+            flags=int(parts[8]), garage_type=int(parts[9]),
+            name=parts[10].strip(),
+        )
+    except (ValueError, IndexError):
+        return None
+
+
+def _parse_enex_line(line: str) -> Optional[IplEnex]:
+    parts = [p.strip() for p in line.split(',')]
+    try:
+        if len(parts) < 14:
+            return None
+        return IplEnex(
+            x1=float(parts[0]), y1=float(parts[1]), z1=float(parts[2]),
+            enter_angle=float(parts[3]),
+            size_x=float(parts[4]), size_y=float(parts[5]), size_z=float(parts[6]),
+            x2=float(parts[7]), y2=float(parts[8]), z2=float(parts[9]),
+            exit_angle=float(parts[10]),
+            target_interior=int(parts[11]), flags=int(parts[12]),
+            name=_ps(parts, 13),
+            sky=_p(parts, 14, int, 0),
+            num_peds=_p(parts, 15, int, 0),
+            time_on=_p(parts, 16, int, 0),
+            time_off=_p(parts, 17, int, 0),
+        )
+    except (ValueError, IndexError):
+        return None
+
+
+def _parse_pick_line(line: str) -> Optional[IplPickup]:
+    parts = [p.strip() for p in line.split(',')]
+    try:
+        if len(parts) < 4:
+            return None
+        return IplPickup(
+            pickup_id=int(parts[0]),
+            pos_x=float(parts[1]), pos_y=float(parts[2]), pos_z=float(parts[3]),
+        )
+    except (ValueError, IndexError):
+        return None
+
+
+def _parse_cars_line(line: str) -> Optional[IplCar]:
+    parts = [p.strip() for p in line.split(',')]
+    try:
+        if len(parts) < 10:
+            return None
+        return IplCar(
+            pos_x=float(parts[0]), pos_y=float(parts[1]), pos_z=float(parts[2]),
+            angle=float(parts[3]), car_id=int(parts[4]),
+            primary_color=int(parts[5]), secondary_color=int(parts[6]),
+            force_spawn=_p(parts, 7, int, 0),
+            alarm=_p(parts, 8, int, 0), door_lock=_p(parts, 9, int, 0),
+            unknown1=_p(parts, 10, int, 0), unknown2=_p(parts, 11, int, 0),
+        )
+    except (ValueError, IndexError):
+        return None
+
+
+def _parse_auzo_line(line: str) -> Optional[IplAuzo]:
+    parts = [p.strip() for p in line.split(',')]
+    try:
+        if len(parts) < 7:
+            return None
+        a = IplAuzo(
+            name=parts[0].strip().strip('"'),
+            audio_id=int(parts[1]), switch=int(parts[2]),
+            x1=float(parts[3]), y1=float(parts[4]), z1=float(parts[5]),
+        )
+        if len(parts) >= 9:
+            # Box format
+            a.x2 = float(parts[6])
+            a.y2 = float(parts[7])
+            a.z2 = float(parts[8])
+        else:
+            # Sphere format
+            a.radius = float(parts[6])
+        return a
+    except (ValueError, IndexError):
+        return None
+
+
+def _parse_jump_line(line: str) -> Optional[IplJump]:
+    parts = [p.strip() for p in line.split(',')]
+    try:
+        if len(parts) < 16:
+            return None
+        return IplJump(
+            start_lower_x=float(parts[0]), start_lower_y=float(parts[1]),
+            start_lower_z=float(parts[2]),
+            start_upper_x=float(parts[3]), start_upper_y=float(parts[4]),
+            start_upper_z=float(parts[5]),
+            target_lower_x=float(parts[6]), target_lower_y=float(parts[7]),
+            target_lower_z=float(parts[8]),
+            target_upper_x=float(parts[9]), target_upper_y=float(parts[10]),
+            target_upper_z=float(parts[11]),
+            camera_x=float(parts[12]), camera_y=float(parts[13]),
+            camera_z=float(parts[14]),
+            reward=int(parts[15]),
+        )
+    except (ValueError, IndexError):
+        return None
+
+
+def _parse_occl_line(line: str) -> Optional[IplOccl]:
+    parts = [p.strip() for p in line.split(',')]
+    try:
+        if len(parts) < 7:
+            return None
+        return IplOccl(
+            mid_x=float(parts[0]), mid_y=float(parts[1]),
+            bottom_z=float(parts[2]),
+            width_x=float(parts[3]), width_y=float(parts[4]),
+            height=float(parts[5]), rotation=float(parts[6]),
+            unknown1=_p(parts, 7, float, 0.0),
+            unknown2=_p(parts, 8, float, 0.0),
+            unknown3=_p(parts, 9, int, 0),
+        )
+    except (ValueError, IndexError):
+        return None
+
+
+def _parse_tcyc_line(line: str) -> Optional[IplTcyc]:
+    parts = [p.strip() for p in line.split(',')]
+    try:
+        if len(parts) < 8:
+            return None
+        return IplTcyc(
+            x1=float(parts[0]), y1=float(parts[1]), z1=float(parts[2]),
+            x2=float(parts[3]), y2=float(parts[4]), z2=float(parts[5]),
+            far_clip=int(parts[6]), extra_color=int(parts[7]),
+            extra_color_intensity=_p(parts, 8, float, 0.0),
+            falloff_dist=_p(parts, 9, float, 100.0),
+            unused=_p(parts, 10, float, 0.0),
+            lod_dist_mult=_p(parts, 11, float, 1.0),
+        )
+    except (ValueError, IndexError):
+        return None
+
+
+def _parse_zone_line(line: str) -> Optional[IplZone]:
+    parts = [p.strip() for p in line.split(',')]
+    try:
+        if len(parts) < 9:
+            return None
+        return IplZone(
+            name=parts[0].strip().strip('"'),
+            zone_type=int(parts[1]),
+            x1=float(parts[2]), y1=float(parts[3]), z1=float(parts[4]),
+            x2=float(parts[5]), y2=float(parts[6]), z2=float(parts[7]),
+            level=int(parts[8]),
+        )
+    except (ValueError, IndexError):
+        return None
+
+
+# ── Formatting helpers ────────────────────────────────────────────────
+
+def _ff(v: float) -> str:
+    """Format float: 6 decimal places."""
+    return f'{v:.6f}'
+
+
+def _format_inst_line(i: IplInstance) -> str:
+    return (f'{i.model_id}, {i.model_name}, {i.interior}, '
+            f'{_ff(i.pos_x)}, {_ff(i.pos_y)}, {_ff(i.pos_z)}, '
+            f'{_ff(i.rot_x)}, {_ff(i.rot_y)}, {_ff(i.rot_z)}, {_ff(i.rot_w)}, '
+            f'{i.lod_index}')
+
+
+def _format_cull_line(c: IplCull) -> str:
+    base = (f'{c.center_x}, {c.center_y}, {c.center_z}, '
+            f'{c.unknown1}, {c.length}, {c.bottom}, '
+            f'{c.width}, {c.unknown2}, {c.top}, {c.flag}')
+    if c.has_mirror:
+        return f'{base}, {c.mirror_vx}, {c.mirror_vy}, {c.mirror_vz}, {c.mirror_cm}'
+    return f'{base}, {c.unknown3}'
+
+
+def _format_grge_line(g: IplGarage) -> str:
+    return (f'{_ff(g.pos_x)}, {_ff(g.pos_y)}, {_ff(g.pos_z)}, '
+            f'{_ff(g.line_x)}, {_ff(g.line_y)}, '
+            f'{_ff(g.cube_x)}, {_ff(g.cube_y)}, {_ff(g.cube_z)}, '
+            f'{g.flags}, {g.garage_type}, {g.name}')
+
+
+def _format_enex_line(e: IplEnex) -> str:
+    return (f'{_ff(e.x1)}, {_ff(e.y1)}, {_ff(e.z1)}, {_ff(e.enter_angle)}, '
+            f'{_ff(e.size_x)}, {_ff(e.size_y)}, {_ff(e.size_z)}, '
+            f'{_ff(e.x2)}, {_ff(e.y2)}, {_ff(e.z2)}, {_ff(e.exit_angle)}, '
+            f'{e.target_interior}, {e.flags}, {e.name}, '
+            f'{e.sky}, {e.num_peds}, {e.time_on}, {e.time_off}')
+
+
+def _format_pick_line(p: IplPickup) -> str:
+    return f'{p.pickup_id}, {_ff(p.pos_x)}, {_ff(p.pos_y)}, {_ff(p.pos_z)}'
+
+
+def _format_cars_line(c: IplCar) -> str:
+    return (f'{_ff(c.pos_x)}, {_ff(c.pos_y)}, {_ff(c.pos_z)}, {_ff(c.angle)}, '
+            f'{c.car_id}, {c.primary_color}, {c.secondary_color}, '
+            f'{c.force_spawn}, {c.alarm}, {c.door_lock}, '
+            f'{c.unknown1}, {c.unknown2}')
+
+
+def _format_auzo_line(a: IplAuzo) -> str:
+    if a.is_sphere:
+        return (f'{a.name}, {a.audio_id}, {a.switch}, '
+                f'{_ff(a.x1)}, {_ff(a.y1)}, {_ff(a.z1)}, {_ff(a.radius)}')
+    return (f'{a.name}, {a.audio_id}, {a.switch}, '
+            f'{_ff(a.x1)}, {_ff(a.y1)}, {_ff(a.z1)}, '
+            f'{_ff(a.x2)}, {_ff(a.y2)}, {_ff(a.z2)}')
+
+
+def _format_jump_line(j: IplJump) -> str:
+    return (f'{_ff(j.start_lower_x)}, {_ff(j.start_lower_y)}, {_ff(j.start_lower_z)}, '
+            f'{_ff(j.start_upper_x)}, {_ff(j.start_upper_y)}, {_ff(j.start_upper_z)}, '
+            f'{_ff(j.target_lower_x)}, {_ff(j.target_lower_y)}, {_ff(j.target_lower_z)}, '
+            f'{_ff(j.target_upper_x)}, {_ff(j.target_upper_y)}, {_ff(j.target_upper_z)}, '
+            f'{_ff(j.camera_x)}, {_ff(j.camera_y)}, {_ff(j.camera_z)}, {j.reward}')
+
+
+def _format_occl_line(o: IplOccl) -> str:
+    return (f'{_ff(o.mid_x)}, {_ff(o.mid_y)}, {_ff(o.bottom_z)}, '
+            f'{_ff(o.width_x)}, {_ff(o.width_y)}, {_ff(o.height)}, '
+            f'{_ff(o.rotation)}, {o.unknown1}, {o.unknown2}, {o.unknown3}')
+
+
+def _format_tcyc_line(t: IplTcyc) -> str:
+    return (f'{_ff(t.x1)}, {_ff(t.y1)}, {_ff(t.z1)}, '
+            f'{_ff(t.x2)}, {_ff(t.y2)}, {_ff(t.z2)}, '
+            f'{t.far_clip}, {t.extra_color}, '
+            f'{_ff(t.extra_color_intensity)}, {_ff(t.falloff_dist)}, '
+            f'{_ff(t.unused)}, {_ff(t.lod_dist_mult)}')
+
+
+def _format_zone_line(z: IplZone) -> str:
+    return (f'{z.name}, {z.zone_type}, '
+            f'{_ff(z.x1)}, {_ff(z.y1)}, {_ff(z.z1)}, '
+            f'{_ff(z.x2)}, {_ff(z.y2)}, {_ff(z.z2)}, '
+            f'{z.level}')
 
 
 # ── Reading ─────────────────────────────────────────────────────────
 
 def read_ipl(filepath: str) -> IplFile:
-    """Parse a text IPL file and return structured data."""
+    """Parse a text or binary IPL file and return structured data."""
+    # Check for binary IPL
+    try:
+        with open(filepath, 'rb') as f:
+            magic = f.read(4)
+            if magic == b'bnry':
+                f.seek(0)
+                return _read_binary_ipl(f.read())
+    except (IOError, OSError):
+        pass
+
+    return _read_text_ipl(filepath)
+
+
+def _read_text_ipl(filepath: str) -> IplFile:
+    """Parse a text IPL file."""
     ipl = IplFile()
     section = None
+
+    _SECTIONS = {'inst', 'cull', 'path', 'grge', 'enex', 'pick',
+                 'jump', 'tcyc', 'auzo', 'mult', 'cars', 'occl', 'zone'}
 
     with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
         for raw_line in f:
@@ -56,76 +585,182 @@ def read_ipl(filepath: str) -> IplFile:
                 section = None
                 continue
 
-            if low in ('inst', 'cull', 'path', 'grge', 'enex', 'pick',
-                       'jump', 'tcyc', 'auzo', 'mult', 'cars', 'occl',
-                       'zone'):
+            if low in _SECTIONS:
                 section = low
                 continue
 
             if section == 'inst':
-                inst = _parse_inst_line(line)
-                if inst:
-                    ipl.instances.append(inst)
+                obj = _parse_inst_line(line)
+                if obj:
+                    ipl.instances.append(obj)
+            elif section == 'cull':
+                obj = _parse_cull_line(line)
+                if obj:
+                    ipl.culls.append(obj)
+            elif section == 'grge':
+                obj = _parse_grge_line(line)
+                if obj:
+                    ipl.garages.append(obj)
+            elif section == 'enex':
+                obj = _parse_enex_line(line)
+                if obj:
+                    ipl.enexs.append(obj)
+            elif section == 'pick':
+                obj = _parse_pick_line(line)
+                if obj:
+                    ipl.pickups.append(obj)
+            elif section == 'cars':
+                obj = _parse_cars_line(line)
+                if obj:
+                    ipl.cars.append(obj)
+            elif section == 'auzo':
+                obj = _parse_auzo_line(line)
+                if obj:
+                    ipl.auzos.append(obj)
+            elif section == 'jump':
+                obj = _parse_jump_line(line)
+                if obj:
+                    ipl.jumps.append(obj)
+            elif section == 'occl':
+                obj = _parse_occl_line(line)
+                if obj:
+                    ipl.occls.append(obj)
+            elif section == 'tcyc':
+                obj = _parse_tcyc_line(line)
+                if obj:
+                    ipl.tcycs.append(obj)
+            elif section == 'zone':
+                obj = _parse_zone_line(line)
+                if obj:
+                    ipl.zones.append(obj)
 
     return ipl
 
 
-def _parse_inst_line(line: str) -> Optional[IplInstance]:
-    """Parse one comma-separated instance placement line."""
-    parts = [p.strip() for p in line.split(',')]
-    try:
-        if len(parts) < 11:
-            return None
-        return IplInstance(
-            model_id=int(parts[0]),
-            model_name=parts[1],
-            interior=int(parts[2]),
-            pos_x=float(parts[3]),
-            pos_y=float(parts[4]),
-            pos_z=float(parts[5]),
-            rot_x=float(parts[6]),
-            rot_y=float(parts[7]),
-            rot_z=float(parts[8]),
-            rot_w=float(parts[9]),
-            lod_index=int(parts[10]),
-        )
-    except (ValueError, IndexError):
-        return None
+def _read_binary_ipl(data: bytes) -> IplFile:
+    """Parse a binary IPL file (bnry header)."""
+    ipl = IplFile()
 
+    if len(data) < 76:
+        return ipl
 
-def _format_inst_line(i: IplInstance) -> str:
-    """Format one IPL inst line."""
-    return (f'{i.model_id}, {i.model_name}, {i.interior}, '
-            f'{i.pos_x:.6f}, {i.pos_y:.6f}, {i.pos_z:.6f}, '
-            f'{i.rot_x:.6f}, {i.rot_y:.6f}, {i.rot_z:.6f}, {i.rot_w:.6f}, '
-            f'{i.lod_index}')
+    # Header: 76 bytes
+    (num_inst, num_unk1, num_unk2, num_unk3, num_cars, num_unk4,
+     off_inst, _, off_unk1, _, off_unk2, _, off_unk3, _,
+     off_cars, _, off_unk4, _) = struct.unpack_from('<18I', data, 4)
+
+    # Read INST entries (40 bytes each)
+    for i in range(num_inst):
+        off = off_inst + i * 40
+        if off + 40 > len(data):
+            break
+        (px, py, pz, rx, ry, rz, rw, obj_id, interior,
+         lod_idx) = struct.unpack_from('<7f3i', data, off)
+        ipl.instances.append(IplInstance(
+            model_id=obj_id, model_name='',
+            interior=interior,
+            pos_x=px, pos_y=py, pos_z=pz,
+            rot_x=rx, rot_y=ry, rot_z=rz, rot_w=rw,
+            lod_index=lod_idx,
+        ))
+
+    # Read CARS entries (48 bytes each)
+    for i in range(num_cars):
+        off = off_cars + i * 48
+        if off + 48 > len(data):
+            break
+        (px, py, pz, angle, car_id, pc, sc, fs, alarm, dl,
+         u1, u2) = struct.unpack_from('<4f8i', data, off)
+        ipl.cars.append(IplCar(
+            pos_x=px, pos_y=py, pos_z=pz,
+            angle=angle, car_id=car_id,
+            primary_color=pc, secondary_color=sc,
+            force_spawn=fs, alarm=alarm, door_lock=dl,
+            unknown1=u1, unknown2=u2,
+        ))
+
+    return ipl
 
 
 # ── Writing ─────────────────────────────────────────────────────────
 
 def write_ipl(filepath: str, ipl: IplFile) -> None:
-    """Write a new IPL file with all standard SA sections (like Kam's scripts)."""
+    """Write a text IPL file with all populated sections."""
     with open(filepath, 'w', encoding='utf-8', newline='\n') as f:
-        # inst — always present
-        f.write('inst\n')
-        for i in ipl.instances:
-            f.write(_format_inst_line(i) + '\n')
-        f.write('end\n')
+        if ipl.instances:
+            f.write('inst\n')
+            for i in ipl.instances:
+                f.write(_format_inst_line(i) + '\n')
+            f.write('end\n')
 
-        # Standard empty sections
-        for section in ('cull', 'path', 'grge', 'enex', 'pick',
-                        'cars', 'jump', 'tcyc', 'auzo', 'mult'):
-            f.write(f'{section}\nend\n')
+        if ipl.culls:
+            f.write('cull\n')
+            for c in ipl.culls:
+                f.write(_format_cull_line(c) + '\n')
+            f.write('end\n')
 
+        if ipl.garages:
+            f.write('grge\n')
+            for g in ipl.garages:
+                f.write(_format_grge_line(g) + '\n')
+            f.write('end\n')
+
+        if ipl.enexs:
+            f.write('enex\n')
+            for e in ipl.enexs:
+                f.write(_format_enex_line(e) + '\n')
+            f.write('end\n')
+
+        if ipl.pickups:
+            f.write('pick\n')
+            for p in ipl.pickups:
+                f.write(_format_pick_line(p) + '\n')
+            f.write('end\n')
+
+        if ipl.cars:
+            f.write('cars\n')
+            for c in ipl.cars:
+                f.write(_format_cars_line(c) + '\n')
+            f.write('end\n')
+
+        if ipl.jumps:
+            f.write('jump\n')
+            for j in ipl.jumps:
+                f.write(_format_jump_line(j) + '\n')
+            f.write('end\n')
+
+        if ipl.auzos:
+            f.write('auzo\n')
+            for a in ipl.auzos:
+                f.write(_format_auzo_line(a) + '\n')
+            f.write('end\n')
+
+        if ipl.occls:
+            f.write('occl\n')
+            for o in ipl.occls:
+                f.write(_format_occl_line(o) + '\n')
+            f.write('end\n')
+
+        if ipl.tcycs:
+            f.write('tcyc\n')
+            for t in ipl.tcycs:
+                f.write(_format_tcyc_line(t) + '\n')
+            f.write('end\n')
+
+        if ipl.zones:
+            f.write('zone\n')
+            for z in ipl.zones:
+                f.write(_format_zone_line(z) + '\n')
+            f.write('end\n')
+
+
+# ── Upsert / Remove (inst section only) ──────────────────────────────
 
 def upsert_ipl(filepath: str, entries: list[IplInstance]) -> tuple[int, int]:
     """
-    Insert or update entries in an existing IPL file.
+    Insert or update inst entries in an existing IPL file.
 
     Matching is by model_id + model_name (both must match).
-    - If match found → replace the line (update position/rotation).
-    - If no match → append to the ``inst`` section.
-
     Returns (updated_count, added_count).
     """
     if not os.path.isfile(filepath):
@@ -135,7 +770,6 @@ def upsert_ipl(filepath: str, entries: list[IplInstance]) -> tuple[int, int]:
     with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
         lines = f.readlines()
 
-    # Build lookup: (model_id, name_lower) → entry
     pending: dict[tuple[int, str], IplInstance] = {}
     for e in entries:
         pending[(e.model_id, e.model_name.lower())] = e
@@ -144,6 +778,9 @@ def upsert_ipl(filepath: str, entries: list[IplInstance]) -> tuple[int, int]:
     result_lines = []
     section = None
     inst_end_idx = -1
+
+    _SECTIONS = {'inst', 'cull', 'path', 'grge', 'enex', 'pick',
+                 'jump', 'tcyc', 'auzo', 'mult', 'cars', 'occl', 'zone'}
 
     for line in lines:
         stripped = line.strip()
@@ -155,8 +792,7 @@ def upsert_ipl(filepath: str, entries: list[IplInstance]) -> tuple[int, int]:
             result_lines.append(line)
             continue
 
-        if low in ('inst', 'cull', 'path', 'grge', 'enex', 'pick',
-                   'jump', 'tcyc', 'auzo', 'mult', 'cars', 'occl', 'zone'):
+        if low in _SECTIONS:
             section = low
             result_lines.append(line)
             continue
@@ -194,7 +830,7 @@ def upsert_ipl(filepath: str, entries: list[IplInstance]) -> tuple[int, int]:
 
 
 def remove_ipl(filepath: str, model_ids: set[int]) -> int:
-    """Remove entries with given model_ids from IPL file.
+    """Remove inst entries with given model_ids from IPL file.
     Recalculates lod_index for remaining entries.
     Returns count removed."""
     if not os.path.isfile(filepath):
@@ -203,7 +839,6 @@ def remove_ipl(filepath: str, model_ids: set[int]) -> int:
     ipl = read_ipl(filepath)
     original_count = len(ipl.instances)
 
-    # Build index mapping: old_index -> new_index (after removal)
     removed_indices = set()
     for i, inst in enumerate(ipl.instances):
         if inst.model_id in model_ids:
@@ -229,11 +864,10 @@ def remove_ipl(filepath: str, model_ids: set[int]) -> int:
             if inst.lod_index in index_map:
                 inst.lod_index = index_map[inst.lod_index]
             else:
-                # LOD was removed — clear reference
                 inst.lod_index = -1
         new_instances.append(inst)
 
-    # Rewrite file
+    # Rewrite preserving non-inst sections
     with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
         lines = f.readlines()
 
@@ -246,28 +880,21 @@ def remove_ipl(filepath: str, model_ids: set[int]) -> int:
         low = stripped.lower()
 
         if low == 'end' and section == 'inst':
-            # Write new inst entries before end
             if not inst_written:
                 for inst in new_instances:
-                    result_lines.append(
-                        f"{inst.model_id}, {inst.model_name}, {inst.interior}, "
-                        f"{inst.pos_x:f}, {inst.pos_y:f}, {inst.pos_z:f}, "
-                        f"{inst.rot_x:f}, {inst.rot_y:f}, {inst.rot_z:f}, {inst.rot_w:f}, "
-                        f"{inst.lod_index}\n"
-                    )
+                    result_lines.append(_format_inst_line(inst) + '\n')
                 inst_written = True
             section = None
             result_lines.append(line)
             continue
 
-        if low in ('inst',):
+        if low == 'inst':
             section = low
             result_lines.append(line)
             continue
 
         if section == 'inst' and stripped and not stripped.startswith('#'):
-            # Skip old inst lines — we'll write new ones
-            continue
+            continue  # skip old inst lines
 
         result_lines.append(line)
 

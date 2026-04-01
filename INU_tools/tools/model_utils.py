@@ -94,14 +94,32 @@ def find_selected_models():
     return models
 
 
+def _get_active_collection_objects():
+    """Get mesh objects from active collection (including child collections)."""
+    col = bpy.context.collection
+    if col is None or col == bpy.context.scene.collection:
+        return []
+    objects = []
+    def _collect(c):
+        for obj in c.objects:
+            if obj.type == 'MESH':
+                objects.append(obj)
+        for child in c.children:
+            _collect(child)
+    _collect(col)
+    return objects
+
+
 def find_all_selected_model_groups():
-    """Find all DFF/LOD/COL model groups among selected objects, grouped by base_name"""
+    """Find all DFF/LOD/COL model groups among selected objects, grouped by base_name.
+    Falls back to active collection if nothing is selected."""
     groups = {}  # {base_name: {'DFF': obj, 'LOD': obj, 'COL': obj}}
 
-    for obj in bpy.context.selected_objects:
-        if obj.type != 'MESH':
-            continue
+    source = [o for o in bpy.context.selected_objects if o.type == 'MESH']
+    if not source:
+        source = _get_active_collection_objects()
 
+    for obj in source:
         model_type, base_name = get_model_type(obj)
         if not base_name:
             continue

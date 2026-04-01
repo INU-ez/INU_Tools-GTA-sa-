@@ -106,20 +106,16 @@ def _decode_color_indices(indices_u32):
 
 
 def _scatter_blocks(block_colors, bw, bh, width, height):
-    """Scatter (N, 4, 4, 4) block pixel data into (height, width, 4) image."""
-    # block_colors shape: (N, 16, 4) → reshape to (bh, bw, 4, 4, 4)
-    out = np.zeros((height, width, 4), dtype=np.uint8)
-    block_colors = block_colors.reshape(bh, bw, 4, 4, 4)
-
-    for by in range(bh):
-        for bx in range(bw):
-            y0 = by * 4
-            x0 = bx * 4
-            yend = min(y0 + 4, height)
-            xend = min(x0 + 4, width)
-            out[y0:yend, x0:xend] = block_colors[by, bx, :yend-y0, :xend-x0]
-
-    return out
+    """Scatter block pixel data into (height, width, 4) image.
+    block_colors: (N, 16, 4) where N = bw*bh, 16 pixels in row-major 4x4.
+    """
+    # Reshape to (bh, bw, 4rows, 4cols, 4rgba)
+    blocks = block_colors.reshape(bh, bw, 4, 4, 4)
+    # Transpose to (bh, 4rows, bw, 4cols, 4rgba) then merge
+    # → (bh*4, bw*4, 4)
+    img = blocks.transpose(0, 2, 1, 3, 4).reshape(bh * 4, bw * 4, 4)
+    # Crop to actual size (in case width/height not multiple of 4)
+    return img[:height, :width].copy()
 
 
 def _decompress_dxt1(data, width, height):
@@ -286,13 +282,21 @@ def _decode_uncompressed(data, width, height, raster_fmt, depth):
         arr[:, [0, 2]] = arr[:, [2, 0]]
         return arr.tobytes()
     elif fmt == RASTER_888:
-        arr = np.frombuffer(data[:n_pixels*3], dtype=np.uint8).reshape(-1, 3)
-        out = np.empty((n_pixels, 4), dtype=np.uint8)
-        out[:, 0] = arr[:, 2]  # B→R
-        out[:, 1] = arr[:, 1]  # G
-        out[:, 2] = arr[:, 0]  # R→B
-        out[:, 3] = 255
-        return out.tobytes()
+        if depth == 32 or len(data) >= n_pixels * 4:
+            # 888 stored as 32-bit BGRX (4 bytes per pixel, X=padding)
+            arr = np.frombuffer(data[:n_pixels*4], dtype=np.uint8).reshape(-1, 4).copy()
+            arr[:, [0, 2]] = arr[:, [2, 0]]  # BGRA → RGBA
+            arr[:, 3] = 255  # force opaque
+            return arr.tobytes()
+        else:
+            # True 24-bit (3 bytes per pixel)
+            arr = np.frombuffer(data[:n_pixels*3], dtype=np.uint8).reshape(-1, 3)
+            out = np.empty((n_pixels, 4), dtype=np.uint8)
+            out[:, 0] = arr[:, 2]  # B→R
+            out[:, 1] = arr[:, 1]  # G
+            out[:, 2] = arr[:, 0]  # R→B
+            out[:, 3] = 255
+            return out.tobytes()
     elif fmt == RASTER_565:
         raw = np.frombuffer(data[:n_pixels*2], dtype=np.uint16)
         out = np.empty((n_pixels, 4), dtype=np.uint8)
@@ -373,7 +377,9 @@ def _read_texture_native(r, size):
     palette = None
     if has_palette:
         pal_data = r.read_bytes(256 * 4)
-        palette = np.frombuffer(pal_data, dtype=np.uint8).reshape(256, 4)
+        palette = np.frombuffer(pal_data, dtype=np.uint8).reshape(256, 4).copy()
+        # GTA SA palette is BGRA → swap to RGBA
+        palette[:, [0, 2]] = palette[:, [2, 0]]
 
     # Mip level 0 (we only need the largest)
     data_size = r.read_one('<I')
@@ -383,17 +389,15 @@ def _read_texture_native(r, size):
     w, h = tex.width, tex.height
 
     if has_palette and palette is not None:
-        # Paletted: each byte is an index into the 256-color palette
         indices = np.frombuffer(raw_data[:w*h], dtype=np.uint8)
         tex.pixels = palette[indices].tobytes()
-    elif tex.fourcc == DXT1:
+    elif tex.fourcc == DXT1 or compression_flag == 1:
         tex.pixels = _decompress_dxt1(raw_data, w, h)
-    elif tex.fourcc == DXT3:
+    elif tex.fourcc == DXT3 or compression_flag in (2, 3):
         tex.pixels = _decompress_dxt3(raw_data, w, h)
-    elif tex.fourcc == DXT5:
+    elif tex.fourcc == DXT5 or compression_flag in (4, 5):
         tex.pixels = _decompress_dxt5(raw_data, w, h)
     else:
-        # Uncompressed
         tex.pixels = _decode_uncompressed(raw_data, w, h, tex.raster_format, tex.depth)
 
     r.seek(struct_end)
