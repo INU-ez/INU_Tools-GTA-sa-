@@ -251,7 +251,7 @@ Name objects with suffixes (`Model_DFF`, `Model_LOD`, `Model_COL`), select them,
 
 </details>
 
-> **[Comparison with other tools (DragonFF, GTA_Tools, DeniskaMax, etc.)](COMPARISON.md)**
+> **[Documentation](DOCS_eng.md)** | **[Документация (Русский)](DOCS.md)** | **[Comparison with other tools](COMPARISON.md)**
 
 ## Credits
 
