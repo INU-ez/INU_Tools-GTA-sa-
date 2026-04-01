@@ -9,6 +9,9 @@
 
 > **[Русская версия / Russian version](README.md)**
 
+> [!WARNING]
+> **Beta** — The addon is under active development. Some features may not work as expected or may be missing. Key features are being finalized. Until a release is marked as **Final** on GitHub, all functions should be considered in testing. Bug reports and feedback are welcome in [Issues](../../issues).
+
 INU_Tools is a Blender addon for working with GTA San Andreas models.
 It provides tools for export, prelighting, and 3D model preparation.
 Starting from v1.5.0, the addon has its own DFF, COL, and TXD export (no DragonFF dependency).
