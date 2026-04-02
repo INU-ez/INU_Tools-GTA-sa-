@@ -116,3 +116,50 @@ def clear_all():
 def get_file_path():
     """Return path to the ID file."""
     return _ID_FILE
+
+
+def create_id_file():
+    """Create model_ids.txt with all IDs 321-19999 as free."""
+    entries = [(i, None) for i in range(321, 20000)]
+    _save(entries)
+    return len(entries)
+
+
+def populate_from_game(game_root):
+    """Read all IDE files from gta.dat and mark those IDs as occupied."""
+    from ..core.gta_dat import find_all_resources
+    from ..core.ide import read_ide
+    import os
+
+    info = find_all_resources(game_root)
+    game_ids = {}  # id -> model_name
+
+    for p in info.ide_paths:
+        if os.path.isfile(p):
+            try:
+                ide = read_ide(p)
+                for obj in ide.objects:
+                    game_ids[obj.model_id] = obj.model_name
+                for anim in ide.anims:
+                    game_ids[anim.model_id] = anim.model_name
+                for car in ide.cars:
+                    game_ids[car.model_id] = car.model_name
+                for ped in ide.peds:
+                    game_ids[ped.model_id] = ped.model_name
+                for weap in ide.weaps:
+                    game_ids[weap.model_id] = weap.model_name
+                for hier in ide.hiers:
+                    game_ids[hier.model_id] = hier.model_name
+            except Exception:
+                pass
+
+    # Update existing entries: mark game IDs as occupied
+    entries = _load()
+    entry_map = {id_num: name for id_num, name in entries}
+
+    for gid, gname in game_ids.items():
+        entry_map[gid] = gname  # mark as occupied with model name
+
+    entries = [(k, v) for k, v in entry_map.items()]
+    _save(entries)
+    return len(game_ids)

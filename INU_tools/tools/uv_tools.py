@@ -639,7 +639,7 @@ class GTATOOLS_OT_add_gtasa_model(bpy.types.Operator):
             self.report({'ERROR'}, f"Unknown model: {self.model}")
             return {'CANCELLED'}
 
-        models_dir = os.path.join(os.path.dirname(__file__), "data", "models")
+        models_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "models")
         filepath = os.path.join(models_dir, info[1])
 
         if not os.path.isfile(filepath):

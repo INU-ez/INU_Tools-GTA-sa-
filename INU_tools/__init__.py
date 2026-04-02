@@ -7289,15 +7289,48 @@ class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
             if free:
                 box.label(text=f"{T('Следующий свободный:')} {free[0]}", icon='FORWARD')
 
-            # Show used IDs
+            # Search field
+            box.prop(scene, "gtatools_id_search", text="", icon='VIEWZOOM')
+            search = getattr(scene, 'gtatools_id_search', '').strip()
+            page = getattr(scene, 'gtatools_id_page', 0)
+            per_page = 20
+
+            # Filter IDs
             if used:
+                filtered = []
+                for id_num in sorted(used.keys()):
+                    name = used[id_num]
+                    if search:
+                        if search.isdigit():
+                            if search not in str(id_num):
+                                continue
+                        else:
+                            if search.lower() not in name.lower():
+                                continue
+                    filtered.append((id_num, name))
+
+                total = len(filtered)
+                max_page = max(0, (total - 1) // per_page)
+                page = min(page, max_page)
+                start = page * per_page
+                page_items = filtered[start:start + per_page]
+
                 sub = box.box()
                 col = sub.column(align=True)
-                for id_num in sorted(used.keys()):
+                # 2 columns
+                for i in range(0, len(page_items), 2):
                     row = col.row(align=True)
-                    row.label(text=f"{id_num} - {used[id_num]}")
-                    op = row.operator("gtatools.id_manager_release", text="", icon='X')
-                    op.model_id = id_num
+                    for j in range(2):
+                        if i + j < len(page_items):
+                            id_num, name = page_items[i + j]
+                            row.label(text=f"{id_num}-{name}")
+                            op = row.operator("gtatools.id_manager_release", text="", icon='X')
+                            op.model_id = id_num
+
+                # Page navigation
+                if total > per_page:
+                    nav = sub.row(align=True)
+                    nav.prop(scene, "gtatools_id_page", text=f"{start+1}-{min(start+per_page, total)} / {total}")
 
             # Show free IDs (compact)
             if free:
@@ -7310,6 +7343,8 @@ class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
             row = box.row(align=True)
             row.operator("gtatools.id_manager_auto_assign", text=T("Назначить ID выделенным"), icon='ADD')
             row.operator("gtatools.id_manager_clear", text="", icon='TRASH')
+            box.operator("gtatools.id_manager_create", text=T("Создать файл ID"), icon='FILE_NEW')
+            box.operator("gtatools.id_manager_from_game", text=T("Загрузить из игры"), icon='IMPORT')
             box.operator("gtatools.id_manager_open_file", text=T("Открыть файл ID"), icon='FILE_TEXT')
 
 
@@ -7323,6 +7358,9 @@ class GTATOOLS_OT_id_manager_open_file(bpy.types.Operator):
         from .data.id_manager import get_file_path
         import subprocess, sys
         filepath = get_file_path()
+        if not os.path.isfile(filepath):
+            self.report({'ERROR'}, T("Файл ID не найден. Нажмите 'Создать файл ID'"))
+            return {'CANCELLED'}
         if sys.platform == 'win32':
             os.startfile(filepath)
         else:
@@ -7421,6 +7459,37 @@ class GTATOOLS_OT_id_manager_clear(bpy.types.Operator):
         from .data.id_manager import clear_all
         clear_all()
         self.report({'INFO'}, T("Все ID очищены"))
+        return {'FINISHED'}
+
+
+
+class GTATOOLS_OT_id_manager_create(bpy.types.Operator):
+    """Создать файл ID (321-19999, все свободные)"""
+    bl_idname = "gtatools.id_manager_create"
+    bl_label = "Create ID File"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        from .data.id_manager import create_id_file
+        count = create_id_file()
+        self.report({'INFO'}, f"ID: 321-19999 ({count})")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_id_manager_from_game(bpy.types.Operator):
+    """Загрузить занятые ID из IDE файлов GTA SA"""
+    bl_idname = "gtatools.id_manager_from_game"
+    bl_label = "Load IDs from Game"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        from .data.id_manager import populate_from_game
+        game_root = bpy.path.abspath(context.scene.gtatools_game_root)
+        if not game_root or not os.path.isdir(game_root):
+            self.report({'ERROR'}, T("Укажите корневую папку GTA SA"))
+            return {'CANCELLED'}
+        count = populate_from_game(game_root)
+        self.report({'INFO'}, f"{T('Занято ID:')} {count}")
         return {'FINISHED'}
 
 
@@ -8559,6 +8628,8 @@ classes = (
     GTATOOLS_OT_id_manager_release,
     GTATOOLS_OT_id_manager_auto_assign,
     GTATOOLS_OT_id_manager_clear,
+    GTATOOLS_OT_id_manager_create,
+    GTATOOLS_OT_id_manager_from_game,
     GTATOOLS_OT_toggle_uv_editor,
     GTATOOLS_OT_toggle_uv_grid,
     GTATOOLS_OT_randomize_uv_grid,
@@ -9228,6 +9299,17 @@ def register():
         description=T("Показать менеджер ID"),
         default=False
     )
+    bpy.types.Scene.gtatools_id_search = StringProperty(
+        name="ID Search",
+        description=T("Поиск по ID или имени модели"),
+        default=""
+    )
+    bpy.types.Scene.gtatools_id_page = IntProperty(
+        name="ID Page",
+        default=0,
+        min=0,
+        soft_max=1000,
+    )
     # Texture loader paths
     bpy.types.Scene.gtatools_texture_path1 = StringProperty(
         name="System Textures Path",
@@ -9590,6 +9672,8 @@ def unregister():
     del bpy.types.Scene.gtatools_suffix_lod
     del bpy.types.Scene.gtatools_suffix_col
     del bpy.types.Scene.gtatools_show_id_manager
+    del bpy.types.Scene.gtatools_id_search
+    del bpy.types.Scene.gtatools_id_page
     del bpy.types.Scene.gtatools_texture_path2
     del bpy.types.Scene.gtatools_texture_path1
     del bpy.types.Scene.gtatools_export_pipeline
