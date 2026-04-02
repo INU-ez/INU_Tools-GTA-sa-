@@ -1299,18 +1299,28 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
                 pass
 
         wm = context.window_manager
-        wm.progress_begin(0, total_entries)
 
         dff_count = 0
         col_count = 0
         tex_count = 0
         skipped = 0
-        progress = 0
+
+        # Count TXD entries for progress (slow part)
+        txd_total = 0
+        for ip in img_paths:
+            try:
+                for e in read_directory(ip):
+                    if e.name.lower().endswith('.txd'):
+                        txd_total += 1
+            except Exception:
+                pass
+        wm.progress_begin(0, max(txd_total, 1))
+        txd_progress = 0
 
         for img_idx, ip in enumerate(img_paths):
             try:
                 with ImgReader(ip) as img:
-                    # Step 1: Batch extract DFF + COL (sequential read)
+                    # Step 1: Batch extract DFF + COL (fast, sequential read)
                     counts = img.extract_all_to(
                         cache_dir,
                         extensions={'.dff', '.col'},
@@ -1318,23 +1328,21 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
                     dff_count += counts['dff']
                     col_count += counts['col']
                     skipped += counts['skipped']
-                    progress += counts['dff'] + counts['col'] + counts['skipped']
-                    wm.progress_update(progress)
 
-                    # Step 2: Extract TXD → convert to PNG
+                    # Step 2: Extract TXD → convert to PNG (slow part)
                     for entry in img.entries:
                         if not entry.name.lower().endswith('.txd'):
-                            progress += 1
                             continue
-                        progress += 1
-                        if progress % 5 == 0:
-                            wm.progress_update(progress)
+                        txd_progress += 1
+                        if txd_progress % 5 == 0:
+                            wm.progress_update(txd_progress)
 
                         txd_data = img.read(entry.name)
                         if not txd_data:
                             continue
 
                         tmp_path = os.path.join(cache_dir, entry.name)
+
                         with open(tmp_path, 'wb') as f:
                             f.write(txd_data)
 
@@ -1361,8 +1369,10 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
                                 else:
                                     _write_png(png_path, tex.pixels, tex.width, tex.height)
                                     tex_count += 1
-                        except Exception:
-                            pass
+                        except Exception as _e:
+                            _log = os.path.join(cache_dir, '_txd_errors.log')
+                            with open(_log, 'a', encoding='utf-8') as _lf:
+                                _lf.write(f"{entry.name}: {_e}\n")
 
                         try:
                             os.remove(tmp_path)
@@ -1371,16 +1381,28 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
             except Exception:
                 pass
 
-        # Batch GPU conversion: nvdecompress DDS → PNG
+        # Batch GPU conversion: nvdecompress DDS → PNG (parallel)
         if dds_queue and nvdecompress:
             import subprocess
-            for i, (dds_path, png_path) in enumerate(dds_queue):
+            wm.progress_begin(0, len(dds_queue))
+            done = [0]
+
+            def _convert(args):
+                dds_p, png_p = args
                 try:
                     subprocess.run(
-                        [nvdecompress, '-format', 'png', dds_path, png_path],
+                        [nvdecompress, '-format', 'png', dds_p, png_p],
                         capture_output=True, timeout=10)
                 except Exception:
                     pass
+                done[0] += 1
+                return done[0]
+
+            workers = min(os.cpu_count() or 4, 8)
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                for count in pool.map(_convert, dds_queue):
+                    if count % 50 == 0:
+                        wm.progress_update(count)
             # Cleanup DDS temp dir
             if dds_dir:
                 try:
@@ -6401,18 +6423,14 @@ class GTATOOLS_PT_export_panel(bpy.types.Panel):
 
         # Pipeline + Normals
         _draw_label_with_info(layout, "Pipeline:",
-            T("None — без pipeline\nBuilding — Day/Night vertex colors (смена освещения по времени суток)\nReflections — отражения на окнах (окна должны быть отдельной моделью)"))
+            T("None — без pipeline\nBuilding — Day/Night vertex colors (смена освещения по времени суток)\nReflections — отражения на окнах (окна должны быть отдельной моделью)\n\nNormals — динамическое освещение движком (персонажи, транспорт, оружие)\nОтключить для зданий и объектов карты (используют vertex colors)"))
         row = layout.row(align=True)
         row.prop_enum(context.scene, "gtatools_export_pipeline", 'NONE')
         row.prop_enum(context.scene, "gtatools_export_pipeline", '0x53F2009A')
         row.prop_enum(context.scene, "gtatools_export_pipeline", '0x53F20098')
-
-        # Normals toggle for active object
         obj = context.active_object
         if obj and obj.type == 'MESH' and hasattr(obj, 'inu'):
-            _draw_label_with_info(layout, "Normals:",
-                T("Включить для объектов с динамическим освещением: персонажи, транспорт, оружие\nОтключить для зданий и объектов карты (используют vertex colors)"))
-            layout.prop(obj.inu, "export_normals", text=T("Normals (динамическое освещение)"), toggle=True)
+            layout.prop(obj.inu, "export_normals", text="Normals", toggle=True)
 
 
 

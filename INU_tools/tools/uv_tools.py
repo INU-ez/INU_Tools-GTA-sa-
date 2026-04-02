@@ -632,7 +632,7 @@ class GTATOOLS_OT_add_gtasa_model(bpy.types.Operator):
     )
 
     def execute(self, context):
-        from .ops.dff_import import import_dff as inu_import_dff
+        from ..ops.dff_import import import_dff as inu_import_dff
 
         info = _GTASA_MODELS.get(self.model)
         if not info:

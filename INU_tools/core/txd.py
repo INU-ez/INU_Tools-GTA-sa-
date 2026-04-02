@@ -372,14 +372,20 @@ def _read_texture_native(r, size):
     raster_type = r.read_one('<B')
     compression_flag = r.read_one('<B')
 
-    # Palette (if PAL8 flag set)
-    has_palette = bool(tex.raster_format & RASTER_PAL8)
+    # Palette (PAL8 = 256 colors, PAL4 = 16 colors)
+    has_pal8 = bool(tex.raster_format & RASTER_PAL8)
+    has_pal4 = bool(tex.raster_format & RASTER_PAL4)
+    has_palette = has_pal8 or has_pal4
     palette = None
-    if has_palette:
+    if has_pal8:
         pal_data = r.read_bytes(256 * 4)
         palette = np.frombuffer(pal_data, dtype=np.uint8).reshape(256, 4).copy()
-        # GTA SA palette is BGRA → swap to RGBA
-        palette[:, [0, 2]] = palette[:, [2, 0]]
+        palette[:, [0, 2]] = palette[:, [2, 0]]  # BGRA → RGBA
+    elif has_pal4:
+        # On D3D8/D3D9 platform, PAL4 still stores 256-entry palette (32 used)
+        pal_data = r.read_bytes(256 * 4)
+        palette = np.frombuffer(pal_data, dtype=np.uint8).reshape(256, 4).copy()
+        palette[:, [0, 2]] = palette[:, [2, 0]]  # BGRA → RGBA
 
     # Mip level 0 (we only need the largest)
     data_size = r.read_one('<I')
@@ -388,17 +394,33 @@ def _read_texture_native(r, size):
     # Decompress / decode pixel data
     w, h = tex.width, tex.height
 
-    if has_palette and palette is not None:
+    # Detect real compression: if data matches uncompressed size, it's not DXT
+    expected_uncompressed = w * h * max(tex.depth, 8) // 8
+    really_compressed = (data_size < expected_uncompressed) if expected_uncompressed > 0 else False
+
+    # DXT compression takes priority over palette flags
+    if (tex.fourcc == DXT1 or compression_flag == 1) and really_compressed:
+        tex.pixels = _decompress_dxt1(raw_data, w, h)
+    elif (tex.fourcc == DXT3 or compression_flag in (2, 3)) and really_compressed:
+        tex.pixels = _decompress_dxt3(raw_data, w, h)
+    elif (tex.fourcc == DXT5 or compression_flag in (4, 5)) and really_compressed:
+        tex.pixels = _decompress_dxt5(raw_data, w, h)
+    elif has_palette and palette is not None:
         indices = np.frombuffer(raw_data[:w*h], dtype=np.uint8)
         tex.pixels = palette[indices].tobytes()
-    elif tex.fourcc == DXT1 or compression_flag == 1:
-        tex.pixels = _decompress_dxt1(raw_data, w, h)
-    elif tex.fourcc == DXT3 or compression_flag in (2, 3):
-        tex.pixels = _decompress_dxt3(raw_data, w, h)
-    elif tex.fourcc == DXT5 or compression_flag in (4, 5):
-        tex.pixels = _decompress_dxt5(raw_data, w, h)
     else:
-        tex.pixels = _decode_uncompressed(raw_data, w, h, tex.raster_format, tex.depth)
+        # Check if data looks compressed (too small for uncompressed)
+        expected = w * h * max(tex.depth, 8) // 8
+        if data_size < expected and not has_palette and w >= 4 and h >= 4:
+            # Likely compressed but not detected — try DXT by data size
+            bw = max(1, (w + 3) // 4)
+            bh = max(1, (h + 3) // 4)
+            if data_size <= bw * bh * 8:
+                tex.pixels = _decompress_dxt1(raw_data, w, h)
+            else:
+                tex.pixels = _decompress_dxt5(raw_data, w, h)
+        else:
+            tex.pixels = _decode_uncompressed(raw_data, w, h, tex.raster_format, tex.depth)
 
     r.seek(struct_end)
 
