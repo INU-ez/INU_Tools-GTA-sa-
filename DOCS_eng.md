@@ -170,8 +170,8 @@ Drag PNG/JPG/TGA images from File Browser into the 3D viewport to automatically 
 - Select **Region** (auto-detected from gta.dat: LA, SF, VEGAS, COUNTRY, etc.)
 
 **Step 2: Extract Resources**
-- Click **Extract Resources** — extracts all DFF, COL, and textures from IMG archives into `.inu_cache/`
-- This is slow but only needed once
+- Click **Extract Resources** — extracts all DFF, COL, and textures from IMG archives into `.inu_cache/` folder next to your .blend file (so save the .blend first)
+- This is slow but only needed once — already extracted files are skipped on re-run
 
 **Step 3: Build .glb**
 - Click **Build Map .glb** — converts DFF models with IPL positions into a single .glb file
@@ -200,7 +200,10 @@ IDE files define model properties: ID, texture dictionary, draw distance, flags.
 
 **All sections supported:** objs, tobj, anim, cars, peds, weap, hier, txdp.
 
-**Auto-LOD:** when adding DFF+LOD pair, LOD gets ID+1, draw distance+50, same TXD.
+**Auto-LOD:** when adding DFF+LOD pair, the following are assigned automatically:
+- **Model ID:** LOD = DFF ID + 1 (e.g. DFF ID 3500 → LOD ID 3501)
+- **Draw Distance:** LOD = 999 (maximum visibility). The HD model is visible up to its draw distance (e.g. 299m), then LOD appears and stays visible up to 999m
+- **TXD:** LOD uses the same texture dictionary as DFF
 
 **IDE Flags** (15 checkboxes in object properties):
 
@@ -229,7 +232,7 @@ IPL files define object positions, rotations, and LOD links on the map.
 | Button | Operator | Description |
 |--------|----------|-------------|
 | Add | `gtatools.upsert_ipl` | Insert/update placement (auto-LOD linking) |
-| Remove | `gtatools.remove_ipl` | Remove by Model ID (recalculates LOD indices) |
+| Remove | `gtatools.remove_ipl` | Remove by Model ID. When an entry is deleted from the middle of the file, all LOD indices of remaining objects are automatically recalculated — otherwise the game would reference wrong lines and may crash |
 | Import | `gtatools.import_ipl` | Place objects or create Empties at positions |
 | Export | `gtatools.export_ipl` | Write selected objects with world transforms |
 
@@ -317,10 +320,10 @@ When enabled, all Map_ collection objects switch to `BOUNDS` display. Objects wi
 
 **Panel:** Properties → Scene → INU Tools → Textures
 
-- **System textures path** — shared textures folder
-- **.blend folder** — auto-set to current .blend location
-- **Load Textures** — scan and assign textures by material names
-- **Drag & Drop** — drag images into viewport to create materials
+- **System textures** — path to a shared texture folder (e.g. `System_textures` from MTA/GTA)
+- **.blend folder** — automatically points to the current .blend file's directory. Refresh button 🔄 updates the path
+- **Load Textures** — searches for PNG/TGA/JPG files matching material names on the object. Searches both folders: system and .blend. If a material is named `brick_wall`, the addon finds `brick_wall.png` in the specified folders and assigns it as texture
+- **Drag & Drop** — drag images from File Browser directly into the viewport to create a new material with the texture
 
 ---
 
@@ -453,6 +456,8 @@ Import/export GTA SA character models with skeleton and animations.
 - Round-trip with byte-level accuracy
 - Correct material indices in BinMesh PLG
 
+**Export settings for characters:** in object properties (`obj.inu`) it's recommended to enable **Normals** and disable **Vertex Colors** — GTA SA characters use normals for dynamic engine lighting instead of baked vertex colors like buildings
+
 ### IFP Animations
 
 | Button | Operator | Description |
@@ -526,11 +531,23 @@ Auto-splits into groups of 12 nodes (GTA SA limit).
 
 | Button | Description |
 |--------|-------------|
-| Apply Quickstart | Apply Itera Quickstart material to selected |
-| Fix Collection | Auto-organize Itera materials in collection |
-| Remove Itera | Remove Itera materials and restore originals |
+| Vertex Lit Linear | Applies a special material for previewing Itera lighting on the model |
+| Quickstart | Creates a modifier on the model and a collection with light sources |
+| Remove Itera | Removes the lighting material and restores the original materials |
 
-Auto-detects Itera Tools 3 library in Blender Asset Libraries. Panel only visible when Itera is installed.
+**Workflow:**
+1. Click **Vertex Lit Linear** — a lighting preview material is applied to the model
+2. Click **Quickstart** — a modifier and light collection appear
+3. Position and configure the lights as needed
+4. In the model's modifier, set **Output Type / Bake → Vertex Colors**
+5. In the **Export Vertex Color** field, type your color attribute name — `Day` or `Night`
+6. When lighting is finalized — **apply the modifier**
+7. A third extra color attribute will appear — you can delete it
+8. Click **Remove Itera** — original materials are restored on the model
+
+> **IMPORTANT:** Do not edit the model's geometry or materials while Itera material is active. Modifying the model in this state can corrupt UV coordinates and break texture assignments.
+
+Panel is only visible when Itera Tools 3 is installed in Asset Libraries.
 
 ### Lightmap Generator (MTA)
 
@@ -548,12 +565,20 @@ Generate Lua code for MTA SA lightmap scripts.
 
 **Fields:** lightmap path, model ID. Output: Lua table with texture names and lightmap references.
 
+The MTA lightmap script itself is available in the [Issues](../../issues) section of the repository.
+
 ### Pipeline
 
-Set render pipeline per object:
-- **None** — no pipeline
-- **Building** (0x53F2009A) — Day/Night vertex colors
-- **Reflections** (0x53F20098) — window reflections
+Render pipeline determines how the GTA SA engine processes the model:
+- **None** — no pipeline. Suitable for most objects: furniture, fences, vegetation, characters
+- **Building** (0x53F2009A) — Day/Night vertex colors. Required for buildings and map objects that have vertex colors — without this pipeline, day/night color transitions won't work in-game
+- **Reflections** (0x53F20098) — window reflections. Only for window models that should reflect the environment. Windows must be a separate model from the building
+
+### Normals
+
+The **Normals** toggle controls vertex normal export in DFF:
+- **Enabled** — the model receives dynamic lighting from the GTA SA engine. Required for: characters, vehicles, weapons, interactive objects
+- **Disabled** — the model is lit only by baked vertex colors. Used for: buildings, roads, map objects
 
 ---
 

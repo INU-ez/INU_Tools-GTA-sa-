@@ -2588,9 +2588,9 @@ class GTATOOLS_OT_upsert_ide(bpy.types.Operator):
                     dff_id = getattr(dff_obj.inu, 'model_id', 0)
                     if dff_id > 0:
                         lod_entry.model_id = dff_id + 1
-                # LOD draw distance = DFF draw distance + 50 if not set
-                if lod_obj.inu.draw_distance == 300.0 and dff_obj:
-                    lod_entry.draw_distance = dff_obj.inu.draw_distance + 50
+                # LOD draw distance = max visible range
+                if lod_obj.inu.draw_distance == 300.0:
+                    lod_entry.draw_distance = 999.0
                 entries.append(lod_entry)
 
         # Validate model IDs
@@ -6399,13 +6399,20 @@ class GTATOOLS_PT_export_panel(bpy.types.Panel):
         row.prop(context.scene, "gtatools_export_all_lod", text="LOD", toggle=True)
         row.prop(context.scene, "gtatools_export_all_txd", text="TXD", toggle=True)
 
-        # Pipeline
+        # Pipeline + Normals
         _draw_label_with_info(layout, "Pipeline:",
             T("None — без pipeline\nBuilding — Day/Night vertex colors (смена освещения по времени суток)\nReflections — отражения на окнах (окна должны быть отдельной моделью)"))
         row = layout.row(align=True)
         row.prop_enum(context.scene, "gtatools_export_pipeline", 'NONE')
         row.prop_enum(context.scene, "gtatools_export_pipeline", '0x53F2009A')
         row.prop_enum(context.scene, "gtatools_export_pipeline", '0x53F20098')
+
+        # Normals toggle for active object
+        obj = context.active_object
+        if obj and obj.type == 'MESH' and hasattr(obj, 'inu'):
+            _draw_label_with_info(layout, "Normals:",
+                T("Включить для объектов с динамическим освещением: персонажи, транспорт, оружие\nОтключить для зданий и объектов карты (используют vertex colors)"))
+            layout.prop(obj.inu, "export_normals", text=T("Normals (динамическое освещение)"), toggle=True)
 
 
 
