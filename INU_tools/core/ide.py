@@ -507,6 +507,9 @@ def upsert_ide(filepath: str, entries: list[IdeObject]) -> tuple[int, int]:
 
         if low in ('objs', 'tobj', 'anim', 'txdp', 'weap', 'hier',
                    'cars', 'peds', 'path', '2dfx'):
+            # Previous section ended implicitly (no 'end' before new section)
+            if section == 'objs':
+                objs_end_idx = len(result_lines)
             section = low
             result_lines.append(line)
             continue

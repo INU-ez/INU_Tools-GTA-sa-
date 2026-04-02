@@ -4,7 +4,7 @@
 
 | Инструмент | Платформа | Автор | Функций |
 |------------|-----------|-------|--------:|
-| **INU_Tools** | Blender 5.1+ | INU | ~145 |
+| **INU_Tools** | Blender 4.2+ | INU | ~155 |
 | **DragonFF** | Blender 4.x | Parik | ~132 |
 | **GTA_Tools(GF)** | 3ds Max | Kam / Goldfish | ~150 |
 | **DeniskaMax** | 3ds Max | Deniska | ~54 |
@@ -27,23 +27,23 @@
 | IFP Import (анимации) | ✅ | — | ✅ | — | — | — | — |
 | Water Import | ✅ | — | ✅ | — | ✅ | — | — |
 | Path Import | ✅ | — | — | ✅ | — | — | ✅ |
-| Map Import (IMG) | ✅ | ✅ | ✅ | — | — | — | — |
+| Map Import (.glb) | ✅ | ✅ | ✅ | — | — | — | — |
 | Cull Zone Import | ✅ | ✅ | ✅ | ✅ | — | — | — |
 | Occlusion Import | ✅ | — | — | ✅ | — | — | — |
-| ZON Import | ✅ | — | ✅ | — | — | — | — |
-| BSP Import (Manhunt) | ❌ | — | ✅ | — | — | — | — |
+| Zone Import | ✅ | — | ✅ | — | — | — | — |
 | **EXPORT** | | | | | | | |
 | DFF Export | ✅ | ✅ | ✅ | ✅ | — | — | — |
 | COL Export | ✅ | ✅ | ✅ | ✅ | — | — | — |
-| TXD Export | ✅ (GPU) | ✅ | — | — | — | — | — |
+| TXD Export (CPU/GPU) | ✅ | ✅ | — | — | — | — | — |
 | IDE Export | ✅ | — | ✅ | ✅ | — | ✅ | — |
 | IPL Export | ✅ | ✅ (cull) | ✅ | — | — | ✅ | — |
 | IMG Archive Export/Import | ✅ | — | — | — | — | — | — |
 | Export All (batch) | ✅ | ✅ (mass) | ✅ (mass) | ✅ (multi) | — | — | — |
+| Export Collection | ✅ | — | — | — | — | — | — |
 | IFP Export (анимации) | ✅ | — | ✅ | ✅ | — | — | — |
 | Water Export | ✅ | — | ✅ | — | ✅ | — | — |
 | Path Export | ✅ | — | — | ✅ | — | — | ✅ |
-| ZON Export | ✅ | — | ✅ | — | — | — | — |
+| Zone Export | ✅ | — | ✅ | — | — | — | — |
 | Cull Zone Export | ✅ | ✅ | ✅ | ✅ | — | — | — |
 | Occlusion Export | ✅ | — | — | ✅ | — | — | — |
 | **МАТЕРИАЛЫ** | | | | | | | |
@@ -71,8 +71,9 @@
 | COL Light Preview | ✅ | — | — | — | — | — | — |
 | Prelight Preview | ✅ | — | — | — | — | — | — |
 | Day↔Night копирование | ❌ | — | ✅ | ✅ | — | — | — |
+| Vertex Alpha (редактор) | ❌ | — | ✅ | — | — | — | — |
 | VC Smooth между объектами | ✅ | — | ✅ | — | — | — | — |
-| Vertex Alpha | ❌ | — | ✅ | — | — | — | — |
+| Пресеты прелайта | ✅ | — | — | — | — | — | — |
 | **2DFX** | | | | | | | |
 | Light (превью + пресеты) | ✅ | ✅ | ✅ | — | — | — | — |
 | Particle | ✅ | ✅ | ⚠️ stub | — | — | — | — |
@@ -94,26 +95,36 @@
 | Object Explode (разрезка) | ❌ | — | ✅ | — | — | — | — |
 | Face Groups (COL) | ❌ | ✅ | — | — | — | — | — |
 | **СКЕЛЕТ / АНИМАЦИИ** | | | | | | | |
-| Skinned Mesh | ❌ | ✅ | ✅ | — | — | — | — |
-| IFP Animation IO | ❌ | — | ✅ | ✅ | — | — | — |
+| Skinned Mesh Import/Export | ✅ | ✅ | ✅ | — | — | — | — |
+| IFP Animation IO | ✅ | — | ✅ | ✅ | — | — | — |
 | Bone Management | ❌ | ✅ | ✅ | — | — | — | — |
 | **MAP** | | | | | | | |
-| Map Import (IMG→scene) | ✅ | ✅ | ✅ | — | — | — | — |
+| Map Import (.glb workflow) | ✅ | ✅ | ✅ | — | — | — | — |
+| Map Build (DFF→glTF) | ✅ | — | — | — | — | — | — |
+| BBox Mode | ✅ | — | — | — | — | — | — |
+| Auto-sort Collections | ✅ | — | — | — | — | — | — |
+| Dynamic Regions (gta.dat) | ✅ | — | — | — | — | — | — |
+| Replace IPL Placeholders | ✅ | — | — | — | — | — | — |
 | Cull Zones IO | ✅ | ✅ | ✅ | ✅ | — | — | — |
 | Occlusion IO | ✅ | — | ✅ | ✅ | — | — | — |
 | Water IO | ✅ | — | ✅ | — | ✅ | — | — |
 | Path IO | ✅ | — | — | ✅ | — | — | ✅ |
-| ZON IO | ✅ | — | ✅ | — | — | — | — |
+| Zone IO | ✅ | — | ✅ | — | — | — | — |
 | Map Objects (Garage/Cars/...) | ✅ | — | ✅ | — | — | — | — |
 | **ИНТЕГРАЦИЯ** | | | | | | | |
 | Itera Tools 3 | ✅ | — | — | — | — | — | — |
 | Lightmap Generator (MTA) | ✅ | — | — | — | — | — | — |
-| Менеджер ID моделей | ✅ | — | — | — | — | — | — |
+| Менеджер ID (321-19999) | ✅ | — | — | — | — | — | — |
+| Загрузка ID из игры | ✅ | — | — | — | — | — | — |
 | Настраиваемые суффиксы | ✅ | — | — | — | — | — | — |
 | IDE Флаги (чекбоксы) | ✅ | — | — | — | — | — | — |
+| LOD Distance (отдельное поле) | ✅ | — | — | — | — | — | — |
+| Normals toggle (Pipeline) | ✅ | — | — | — | — | — | — |
 | Пресеты прелайта | ✅ | — | — | — | — | — | — |
 | COL Light Preview + Порог | ✅ | — | — | — | — | — | — |
-| Панель Check (отдельная) | ✅ | — | — | — | — | — | — |
+| GPU NVTT автодетект | ✅ | — | — | — | — | — | — |
+| Локализация (RU/EN) | ✅ | — | — | — | — | — | — |
+| Сохранение путей (paths.json) | ✅ | — | — | — | — | — | — |
 
 ---
 
@@ -121,7 +132,6 @@
 
 | Функция | Где есть | Сложность |
 |---------|----------|-----------|
-| Skinned Mesh | DragonFF, GTA_Tools | Высокая |
 | Road Sign 2DFX | DragonFF | Средняя |
 | Escalator 2DFX | DragonFF | Средняя |
 | Cover/Trigger Point 2DFX | DragonFF | Низкая |
@@ -133,3 +143,5 @@
 | Day↔Night копирование | GTA_Tools, DeniskaMax | Низкая |
 | Face Groups (COL) | DragonFF | Средняя |
 | Object Explode | GTA_Tools | Средняя |
+| Bone Management | DragonFF, GTA_Tools | Средняя |
+| Vertex Alpha (редактор) | GTA_Tools | Низкая |

@@ -394,9 +394,15 @@ class INUObjectProps(bpy.types.PropertyGroup):
     )
     draw_distance : FloatProperty(
         name="Draw Distance",
-        default=300.0,
+        default=299.0,
         min=0.0,
         description=T("Дальность прорисовки объекта (IDE)"),
+    )
+    lod_draw_distance : FloatProperty(
+        name="LOD Distance",
+        default=999.0,
+        min=0.0,
+        description=T("Дальность прорисовки LOD модели (IDE)"),
     )
     ide_flags : IntProperty(
         name="IDE Flags",
@@ -2610,8 +2616,10 @@ class GTATOOLS_OT_upsert_ide(bpy.types.Operator):
                     dff_id = getattr(dff_obj.inu, 'model_id', 0)
                     if dff_id > 0:
                         lod_entry.model_id = dff_id + 1
-                # LOD draw distance = max visible range
-                if lod_obj.inu.draw_distance == 300.0:
+                # LOD draw distance from DFF's lod_draw_distance property
+                if dff_obj:
+                    lod_entry.draw_distance = dff_obj.inu.lod_draw_distance
+                elif lod_obj.inu.draw_distance in (299.0, 300.0):
                     lod_entry.draw_distance = 999.0
                 entries.append(lod_entry)
 
@@ -2959,6 +2967,87 @@ class GTATOOLS_OT_import_ipl(bpy.types.Operator):
         except Exception as e:
             self.report({'ERROR'}, f"IPL import error: {str(e)}")
             return {'CANCELLED'}
+
+
+class GTATOOLS_OT_replace_ipl_placeholders(bpy.types.Operator):
+    """Заменить IPL Empty-плейсхолдеры на модели из сцены"""
+    bl_idname = "gtatools.replace_ipl_placeholders"
+    bl_label = "Replace IPL Placeholders"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        replaced = 0
+        # Build lookup from scene meshes
+        mesh_lookup = {}
+        for obj in bpy.data.objects:
+            if obj.type == 'MESH':
+                clean, stype = _clean_name_typed_ipl(obj.name)
+                low = clean.lower()
+                if low not in mesh_lookup:
+                    mesh_lookup[low] = {}
+                if stype not in mesh_lookup[low]:
+                    mesh_lookup[low][stype] = obj
+
+        for obj in list(bpy.data.objects):
+            if obj.type != 'EMPTY' or not obj.get('ipl_placeholder'):
+                continue
+
+            model_name = obj.get('ipl_model_name', obj.name)
+            key = model_name.lower()
+            is_lod = key.startswith('lod')
+
+            # Find matching mesh
+            mesh_obj = None
+            if is_lod:
+                base = key[3:]
+                variants = mesh_lookup.get(base, {})
+                mesh_obj = variants.get('LOD') or variants.get('DFF')
+            else:
+                variants = mesh_lookup.get(key, {})
+                mesh_obj = variants.get('DFF') or variants.get('OTHER')
+
+            if not mesh_obj:
+                continue
+
+            # Create linked duplicate at placeholder position
+            new_obj = mesh_obj.copy()
+            new_obj.data = mesh_obj.data
+            new_obj.location = obj.location.copy()
+            new_obj.rotation_mode = 'QUATERNION'
+            new_obj.rotation_quaternion = obj.rotation_quaternion.copy()
+
+            if is_lod and new_obj.name.lower().startswith('lod'):
+                new_obj.name = new_obj.name[3:] + '_LOD'
+
+            # Copy properties
+            new_obj.inu.model_id = obj.inu.model_id
+            new_obj.inu.interior_id = obj.inu.interior_id
+            new_obj.inu.lod_index = obj.inu.lod_index
+
+            # Link to same collections
+            for col in obj.users_collection:
+                col.objects.link(new_obj)
+
+            # Remove placeholder
+            bpy.data.objects.remove(obj, do_unlink=True)
+            replaced += 1
+
+        self.report({'INFO'}, f"{T('Заменено:')} {replaced}")
+        return {'FINISHED'}
+
+
+def _clean_name_typed_ipl(name):
+    if '.' in name:
+        base, suffix = name.rsplit('.', 1)
+        if suffix.isdigit():
+            name = base
+    for sfx, stype in [('_DFF', 'DFF'), ('_dff', 'DFF'),
+                        ('_LOD', 'LOD'), ('_lod', 'LOD'),
+                        ('_COL', 'COL'), ('_col', 'COL'),
+                        ('_SHA', 'SHA'), ('_sha', 'SHA')]:
+        if name.endswith(sfx):
+            return name[:-len(sfx)], stype
+    return name, 'OTHER'
 
 
 # ── File > Export / Import IDE/IPL operators ──
@@ -5594,6 +5683,7 @@ class GTATOOLS_PT_ide_ipl_panel(bpy.types.Panel):
             col = box.column(align=True)
             col.prop(inu, "model_id", text="Model ID")
             col.prop(inu, "draw_distance", text="Draw Dist")
+            col.prop(inu, "lod_draw_distance", text="LOD Dist")
 
             # Flags with expandable checkboxes
             row = box.row(align=True)
@@ -5691,6 +5781,7 @@ class GTATOOLS_PT_ide_ipl_panel(bpy.types.Panel):
         row = box.row(align=True)
         row.operator("gtatools.import_ipl_sections", text=T("Секции IPL"), icon='IMPORT')
         row.operator("gtatools.export_ipl_sections", text=T("Секции IPL"), icon='EXPORT')
+        box.operator("gtatools.replace_ipl_placeholders", text=T("Заменить Empty"), icon='MESH_DATA')
 
         # IMG section
         box = layout.box()
@@ -8684,6 +8775,7 @@ classes = (
     GTATOOLS_OT_export_ipl,
     GTATOOLS_OT_import_ide,
     GTATOOLS_OT_import_ipl,
+    GTATOOLS_OT_replace_ipl_placeholders,
     GTATOOLS_OT_file_export_ide,
     GTATOOLS_OT_file_export_ipl,
     GTATOOLS_OT_file_import_ide,
