@@ -260,6 +260,7 @@ All IPL sections are supported for import/export as Blender objects:
 |--------|----------|-------------|
 | Sections IPL ↓ | `gtatools.import_ipl_sections` | Import all sections from IPL file |
 | Sections IPL ↑ | `gtatools.export_ipl_sections` | Export all section collections to IPL file |
+| Replace Empty | `gtatools.replace_ipl_placeholders` | When IPL import can't find a model, it creates an Empty with `_empty` suffix in IPL_Empty collection. After adding the model to the scene, click this button — the model moves to the Empty's position and the Empty is removed |
 
 ### IMG Archive
 
@@ -279,6 +280,24 @@ All IPL sections are supported for import/export as Blender objects:
 | BBox: ON/OFF | `gtatools.toggle_bbox` | Toggle Bounding Box display for map objects |
 
 When enabled, all Map_ collection objects switch to `BOUNDS` display. Objects within 300m of the selected object stay as `TEXTURED`. Updates automatically when selection changes.
+
+### Suffixes / Prefixes
+
+**Panel:** Properties → Scene → INU Tools → Suffixes / Prefixes
+
+Determine how the addon recognizes model type by object name in Blender.
+
+**Suffixes** (end of name):
+- DFF: `_DFF` → `mybuilding_DFF` recognized as DFF model
+- LOD: `_LOD` → `mybuilding_LOD` recognized as LOD model
+- COL: `_COL` → `mybuilding_COL` recognized as collision
+
+**Prefixes** (start of name):
+- LOD: `LOD` → `LODmybuilding` recognized as LOD model
+
+You can use **either suffix or prefix** for each type — not both. When entering one, the other is automatically cleared. If neither is set — the model is treated as DFF.
+
+When exporting IDE/IPL, LOD models are always written with `LOD` prefix (GTA SA format).
 
 ### Model ID Manager
 

@@ -84,7 +84,8 @@ def import_ipl(filepath: str, context=None) -> list:
             placed.append(obj)
         else:
             # Create empty as placeholder (model not in scene)
-            empty = bpy.data.objects.new(inst.model_name, None)
+            empty_name = inst.model_name + '_empty'
+            empty = bpy.data.objects.new(empty_name, None)
             empty.empty_display_type = 'CUBE'
             empty.empty_display_size = 1.0
             empty.location = loc
@@ -93,10 +94,12 @@ def import_ipl(filepath: str, context=None) -> list:
             empty['ipl_placeholder'] = True
             empty['ipl_model_name'] = inst.model_name
 
-            if context and context.collection:
-                context.collection.objects.link(empty)
-            else:
-                bpy.context.scene.collection.objects.link(empty)
+            # Put in IPL_Empty collection
+            empty_col = bpy.data.collections.get("IPL_Empty")
+            if not empty_col:
+                empty_col = bpy.data.collections.new("IPL_Empty")
+                bpy.context.scene.collection.children.link(empty_col)
+            empty_col.objects.link(empty)
 
             inu = empty.inu
             inu.model_id = inst.model_id

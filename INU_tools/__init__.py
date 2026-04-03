@@ -1063,7 +1063,9 @@ class GTATOOLS_OT_file_import_dff(bpy.types.Operator, ImportHelper):
             self.report({'ERROR'}, f"DFF import error: {str(e)}")
             return {'CANCELLED'}
 
-        # Auto-import TXD: search in custom folder or DFF folder
+        # Auto-import TXD (if enabled)
+        if not getattr(context.scene, 'gtatools_txd_auto_import', True):
+            return {'FINISHED'}
         txd_file = None
         dff_name = os.path.splitext(os.path.basename(self.filepath))[0]
         custom_dir = getattr(context.scene, 'gtatools_txd_import_path', '')
@@ -2992,7 +2994,7 @@ class GTATOOLS_OT_replace_ipl_placeholders(bpy.types.Operator):
             if obj.type != 'EMPTY' or not obj.get('ipl_placeholder'):
                 continue
 
-            model_name = obj.get('ipl_model_name', obj.name)
+            model_name = obj.get('ipl_model_name', obj.name.replace('_empty', ''))
             key = model_name.lower()
             is_lod = key.startswith('lod')
 
@@ -3009,24 +3011,15 @@ class GTATOOLS_OT_replace_ipl_placeholders(bpy.types.Operator):
             if not mesh_obj:
                 continue
 
-            # Create linked duplicate at placeholder position
-            new_obj = mesh_obj.copy()
-            new_obj.data = mesh_obj.data
-            new_obj.location = obj.location.copy()
-            new_obj.rotation_mode = 'QUATERNION'
-            new_obj.rotation_quaternion = obj.rotation_quaternion.copy()
+            # Move existing model to placeholder position
+            mesh_obj.location = obj.location.copy()
+            mesh_obj.rotation_mode = 'QUATERNION'
+            mesh_obj.rotation_quaternion = obj.rotation_quaternion.copy()
 
-            if is_lod and new_obj.name.lower().startswith('lod'):
-                new_obj.name = new_obj.name[3:] + '_LOD'
-
-            # Copy properties
-            new_obj.inu.model_id = obj.inu.model_id
-            new_obj.inu.interior_id = obj.inu.interior_id
-            new_obj.inu.lod_index = obj.inu.lod_index
-
-            # Link to same collections
-            for col in obj.users_collection:
-                col.objects.link(new_obj)
+            # Copy IPL properties
+            mesh_obj.inu.model_id = obj.inu.model_id
+            mesh_obj.inu.interior_id = obj.inu.interior_id
+            mesh_obj.inu.lod_index = obj.inu.lod_index
 
             # Remove placeholder
             bpy.data.objects.remove(obj, do_unlink=True)
@@ -3592,7 +3585,7 @@ class GTATOOLS_OT_bake_vertex_colors(bpy.types.Operator):
             self.report({'INFO'}, f"Baked from lights: {baked} objects")
             return {'FINISHED'}
         else:
-            self.report({'ERROR'}, T("Нет vertex colors"))
+            self.report({'WARNING'}, T("Нет vertex colors"))
             return {'CANCELLED'}
 
 
@@ -3629,7 +3622,7 @@ class GTATOOLS_OT_bake_vertex_colors_simple(bpy.types.Operator):
             self.report({'INFO'}, f"Baked to '{attr_name}' from {baked} objects")
             return {'FINISHED'}
         else:
-            self.report({'ERROR'}, T("Нет vertex colors"))
+            self.report({'WARNING'}, T("Нет vertex colors"))
             return {'CANCELLED'}
 
 
@@ -3674,7 +3667,7 @@ class GTATOOLS_OT_analyze_vertex_colors(bpy.types.Operator):
         result = analyze_vertex_colors(obj)
 
         if result is None:
-            self.report({'ERROR'}, "No vertex colors found!")
+            self.report({'WARNING'}, "No vertex colors found!")
             return {'CANCELLED'}
 
         # Store result in scene for display
@@ -3839,7 +3832,7 @@ class GTATOOLS_OT_vc_smooth_between(bpy.types.Operator):
                 all_points.append((world_co, len(obj_data) - 1, vi))
 
         if not obj_data:
-            self.report({'ERROR'}, T("Нет vertex colors"))
+            self.report({'WARNING'}, T("Нет vertex colors"))
             return {'CANCELLED'}
 
         # Build KD-tree from all vertices
@@ -7357,11 +7350,25 @@ class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
         row = box.row()
         row.prop(scene, "gtatools_show_suffix_settings",
                  icon='TRIA_DOWN' if scene.gtatools_show_suffix_settings else 'TRIA_RIGHT',
-                 text=T("Суффиксы моделей"), emboss=False)
+                 text=T("Суффиксы / Префиксы"), emboss=False)
         if scene.gtatools_show_suffix_settings:
-            box.prop(scene, "gtatools_suffix_dff", text="DFF")
-            box.prop(scene, "gtatools_suffix_lod", text="LOD")
-            box.prop(scene, "gtatools_suffix_col", text="COL")
+            for _label, _pfx, _sfx in [("DFF", "gtatools_prefix_dff", "gtatools_suffix_dff"),
+                                        ("LOD", "gtatools_prefix_lod", "gtatools_suffix_lod"),
+                                        ("COL", "gtatools_prefix_col", "gtatools_suffix_col")]:
+                row = box.row(align=True)
+                pfx = row.row(align=True)
+                pfx.scale_x = 0.7
+                pfx.prop(scene, _pfx, text="")
+                sub_lbl = row.row(align=True)
+                sub_lbl.scale_x = 0.6
+                sub_lbl.label(text="Model")
+                sfx = row.row(align=True)
+                sfx.scale_x = 0.7
+                sfx.prop(scene, _sfx, text="")
+                pad = row.row(align=True)
+                pad.label(text=" ")
+                pad.label(text=" ")
+                pad.label(text=" ")
 
         # ID Manager (collapsible)
         box = layout.box()
@@ -7657,10 +7664,17 @@ class GTATOOLS_PT_prelight_panel(bpy.types.Panel):
 
             # Day/Night label and buttons
             row = layout.row(align=True)
-            op_on = row.operator("gtatools.prelight_preview", text="", icon='HIDE_OFF')
-            op_on.enable = True
-            op_off = row.operator("gtatools.prelight_preview", text="", icon='HIDE_ON')
-            op_off.enable = False
+            # Check if preview is active on active object
+            _preview_on = False
+            if obj and obj.type == 'MESH':
+                for _ms in obj.material_slots:
+                    _m = _ms.material
+                    if _m and _m.use_nodes and _m.node_tree.nodes.get("Prelight_Mix"):
+                        _preview_on = True
+                        break
+            _pv_icon = 'HIDE_OFF' if _preview_on else 'HIDE_ON'
+            op_pv = row.operator("gtatools.prelight_preview", text="", icon=_pv_icon, depress=_preview_on)
+            op_pv.enable = not _preview_on
             row.operator("gtatools.create_day_night", text="Day/Night")
             row.operator("gtatools.add_color_attribute", text="", icon='ADD')
             row.operator("gtatools.remove_color_attribute", text="", icon='REMOVE')
@@ -9120,6 +9134,31 @@ def _load_paths(scene):
         pass
 
 
+def _upd_suffix_dff(self, ctx):
+    if self.gtatools_suffix_dff and self.gtatools_prefix_dff:
+        self.gtatools_prefix_dff = ""
+
+def _upd_suffix_lod(self, ctx):
+    if self.gtatools_suffix_lod and self.gtatools_prefix_lod:
+        self.gtatools_prefix_lod = ""
+
+def _upd_suffix_col(self, ctx):
+    if self.gtatools_suffix_col and self.gtatools_prefix_col:
+        self.gtatools_prefix_col = ""
+
+def _upd_prefix_dff(self, ctx):
+    if self.gtatools_prefix_dff and self.gtatools_suffix_dff:
+        self.gtatools_suffix_dff = ""
+
+def _upd_prefix_lod(self, ctx):
+    if self.gtatools_prefix_lod and self.gtatools_suffix_lod:
+        self.gtatools_suffix_lod = ""
+
+def _upd_prefix_col(self, ctx):
+    if self.gtatools_prefix_col and self.gtatools_suffix_col:
+        self.gtatools_suffix_col = ""
+
+
 def register():
     # Auto-translate tooltips: docstrings are in Russian,
     # bl_description is set via T() so locale/eng.py handles English
@@ -9370,19 +9409,28 @@ def register():
         default=False
     )
     bpy.types.Scene.gtatools_suffix_dff = StringProperty(
-        name="DFF Suffix",
-        description=T("Суффикс для DFF моделей (например _DFF или DFF)"),
-        default="_DFF"
+        name="DFF Suffix", default="_DFF", update=_upd_suffix_dff,
+        description=T("Суффикс для DFF моделей"),
     )
     bpy.types.Scene.gtatools_suffix_lod = StringProperty(
-        name="LOD Suffix",
-        description=T("Суффикс для LOD моделей (например _LOD или LOD)"),
-        default="_LOD"
+        name="LOD Suffix", default="_LOD", update=_upd_suffix_lod,
+        description=T("Суффикс для LOD моделей"),
     )
     bpy.types.Scene.gtatools_suffix_col = StringProperty(
-        name="COL Suffix",
-        description=T("Суффикс для COL моделей (например _COL или COL)"),
-        default="_COL"
+        name="COL Suffix", default="_COL", update=_upd_suffix_col,
+        description=T("Суффикс для COL моделей"),
+    )
+    bpy.types.Scene.gtatools_prefix_dff = StringProperty(
+        name="DFF Prefix", default="", update=_upd_prefix_dff,
+        description=T("Префикс для DFF моделей"),
+    )
+    bpy.types.Scene.gtatools_prefix_lod = StringProperty(
+        name="LOD Prefix", default="", update=_upd_prefix_lod,
+        description=T("Префикс для LOD моделей"),
+    )
+    bpy.types.Scene.gtatools_prefix_col = StringProperty(
+        name="COL Prefix", default="", update=_upd_prefix_col,
+        description=T("Префикс для COL моделей"),
     )
 
     # ID Manager
@@ -9763,6 +9811,9 @@ def unregister():
     del bpy.types.Scene.gtatools_suffix_dff
     del bpy.types.Scene.gtatools_suffix_lod
     del bpy.types.Scene.gtatools_suffix_col
+    del bpy.types.Scene.gtatools_prefix_dff
+    del bpy.types.Scene.gtatools_prefix_lod
+    del bpy.types.Scene.gtatools_prefix_col
     del bpy.types.Scene.gtatools_show_id_manager
     del bpy.types.Scene.gtatools_id_search
     del bpy.types.Scene.gtatools_id_page

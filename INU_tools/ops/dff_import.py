@@ -65,6 +65,7 @@ def _create_blender_material(dff_mat: DffMaterial, index: int) -> bpy.types.Mate
     bsdf.inputs['Base Color'].default_value = (c.r / 255.0, c.g / 255.0, c.b / 255.0, 1.0)
 
     # Connect texture if available
+    tex_node = None
     if tex_name:
         img = bpy.data.images.get(tex_name)
         if not img:
@@ -78,7 +79,6 @@ def _create_blender_material(dff_mat: DffMaterial, index: int) -> bpy.types.Mate
         tex_node.label = tex_name
         tex_node.location = (bsdf.location.x - 300, bsdf.location.y)
         tree.links.new(tex_node.outputs['Color'], bsdf.inputs['Base Color'])
-        tree.links.new(tex_node.outputs['Alpha'], bsdf.inputs['Alpha'])
         if img:
             tex_node.image = img
 
@@ -88,11 +88,14 @@ def _create_blender_material(dff_mat: DffMaterial, index: int) -> bpy.types.Mate
     elif 'Specular' in bsdf.inputs:
         bsdf.inputs['Specular'].default_value = 0.0
 
-    # Альфа
+    # Альфа — подключать только если материал прозрачный
     if c.a < 255:
         if hasattr(mat, 'blend_method'):
             mat.blend_method = 'BLEND'
         bsdf.inputs['Alpha'].default_value = c.a / 255.0
+        # Connect texture alpha to shader alpha
+        if tex_node:
+            tree.links.new(tex_node.outputs['Alpha'], bsdf.inputs['Alpha'])
 
     # Ambient в INU свойства
     mat.inu.ambient = dff_mat.surface.ambient if dff_mat.surface else 1.0
