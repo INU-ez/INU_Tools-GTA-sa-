@@ -49,6 +49,10 @@ def import_ide(filepath: str, context=None) -> list:
         clean, stype = _clean_name_typed(obj.name)
         clean_low = clean.lower()
 
+        # Skip COL and SHA objects — IDE definitions are for DFF/LOD only
+        if stype in ('COL', 'SHA'):
+            continue
+
         entry = None
         if stype == 'LOD':
             # admiral_LOD → look for "LODadmiral" in IDE
@@ -73,18 +77,11 @@ def import_ide(filepath: str, context=None) -> list:
 
 
 def _clean_name_typed(name: str) -> tuple[str, str]:
-    """Remove Blender numeric suffix and known suffixes.
-    Returns (clean_name, suffix_type)."""
-    if '.' in name:
-        base, suffix = name.rsplit('.', 1)
-        if suffix.isdigit():
-            name = base
-
-    for sfx, stype in [('_DFF', 'DFF'), ('_dff', 'DFF'),
-                        ('_LOD', 'LOD'), ('_lod', 'LOD'),
-                        ('_COL', 'COL'), ('_col', 'COL'),
-                        ('_SHA', 'SHA'), ('_sha', 'SHA')]:
-        if name.endswith(sfx):
-            return name[:-len(sfx)], stype
-
-    return name, 'OTHER'
+    """Remove Blender numeric suffix and detect type using scene settings."""
+    from ..tools.model_utils import get_model_type
+    # Create a minimal mock object for get_model_type
+    class _Mock:
+        def __init__(self, n):
+            self.name = n
+    mt, base = get_model_type(_Mock(name))
+    return base, mt or 'OTHER'

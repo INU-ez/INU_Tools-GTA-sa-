@@ -1193,15 +1193,12 @@ def _ipl_entry_from_obj(obj):
 
 
 def _clean_model_name_ide(name):
-    if '.' in name:
-        base, suffix = name.rsplit('.', 1)
-        if suffix.isdigit():
-            name = base
-    for sfx in ('_DFF', '_dff', '_COL', '_col', '_LOD', '_lod', '_SHA', '_sha'):
-        if name.endswith(sfx):
-            name = name[:-len(sfx)]
-            break
-    return name
+    from .tools.model_utils import get_model_type
+    class _Mock:
+        def __init__(self, n):
+            self.name = n
+    _, base = get_model_type(_Mock(name))
+    return base
 
 
 class GTATOOLS_OT_discover_game(bpy.types.Operator):
@@ -2422,6 +2419,8 @@ class GTATOOLS_OT_import_from_img(bpy.types.Operator):
                                     col_objects = list(after_col - before_col)
                                     col_pos = (inst.pos_x, inst.pos_y, inst.pos_z)
                                     col_rot = Quaternion((inst.rot_w, inst.rot_x, inst.rot_y, inst.rot_z)).conjugated()
+                                    _sfx_col = getattr(scene, 'gtatools_suffix_col', '_COL')
+                                    _pfx_col = getattr(scene, 'gtatools_prefix_col', '')
                                     for co in col_objects:
                                         for c in list(co.users_collection):
                                             c.objects.unlink(co)
@@ -2429,6 +2428,14 @@ class GTATOOLS_OT_import_from_img(bpy.types.Operator):
                                         co.location = col_pos
                                         co.rotation_mode = 'QUATERNION'
                                         co.rotation_quaternion = col_rot
+                                        # Rename COL
+                                        base_col = model_name
+                                        if base_col.upper().startswith('LOD'):
+                                            base_col = base_col[3:]
+                                        if _sfx_col:
+                                            co.name = base_col + _sfx_col
+                                        elif _pfx_col:
+                                            co.name = _pfx_col + base_col
                                 except:
                                     pass
 
@@ -2436,6 +2443,37 @@ class GTATOOLS_OT_import_from_img(bpy.types.Operator):
                     except Exception as e:
                         errors.append(f"{model_name}: {str(e)}")
                         continue
+
+                # Rename objects: add suffixes, convert LOD prefix
+                _sfx_dff = getattr(scene, 'gtatools_suffix_dff', '_DFF')
+                _sfx_lod = getattr(scene, 'gtatools_suffix_lod', '_LOD')
+                _pfx_dff = getattr(scene, 'gtatools_prefix_dff', '')
+                _pfx_lod = getattr(scene, 'gtatools_prefix_lod', '')
+                for obj in new_objects:
+                    if obj.type == 'MESH':
+                        base = obj.name
+                        # Remove .dff extension if present
+                        if '.dff' in base.lower():
+                            base = base.split('.dff')[0]
+                        # Remove Blender numeric suffix
+                        if '.' in base:
+                            b, s = base.rsplit('.', 1)
+                            if s.isdigit():
+                                base = b
+
+                        if is_lod:
+                            # LODmodel → model + LOD suffix/prefix
+                            if base.upper().startswith('LOD'):
+                                base = base[3:]
+                            if _sfx_lod:
+                                obj.name = base + _sfx_lod
+                            elif _pfx_lod:
+                                obj.name = _pfx_lod + base
+                        else:
+                            if _sfx_dff:
+                                obj.name = base + _sfx_dff
+                            elif _pfx_dff:
+                                obj.name = _pfx_dff + base
 
                 # Position and rotate according to IPL
                 pos = (inst.pos_x, inst.pos_y, inst.pos_z)
@@ -3030,17 +3068,12 @@ class GTATOOLS_OT_replace_ipl_placeholders(bpy.types.Operator):
 
 
 def _clean_name_typed_ipl(name):
-    if '.' in name:
-        base, suffix = name.rsplit('.', 1)
-        if suffix.isdigit():
-            name = base
-    for sfx, stype in [('_DFF', 'DFF'), ('_dff', 'DFF'),
-                        ('_LOD', 'LOD'), ('_lod', 'LOD'),
-                        ('_COL', 'COL'), ('_col', 'COL'),
-                        ('_SHA', 'SHA'), ('_sha', 'SHA')]:
-        if name.endswith(sfx):
-            return name[:-len(sfx)], stype
-    return name, 'OTHER'
+    from .tools.model_utils import get_model_type
+    class _Mock:
+        def __init__(self, n):
+            self.name = n
+    mt, base = get_model_type(_Mock(name))
+    return base, mt or 'OTHER'
 
 
 # ── File > Export / Import IDE/IPL operators ──

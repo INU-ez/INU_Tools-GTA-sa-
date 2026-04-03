@@ -81,6 +81,16 @@ def import_ipl(filepath: str, context=None) -> list:
             inu.interior_id = inst.interior
             inu.lod_index = inst.lod_index
 
+            # Move paired COL to same position (COL not listed in IPL)
+            if not is_lod:
+                clean, _ = _clean_name_typed(obj.name)
+                col_variants = clean_lookup.get(clean.lower(), {})
+                col_obj = col_variants.get('COL')
+                if col_obj:
+                    col_obj.location = loc
+                    col_obj.rotation_mode = 'QUATERNION'
+                    col_obj.rotation_quaternion = quat
+
             placed.append(obj)
         else:
             # Create empty as placeholder (model not in scene)
@@ -112,18 +122,10 @@ def import_ipl(filepath: str, context=None) -> list:
 
 
 def _clean_name_typed(name: str) -> tuple[str, str]:
-    """Remove Blender numeric suffix and known suffixes.
-    Returns (clean_name, suffix_type) where suffix_type is 'DFF', 'LOD', 'COL', 'SHA', or 'OTHER'."""
-    if '.' in name:
-        base, suffix = name.rsplit('.', 1)
-        if suffix.isdigit():
-            name = base
-
-    for sfx, stype in [('_DFF', 'DFF'), ('_dff', 'DFF'),
-                        ('_LOD', 'LOD'), ('_lod', 'LOD'),
-                        ('_COL', 'COL'), ('_col', 'COL'),
-                        ('_SHA', 'SHA'), ('_sha', 'SHA')]:
-        if name.endswith(sfx):
-            return name[:-len(sfx)], stype
-
-    return name, 'OTHER'
+    """Remove Blender numeric suffix and detect type using scene settings."""
+    from ..tools.model_utils import get_model_type
+    class _Mock:
+        def __init__(self, n):
+            self.name = n
+    mt, base = get_model_type(_Mock(name))
+    return base, mt or 'OTHER'

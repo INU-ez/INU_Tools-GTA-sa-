@@ -49,13 +49,10 @@ def export_ipl(filepath: str, objects: list) -> None:
 
 
 def _clean_model_name(name: str) -> str:
-    """Remove common suffixes like .001, _COL, _LOD from object name."""
-    if '.' in name:
-        base, suffix = name.rsplit('.', 1)
-        if suffix.isdigit():
-            name = base
-    for sfx in ('_COL', '_col', '_LOD', '_lod', '_SHA', '_sha'):
-        if name.endswith(sfx):
-            name = name[:-len(sfx)]
-            break
-    return name
+    """Remove suffixes/prefixes using scene settings."""
+    from ..tools.model_utils import get_model_type
+    class _Mock:
+        def __init__(self, n):
+            self.name = n
+    _, base = get_model_type(_Mock(name))
+    return base
