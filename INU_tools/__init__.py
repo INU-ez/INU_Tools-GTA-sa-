@@ -23,7 +23,7 @@
 bl_info = {
     "name": "INU_tools(gta_sa)",
     "author": "INU",
-    "version": (1, 6, 0),
+    "version": (1, 6, 1),
     "blender": (4, 2, 0),
     "location": "View3D > Sidebar (N) > GTA Tools",
     "description": "Toolset for GTA SA models",
@@ -32,6 +32,18 @@ bl_info = {
 }
 
 # Changelog:
+# v1.6.1 - IPL Import: перемещение COL вместе с DFF, Empty с _empty суффиксом в коллекции IPL_Empty, кнопка Заменить Empty
+#        - Префиксы моделей (DFF/LOD/COL) в настройках, авто-очистка конфликтов суффикс/префикс
+#        - Все import/export используют пользовательские суффиксы/префиксы
+#        - Model Links: визуализация связей DFF↔LOD↔COL пунктирными линиями
+#        - LOD/COL → DFF: кнопка подтягивания к позиции DFF
+#        - Скрытие DFF/LOD/COL по отдельности в панели Проверка
+#        - Удалить из IMG по типу выделенного объекта (DFF+TXD / COL / LOD)
+#        - Список файлов IMG (UIList с прокруткой и поиском)
+#        - Менеджер ID: очистка ID выделенных, синхронизация сцены, создание файла 321-19999
+#        - Проверка конфликтов ID (предупреждение в панели)
+#        - Normals toggle в панели Pipeline
+#        - Drag & Drop TXD с созданием материалов
 # v1.6.0 - Import Map: workflow Extract → Build .glb → Import с автосортировкой по коллекциям
 #        - BBox Mode: Bounding Box для далёких объектов (300м от выделения)
 #        - IPL ZONE секция: парсинг/запись/визуализация зон карты
@@ -539,6 +551,78 @@ class INUMaterialProps(bpy.types.PropertyGroup):
     # UV Animation
     export_animation : BoolProperty(name="UV Animation")
     animation_name : StringProperty()
+
+
+class GTATOOLS_ImgFileEntry(bpy.types.PropertyGroup):
+    """One file entry in IMG archive list."""
+    name: StringProperty()
+
+
+class GTATOOLS_UL_img_files(bpy.types.UIList):
+    """Scrollable list of files in IMG archive."""
+    bl_idname = "GTATOOLS_UL_img_files"
+
+    def draw_item(self, context, layout, data, item, icon, active_data, active_property, index):
+        ext = item.name.rsplit('.', 1)[-1].lower() if '.' in item.name else ''
+        icons = {'dff': 'MESH_DATA', 'col': 'MESH_CUBE', 'txd': 'TEXTURE', 'ipl': 'EMPTY_AXIS'}
+        layout.label(text=item.name, icon=icons.get(ext, 'FILE'))
+
+    def filter_items(self, context, data, propname):
+        items = getattr(data, propname)
+        flt_flags = [self.bitflag_filter_item] * len(items)
+        # Keep original order — no sorting
+        flt_neworder = []
+
+        if self.filter_name:
+            search = self.filter_name.lower()
+            for i, item in enumerate(items):
+                if search not in item.name.lower():
+                    flt_flags[i] = 0
+
+        return flt_flags, flt_neworder
+
+
+
+def _refresh_img_entries(scn, img_path):
+    """Directly refresh IMG entries list."""
+    scn.gtatools_img_entries.clear()
+    try:
+        from .core.img import read_directory
+        entries = read_directory(img_path)
+        for entry in entries:
+            item = scn.gtatools_img_entries.add()
+            item.name = entry.name
+        scn.gtatools_img_entries_index = max(0, len(entries) - 1)
+    except Exception:
+        pass
+
+
+class GTATOOLS_OT_refresh_img_list(bpy.types.Operator):
+    """Обновить список файлов IMG архива"""
+    bl_idname = "gtatools.refresh_img_list"
+    bl_label = "Refresh IMG List"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        from .core.img import read_directory
+        scn = context.scene
+        img_path = bpy.path.abspath(scn.gtatools_img_path)
+        if not img_path or not os.path.isfile(img_path):
+            self.report({'WARNING'}, T("Укажите путь к IMG"))
+            return {'CANCELLED'}
+
+        scn.gtatools_img_entries.clear()
+        try:
+            entries = read_directory(img_path)
+            for entry in entries:
+                item = scn.gtatools_img_entries.add()
+                item.name = entry.name
+            # Set index to end so list shows from bottom
+            scn.gtatools_img_entries_index = max(0, len(entries) - 1)
+            self.report({'INFO'}, f"{T('Файлов:')} {len(scn.gtatools_img_entries)}")
+        except Exception as e:
+            self.report({'ERROR'}, str(e))
+        return {'FINISHED'}
 
 
 class GTATOOLS_FillColorItem(bpy.types.PropertyGroup):
@@ -1475,6 +1559,115 @@ def _bbox_selection_handler(scene, depsgraph):
             obj.display_type = 'TEXTURED'
 
     _bbox_near_set = new_near
+
+
+# ── Model Links Visualization ────────────────────────────────────────
+
+_links_draw_handler = None
+_links_active = False
+
+
+def _draw_model_links():
+    """Draw lines between DFF↔LOD↔COL related models."""
+    import gpu
+    from gpu_extras.batch import batch_for_shader
+
+    if not _links_active:
+        return
+
+    from .tools.model_utils import get_model_type
+
+    # Group objects by base name
+    groups = {}  # base_name → {'DFF': obj, 'LOD': obj, 'COL': obj}
+    for obj in bpy.data.objects:
+        if obj.type != 'MESH':
+            continue
+        mt, base = get_model_type(obj)
+        if not base:
+            continue
+        base_clean = base.rstrip('_').lower()
+        if base_clean not in groups:
+            groups[base_clean] = {'DFF': None, 'LOD': None, 'COL': None}
+        if mt and groups[base_clean][mt] is None:
+            groups[base_clean][mt] = obj
+
+    # Build dashed lines
+    verts = []
+    colors = []
+    dash_len = 0.5
+    gap_len = 0.3
+
+    def _add_dashed(p1, p2, color):
+        from mathutils import Vector
+        a = Vector(p1)
+        b = Vector(p2)
+        d = b - a
+        total = d.length
+        if total < 0.01:
+            return
+        step = dash_len + gap_len
+        n = d.normalized()
+        t = 0.0
+        while t < total:
+            seg_start = a + n * t
+            seg_end = a + n * min(t + dash_len, total)
+            verts.extend([seg_start, seg_end])
+            colors.extend([color, color])
+            t += step
+
+    for base, g in groups.items():
+        dff = g['DFF']
+        lod = g['LOD']
+        col = g['COL']
+
+        if dff and lod:
+            _add_dashed(dff.location, lod.location, (0.2, 0.6, 1.0, 0.8))  # blue
+        if dff and col:
+            _add_dashed(dff.location, col.location, (1.0, 0.3, 0.1, 0.8))  # red
+        if lod and col and not dff:
+            _add_dashed(lod.location, col.location, (1.0, 0.6, 0.0, 0.8))  # orange
+
+    if not verts:
+        return
+
+    shader = gpu.shader.from_builtin('FLAT_COLOR')
+    batch = batch_for_shader(shader, 'LINES', {"pos": verts, "color": colors})
+    gpu.state.blend_set('ALPHA')
+    gpu.state.line_width_set(3.0)
+    shader.bind()
+    batch.draw(shader)
+    gpu.state.blend_set('NONE')
+    gpu.state.line_width_set(1.0)
+
+
+class GTATOOLS_OT_toggle_links(bpy.types.Operator):
+    """Показать/скрыть линии связей DFF↔LOD↔COL"""
+    bl_idname = "gtatools.toggle_links"
+    bl_label = "Toggle Model Links"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        global _links_active, _links_draw_handler
+
+        _links_active = not _links_active
+
+        if _links_active:
+            if _links_draw_handler is None:
+                _links_draw_handler = bpy.types.SpaceView3D.draw_handler_add(
+                    _draw_model_links, (), 'WINDOW', 'POST_VIEW')
+            self.report({'INFO'}, "Model Links: ON")
+        else:
+            if _links_draw_handler is not None:
+                bpy.types.SpaceView3D.draw_handler_remove(_links_draw_handler, 'WINDOW')
+                _links_draw_handler = None
+            self.report({'INFO'}, "Model Links: OFF")
+
+        # Force viewport redraw
+        for area in context.screen.areas:
+            if area.type == 'VIEW_3D':
+                area.tag_redraw()
+
+        return {'FINISHED'}
 
 
 class GTATOOLS_OT_toggle_bbox(bpy.types.Operator):
@@ -2455,9 +2648,14 @@ class GTATOOLS_OT_import_from_img(bpy.types.Operator):
                         # Remove .dff extension if present
                         if '.dff' in base.lower():
                             base = base.split('.dff')[0]
-                        # Remove Blender numeric suffix
+                        # Remove Blender numeric suffix (.001, .002)
                         if '.' in base:
                             b, s = base.rsplit('.', 1)
+                            if s.isdigit():
+                                base = b
+                        # Remove _0, _1 etc (multiple atomics in DFF)
+                        if '_' in base:
+                            b, s = base.rsplit('_', 1)
                             if s.isdigit():
                                 base = b
 
@@ -2506,6 +2704,54 @@ class GTATOOLS_OT_import_from_img(bpy.types.Operator):
             for e in errors[:5]:
                 print(f"[Map Import] {e}")
         self.report({'INFO'}, msg)
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_remove_from_img(bpy.types.Operator):
+    """Удалить DFF/TXD/COL выделенных моделей из IMG архива"""
+    bl_idname = "gtatools.remove_from_img"
+    bl_label = "Remove from IMG"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        from .core.img import remove_file
+        from .tools.model_utils import get_model_type
+
+        img_path = bpy.path.abspath(context.scene.gtatools_img_path)
+        if not img_path or not os.path.isfile(img_path):
+            self.report({'ERROR'}, T("Укажите путь к .img архиву"))
+            return {'CANCELLED'}
+
+        objs = [o for o in context.selected_objects if o.type == 'MESH']
+        if not objs:
+            self.report({'ERROR'}, T("Выделите меш объекты"))
+            return {'CANCELLED'}
+
+        removed = []
+        for obj in objs:
+            mt, base = get_model_type(obj)
+            if not base:
+                continue
+
+            if mt == 'DFF':
+                if remove_file(img_path, base + '.dff'):
+                    removed.append(base + '.dff')
+                if remove_file(img_path, base + '.txd'):
+                    removed.append(base + '.txd')
+            elif mt == 'LOD':
+                fname = 'LOD' + base + '.dff'
+                if remove_file(img_path, fname):
+                    removed.append(fname)
+            elif mt == 'COL':
+                if remove_file(img_path, base + '.col'):
+                    removed.append(base + '.col')
+
+        if removed:
+            # Refresh IMG file list
+            _refresh_img_entries(context.scene, img_path)
+            self.report({'INFO'}, f"IMG: {T('удалено')} {', '.join(removed)}")
+        else:
+            self.report({'WARNING'}, T("Файлы не найдены в IMG"))
         return {'FINISHED'}
 
 
@@ -2600,6 +2846,8 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
                     except Exception as e:
                         results.append(f"{base_name}.txd error: {e}")
 
+        # Refresh IMG file list
+        _refresh_img_entries(context.scene, img_path)
         self.report({'INFO'}, f"IMG: {', '.join(results)}")
         return {'FINISHED'}
 
@@ -2747,6 +2995,13 @@ class GTATOOLS_OT_upsert_ipl(bpy.types.Operator):
             # Set DFF lod_index pointing to LOD
             if dff_entry and lod_entry:
                 dff_entry.lod_index = lod_idx
+                # Update object property too
+                if pair['DFF']:
+                    pair['DFF'].inu.lod_index = lod_idx
+            elif dff_entry:
+                dff_entry.lod_index = -1
+                if pair['DFF']:
+                    pair['DFF'].inu.lod_index = -1
 
             if dff_entry:
                 entries.append(dff_entry)
@@ -2835,6 +3090,12 @@ class GTATOOLS_OT_remove_ipl(bpy.types.Operator):
             return {'CANCELLED'}
 
         removed = remove_ipl(filepath, model_ids)
+
+        # Reset lod_index to -1 on removed objects
+        for o in objs:
+            if hasattr(o, 'inu'):
+                o.inu.lod_index = -1
+
         self.report({'INFO'}, f"IPL: {T('удалено')} {removed}")
         return {'FINISHED'}
 
@@ -5510,6 +5771,65 @@ class GTATOOLS_FH_texture_drop(bpy.types.FileHandler):
         return context.area and context.area.type == 'VIEW_3D'
 
 
+class GTATOOLS_OT_drop_txd(bpy.types.Operator):
+    """Импорт TXD при перетаскивании во viewport"""
+    bl_idname = "gtatools.drop_txd"
+    bl_label = "Import TXD (Drop)"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    filepath: StringProperty(subtype='FILE_PATH')
+    files: CollectionProperty(type=bpy.types.OperatorFileListElement)
+    directory: StringProperty(subtype='DIR_PATH')
+
+    def execute(self, context):
+        from .ops.txd_import import import_txd as inu_import_txd
+        count = 0
+        for f in self.files:
+            path = os.path.join(self.directory, f.name)
+            if os.path.isfile(path) and path.lower().endswith('.txd'):
+                try:
+                    images = inu_import_txd(filepath=path)
+                    # Create materials for each imported texture
+                    for img in images:
+                        mat_name = os.path.splitext(img.name)[0]
+                        mat = bpy.data.materials.get(mat_name)
+                        if not mat:
+                            mat = bpy.data.materials.new(name=mat_name)
+                            mat.use_nodes = True
+                            nodes = mat.node_tree.nodes
+                            bsdf = None
+                            for n in nodes:
+                                if n.type == 'BSDF_PRINCIPLED':
+                                    bsdf = n
+                                    break
+                            if bsdf:
+                                tex_node = nodes.new('ShaderNodeTexImage')
+                                tex_node.image = img
+                                tex_node.location = (bsdf.location.x - 300, bsdf.location.y)
+                                mat.node_tree.links.new(tex_node.outputs['Color'], bsdf.inputs['Base Color'])
+                                if 'Specular IOR Level' in bsdf.inputs:
+                                    bsdf.inputs['Specular IOR Level'].default_value = 0.0
+                                elif 'Specular' in bsdf.inputs:
+                                    bsdf.inputs['Specular'].default_value = 0.0
+                    count += len(images)
+                except Exception as e:
+                    self.report({'WARNING'}, f"TXD: {e}")
+        self.report({'INFO'}, f"TXD: {count} {T('текстур импортировано')}")
+        return {'FINISHED'}
+
+
+class GTATOOLS_FH_txd_drop(bpy.types.FileHandler):
+    """File Handler для перетаскивания TXD"""
+    bl_idname = "GTATOOLS_FH_txd_drop"
+    bl_label = "GTA TXD Drop"
+    bl_import_operator = "gtatools.drop_txd"
+    bl_file_extensions = ".txd"
+
+    @classmethod
+    def poll_drop(cls, context):
+        return context.area and context.area.type == 'VIEW_3D'
+
+
 class GTATOOLS_OT_check_materials(bpy.types.Operator):
     """Проверить количество материалов на выделенных объектах"""
     bl_idname = "gtatools.check_materials"
@@ -5739,6 +6059,14 @@ class GTATOOLS_PT_ide_ipl_panel(bpy.types.Panel):
             row = box.row(align=True)
             row.prop(inu, "interior_id", text="Interior")
             row.prop(inu, "lod_index", text="LOD")
+
+            # Check for ID conflicts
+            if inu.model_id > 0:
+                conflicts = [o.name for o in bpy.data.objects
+                             if o.type == 'MESH' and o != obj
+                             and hasattr(o, 'inu') and o.inu.model_id == inu.model_id]
+                if conflicts:
+                    box.label(text=f"ID {inu.model_id}: {T('конфликт с')} {', '.join(conflicts[:3])}", icon='ERROR')
         else:
             layout.label(text=T("Выделите меш объект"), icon='INFO')
 
@@ -5822,6 +6150,8 @@ class GTATOOLS_PT_ide_ipl_panel(bpy.types.Panel):
         row.prop(scn, "gtatools_img_load_txd", text="TXD", toggle=True)
         box.operator("gtatools.import_from_img", text=T("Импорт из IMG"), icon='IMPORT')
         box.operator("gtatools.export_to_img", text=T("Экспорт в IMG"), icon='EXPORT')
+        box.operator("gtatools.remove_from_img", text=T("Удалить из IMG"), icon='REMOVE')
+
 
 
 
@@ -6551,6 +6881,93 @@ class GTATOOLS_PT_export_panel(bpy.types.Panel):
 
 
 
+
+
+_hide_dff = False
+_hide_lod = False
+_hide_col = False
+
+
+class GTATOOLS_OT_toggle_visibility(bpy.types.Operator):
+    """Скрыть/показать DFF, LOD или COL объекты во всей сцене"""
+    bl_idname = "gtatools.toggle_visibility"
+    bl_label = "Toggle Visibility"
+    bl_options = {'REGISTER'}
+
+    model_type: StringProperty()
+
+    def execute(self, context):
+        global _hide_dff, _hide_lod, _hide_col
+        from .tools.model_utils import get_model_type
+
+        if self.model_type == 'DFF':
+            _hide_dff = not _hide_dff
+            hide = _hide_dff
+        elif self.model_type == 'LOD':
+            _hide_lod = not _hide_lod
+            hide = _hide_lod
+        elif self.model_type == 'COL':
+            _hide_col = not _hide_col
+            hide = _hide_col
+        else:
+            return {'CANCELLED'}
+
+        count = 0
+        for obj in bpy.data.objects:
+            if obj.type != 'MESH':
+                continue
+            mt, _ = get_model_type(obj)
+            if mt == self.model_type:
+                obj.hide_viewport = hide
+                count += 1
+
+        self.report({'INFO'}, f"{self.model_type}: {'Hidden' if hide else 'Visible'} ({count})")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_snap_to_dff(bpy.types.Operator):
+    """Подтянуть LOD и COL к позиции DFF модели"""
+    bl_idname = "gtatools.snap_to_dff"
+    bl_label = "Snap LOD/COL to DFF"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        from .tools.model_utils import get_model_type
+
+        # Group all scene meshes by base name
+        groups = {}
+        for obj in bpy.data.objects:
+            if obj.type != 'MESH':
+                continue
+            mt, base = get_model_type(obj)
+            if not base:
+                continue
+            base_clean = base.rstrip('_').lower()
+            if base_clean not in groups:
+                groups[base_clean] = {'DFF': None, 'LOD': None, 'COL': None}
+            if mt and groups[base_clean][mt] is None:
+                groups[base_clean][mt] = obj
+
+        snapped = 0
+        for base, g in groups.items():
+            dff = g['DFF']
+            if not dff:
+                continue
+            for mt in ('LOD', 'COL'):
+                other = g[mt]
+                if other and other.location != dff.location:
+                    other.location = dff.location.copy()
+                    other.rotation_mode = dff.rotation_mode
+                    if dff.rotation_mode == 'QUATERNION':
+                        other.rotation_quaternion = dff.rotation_quaternion.copy()
+                    else:
+                        other.rotation_euler = dff.rotation_euler.copy()
+                    snapped += 1
+
+        self.report({'INFO'}, f"{T('Перемещено:')} {snapped}")
+        return {'FINISHED'}
+
+
 class GTATOOLS_PT_check_panel(bpy.types.Panel):
     """Панель проверки геометрии и материалов"""
     bl_label = T("Проверка")
@@ -6570,6 +6987,18 @@ class GTATOOLS_PT_check_panel(bpy.types.Panel):
         layout.operator("gtatools.check_materials", text=T("Проверка материалов"), icon='MATERIAL')
         layout.operator("gtatools.cleanup_materials", text=T("Очистка материалов"), icon='BRUSH_DATA')
         layout.operator("gtatools.sort_materials", text=T("Сортировка материалов"), icon='SORTALPHA')
+        layout.separator()
+        layout.operator("gtatools.snap_to_dff", text=T("LOD/COL → DFF"), icon='SNAP_ON')
+        row = layout.row(align=True)
+        op = row.operator("gtatools.toggle_visibility", text="DFF",
+                          icon='HIDE_ON' if _hide_dff else 'HIDE_OFF', depress=_hide_dff)
+        op.model_type = 'DFF'
+        op = row.operator("gtatools.toggle_visibility", text="LOD",
+                          icon='HIDE_ON' if _hide_lod else 'HIDE_OFF', depress=_hide_lod)
+        op.model_type = 'LOD'
+        op = row.operator("gtatools.toggle_visibility", text="COL",
+                          icon='HIDE_ON' if _hide_col else 'HIDE_OFF', depress=_hide_col)
+        op.model_type = 'COL'
 
 
 # ── 2DFX Light Presets ──
@@ -7336,10 +7765,15 @@ class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
             box.operator("gtatools.extract_textures", text=T("Извлечь ресурсы"), icon='PACKAGE')
             box.operator("gtatools.build_map_glb", text=T("Собрать карту в .glb"), icon='WORLD')
             box.operator("gtatools.load_map_glb", text=T("Импорт карты .glb"), icon='IMPORT')
-            box.operator("gtatools.toggle_bbox",
+            row = box.row(align=True)
+            row.operator("gtatools.toggle_bbox",
                          text=T("BBox: ON") if _bbox_mode_active else T("BBox: OFF"),
                          icon='MESH_CUBE',
                          depress=_bbox_mode_active)
+            row.operator("gtatools.toggle_links",
+                         text=T("Links: ON") if _links_active else T("Links: OFF"),
+                         icon='LINKED',
+                         depress=_links_active)
             box.separator()
             box.label(text="IDE", icon='TEXT')
             box.prop(scene, "gtatools_ide_path", text="")
@@ -7473,10 +7907,29 @@ class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
 
             row = box.row(align=True)
             row.operator("gtatools.id_manager_auto_assign", text=T("Назначить ID выделенным"), icon='ADD')
+            row.operator("gtatools.id_manager_clear_selected", text="", icon='REMOVE')
             row.operator("gtatools.id_manager_clear", text="", icon='TRASH')
             box.operator("gtatools.id_manager_create", text=T("Создать файл ID"), icon='FILE_NEW')
+            box.operator("gtatools.id_manager_sync_scene", text=T("Синхронизировать сцену"), icon='SCENE_DATA')
             box.operator("gtatools.id_manager_from_game", text=T("Загрузить из игры"), icon='IMPORT')
             box.operator("gtatools.id_manager_open_file", text=T("Открыть файл ID"), icon='FILE_TEXT')
+
+        # IMG file list (collapsible)
+        box = layout.box()
+        row = box.row()
+        row.prop(scene, "gtatools_show_img_list",
+                 icon='TRIA_DOWN' if scene.gtatools_show_img_list else 'TRIA_RIGHT',
+                 text=T("Файлы IMG"), emboss=False)
+        if scene.gtatools_show_img_list:
+            if len(scene.gtatools_img_entries) > 0:
+                box.template_list("GTATOOLS_UL_img_files", "", scene, "gtatools_img_entries",
+                                  scene, "gtatools_img_entries_index", rows=8)
+                entries = scene.gtatools_img_entries
+                dff_c = sum(1 for e in entries if e.name.lower().endswith('.dff'))
+                col_c = sum(1 for e in entries if e.name.lower().endswith('.col'))
+                txd_c = sum(1 for e in entries if e.name.lower().endswith('.txd'))
+                box.label(text=f"DFF: {dff_c}  COL: {col_c}  TXD: {txd_c}  Total: {len(entries)}", icon='INFO')
+            box.operator("gtatools.refresh_img_list", text=T("Обновить список"), icon='FILE_REFRESH')
 
 
 class GTATOOLS_OT_id_manager_open_file(bpy.types.Operator):
@@ -7577,6 +8030,26 @@ class GTATOOLS_OT_id_manager_auto_assign(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class GTATOOLS_OT_id_manager_clear_selected(bpy.types.Operator):
+    """Очистить Model ID у выделенных объектов"""
+    bl_idname = "gtatools.id_manager_clear_selected"
+    bl_label = "Clear Selected IDs"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        from .data.id_manager import release_id
+        count = 0
+        for obj in context.selected_objects:
+            if obj.type == 'MESH' and hasattr(obj, 'inu'):
+                mid = obj.inu.model_id
+                if mid > 0:
+                    release_id(mid)
+                    obj.inu.model_id = 0
+                    count += 1
+        self.report({'INFO'}, f"{T('Очищено ID:')} {count}")
+        return {'FINISHED'}
+
+
 class GTATOOLS_OT_id_manager_clear(bpy.types.Operator):
     """Очистить все занятые ID"""
     bl_idname = "gtatools.id_manager_clear"
@@ -7621,6 +8094,44 @@ class GTATOOLS_OT_id_manager_from_game(bpy.types.Operator):
             return {'CANCELLED'}
         count = populate_from_game(game_root)
         self.report({'INFO'}, f"{T('Занято ID:')} {count}")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_id_manager_sync_scene(bpy.types.Operator):
+    """Добавить ID из объектов сцены в менеджер"""
+    bl_idname = "gtatools.id_manager_sync_scene"
+    bl_label = "Sync Scene IDs"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        from .data.id_manager import _load, _save
+        from .tools.model_utils import get_model_type
+
+        entries = _load()
+        existing = {id_num for id_num, _ in entries}
+
+        added = 0
+        for obj in bpy.data.objects:
+            if obj.type != 'MESH' or not hasattr(obj, 'inu'):
+                continue
+            mid = obj.inu.model_id
+            if mid > 0 and mid not in existing:
+                _, base = get_model_type(obj)
+                entries.append((mid, base or obj.name))
+                existing.add(mid)
+                added += 1
+            elif mid > 0 and mid in existing:
+                # Update name if it was free (None)
+                for i, (eid, ename) in enumerate(entries):
+                    if eid == mid and ename is None:
+                        _, base = get_model_type(obj)
+                        entries[i] = (mid, base or obj.name)
+                        added += 1
+                        break
+
+        if added > 0:
+            _save(entries)
+        self.report({'INFO'}, f"{T('Добавлено ID:')} {added}")
         return {'FINISHED'}
 
 
@@ -8698,7 +9209,12 @@ class GTATOOLS_PT_paths_panel(bpy.types.Panel):
 classes = (
     INUObjectProps,
     INUMaterialProps,
+    GTATOOLS_ImgFileEntry,
+    GTATOOLS_UL_img_files,
+    GTATOOLS_OT_refresh_img_list,
     GTATOOLS_FillColorItem,
+    GTATOOLS_OT_toggle_visibility,
+    GTATOOLS_OT_snap_to_dff,
     GTATOOLS_OT_check_geometry,
     GTATOOLS_OT_check_ngons,
     GTATOOLS_OT_clear_raw_dff,
@@ -8759,14 +9275,18 @@ classes = (
     GTATOOLS_OT_set_blend_folder,
     GTATOOLS_OT_drop_texture_as_material,
     GTATOOLS_FH_texture_drop,
+    GTATOOLS_OT_drop_txd,
+    GTATOOLS_FH_txd_drop,
     GTATOOLS_OT_check_materials,
     GTATOOLS_OT_cleanup_materials,
     GTATOOLS_OT_sort_materials,
     GTATOOLS_OT_id_manager_open_file,
     GTATOOLS_OT_id_manager_release,
     GTATOOLS_OT_id_manager_auto_assign,
+    GTATOOLS_OT_id_manager_clear_selected,
     GTATOOLS_OT_id_manager_clear,
     GTATOOLS_OT_id_manager_create,
+    GTATOOLS_OT_id_manager_sync_scene,
     GTATOOLS_OT_id_manager_from_game,
     GTATOOLS_OT_toggle_uv_editor,
     GTATOOLS_OT_toggle_uv_grid,
@@ -8783,6 +9303,7 @@ classes = (
     GTATOOLS_OT_file_import_dff,
     GTATOOLS_OT_file_import_col,
     GTATOOLS_OT_file_import_txd,
+    GTATOOLS_OT_toggle_links,
     GTATOOLS_OT_toggle_bbox,
     GTATOOLS_OT_extract_resources,
     GTATOOLS_OT_load_map_glb,
@@ -8814,6 +9335,7 @@ classes = (
     GTATOOLS_OT_add_ped_path,
     GTATOOLS_OT_mark_station,
     GTATOOLS_OT_export_to_img,
+    GTATOOLS_OT_remove_from_img,
     GTATOOLS_OT_upsert_ide,
     GTATOOLS_OT_upsert_ipl,
     GTATOOLS_OT_remove_ide,
@@ -9467,6 +9989,12 @@ def register():
     )
 
     # ID Manager
+    bpy.types.Scene.gtatools_show_img_list = BoolProperty(
+        name="Show IMG List",
+        default=False
+    )
+    bpy.types.Scene.gtatools_img_entries = CollectionProperty(type=GTATOOLS_ImgFileEntry)
+    bpy.types.Scene.gtatools_img_entries_index = IntProperty(default=0)
     bpy.types.Scene.gtatools_show_id_manager = BoolProperty(
         name="Show ID Manager",
         description=T("Показать менеджер ID"),
@@ -9801,6 +10329,13 @@ def unregister():
     _col_light_mod._col_light_preview_handlers.clear()
     _col_light_mod._col_light_preview_active = False
 
+    # Remove model links draw handler
+    global _links_draw_handler, _links_active
+    if _links_draw_handler is not None:
+        bpy.types.SpaceView3D.draw_handler_remove(_links_draw_handler, 'WINDOW')
+        _links_draw_handler = None
+    _links_active = False
+
     # Remove UV grid draw handler
     if _uv._uv_grid_draw_handler is not None:
         bpy.types.SpaceImageEditor.draw_handler_remove(_uv._uv_grid_draw_handler, 'WINDOW')
@@ -9847,6 +10382,9 @@ def unregister():
     del bpy.types.Scene.gtatools_prefix_dff
     del bpy.types.Scene.gtatools_prefix_lod
     del bpy.types.Scene.gtatools_prefix_col
+    del bpy.types.Scene.gtatools_show_img_list
+    del bpy.types.Scene.gtatools_img_entries
+    del bpy.types.Scene.gtatools_img_entries_index
     del bpy.types.Scene.gtatools_show_id_manager
     del bpy.types.Scene.gtatools_id_search
     del bpy.types.Scene.gtatools_id_page

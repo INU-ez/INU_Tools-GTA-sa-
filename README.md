@@ -4,7 +4,7 @@
 
 ![Blender](https://img.shields.io/badge/Blender-4.2+-orange?logo=blender)
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue)
-![Version](https://img.shields.io/badge/Version-1.6.0-green)
+![Version](https://img.shields.io/badge/Version-1.6.1-green)
 ![Views](https://komarev.com/ghpvc/?username=INU-ez&color=orange&style=flat-square&label=REPO+VIEWS)
 
 > **[English version](README_eng.md)**
@@ -230,6 +230,7 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 <details>
 <summary><b>История изменений</b></summary>
 
+- **v1.6.1** — IPL Import: перемещение COL вместе с DFF, Empty-плейсхолдеры с _empty суффиксом в коллекции IPL_Empty, кнопка Заменить Empty; Префиксы моделей в настройках с авто-очисткой конфликтов; Model Links — визуализация связей DFF↔LOD↔COL пунктирными линиями; LOD/COL → DFF snap; Скрытие DFF/LOD/COL по отдельности; Удалить из IMG по типу объекта; Список файлов IMG с прокруткой и поиском; Менеджер ID: очистка выделенных, синхронизация сцены, файл 321-19999, проверка конфликтов; Normals toggle; Drag & Drop TXD с созданием материалов
 - **v1.6.0** — Import Map: полный workflow импорта карты (Extract → Build .glb → Import), автосортировка по коллекциям (Buildings/Vegetation/Props/Small/LOD), дубликаты в _Instances подколлекциях; BBox Mode: переключение далёких объектов в Bounding Box с радиусом 300м от выделения; IPL ZONE секция: парсинг/запись/визуализация зон карты; динамические регионы карты из gta.dat (вместо захардкоженных); TXD: исправлена декомпрессия RASTER_888 (32-bit BGRX), улучшена детекция DXT по compression_flag; GPU NVTT автодетект (без toggle кнопки); UI: объединены панели Экспорт/Импорт, компактный layout IDE/IPL/IMG, панель Проверка переведена на русский; экспорт коллекций (если ничего не выделено — экспорт активной коллекции); убраны: Fake mode, Bounds mode, LOD view, Auto-discover кнопка
 - **v1.5.3** — Импорт/экспорт персонажей (skinned DFF): скелет, vertex weights, bone matrices; IFP анимации: импорт 294+ анимаций из ped.ifp, применение к скелету, выбор через поиск; Water IO: импорт/экспорт water.dat, текстура waterclear256, анимация течения, типы воды; Path IO: импорт/экспорт paths.ipl, tracks.dat, NODES.dat, создание/конвертация путей; Bin Mesh PLG — корректные material indices для skinned моделей; пользовательские настройки в INU_Preset (не удаляются при обновлении); совместимость Blender 5.1 (layered actions API); исправлен SkinPLG reader (bones_used, num_used, max_weights)
 - **v1.5.2** — Рефакторинг: модульная структура (tools/, data/); COL Light Preview: активный атрибут Day/Night, порог яркости, цифры только на границах, автообновление при перемещении; Менеджер ID моделей (model_ids.txt); авто-LOD в IDE/IPL/IMG экспорте; Export All с 2DFX; LOD в IMG экспорте; массовый IMG экспорт; VC Smooth между объектами; настраиваемые суффиксы моделей; сортировка материалов в панели; сворачиваемые секции в INU Tools

@@ -4,7 +4,7 @@
 
 ![Blender](https://img.shields.io/badge/Blender-4.2+-orange?logo=blender)
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue)
-![Version](https://img.shields.io/badge/Version-1.6.0-green)
+![Version](https://img.shields.io/badge/Version-1.6.1-green)
 ![Views](https://komarev.com/ghpvc/?username=INU-ez&color=orange&style=flat-square&label=REPO+VIEWS)
 
 > **[Русская версия / Russian version](README.md)**
@@ -230,6 +230,7 @@ Name objects with suffixes (`Model_DFF`, `Model_LOD`, `Model_COL`), select them,
 <details>
 <summary><b>Changelog</b></summary>
 
+- **v1.6.1** — IPL Import: COL moves with DFF, Empty placeholders with _empty suffix in IPL_Empty collection, Replace Empty button; Model prefixes in settings with auto-conflict clearing; Model Links — dashed line visualization DFF↔LOD↔COL; LOD/COL → DFF snap; Hide DFF/LOD/COL separately; Remove from IMG by object type; IMG file list with scroll and search; ID Manager: clear selected, sync scene, file 321-19999, conflict detection; Normals toggle; Drag & Drop TXD with material creation
 - **v1.6.0** — Import Map: full workflow (Extract → Build .glb → Import), auto-sort into collections (Buildings/Vegetation/Props/Small/LOD), duplicates in _Instances sub-collections; BBox Mode: toggle distant objects to Bounding Box with 300m radius from selection; IPL ZONE section: parse/write/visualize map zones; dynamic map regions from gta.dat (replaces hardcoded); TXD: fixed RASTER_888 decompression (32-bit BGRX), improved DXT detection via compression_flag; GPU NVTT auto-detect (no toggle button); UI: merged Export/Import panels, compact IDE/IPL/IMG layout, Check panel translated to Russian; collection export (active collection if nothing selected); removed: Fake mode, Bounds mode, LOD view, Auto-discover button; Blender 4.2+ compatibility
 - **v1.5.3** — Skinned DFF import/export: skeleton, vertex weights, bone matrices; IFP animations: import 294+ anims from ped.ifp, apply to skeleton, search selector; Water IO: import/export water.dat, waterclear256 texture, flow animation, water types; Path IO: import/export paths.ipl, tracks.dat, NODES.dat, create/convert paths; Bin Mesh PLG — correct material indices for skinned models; user config in INU_Preset folder (preserved on updates); Blender 5.1 compatibility (layered actions API); fixed SkinPLG reader (bones_used, num_used, max_weights)
 - **v1.5.2** — Refactoring: modular structure (tools/, data/); COL Light Preview: active Day/Night attribute, brightness threshold, border-only numbers, auto-update on transform; Model ID Manager (model_ids.txt); auto-LOD in IDE/IPL/IMG export; Export All with 2DFX; LOD in IMG export; batch IMG export; VC Smooth between objects; customizable model suffixes; material sorting in panel; collapsible sections in INU Tools

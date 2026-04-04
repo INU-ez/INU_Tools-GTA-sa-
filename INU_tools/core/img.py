@@ -286,3 +286,5 @@ def create_img(filepath: str) -> None:
 def list_files(img_path: str) -> list[str]:
     """Return list of filenames in the archive."""
     return [e.name for e in read_directory(img_path)]
+
+
