@@ -191,6 +191,12 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 
 </details>
 
+## Видео
+
+[![IDE/IPL/IMG/Map Tutorial](https://img.youtube.com/vi/Jw_R9QFYxWE/0.jpg)](https://www.youtube.com/watch?v=Jw_R9QFYxWE)
+
+> Export & Import IDE / IPL / IMG / Map
+
 ## Установка
 
 1. Скачайте папку `INU_tools/` (или zip-архив)

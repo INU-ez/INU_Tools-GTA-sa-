@@ -191,6 +191,12 @@ Starting from v1.5.0, the addon has its own DFF, COL, and TXD export (no DragonF
 
 </details>
 
+## Video
+
+[![IDE/IPL/IMG/Map Tutorial](https://img.youtube.com/vi/Jw_R9QFYxWE/0.jpg)](https://www.youtube.com/watch?v=Jw_R9QFYxWE)
+
+> Export & Import IDE / IPL / IMG / Map
+
 ## Installation
 
 1. Download the `INU_tools/` folder (or zip archive)
