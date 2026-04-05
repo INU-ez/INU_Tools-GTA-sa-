@@ -38,6 +38,7 @@
 - [Characters (Skinned DFF)](#characters-skinned-dff)
 - [Water IO](#water-io)
 - [Path IO](#path-io)
+- [LightMap (beta_MTA)](#lightmap-beta_mta)
 - [Integrations](#integrations)
 - [Technical Reference](#technical-reference)
   - [Project Structure](#project-structure)
@@ -568,11 +569,25 @@ Auto-splits into groups of 12 nodes (GTA SA limit).
 
 Panel is only visible when Itera Tools 3 is installed in Asset Libraries.
 
-### Lightmap Generator (MTA)
+### LightMap (beta_MTA)
 
 **Panel:** View3D → Sidebar (N) → GTA Tools → Lightmap Generator (beta)
 
-Generate Lua code for MTA SA lightmap scripts.
+Generate Lua code for MTA SA lightmap scripts. The MTA script replaces shaders at runtime, adding a second UV layer with the lightmap over the base textures.
+
+**Full workflow:**
+
+1. **Create UV1** — main UV layout for model textures (bricks, roof, etc.)
+2. **Create UV2** — second UV layout specifically for the lightmap. Each polygon must occupy a unique space with no overlaps. In Blender: UV Editor → UV → Smart UV Project or manually
+3. **Bake lighting to a texture using UV2** — use any baking method you prefer (Blender Bake, Cycles, third-party addons). The result must be baked to a texture using the UV2 layout
+4. **Save lightmap** as a PNG file (e.g. `lightmaps/building01.png`)
+5. **Export DFF** — make sure both UV layers are enabled in object properties (`uv_map1` and `uv_map2`). The addon writes both UVs to the DFF file
+6. **Generate code:**
+   - Select the object
+   - Set the **lightmap path** (relative, as in MTA resources)
+   - Set the **Model ID**
+   - Click **Generate**
+7. **Copy** the result into your MTA Lua script
 
 | Button | Operator | Description |
 |--------|----------|-------------|
@@ -582,7 +597,19 @@ Generate Lua code for MTA SA lightmap scripts.
 | Copy | `gtatools.lightmap_copy` | Copy result to clipboard |
 | Clear | `gtatools.lightmap_clear` | Clear generated code |
 
-**Fields:** lightmap path, model ID. Output: Lua table with texture names and lightmap references.
+**Output:** Lua table with texture names and lightmap references:
+```lua
+{
+    textures = {
+        "brick_wall",
+        "roof_tile",
+    },
+    lightmap = "lightmaps/building01.png",
+    models = {3500}
+},
+```
+
+> **IMPORTANT:** UV2 is required — without a second UV layer, the lightmap will use UV1 coordinates and look incorrect.
 
 The MTA lightmap script itself is available in the [Issues](../../issues) section of the repository.
 

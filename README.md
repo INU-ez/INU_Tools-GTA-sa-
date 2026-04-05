@@ -184,7 +184,7 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 <summary><b>Интеграции</b></summary>
 
 > - ✅ Support Itera Tools 3 (Vertex Lit Linear / Quickstart)
-> - ✅ Lightmap Generator (MTA)
+> - ✅ LightMap (beta_MTA)
 > - ✅ Pipeline (Building / Reflections)
 > - ✅ Горячие клавиши (Shift+T, Shift+A)
 > - ✅ Локализация (RU / EN)

@@ -8659,7 +8659,7 @@ class GTATOOLS_PT_vertex_paint_panel(bpy.types.Panel):
 
 class GTATOOLS_PT_lightmap_panel(bpy.types.Panel):
     """Панель генератора Lightmap"""
-    bl_label = "Lightmap Generator (beta)"
+    bl_label = "LightMap (beta_MTA)"
     bl_idname = "GTATOOLS_PT_lightmap_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'

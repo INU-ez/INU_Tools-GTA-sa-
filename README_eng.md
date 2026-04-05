@@ -184,7 +184,7 @@ Starting from v1.5.0, the addon has its own DFF, COL, and TXD export (no DragonF
 <summary><b>Integrations</b></summary>
 
 > - ✅ Support Itera Tools 3 (Vertex Lit Linear / Quickstart)
-> - ✅ Lightmap Generator (MTA)
+> - ✅ LightMap (beta_MTA)
 > - ✅ Pipeline (Building / Reflections)
 > - ✅ Hotkeys (Shift+T, Shift+A)
 > - ✅ Localization (RU / EN)
