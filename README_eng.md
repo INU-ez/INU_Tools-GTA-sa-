@@ -27,6 +27,8 @@ Starting from v1.5.0, the addon has its own DFF, COL, and TXD export (no DragonF
 > - ✅ TXD export/import (DXT compression, parallel processing, GPU via NVIDIA Texture Tools)
 > - ✅ Export All — batch export by suffixes `_DFF` / `_LOD` / `_COL` + automatic TXD assembly
 > - ✅ Collection export — if nothing selected, exports all objects from active collection
+> - ✅ Drag & Drop TXD — drag .txd files into viewport with auto material creation
+> - ✅ DFF Flags — collapsible geometry flags panel (Normals, Light, Modulate Color, UV1/UV2, Day/Night, BinMesh)
 
 </details>
 
@@ -40,9 +42,14 @@ Starting from v1.5.0, the addon has its own DFF, COL, and TXD export (no DragonF
 > - ✅ Import Map — extract resources from IMG, build map as .glb, import with auto-sorting into collections
 > - ✅ BBox Mode — toggle distant objects to Bounding Box, near selection (300m) — full models
 > - ✅ Map regions — auto-detected from gta.dat (LA, SF, VEGAS, COUNTRY, etc.)
-> - ✅ Model ID Manager — free ID list, auto-assign to selected objects
+> - ✅ Model ID Manager — create file (321-19999), sync scene, load from game, clear selected, search and pagination
 > - ✅ IDE Flags — 15 checkboxes with descriptions (IS_ROAD, IS_TREE, DRAW_LAST, etc.)
-> - ✅ Customizable model suffixes (_DFF, _LOD, _COL)
+> - ✅ Customizable suffixes and prefixes (_DFF, _LOD, _COL, LOD, etc.)
+> - ✅ Model Links — visualize DFF↔LOD↔COL relationships with dashed lines
+> - ✅ Remove from IMG — delete DFF/COL/TXD by selected object type
+> - ✅ IMG File List — scrollable UIList with search
+> - ✅ Replace Empty — replace IPL placeholders with scene models
+> - ✅ X Radar Maker — generate minimap tiles (8x8, menu, full radar) + pack to TXD
 
 </details>
 
@@ -138,6 +145,9 @@ Starting from v1.5.0, the addon has its own DFF, COL, and TXD export (no DragonF
 > - ✅ Geometry check — loose vertices, edges, N-gons
 > - ✅ Material limit check (50 for GTA SA)
 > - ✅ Material cleanup/sorting
+> - ✅ LOD/COL → DFF snap — move LOD and COL to DFF position
+> - ✅ Hide DFF/LOD/COL separately
+> - ✅ Model ID conflict detection
 >
 > <details>
 > <summary><b>Tutorial .gif</b></summary>
