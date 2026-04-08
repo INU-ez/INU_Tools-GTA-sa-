@@ -14,6 +14,7 @@ def export_ide(filepath: str, objects: list) -> None:
     Model name defaults to the object name (without _COL/_LOD suffixes).
     """
     ide = IdeFile()
+    seen_models: set[str] = set()
 
     for obj in objects:
         if obj.type != 'MESH':
@@ -23,6 +24,11 @@ def export_ide(filepath: str, objects: list) -> None:
 
         # Model name: strip suffixes, use clean name
         model_name = _clean_model_name(obj.name)
+
+        # Skip duplicate model names (instances like gta_bench.001, .002)
+        if model_name in seen_models:
+            continue
+        seen_models.add(model_name)
 
         model_id = getattr(inu, 'model_id', 0) if inu else 0
         txd_name = getattr(inu, 'txd_name', '') if inu else ''
