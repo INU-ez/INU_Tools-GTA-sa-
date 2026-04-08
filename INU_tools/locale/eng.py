@@ -308,7 +308,7 @@ LANG = {
     "Проверка": "Check",
     "Проверка вершин": "Check Vertex",
     "Проверка N-gon": "Check N-gon",
-    "Проверка материалов": "Check Material",
+    "Проверка материалов": "Check Materials",
     "Привязать к модели": "Attach to Model",
     "Выделите меш + 2DFX, затем нажмите": "Select mesh + 2DFX, then click",
     "Обновить превью": "Refresh Preview",
@@ -676,6 +676,8 @@ LANG = {
     "Проверка материалов": "Check materials",
     "Очистка материалов": "Cleanup materials",
     "Сортировка материалов": "Sort materials",
+    "Сброс трансформ": "Reset Transform",
+    "Сброшено объектов:": "Objects reset:",
     "COL light материалов:": "COL light materials:",
     "Запечь COL Light": "Bake COL Light",
 

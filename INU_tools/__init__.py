@@ -5989,6 +5989,26 @@ class GTATOOLS_OT_sort_materials(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class GTATOOLS_OT_reset_transform(bpy.types.Operator):
+    """Сброс Location и Rotation в (0,0,0) для выделенных мешей"""
+    bl_idname = "gtatools.reset_transform"
+    bl_label = "Reset Transform"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        objects = context.selected_objects
+        if not objects:
+            objects = [o for o in context.scene.objects if o.type == 'MESH']
+        count = 0
+        for obj in objects:
+            if obj.type == 'MESH':
+                obj.location = (0.0, 0.0, 0.0)
+                obj.rotation_euler = (0.0, 0.0, 0.0)
+                count += 1
+        self.report({'INFO'}, f"{T('Сброшено объектов:')} {count}")
+        return {'FINISHED'}
+
+
 # =============================================================================
 # PANELS
 # =============================================================================
@@ -6434,7 +6454,6 @@ class GTATOOLS_OT_export_nodes(bpy.types.Operator):
 
         self.report({'INFO'}, f"Nodes: {exported} nodes exported")
         return {'FINISHED'}
-            return {'CANCELLED'}
 
 
 class GTATOOLS_OT_import_paths_ipl(bpy.types.Operator):
@@ -7059,6 +7078,7 @@ class GTATOOLS_PT_check_panel(bpy.types.Panel):
         layout.operator("gtatools.check_materials", text=T("Проверка материалов"), icon='MATERIAL')
         layout.operator("gtatools.cleanup_materials", text=T("Очистка материалов"), icon='BRUSH_DATA')
         layout.operator("gtatools.sort_materials", text=T("Сортировка материалов"), icon='SORTALPHA')
+        layout.operator("gtatools.reset_transform", text=T("Сброс трансформ"), icon='EMPTY_AXIS')
         layout.separator()
         layout.operator("gtatools.snap_to_dff", text=T("LOD/COL → DFF"), icon='SNAP_ON')
         row = layout.row(align=True)
@@ -9712,6 +9732,7 @@ classes = (
     GTATOOLS_OT_check_materials,
     GTATOOLS_OT_cleanup_materials,
     GTATOOLS_OT_sort_materials,
+    GTATOOLS_OT_reset_transform,
     GTATOOLS_OT_id_manager_open_file,
     GTATOOLS_OT_id_manager_release,
     GTATOOLS_OT_id_manager_auto_assign,
