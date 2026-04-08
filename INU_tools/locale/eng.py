@@ -63,13 +63,13 @@ LANG = {
     "Выберите меш объект!": "Select a mesh object!",
     "Не меш объект": "Not a mesh object",
     "Геометрия в порядке!": "Geometry is OK!",
-    "висящих вершин": "loose vertices",
+    "висящих вершин": "loose vertex",
     "висящих рёбер": "loose edges",
     "N-gons не найдены!": "No N-gons found!",
-    "N-gons (5+ вершин)": "N-gons (5+ vertices)",
+    "N-gons (5+ вершин)": "N-gons (5+ vertex)",
     "Нечего удалять - геометрия чистая!": "Nothing to delete - geometry is clean!",
     "Удалено:": "Deleted:",
-    "вершин,": "vertices,",
+    "вершин,": "vertex,",
     "рёбер": "edges",
     "Выделите модели для экспорта!": "Select models for export!",
     "Не удалось определить имя модели!": "Could not determine model name!",
@@ -120,9 +120,9 @@ LANG = {
     "меш(ей)": "mesh(es)",
 
     # Operator docstrings
-    "Проверить геометрию на висящие вершины и рёбра": "Check geometry for loose vertices and edges",
-    "Проверить геометрию на N-gons (полигоны с 5+ вершинами)": "Check geometry for N-gons (polygons with 5+ vertices)",
-    "Удалить висящие вершины и рёбра": "Delete loose vertices and edges",
+    "Проверить геометрию на висящие вершины и рёбра": "Check geometry for loose vertex and edges",
+    "Проверить геометрию на N-gons (полигоны с 5+ вершинами)": "Check geometry for N-gons (polygons with 5+ vertex)",
+    "Удалить висящие вершины и рёбра": "Delete loose vertex and edges",
     "Экспортировать текстуры в TXD архив": "Export textures to TXD archive",
     "Экспортировать DFF модель": "Export DFF model",
     "Экспортировать COL модель коллизии": "Export COL collision model",
@@ -199,7 +199,7 @@ LANG = {
     "Удалить Fill цвет и все его Scatter слои, пересчитать": "Delete Fill color and all its Scatter layers, recalculate",
     "Удалить цвет из списка по индексу": "Delete color from list by index",
     "Получить Fill цвет выделенных полигонов": "Get Fill color of selected polygons",
-    "Проверить объект на висящие вершины и рёбра (не присоединённые к полигонам)": "Check object for loose vertices and edges (not attached to polygons)",
+    "Проверить объект на висящие вершины и рёбра (не присоединённые к полигонам)": "Check object for loose vertex and edges (not attached to polygons)",
     "Элемент списка цветов заливки": "Fill color list item",
 
     # Material Backup
@@ -218,7 +218,7 @@ LANG = {
 
     # Post-processing
     "Пост-обработка vertex colors": "Post-process vertex colors",
-    "Сгладить vertex colors между соседними вершинами": "Smooth vertex colors between neighboring vertices",
+    "Сгладить vertex colors между соседними вершинами": "Smooth vertex colors between neighboring vertex",
     "Применить контраст к vertex colors": "Apply contrast to vertex colors",
     "Применить яркость к vertex colors": "Apply brightness to vertex colors",
     "Применить гамма-коррекцию к vertex colors": "Apply gamma correction to vertex colors",
@@ -246,7 +246,7 @@ LANG = {
         "None — no pipeline\nBuilding — Day/Night vertex colors (lighting changes by time of day)\nReflections — window reflections (windows must be a separate model)",
 
     "DFF — модель (меш, материалы, UV)\nCOL — коллизия\nTXD — текстуры\nCheck vertex — висящие вершины и рёбра\nCheck N-gon — полигоны с 5+ вершинами\nCheck Material — лимит 50 материалов\nGPU (NVTT) — сжатие текстур на видеокарте":
-        "DFF — model (mesh, materials, UV)\nCOL — collision\nTXD — textures\nCheck vertex — loose vertices and edges\nCheck N-gon — polygons with 5+ vertices\nCheck Material — 50 material limit\nGPU (NVTT) — texture compression on GPU",
+        "DFF — model (mesh, materials, UV)\nCOL — collision\nTXD — textures\nCheck vertex — loose vertex and edges\nCheck N-gon — polygons with 5+ vertex\nCheck Material — 50 material limit\nGPU (NVTT) — texture compression on GPU",
 
     "DFF — импорт модели с мешем и материалами\nCOL — импорт коллизии\nTXD — импорт текстур\nImport TXD — автоимпорт текстур при импорте DFF":
         "DFF — import model with mesh and materials\nCOL — import collision\nTXD — import textures\nImport TXD — auto-import textures when importing DFF",
@@ -279,7 +279,7 @@ LANG = {
         "V — brightness offset for vertex colors\nPositive value — brighter\nNegative — darker",
 
     "Сглаживание vertex colors между соседними вершинами\nIterations — количество проходов\nFactor — сила сглаживания (0-1)":
-        "Smooth vertex colors between neighboring vertices\nIterations — number of passes\nFactor — smoothing strength (0-1)",
+        "Smooth vertex colors between neighboring vertex\nIterations — number of passes\nFactor — smoothing strength (0-1)",
 
     "Контраст vertex colors\n1.0 — без изменений\n< 1.0 — меньше контраст\n> 1.0 — больше контраст":
         "Vertex colors contrast\n1.0 — no change\n< 1.0 — less contrast\n> 1.0 — more contrast",
@@ -669,9 +669,9 @@ LANG = {
     "Сглажено стыков:": "Smoothed seams:",
     "Выделите минимум 2 меш объекта": "Select at least 2 mesh objects",
     "Нет vertex colors": "No vertex colors",
-    "Максимальное расстояние между вершинами для сопоставления": "Maximum distance between vertices for matching",
+    "Максимальное расстояние между вершинами для сопоставления": "Maximum distance between vertex for matching",
     "Открыт:": "Opened:",
-    "Проверка вершин": "Check vertices",
+    "Проверка вершин": "Check Vertex",
     "Проверка N-gon": "Check N-gon",
     "Проверка материалов": "Check materials",
     "Очистка материалов": "Cleanup materials",
@@ -714,8 +714,8 @@ LANG = {
     "Авто путь": "Vehicle Path",
     "Пеш. путь": "Ped Path",
     "Ж/д путь создан. Редактируйте в Edit Mode": "Train track created. Edit in Edit Mode",
-    "Авто путь создан. Добавляйте вершины в Edit Mode": "Vehicle path created. Add vertices in Edit Mode",
-    "Пешеходный путь создан. Добавляйте вершины в Edit Mode": "Ped path created. Add vertices in Edit Mode",
+    "Авто путь создан. Добавляйте вершины в Edit Mode": "Vehicle path created. Add vertex in Edit Mode",
+    "Пешеходный путь создан. Добавляйте вершины в Edit Mode": "Ped path created. Add vertex in Edit Mode",
     "Пути (paths.ipl):": "Paths (paths.ipl):",
     "Создать путь": "Add Path",
     "Скомпилированные (NODES):": "Compiled (NODES):",
@@ -771,8 +771,8 @@ LANG = {
     "ещё": "more",
     "LOD/COL → DFF": "LOD/COL → DFF",
     "Перемещено:": "Moved:",
-    "Сшить вершины": "Snap Border Vertices",
-    "вершин усреднено": "vertices averaged",
+    "Сшить вершины": "Snap Border Vertex",
+    "вершин усреднено": "vertex averaged",
     "Суффиксы / Префиксы": "Suffixes / Prefixes",
     "Суффиксы:": "Suffixes:",
     "Префиксы:": "Prefixes:",
@@ -824,7 +824,7 @@ LANG = {
     "Линейное освещение вершин с UV текстурой": "Vertex Lit Linear with UV texture",
     "Не найден Armature!": "Armature not found!",
     "Нет активного объекта!": "No active object!",
-    "Нет граничных вершин": "No border vertices",
+    "Нет граничных вершин": "No border vertex",
     "Показать цифры на полигонах": "Show numbers on polygons",
     "Порог яркости: 0 = без порога, 100 = максимальная отсечка": "Brightness threshold: 0 = no threshold, 100 = max cutoff",
     "Размер цифр на полигонах": "Number size on polygons",
