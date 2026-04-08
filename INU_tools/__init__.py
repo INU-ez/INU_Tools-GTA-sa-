@@ -6329,13 +6329,15 @@ class GTATOOLS_OT_export_track(bpy.types.Operator):
 
 
 class GTATOOLS_OT_import_nodes(bpy.types.Operator):
-    """Импорт nodes.dat — пешеходные/авто пути"""
+    """Импорт nodes.dat — пешеходные/авто пути (мультивыбор)"""
     bl_idname = "gtatools.import_nodes"
     bl_label = "Import Path Nodes"
     bl_options = {'REGISTER', 'UNDO'}
 
     filepath: StringProperty(subtype='FILE_PATH')
     filter_glob: StringProperty(default="*.dat", options={'HIDDEN'})
+    files: CollectionProperty(type=bpy.types.OperatorFileListElement)
+    directory: StringProperty(subtype='DIR_PATH')
 
     def invoke(self, context, event):
         context.window_manager.fileselect_add(self)
@@ -6343,41 +6345,95 @@ class GTATOOLS_OT_import_nodes(bpy.types.Operator):
 
     def execute(self, context):
         from .ops.path_import import import_nodes
-        try:
-            objects = import_nodes(filepath=self.filepath, context=context)
-            total = sum(len(o.data.vertices) for o in objects if o.type == 'MESH')
-            self.report({'INFO'}, f"Nodes: {total} nodes imported")
-            return {'FINISHED'}
-        except Exception as e:
-            self.report({'ERROR'}, f"Nodes import error: {str(e)}")
-            return {'CANCELLED'}
+        total_nodes = 0
+        total_files = 0
+        for f in self.files:
+            path = os.path.join(self.directory, f.name)
+            if not os.path.isfile(path):
+                continue
+            try:
+                objects = import_nodes(filepath=path, context=context)
+                total_nodes += sum(len(o.data.vertices) for o in objects if o.type == 'MESH')
+                total_files += 1
+            except Exception as e:
+                self.report({'WARNING'}, f"{f.name}: {str(e)}")
+        self.report({'INFO'}, f"Nodes: {total_nodes} nodes from {total_files} files")
+        return {'FINISHED'}
 
 
 class GTATOOLS_OT_export_nodes(bpy.types.Operator):
-    """Экспорт nodes.dat — пешеходные/авто пути"""
+    """Экспорт nodes.dat — группировка по имени файла или авто-разбиение по зонам"""
     bl_idname = "gtatools.export_nodes"
     bl_label = "Export Path Nodes"
     bl_options = {'REGISTER'}
 
-    filepath: StringProperty(subtype='FILE_PATH')
-    filter_glob: StringProperty(default="*.dat", options={'HIDDEN'})
+    directory: StringProperty(subtype='DIR_PATH')
 
     def invoke(self, context, event):
-        if not self.filepath:
-            self.filepath = "nodes0.dat"
         context.window_manager.fileselect_add(self)
         return {'RUNNING_MODAL'}
 
     def execute(self, context):
         from .ops.path_export import export_nodes
-        try:
-            objects = [o for o in context.selected_objects
-                       if o.type == 'MESH' and o.get('path_type', '').startswith('nodes_')]
-            count = export_nodes(filepath=self.filepath, objects=objects)
-            self.report({'INFO'}, f"Nodes: {count} nodes exported")
-            return {'FINISHED'}
-        except Exception as e:
-            self.report({'ERROR'}, f"Nodes export error: {str(e)}")
+
+        objects = [o for o in context.selected_objects
+                   if o.type == 'MESH' and o.get('path_type', '').startswith('nodes_')]
+        if not objects:
+            self.report({'ERROR'}, T("Выделите объекты с нодами"))
+            return {'CANCELLED'}
+
+        # Group by nodes_filename
+        groups = {}  # filename → [objects]
+        auto_split = []  # objects without filename
+        for obj in objects:
+            fname = obj.get('nodes_filename', '')
+            if fname:
+                groups.setdefault(fname, []).append(obj)
+            else:
+                auto_split.append(obj)
+
+        exported = 0
+
+        # Export objects with known filename
+        for fname, objs in groups.items():
+            filepath = os.path.join(self.directory, fname)
+            try:
+                count = export_nodes(filepath=filepath, objects=objs)
+                exported += count
+            except Exception as e:
+                self.report({'WARNING'}, f"{fname}: {e}")
+
+        # Auto-split objects by zone (8x8 grid)
+        if auto_split:
+            from .core.paths import NodesFile, PathNode, write_nodes
+            zones = {}  # zone_idx → NodesFile
+            for obj in auto_split:
+                path_type = obj.get('path_type', '')
+                mat_w = obj.matrix_world
+                for vert in obj.data.vertices:
+                    co = mat_w @ vert.co
+                    gx = max(0, min(7, int((co.x + 3000) / 750)))
+                    gy = max(0, min(7, int((3000 - co.y) / 750)))
+                    zone = gy * 8 + gx
+                    if zone not in zones:
+                        zones[zone] = NodesFile()
+                    node = PathNode(x=co.x, y=co.y, z=co.z)
+                    if path_type == 'nodes_vehicle':
+                        zones[zone].vehicle_nodes.append(node)
+                    elif path_type == 'nodes_ped':
+                        zones[zone].ped_nodes.append(node)
+
+            for zone_idx, nf in zones.items():
+                fname = f"nodes{zone_idx}.dat"
+                filepath = os.path.join(self.directory, fname)
+                try:
+                    write_nodes(filepath, nf)
+                    exported += len(nf.vehicle_nodes) + len(nf.ped_nodes)
+                except Exception as e:
+                    self.report({'WARNING'}, f"{fname}: {e}")
+
+        self.report({'INFO'}, f"Nodes: {exported} nodes exported")
+        return {'FINISHED'}
             return {'CANCELLED'}
 
 

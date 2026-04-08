@@ -86,6 +86,7 @@ def import_nodes(filepath: str, context=None):
     if data.vehicle_nodes:
         obj = _create_nodes_mesh(f"{name}_vehicle", data.vehicle_nodes, col)
         obj['path_type'] = 'nodes_vehicle'
+        obj['nodes_filename'] = name + '.dat'
         _assign_path_material(obj, 'VehicleNode_Mat', (0.0, 0.5, 1.0, 0.8))  # Blue
         created.append(obj)
 
@@ -93,6 +94,7 @@ def import_nodes(filepath: str, context=None):
     if data.ped_nodes:
         obj = _create_nodes_mesh(f"{name}_ped", data.ped_nodes, col)
         obj['path_type'] = 'nodes_ped'
+        obj['nodes_filename'] = name + '.dat'
         _assign_path_material(obj, 'PedNode_Mat', (0.0, 1.0, 0.3, 0.8))  # Green
         created.append(obj)
 
@@ -104,6 +106,7 @@ def import_nodes(filepath: str, context=None):
         mesh.update()
         obj = bpy.data.objects.new(f"{name}_navi", mesh)
         obj['path_type'] = 'nodes_navi'
+        obj['nodes_filename'] = name + '.dat'
 
         # Store navi data as custom props
         for i, n in enumerate(data.navi_nodes):
