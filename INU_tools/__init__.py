@@ -7015,6 +7015,12 @@ class GTATOOLS_PT_check_panel(bpy.types.Panel):
         op = row.operator("gtatools.toggle_visibility", text="COL",
                           icon='HIDE_ON' if _hide_col else 'HIDE_OFF', depress=_hide_col)
         op.model_type = 'COL'
+        # Batch set type
+        row = layout.row(align=True)
+        row.label(text=T("Тип:"))
+        for _t in ('OBJ', 'COL', 'SHA', 'NON'):
+            op = row.operator("gtatools.batch_set_type", text=_t)
+            op.obj_type = _t
 
 
 # ── 2DFX Light Presets ──
@@ -7863,9 +7869,11 @@ class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
 
             row = box.row(align=True)
             row.operator("gtatools.id_manager_auto_assign", text=T("Назначить ID выделенным"), icon='ADD')
+            box.operator("gtatools.id_manager_assign_from", text=T("Назначить с ID..."), icon='SEQUENCE')
             row.operator("gtatools.id_manager_clear_selected", text="", icon='REMOVE')
             row.operator("gtatools.id_manager_clear", text="", icon='TRASH')
             box.operator("gtatools.id_manager_create", text=T("Создать файл ID"), icon='FILE_NEW')
+            box.operator("gtatools.id_manager_extend", text=T("Расширить ID (FLA)"), icon='ADD')
             box.operator("gtatools.id_manager_sync_scene", text=T("Синхронизировать сцену"), icon='SCENE_DATA')
             box.operator("gtatools.id_manager_from_game", text=T("Загрузить из игры"), icon='IMPORT')
             box.operator("gtatools.id_manager_open_file", text=T("Открыть файл ID"), icon='FILE_TEXT')
@@ -7986,6 +7994,102 @@ class GTATOOLS_OT_id_manager_auto_assign(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class GTATOOLS_OT_id_manager_assign_from(bpy.types.Operator):
+    """Назначить последовательные ID выделенным объектам начиная с указанного"""
+    bl_idname = "gtatools.id_manager_assign_from"
+    bl_label = "Assign IDs from..."
+    bl_options = {'REGISTER', 'UNDO'}
+
+    start_id: IntProperty(
+        name="Start ID",
+        default=321,
+        min=1,
+        description=T("Начальный ID для назначения"),
+    )
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self)
+
+    def execute(self, context):
+        from .data.id_manager import get_used_ids
+
+        objs = [o for o in context.selected_objects if o.type == 'MESH']
+        if not objs:
+            self.report({'ERROR'}, T("Выделите меш объекты"))
+            return {'CANCELLED'}
+
+        used = set(get_used_ids().keys())
+        # Also collect IDs already on scene objects
+        for o in bpy.data.objects:
+            if o.type == 'MESH' and hasattr(o, 'inu') and o.inu.model_id > 0:
+                used.add(o.inu.model_id)
+
+        current_id = self.start_id
+        assigned = 0
+        for obj in objs:
+            if hasattr(obj, 'inu'):
+                # Skip occupied IDs
+                while current_id in used:
+                    current_id += 1
+                obj.inu.model_id = current_id
+                used.add(current_id)
+                current_id += 1
+                assigned += 1
+
+        self.report({'INFO'}, f"{T('Назначено ID:')} {assigned} ({self.start_id}+)")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_batch_set_type(bpy.types.Operator):
+    """Массовое переключение типа объектов (OBJ/COL/SHA/2DFX/NON)"""
+    bl_idname = "gtatools.batch_set_type"
+    bl_label = "Batch Set Type"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    obj_type: EnumProperty(
+        items=[
+            ('OBJ', 'Object', ''),
+            ('COL', 'Collision', ''),
+            ('SHA', 'Shadow', ''),
+            ('NON', "Don't export", ''),
+        ],
+        name="Type",
+    )
+
+    def execute(self, context):
+        from .tools.model_utils import get_model_type, _get_suffixes, _get_prefixes
+
+        suffixes = _get_suffixes()
+        prefixes = _get_prefixes()
+
+        count = 0
+        for obj in context.selected_objects:
+            if obj.type != 'MESH' or not hasattr(obj, 'inu'):
+                continue
+
+            # Get current base name
+            _, base = get_model_type(obj)
+            if not base:
+                base = obj.name
+
+            # Set internal type
+            obj.inu.type = self.obj_type
+
+            # Rename: base + new suffix/prefix
+            new_sfx = suffixes.get(self.obj_type, '')
+            new_pfx = prefixes.get(self.obj_type, '')
+            if new_sfx:
+                obj.name = base + new_sfx
+            elif new_pfx:
+                obj.name = new_pfx + base
+            else:
+                obj.name = base
+
+            count += 1
+        self.report({'INFO'}, f"{self.obj_type}: {count}")
+        return {'FINISHED'}
+
+
 class GTATOOLS_OT_id_manager_clear_selected(bpy.types.Operator):
     """Очистить Model ID у выделенных объектов"""
     bl_idname = "gtatools.id_manager_clear_selected"
@@ -8033,6 +8137,29 @@ class GTATOOLS_OT_id_manager_create(bpy.types.Operator):
         from .data.id_manager import create_id_file
         count = create_id_file()
         self.report({'INFO'}, f"ID: 321-19999 ({count})")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_id_manager_extend(bpy.types.Operator):
+    """Добавить ID (Fastman Limit Adjuster)"""
+    bl_idname = "gtatools.id_manager_extend"
+    bl_label = "Extend IDs"
+    bl_options = {'REGISTER'}
+
+    count: IntProperty(
+        name="Count",
+        default=1000,
+        min=100, max=50000,
+        description=T("Количество ID для добавления"),
+    )
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self)
+
+    def execute(self, context):
+        from .data.id_manager import extend_ids
+        new_start, new_end = extend_ids(self.count)
+        self.report({'INFO'}, f"ID: +{self.count} ({new_start}-{new_end})")
         return {'FINISHED'}
 
 
@@ -9532,9 +9659,12 @@ classes = (
     GTATOOLS_OT_id_manager_open_file,
     GTATOOLS_OT_id_manager_release,
     GTATOOLS_OT_id_manager_auto_assign,
+    GTATOOLS_OT_id_manager_assign_from,
+    GTATOOLS_OT_batch_set_type,
     GTATOOLS_OT_id_manager_clear_selected,
     GTATOOLS_OT_id_manager_clear,
     GTATOOLS_OT_id_manager_create,
+    GTATOOLS_OT_id_manager_extend,
     GTATOOLS_OT_id_manager_sync_scene,
     GTATOOLS_OT_id_manager_from_game,
     GTATOOLS_OT_toggle_uv_editor,

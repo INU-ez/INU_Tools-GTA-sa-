@@ -837,6 +837,16 @@ LANG = {
         "Day — daytime vertex colors (prelight)\nNight — nighttime vertex colors (requires Pipeline: Building)",
     "None — без pipeline\nBuilding — Day/Night vertex colors (смена освещения по времени суток)\nReflections — отражения на окнах (окна должны быть отдельной моделью)\n\nNormals — динамическое освещение движком (персонажи, транспорт, оружие)\nОтключить для зданий и объектов карты (используют vertex colors)":
         "None — no pipeline\nBuilding — Day/Night vertex colors (time-of-day lighting)\nReflections — window reflections (windows must be separate model)\n\nNormals — dynamic engine lighting (characters, vehicles, weapons)\nDisable for buildings and map objects (use vertex colors)",
+    # FLA / ID Manager
+    "Расширить ID (FLA)": "Extend IDs (FLA)",
+    "Количество ID для добавления": "Number of IDs to add",
+
+    # Batch operations
+    "Назначить с ID...": "Assign from ID...",
+    "Начальный ID для назначения": "Starting ID for assignment",
+    "Назначено ID:": "Assigned IDs:",
+    "Тип:": "Type:",
+
     # X Radar Maker
     "Папка": "Folder",
     "Сетка": "Grid",

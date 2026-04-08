@@ -118,11 +118,26 @@ def get_file_path():
     return _ID_FILE
 
 
-def create_id_file():
-    """Create model_ids.txt with all IDs 321-19999 as free."""
-    entries = [(i, None) for i in range(321, 20000)]
+def create_id_file(max_id=19999):
+    """Create model_ids.txt with all IDs 321-max_id as free."""
+    entries = [(i, None) for i in range(321, max_id + 1)]
     _save(entries)
     return len(entries)
+
+
+def extend_ids(count=1000):
+    """Add more free IDs after the current maximum. Returns (new_start, new_end)."""
+    entries = _load()
+    if entries:
+        max_id = max(id_num for id_num, _ in entries)
+    else:
+        max_id = 320
+    new_start = max_id + 1
+    new_end = new_start + count - 1
+    for i in range(new_start, new_end + 1):
+        entries.append((i, None))
+    _save(entries)
+    return new_start, new_end
 
 
 def populate_from_game(game_root):
