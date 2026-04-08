@@ -44,10 +44,15 @@ def export_ide(filepath: str, objects: list) -> None:
 
 
 def _clean_model_name(name: str) -> str:
-    """Remove suffixes/prefixes using scene settings."""
+    """Remove suffixes/prefixes and Blender duplicate suffixes (.001, .002)."""
     from ..tools.model_utils import get_model_type
     class _Mock:
         def __init__(self, n):
             self.name = n
     _, base = get_model_type(_Mock(name))
+    # Strip Blender duplicate suffix (.001, .002, etc.)
+    if '.' in base:
+        b, s = base.rsplit('.', 1)
+        if s.isdigit():
+            base = b
     return base
