@@ -522,6 +522,8 @@ class DffGeometry:
     export_normals: bool = True
     write_bin_mesh: bool = True
     pipeline: int = 0
+    export_light: bool = True
+    export_mod_color: bool = True
 
     original_flags: int = 0  # original geometry flags from import (for round-trip)
 
@@ -569,7 +571,10 @@ class DffGeometry:
             flags |= GEOM_PRELIT
         if self.export_normals and self.normals:
             flags |= GEOM_NORMALS
-        flags |= GEOM_LIGHT | GEOM_MOD_COLOR
+        if self.export_light:
+            flags |= GEOM_LIGHT
+        if self.export_mod_color:
+            flags |= GEOM_MOD_COLOR
 
         # UV layer count in bits 16-23
         flags |= (num_uv & 0xFF) << 16

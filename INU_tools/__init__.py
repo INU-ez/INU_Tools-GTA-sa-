@@ -6877,7 +6877,23 @@ class GTATOOLS_PT_export_panel(bpy.types.Panel):
         row.prop_enum(context.scene, "gtatools_export_pipeline", '0x53F20098')
         obj = context.active_object
         if obj and obj.type == 'MESH' and hasattr(obj, 'inu'):
-            layout.prop(obj.inu, "export_normals", text="Normals", toggle=True)
+            inu = obj.inu
+            row = layout.row(align=True)
+            row.prop(context.scene, "gtatools_show_dff_flags",
+                     icon='TRIA_DOWN' if context.scene.gtatools_show_dff_flags else 'TRIA_RIGHT',
+                     text="DFF Flags", emboss=False)
+            if context.scene.gtatools_show_dff_flags:
+                fbox = layout.box()
+                fbox.prop(inu, "export_normals", text="Normals", toggle=True)
+                fbox.prop(inu, "light", text="Light", toggle=True)
+                fbox.prop(inu, "modulate_color", text="Modulate Color", toggle=True)
+                fbox.prop(inu, "export_binsplit", text="Bin Mesh PLG", toggle=True)
+                row = fbox.row(align=True)
+                row.prop(inu, "uv_map1", text="UV1", toggle=True)
+                row.prop(inu, "uv_map2", text="UV2", toggle=True)
+                row = fbox.row(align=True)
+                row.prop(inu, "day_cols", text="Day", toggle=True)
+                row.prop(inu, "night_cols", text="Night", toggle=True)
 
 
 
@@ -7671,66 +7687,6 @@ class GTATOOLS_PT_material_effects_panel(bpy.types.Panel):
             box.prop(inu, "animation_name", text=T("Имя анимации"))
 
 
-class GTATOOLS_PT_object_props_panel(bpy.types.Panel):
-    """Панель свойств объекта GTA SA"""
-    bl_label = "GTA SA Object"
-    bl_idname = "GTATOOLS_PT_object_props_panel"
-    bl_space_type = 'PROPERTIES'
-    bl_region_type = 'WINDOW'
-    bl_context = 'object'
-    bl_options = {'DEFAULT_CLOSED'}
-
-    @classmethod
-    def poll(cls, context):
-        return context.object is not None
-
-    def draw(self, context):
-        layout = self.layout
-        obj = context.object
-        inu = obj.inu
-
-        # ── Object Type ──
-        layout.prop(inu, "type", text=T("Тип"))
-        layout.separator()
-
-        # ── DFF Flags (only for mesh objects) ──
-        if obj.type == 'MESH':
-            box = layout.box()
-            _draw_label_with_info(box, T("Флаги геометрии:"),
-                T("Light — динамическое освещение модели\nModulate Material Color — цвет материала влияет на модель\nExport Normals — экспорт нормалей (отключить для map объектов)"),
-                icon='PREFERENCES')
-            box.prop(inu, "light", text=T("Свет (rpGEOMETRYLIGHT)"))
-            box.prop(inu, "modulate_color", text=T("Цвет материала модулирует"))
-            box.prop(inu, "export_normals", text=T("Экспорт нормалей"))
-
-            box = layout.box()
-            _draw_label_with_info(box, T("Вертексные цвета:"),
-                T("Day — дневные вертексные цвета (prelight)\nNight — ночные вертексные цвета (требует Pipeline: Building)"),
-                icon='COLOR')
-            box.prop(inu, "day_cols", text=T("Дневные верт. цвета"))
-            box.prop(inu, "night_cols", text=T("Ночные верт. цвета"))
-
-            box = layout.box()
-            _draw_label_with_info(box, T("UV карты:"),
-                T("UV Map 1 — основная UV развёртка\nUV Map 2 — вторая UV (для lightmap и т.д.)\nBin Mesh PLG — совместимость с просмотрщиками DFF"),
-                icon='UV')
-            box.prop(inu, "uv_map1", text=T("UV карта 1"))
-            if inu.uv_map1:
-                box.prop(inu, "uv_map2", text=T("UV карта 2"))
-
-            box.prop(inu, "export_binsplit", text=T("Bin Mesh PLG"))
-
-            # ── IDE / IPL Properties ──
-            box = layout.box()
-            _draw_label_with_info(box, "IDE / IPL:",
-                T("Model ID — ID модели в GTA SA\nTXD Name — словарь текстур\nDraw Distance — дальность прорисовки\nIDE Flags — флаги объекта\nInterior — ID интерьера (0 = улица)\nLOD Index — индекс LOD модели (-1 = нет)"),
-                icon='WORLD_DATA')
-            box.prop(inu, "model_id", text="Model ID")
-            box.prop(inu, "txd_name", text="TXD Name")
-            box.prop(inu, "draw_distance", text="Draw Distance")
-            box.prop(inu, "ide_flags", text="Flags")
-            box.prop(inu, "interior_id", text="Interior")
-            box.prop(inu, "lod_index", text="LOD Index")
 
 
 def _draw_sort_materials_menu(self, context):
@@ -9655,7 +9611,6 @@ classes = (
     GTATOOLS_OT_col_surface_menu,
     GTATOOLS_PT_col_material_panel,
     GTATOOLS_PT_material_effects_panel,
-    GTATOOLS_PT_object_props_panel,
     GTATOOLS_PT_inu_tools_panel,
     GTATOOLS_PT_itera_panel,
     GTATOOLS_PT_prelight_panel,
@@ -10254,6 +10209,10 @@ def register():
         default=False
     )
 
+    bpy.types.Scene.gtatools_show_dff_flags = BoolProperty(
+        name="Show DFF Flags",
+        default=False
+    )
     bpy.types.Scene.gtatools_show_ide_flags = BoolProperty(
         name="Show IDE Flags",
         description=T("Показать флаги IDE"),
@@ -10707,6 +10666,7 @@ def unregister():
     del bpy.types.Scene.gtatools_show_texture_settings
     del bpy.types.Scene.gtatools_show_paths_settings
     del bpy.types.Scene.gtatools_show_suffix_settings
+    del bpy.types.Scene.gtatools_show_dff_flags
     del bpy.types.Scene.gtatools_show_ide_flags
     del bpy.types.Scene.gtatools_suffix_dff
     del bpy.types.Scene.gtatools_suffix_lod

@@ -224,6 +224,8 @@ def _get_obj_export_flags(obj) -> dict:
         'uv_map2': True,
         'day_cols': True,
         'night_cols': True,
+        'light': True,
+        'modulate_color': True,
         'pipeline': 0,
     }
     inu = getattr(obj, 'inu', None)
@@ -530,6 +532,8 @@ def _process_mesh(obj, clump: DffClump, frame_index: int):
     geom.export_normals = flags['export_normals']
     geom.write_bin_mesh = flags['export_binsplit']
     geom.pipeline = flags['pipeline']
+    geom.export_light = flags.get('light', True)
+    geom.export_mod_color = flags.get('modulate_color', True)
 
     if has_night:
         geom.extra_colors = ExtraVertColors(colors=night_colors)
