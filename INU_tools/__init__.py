@@ -6205,12 +6205,29 @@ class GTATOOLS_OT_toggle_lightmap_uv2(bpy.types.Operator):
                 if not lm_mix:
                     continue
 
+                principled = None
+                for n in nodes:
+                    if n.type == 'BSDF_PRINCIPLED':
+                        principled = n
+                        break
+                if not principled:
+                    continue
+
+                base_input = principled.inputs['Base Color']
+                # Get A input of mix (original texture)
+                a_input = lm_mix.inputs.get('A') or lm_mix.inputs.get('Color1')
+                out_socket = lm_mix.outputs.get('Result') or lm_mix.outputs.get('Color') or lm_mix.outputs[0]
+                orig_socket = a_input.links[0].from_socket if a_input and a_input.links else None
+
                 if self.enable:
-                    # Enable: unmute LM_Mix, reconnect output to Base Color
+                    # ON: connect LM_Mix output → Base Color
                     lm_mix.mute = False
+                    links.new(out_socket, base_input)
                 else:
-                    # Disable: mute LM_Mix (Blender passes A input through)
+                    # OFF: bypass LM_Mix, connect original texture → Base Color directly
                     lm_mix.mute = True
+                    if orig_socket:
+                        links.new(orig_socket, base_input)
                 count += 1
 
         state = "ON" if self.enable else "OFF"
