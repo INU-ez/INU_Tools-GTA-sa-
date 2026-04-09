@@ -6009,6 +6009,215 @@ class GTATOOLS_OT_reset_transform(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class GTATOOLS_OT_apply_lightmap_uv2(bpy.types.Operator):
+    """Применить текстуру LightMap на UV2 (Multiply) для выделенных объектов"""
+    bl_idname = "gtatools.apply_lightmap_uv2"
+    bl_label = "Apply LightMap UV2"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    filepath: StringProperty(subtype='FILE_PATH')
+    filter_glob: StringProperty(default="*.png;*.jpg;*.jpeg;*.tga;*.bmp;*.tif;*.tiff", options={'HIDDEN'})
+
+    def invoke(self, context, event):
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        if not self.filepath or not os.path.isfile(self.filepath):
+            self.report({'ERROR'}, T("Файл не найден"))
+            return {'CANCELLED'}
+
+        lm_image = bpy.data.images.load(self.filepath, check_existing=True)
+
+        objects = [o for o in context.selected_objects if o.type == 'MESH']
+        if not objects:
+            obj = context.active_object
+            if obj and obj.type == 'MESH':
+                objects = [obj]
+        if not objects:
+            self.report({'ERROR'}, T("Выберите меш объект!"))
+            return {'CANCELLED'}
+
+        applied = 0
+        for obj in objects:
+            mesh = obj.data
+            # Ensure UV2 exists
+            if len(mesh.uv_layers) < 2:
+                mesh.uv_layers.new(name="UVMap.001")
+            uv2_name = mesh.uv_layers[1].name
+
+            for mat_slot in obj.material_slots:
+                mat = mat_slot.material
+                if not mat or not mat.use_nodes:
+                    continue
+
+                nodes = mat.node_tree.nodes
+                links = mat.node_tree.links
+
+                # Find Principled BSDF
+                principled = None
+                for n in nodes:
+                    if n.type == 'BSDF_PRINCIPLED':
+                        principled = n
+                        break
+                if not principled:
+                    continue
+
+                # Skip if already has lightmap
+                if nodes.get("LM_Texture"):
+                    nodes.get("LM_Texture").image = lm_image
+                    applied += 1
+                    continue
+
+                # Find what's connected to Base Color
+                base_input = principled.inputs['Base Color']
+                orig_socket = None
+                if base_input.links:
+                    orig_socket = base_input.links[0].from_socket
+
+                # UV Map node for UV2
+                uv_node = nodes.new('ShaderNodeUVMap')
+                uv_node.name = "LM_UV"
+                uv_node.uv_map = uv2_name
+
+                # Lightmap texture node
+                tex_node = nodes.new('ShaderNodeTexImage')
+                tex_node.name = "LM_Texture"
+                tex_node.label = "LightMap"
+                tex_node.image = lm_image
+
+                # Mix node (Multiply)
+                if bpy.app.version >= (4, 0, 0):
+                    mix = nodes.new('ShaderNodeMix')
+                    mix.data_type = 'RGBA'
+                    mix.blend_type = 'MULTIPLY'
+                    mix.inputs['Factor'].default_value = 1.0
+                    in_a, in_b, out_r = 'A', 'B', 'Result'
+                else:
+                    mix = nodes.new('ShaderNodeMixRGB')
+                    mix.blend_type = 'MULTIPLY'
+                    mix.inputs['Fac'].default_value = 1.0
+                    in_a, in_b, out_r = 'Color1', 'Color2', 'Color'
+                mix.name = "LM_Mix"
+                mix.label = "LightMap Mix"
+
+                # Position nodes
+                px = principled.location.x
+                py = principled.location.y
+                uv_node.location = (px - 700, py - 300)
+                tex_node.location = (px - 500, py - 300)
+                mix.location = (px - 200, py)
+
+                # Connect
+                links.new(uv_node.outputs['UV'], tex_node.inputs['Vector'])
+                if orig_socket:
+                    links.new(orig_socket, mix.inputs[in_a])
+                else:
+                    mix.inputs[in_a].default_value = (1, 1, 1, 1)
+                links.new(tex_node.outputs['Color'], mix.inputs[in_b])
+                links.new(mix.outputs[out_r], base_input)
+
+                applied += 1
+
+        self.report({'INFO'}, f"LightMap UV2: {applied} {T('материалов')}")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_remove_lightmap_uv2(bpy.types.Operator):
+    """Убрать LightMap UV2 из материалов выделенных объектов"""
+    bl_idname = "gtatools.remove_lightmap_uv2"
+    bl_label = "Remove LightMap UV2"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        objects = [o for o in context.selected_objects if o.type == 'MESH']
+        if not objects:
+            obj = context.active_object
+            if obj and obj.type == 'MESH':
+                objects = [obj]
+
+        removed = 0
+        for obj in objects:
+            for mat_slot in obj.material_slots:
+                mat = mat_slot.material
+                if not mat or not mat.use_nodes:
+                    continue
+
+                nodes = mat.node_tree.nodes
+                links = mat.node_tree.links
+
+                lm_mix = nodes.get("LM_Mix")
+                lm_tex = nodes.get("LM_Texture")
+                lm_uv = nodes.get("LM_UV")
+
+                if not lm_mix:
+                    continue
+
+                # Restore original connection: A input -> Base Color target
+                orig_socket = None
+                a_input = lm_mix.inputs.get('A') or lm_mix.inputs.get('Color1')
+                if a_input and a_input.links:
+                    orig_socket = a_input.links[0].from_socket
+
+                # Find where mix output goes
+                for link in lm_mix.outputs[0].links:
+                    target_socket = link.to_socket
+                    if orig_socket:
+                        links.new(orig_socket, target_socket)
+
+                if lm_mix:
+                    nodes.remove(lm_mix)
+                if lm_tex:
+                    nodes.remove(lm_tex)
+                if lm_uv:
+                    nodes.remove(lm_uv)
+                removed += 1
+
+        self.report({'INFO'}, f"LightMap UV2: {removed} {T('удалено')}")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_toggle_lightmap_uv2(bpy.types.Operator):
+    """Включить/выключить отображение LightMap UV2"""
+    bl_idname = "gtatools.toggle_lightmap_uv2"
+    bl_label = "Toggle LightMap UV2"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    enable: BoolProperty(name="Enable", default=True)
+
+    def execute(self, context):
+        objects = [o for o in context.selected_objects if o.type == 'MESH']
+        if not objects:
+            obj = context.active_object
+            if obj and obj.type == 'MESH':
+                objects = [obj]
+
+        count = 0
+        for obj in objects:
+            for mat_slot in obj.material_slots:
+                mat = mat_slot.material
+                if not mat or not mat.use_nodes:
+                    continue
+
+                nodes = mat.node_tree.nodes
+                links = mat.node_tree.links
+                lm_mix = nodes.get("LM_Mix")
+                if not lm_mix:
+                    continue
+
+                if self.enable:
+                    # Enable: unmute LM_Mix, reconnect output to Base Color
+                    lm_mix.mute = False
+                else:
+                    # Disable: mute LM_Mix (Blender passes A input through)
+                    lm_mix.mute = True
+                count += 1
+
+        state = "ON" if self.enable else "OFF"
+        self.report({'INFO'}, f"LightMap UV2: {state} ({count})")
+        return {'FINISHED'}
+
+
 # =============================================================================
 # PANELS
 # =============================================================================
@@ -8382,6 +8591,28 @@ class GTATOOLS_PT_prelight_panel(bpy.types.Panel):
             row.operator("gtatools.add_color_attribute", text="", icon='ADD')
             row.operator("gtatools.remove_color_attribute", text="", icon='REMOVE')
 
+            # LightMap UV2 row
+            row = layout.row(align=True)
+            _lm_on = False
+            _lm_exists = False
+            for _ms in obj.material_slots:
+                _m = _ms.material
+                if _m and _m.use_nodes:
+                    _lm_mix = _m.node_tree.nodes.get("LM_Mix")
+                    if _lm_mix:
+                        _lm_exists = True
+                        if not _lm_mix.mute:
+                            _lm_on = True
+                        break
+            _lm_icon = 'HIDE_OFF' if _lm_on else 'HIDE_ON'
+            if _lm_exists:
+                op_lm = row.operator("gtatools.toggle_lightmap_uv2", text="", icon=_lm_icon, depress=_lm_on)
+                op_lm.enable = not _lm_on
+            else:
+                row.label(text="", icon='HIDE_ON')
+            row.operator("gtatools.apply_lightmap_uv2", text=T("Добавить LightMap"))
+            row.operator("gtatools.remove_lightmap_uv2", text="", icon='REMOVE')
+
         layout.separator()
 
         # Bake Vertex Colors
@@ -9733,6 +9964,9 @@ classes = (
     GTATOOLS_OT_cleanup_materials,
     GTATOOLS_OT_sort_materials,
     GTATOOLS_OT_reset_transform,
+    GTATOOLS_OT_apply_lightmap_uv2,
+    GTATOOLS_OT_remove_lightmap_uv2,
+    GTATOOLS_OT_toggle_lightmap_uv2,
     GTATOOLS_OT_id_manager_open_file,
     GTATOOLS_OT_id_manager_release,
     GTATOOLS_OT_id_manager_auto_assign,

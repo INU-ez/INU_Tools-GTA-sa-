@@ -678,6 +678,11 @@ LANG = {
     "Сортировка материалов": "Sort materials",
     "Сброс трансформ": "Reset Transform",
     "Сброшено объектов:": "Objects reset:",
+    "LightMap UV2": "LightMap UV2",
+    "Добавить LightMap": "Add LightMap",
+    "материалов": "materials",
+    "удалено": "removed",
+    "Файл не найден": "File not found",
     "COL light материалов:": "COL light materials:",
     "Запечь COL Light": "Bake COL Light",
 

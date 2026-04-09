@@ -43,6 +43,8 @@ Starting from v1.5.0, the addon has its own DFF, COL, and TXD export (no DragonF
 > - ✅ BBox Mode — toggle distant objects to Bounding Box, near selection (300m) — full models
 > - ✅ Map regions — auto-detected from gta.dat (LA, SF, VEGAS, COUNTRY, etc.)
 > - ✅ Model ID Manager — create file (321-19999), sync scene, load from game, clear selected, search and pagination
+> - ✅ Assign IDs from number — assign IDs starting from a specific value, skipping occupied
+> - ✅ Extend IDs (FLA) — extend ID range for Fastman Limit Adjuster
 > - ✅ IDE Flags — 15 checkboxes with descriptions (IS_ROAD, IS_TREE, DRAW_LAST, etc.)
 > - ✅ Customizable suffixes and prefixes (_DFF, _LOD, _COL, LOD, etc.)
 > - ✅ Model Links — visualize DFF↔LOD↔COL relationships with dashed lines
@@ -61,6 +63,7 @@ Starting from v1.5.0, the addon has its own DFF, COL, and TXD export (no DragonF
 > - ✅ Fill Colors — polygon painting with eyedropper and level system
 > - ✅ Scatter Light — light scattering with configurable parameters
 > - ✅ Day/Night — separate color attributes for day and night
+> - ✅ LightMap UV2 — apply lightmap texture on second UV channel (Multiply)
 > - ✅ Vertex color analysis and preview
 > - ✅ Prelight COL — convert vertex colors to COL Day/Night Light
 > - ✅ COL Light Preview — visualization with Edge/Threshold/Contrast settings
@@ -148,6 +151,8 @@ Starting from v1.5.0, the addon has its own DFF, COL, and TXD export (no DragonF
 > - ✅ LOD/COL → DFF snap — move LOD and COL to DFF position
 > - ✅ Hide DFF/LOD/COL separately
 > - ✅ Model ID conflict detection
+> - ✅ Batch Set Type (OBJ/COL/SHA/NON) with auto-rename
+> - ✅ Reset Transform — zero out Location and Rotation for selected meshes
 >
 > <details>
 > <summary><b>Tutorial .gif</b></summary>
@@ -174,9 +179,10 @@ Starting from v1.5.0, the addon has its own DFF, COL, and TXD export (no DragonF
 
 > - ✅ Import/export paths.ipl (vehicle/ped paths for gta.dat)
 > - ✅ Import/export tracks.dat (train tracks, stations)
-> - ✅ Import NODES.dat (compiled path nodes)
+> - ✅ Import/export NODES.dat (compiled path nodes), multi-file import
 > - ✅ Create paths, convert curves/edges to paths
 > - ✅ Auto-split into 12-node groups
+> - ✅ NODES export with auto-split by 8x8 map zones
 
 </details>
 

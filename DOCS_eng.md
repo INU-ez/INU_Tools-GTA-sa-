@@ -35,6 +35,7 @@
   - [Presets](#presets)
 - [2DFX Effects](#2dfx-effects)
 - [UV Tools](#uv-tools)
+- [Check](#check)
 - [Characters (Skinned DFF)](#characters-skinned-dff)
 - [Water IO](#water-io)
 - [Path IO](#path-io)
@@ -307,7 +308,9 @@ When exporting IDE/IPL, LOD models are always written with `LOD` prefix (GTA SA 
 - Shows free/used ID count
 - **Next free ID** displayed
 - **Auto Assign** — assigns next free ID to selected objects
+- **Assign from ID...** — assign IDs starting from a specific number, skipping occupied
 - **Release** — marks ID as free
+- **Extend IDs (FLA)** — add IDs beyond 19999 for Fastman Limit Adjuster
 - IDs stored in `model_ids.txt` in INU_Preset folder
 
 ---
@@ -405,6 +408,9 @@ Save/load prelight settings (Ambient, Intensity, Gamma, Shadows) as named preset
 | Day + / Night + | Create individual color attribute |
 | Day - / Night - | Remove individual color attribute |
 | Toggle Preview | Enable/disable Day/Night mix visualization in viewport |
+| Add LightMap | Load lightmap texture and connect to UV2 (Multiply blend) |
+| 👁 LightMap | Toggle lightmap visibility (mute/unmute) |
+| ➖ LightMap | Remove lightmap nodes from materials |
 | Analyze | Show vertex color histogram (min/max/avg) |
 | Reset | Reset bake settings to defaults |
 
@@ -459,6 +465,26 @@ Create and configure 2DFX effects that export into DFF files.
 | Show UV Grid | Visualize GTA texture atlas grid |
 
 **Grid settings:** columns × rows (default 4×4).
+
+---
+
+## Check
+
+**Panel:** View3D → Sidebar (N) → GTA Tools → Check
+
+| Button | Description |
+|--------|-------------|
+| Check Vertex | Find loose vertex and edges |
+| Check N-gon | Find polygons with 5+ vertex |
+| Check Materials | Check 50 material limit per object |
+| Cleanup Materials | Remove duplicates (.001, .002) |
+| Sort Materials | Sort materials by name (natural sorting) |
+| Reset Transform | Zero out Location and Rotation for selected meshes (Scale untouched) |
+| LOD/COL → DFF | Snap LOD and COL to their corresponding DFF position |
+| DFF / LOD / COL | Hide/show objects by type |
+| Type: OBJ/COL/SHA/NON | Batch assign type to selected objects with auto-rename |
+
+> **Duplicate cleanup:** on IDE and IPL export, Blender duplicate suffixes (.001, .002, etc.) are automatically stripped from model names.
 
 ---
 
@@ -538,8 +564,16 @@ Auto-splits into groups of 12 nodes (GTA SA limit).
 
 | Button | Description |
 |--------|-------------|
-| Import NODES.dat | Load compiled binary path nodes |
-| Export NODES.dat | Save compiled nodes |
+| Import NODES.dat | Load compiled binary path nodes (multi-file selection) |
+| Export NODES.dat | Save compiled nodes to selected folder |
+
+**Import:** select multiple files (nodes0.dat, nodes1.dat, ...) at once. Each imported object gets a `nodes_filename` property with the source file name.
+
+**Export** works in two modes:
+1. **By filename** — if objects have `nodes_filename` property (set on import), nodes are grouped by source files and saved with the same names
+2. **Auto-split by zones** — objects without `nodes_filename` are automatically distributed across the GTA SA map zone grid (8x8, 64 zones, 750 units per zone). Each vertex is assigned to a zone by coordinates: `gx = (X + 3000) / 750`, `gy = (3000 - Y) / 750`. Files are saved as `nodes0.dat` ... `nodes63.dat`
+
+> **Zone grid:** GTA SA map ranges from -3000 to +3000 on X and Y. Zones are numbered left-to-right, top-to-bottom (zone = gy × 8 + gx).
 
 ---
 
