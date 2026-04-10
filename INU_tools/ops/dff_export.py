@@ -92,7 +92,10 @@ def _read_base_color(mat) -> RGBA:
 
 
 def _read_texture(mat) -> DffTexture:
-    """Read texture name from Principled BSDF image node."""
+    """Read texture name from Principled BSDF image node.
+
+    Walks through preview nodes (Prelight_Mix, LM_Mix) to find the real texture.
+    """
     principled = _get_principled(mat)
     if not principled:
         return None
@@ -102,7 +105,22 @@ def _read_texture(mat) -> DffTexture:
         return None
 
     source_node = bc_input.links[0].from_node
-    if source_node.type != 'TEX_IMAGE' or not source_node.image:
+
+    # Walk through preview mix nodes (Prelight_Mix, LM_Mix) to find real texture
+    # These wrappers have original texture on input 'A' or 'Color1'
+    max_depth = 5
+    while source_node and source_node.name in ("Prelight_Mix", "LM_Mix", "Lightmap_Mix") and max_depth > 0:
+        max_depth -= 1
+        a_input = source_node.inputs.get('A') or source_node.inputs.get('Color1')
+        if not a_input or not a_input.is_linked:
+            return None
+        source_node = a_input.links[0].from_node
+
+    # Also skip lightmap texture nodes if they ended up here
+    if source_node and source_node.name in ("LM_Texture", "Lightmap_Texture"):
+        return None
+
+    if not source_node or source_node.type != 'TEX_IMAGE' or not source_node.image:
         return None
 
     img = source_node.image

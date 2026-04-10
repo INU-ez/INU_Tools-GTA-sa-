@@ -227,6 +227,9 @@ def collect_textures(selected_only=False):
             continue
         for node in mat.node_tree.nodes:
             if node.type == 'TEX_IMAGE' and node.image:
+                # Пропускаем лайтмап превью ноды (не экспортировать в TXD)
+                if node.name in ("LM_Texture", "Lightmap_Texture"):
+                    continue
                 # Игнорировать ноды которые ни к чему не подключены
                 if not is_node_connected(node):
                     continue
