@@ -393,14 +393,18 @@ def bake_vertex_colors_from_lights(obj, use_shadows=True):
     if obj is None or obj.type != 'MESH':
         return False, "Select a mesh object!"
 
-    # Collect all point lights in scene
+    # Collect all point lights in scene (skip hidden, including collection visibility)
     lights = []
     for light_obj in bpy.data.objects:
         if light_obj.type == 'LIGHT' and light_obj.data.type == 'POINT':
+            if not light_obj.visible_get():
+                continue
+            if light_obj.hide_render:
+                continue
             lights.append(light_obj)
 
     if not lights:
-        return False, "No Point lights in scene!"
+        return False, "No visible Point lights in scene!"
 
     mesh = obj.data
 
@@ -416,6 +420,12 @@ def bake_vertex_colors_from_lights(obj, use_shadows=True):
     world_matrix = obj.matrix_world
     normal_matrix = world_matrix.to_3x3().inverted().transposed()
 
+    # Ensure split normals are calculated for smooth/flat shading
+    try:
+        mesh.calc_normals_split()
+    except Exception:
+        pass
+
     # Prepare depsgraph for raycasting
     depsgraph = bpy.context.evaluated_depsgraph_get()
 
@@ -425,9 +435,9 @@ def bake_vertex_colors_from_lights(obj, use_shadows=True):
             loop = mesh.loops[loop_idx]
             vert = mesh.vertices[loop.vertex_index]
 
-            # World space position and normal
+            # World space position and normal (loop.normal respects smooth/flat shading)
             world_pos = world_matrix @ vert.co
-            world_normal = (normal_matrix @ poly.normal).normalized()
+            world_normal = (normal_matrix @ loop.normal).normalized()
 
             # Calculate lighting from all lights
             total_light = Vector((0.0, 0.0, 0.0))
@@ -486,14 +496,18 @@ def bake_vertex_colors_simple(obj, ambient=0.05, intensity_mult=0.008, gamma=1.8
     if obj is None or obj.type != 'MESH':
         return False, "Select a mesh object!"
 
-    # Collect all point lights
+    # Collect all point lights (skip hidden, including collection visibility)
     lights = []
     for light_obj in bpy.data.objects:
         if light_obj.type == 'LIGHT' and light_obj.data.type == 'POINT':
+            if not light_obj.visible_get():
+                continue
+            if light_obj.hide_render:
+                continue
             lights.append(light_obj)
 
     if not lights:
-        return False, "No Point lights in scene!"
+        return False, "No visible Point lights in scene!"
 
     mesh = obj.data
 
@@ -511,6 +525,12 @@ def bake_vertex_colors_simple(obj, ambient=0.05, intensity_mult=0.008, gamma=1.8
     world_matrix = obj.matrix_world
     normal_matrix = world_matrix.to_3x3().inverted().transposed()
 
+    # Ensure split normals are calculated for smooth/flat shading
+    try:
+        mesh.calc_normals_split()
+    except Exception:
+        pass
+
     # Prepare depsgraph for raycasting
     depsgraph = bpy.context.evaluated_depsgraph_get() if use_shadows else None
 
@@ -520,7 +540,8 @@ def bake_vertex_colors_simple(obj, ambient=0.05, intensity_mult=0.008, gamma=1.8
             vert = mesh.vertices[loop.vertex_index]
 
             world_pos = world_matrix @ vert.co
-            world_normal = (normal_matrix @ poly.normal).normalized()
+            # loop.normal respects smooth/flat shading and custom normals
+            world_normal = (normal_matrix @ loop.normal).normalized()
 
             # Start with ambient
             total_light = Vector((ambient, ambient, ambient))
@@ -947,6 +968,47 @@ def setup_prelight_preview(obj, enable=True):
             # Mix -> Base Color
             links.new(mix_node.outputs['Result'], base_color_input)
 
+            # ── Alpha: vertex color alpha → Principled Alpha ──
+            # Only if active color attribute actually has any alpha < 1.0 painted
+            has_alpha_painted = False
+            active_attr = mesh.color_attributes.get(color_name)
+            if active_attr and active_attr.data_type in ('BYTE_COLOR', 'FLOAT_COLOR'):
+                for d in active_attr.data:
+                    if d.color[3] < 0.999:
+                        has_alpha_painted = True
+                        break
+
+            alpha_input = principled.inputs.get('Alpha')
+            if has_alpha_painted and alpha_input and 'Alpha' in vc_node.outputs:
+                # Save original blend_method
+                if 'prelight_orig_blend' not in mat:
+                    mat['prelight_orig_blend'] = getattr(mat, 'blend_method', 'OPAQUE')
+                if hasattr(mat, 'blend_method'):
+                    mat.blend_method = 'HASHED'
+
+                if alpha_input.is_linked:
+                    # Texture alpha already connected — insert Multiply node
+                    orig_alpha_socket = alpha_input.links[0].from_socket
+                    alpha_mult = nodes.get("Prelight_AlphaMult")
+                    if not alpha_mult:
+                        alpha_mult = nodes.new('ShaderNodeMath')
+                        alpha_mult.name = "Prelight_AlphaMult"
+                        alpha_mult.label = "Prelight Alpha Mult"
+                        alpha_mult.operation = 'MULTIPLY'
+                        alpha_mult.location = (principled.location.x - 200, principled.location.y - 350)
+                    # Disconnect old alpha link
+                    for lnk in list(alpha_input.links):
+                        links.remove(lnk)
+                    # texture_alpha × vc_alpha → Principled Alpha
+                    links.new(orig_alpha_socket, alpha_mult.inputs[0])
+                    links.new(vc_node.outputs['Alpha'], alpha_mult.inputs[1])
+                    links.new(alpha_mult.outputs[0], alpha_input)
+                    mat['prelight_alpha_mode'] = 'mult'
+                else:
+                    # No existing alpha — connect vc alpha directly
+                    links.new(vc_node.outputs['Alpha'], alpha_input)
+                    mat['prelight_alpha_mode'] = 'direct'
+
             modified_count += 1
 
         else:
@@ -973,6 +1035,41 @@ def setup_prelight_preview(obj, enable=True):
                     # Restore connection - может быть Lightmap_Mix или оригинальная текстура
                     if original_source and original_socket:
                         links.new(original_socket, base_color_input)
+
+                    # ── Alpha cleanup ──
+                    alpha_mode = mat.get('prelight_alpha_mode')
+                    alpha_input = principled.inputs.get('Alpha')
+                    alpha_mult = nodes.get("Prelight_AlphaMult")
+
+                    if alpha_mode == 'mult' and alpha_mult and alpha_input:
+                        # Restore original texture alpha → Principled Alpha
+                        orig_socket = None
+                        if alpha_mult.inputs[0].is_linked:
+                            orig_socket = alpha_mult.inputs[0].links[0].from_socket
+                        # Disconnect mult output
+                        for lnk in list(alpha_input.links):
+                            links.remove(lnk)
+                        if orig_socket:
+                            links.new(orig_socket, alpha_input)
+                        nodes.remove(alpha_mult)
+                    elif alpha_mode == 'direct' and alpha_input:
+                        # Disconnect VC alpha, reset to 1.0
+                        for lnk in list(alpha_input.links):
+                            if lnk.from_node == vc_node:
+                                links.remove(lnk)
+                        alpha_input.default_value = 1.0
+
+                    if 'prelight_alpha_mode' in mat:
+                        del mat['prelight_alpha_mode']
+
+                    # Restore blend_method
+                    if 'prelight_orig_blend' in mat:
+                        if hasattr(mat, 'blend_method'):
+                            try:
+                                mat.blend_method = mat['prelight_orig_blend']
+                            except Exception:
+                                mat.blend_method = 'OPAQUE'
+                        del mat['prelight_orig_blend']
 
                 # Remove prelight nodes
                 nodes.remove(mix_node)
