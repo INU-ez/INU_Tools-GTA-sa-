@@ -23,7 +23,7 @@
 bl_info = {
     "name": "INU_tools(gta_sa)",
     "author": "INU",
-    "version": (1, 6, 1),
+    "version": (1, 6, 3),
     "blender": (4, 2, 0),
     "location": "View3D > Sidebar (N) > GTA Tools",
     "description": "Toolset for GTA SA models",
@@ -32,6 +32,31 @@ bl_info = {
 }
 
 # Changelog:
+# v1.6.3 - Particle Effects: полноценный редактор GTA SA effects.fxp
+#        - Парсер effects.fxp (text-based, 82 эффекта), кэш с auto-reload
+#        - Симуляция частиц в viewport (30 FPS, до 64 частиц на эмиттер, billboard к камере)
+#        - Dropdown выбора эффекта из 82 систем + multi-emitter switching
+#        - Редактирование 40+ параметров: цвет, размер, скорость, направление, физика, ветер, гравитация
+#        - Keyframe editor для curves (size/color/alpha over lifetime)
+#        - Сохранение в effects.fxp с авто-бэкапом (.fxp.bak)
+#        - Operators: New, Delete, Switch Emitter, Reload effects.fxp
+#        - IDE/IPL Export: очистка .001 дубликатов перед записью
+#        - IPL Upsert: поддержка нескольких instances одной модели (match по позиции)
+#        - DFF Export: _read_texture идёт через Prelight_Mix/LM_Mix к реальной текстуре
+#        - TXD Export: пропускает LM_Texture/Lightmap_Texture ноды
+#        - LightMap UV2: Add/Toggle/Remove кнопки в Prelight панели (Multiply blend на UV2)
+#        - Prelight Bake: использует loop.normal (smooth shading), пропускает скрытые лампы
+#        - Reset Transform: сброс Location/Rotation в (0,0,0) для выделенных мешей
+#        - Batch Set Type: массовое назначение OBJ/COL/SHA/NON с автопереименованием
+#        - 2DFX: detach all from mesh, список привязанных в UI меша
+#        - 2DFX Billboard: переход с timer на draw handler — фикс tracking при смене сцены
+#        - DFF Flags: компактный список чекбоксов вместо больших кнопок
+#        - Object Properties: новая панель "GTA SA: IDE / IPL" (перенос из N-панели)
+#        - Nodes Export: авто-разбиение по зонам карты 8x8 (64 файла nodes0..63.dat)
+#        - Nodes Import: мультифайловый импорт (несколько nodes*.dat за раз)
+#        - ID Manager: Assign from ID..., Extend IDs (FLA, Fastman Limit Adjuster)
+#        - .gitattributes: нормализация LF/CRLF
+#        - Документация: Alpha threshold 57% (145/255) — задокументирован hard cutoff в GTA SA
 # v1.6.1 - IPL Import: перемещение COL вместе с DFF, Empty с _empty суффиксом в коллекции IPL_Empty, кнопка Заменить Empty
 #        - Префиксы моделей (DFF/LOD/COL) в настройках, авто-очистка конфликтов суффикс/префикс
 #        - Все import/export используют пользовательские суффиксы/префиксы
@@ -204,6 +229,301 @@ addon_keymaps = []
 # PROPERTY GROUPS
 # =============================================================================
 
+# ── Particle curve keyframe PropertyGroup (used by B1 curve editor) ── #
+class INUParticleKeyframe(bpy.types.PropertyGroup):
+    """A single FX_KEYFLOAT_DATA entry (time, val) for the curve editor buffer."""
+    time: FloatProperty(
+        name="Time",
+        default=0.0, min=0.0, max=1.0, precision=4,
+    )
+    val: FloatProperty(
+        name="Value",
+        default=0.0, precision=4,
+    )
+
+
+# ── Particle effect EnumProperty — dynamic items from effects.fxp ── #
+# Module-level cache: EnumProperty items callbacks MUST return the same
+# Python objects across calls, otherwise Blender shows garbled strings
+# (strings get GC'd). We keep the last returned list alive here.
+_particle_enum_items_cache = [('', '<not loaded>', '')]
+_particle_enum_cache_key = None  # (path, mtime)
+
+
+def _particle_effect_enum_items(self, context):
+    """Items callback for INUObjectProps.particle_effect_2dfx."""
+    global _particle_enum_items_cache, _particle_enum_cache_key
+    try:
+        game_root = bpy.path.abspath(
+            getattr(context.scene, 'gtatools_game_root', '') or ''
+        )
+        if not game_root or not os.path.isdir(game_root):
+            _particle_enum_items_cache = [('', '<Game Root не задан>', '')]
+            _particle_enum_cache_key = None
+            return _particle_enum_items_cache
+
+        path = os.path.join(game_root, 'models', 'effects.fxp')
+        if not os.path.isfile(path):
+            _particle_enum_items_cache = [('', '<effects.fxp не найден>', '')]
+            _particle_enum_cache_key = None
+            return _particle_enum_items_cache
+
+        mtime = os.path.getmtime(path)
+        key = (path, mtime)
+        if key == _particle_enum_cache_key:
+            return _particle_enum_items_cache
+
+        from .core import fxp as _fxp
+        fxf = _fxp.load_cached(path)
+        items = [(s.name, s.name, "") for s in fxf.systems]
+        if not items:
+            items = [('', '<нет эффектов>', '')]
+        _particle_enum_items_cache = items
+        _particle_enum_cache_key = key
+        return _particle_enum_items_cache
+    except Exception as ex:
+        _particle_enum_items_cache = [('', f'<ошибка: {ex}>', '')]
+        _particle_enum_cache_key = None
+        return _particle_enum_items_cache
+
+
+def _particle_effect_get(self):
+    obj = self.id_data
+    name = obj.get('2dfx_effect_name', '') or ''
+    for i, item in enumerate(_particle_enum_items_cache):
+        if item[0] == name:
+            return i
+    return 0
+
+
+def _particle_effect_set(self, value):
+    obj = self.id_data
+    items = _particle_enum_items_cache
+    if 0 <= value < len(items):
+        name = items[value][0]
+        if name:
+            obj['2dfx_effect_name'] = name
+            # Reset to the first emitter whenever the effect changes
+            obj.inu.particle_emitter_index = 0
+            try:
+                _populate_particle_props_from_fxp(obj, name, 0)
+            except Exception as e:
+                print(f"[2DFX Particle] populate failed: {e}")
+            try:
+                from .ops.fx_preview import update_particle_preview
+                update_particle_preview(obj)
+            except Exception as e:
+                print(f"[2DFX Particle] preview update failed: {e}")
+
+
+def _sample_particle_from_emitter(em) -> dict:
+    """Sample the editable particle parameters from a FXEmitter.
+
+    Returns a dict with exactly the fields that our editor exposes, in the
+    same shape/units as obj.inu.particle_*. Used both to populate from FXP
+    and to detect user edits on save (so we only write changed fields).
+    """
+    tex_raw = (em.base_get('TEXTURE') or '').strip()
+    tex = "" if tex_raw == 'NULL' else tex_raw
+    try:
+        src_blend = int(em.base_get('SRCBLENDID') or 4)
+    except (TypeError, ValueError):
+        src_blend = 4
+    try:
+        dst_blend = int(em.base_get('DSTBLENDID') or 5)
+    except (TypeError, ValueError):
+        dst_blend = 5
+
+    def _curve(info_type, field, default=0.0, t=0.0):
+        info = em.info(info_type)
+        if not info:
+            return default
+        c = info.curves.get(field)
+        if not c:
+            return default
+        return c.sample(t)
+
+    def _rgba(t):
+        return (
+            max(min(_curve('COLOUR', 'RED', 255.0, t) / 255.0, 1.0), 0.0),
+            max(min(_curve('COLOUR', 'GREEN', 255.0, t) / 255.0, 1.0), 0.0),
+            max(min(_curve('COLOUR', 'BLUE', 255.0, t) / 255.0, 1.0), 0.0),
+            max(min(_curve('COLOUR', 'ALPHA', 255.0, t) / 255.0, 1.0), 0.0),
+        )
+
+    # Detect a middle COLOUR keyframe: any COLOUR curve with > 2 keys.
+    # Use the ALPHA curve's middle keyframe time as the canonical mid_time
+    # (alpha is usually where fade-in/fade-out lives).
+    colour = em.info('COLOUR')
+    mid_enabled = False
+    mid_time = 0.5
+    if colour is not None:
+        for name in ('ALPHA', 'RED', 'GREEN', 'BLUE'):
+            c = colour.curves.get(name)
+            if c is not None and len(c.keys) >= 3:
+                mid_enabled = True
+                if name == 'ALPHA':
+                    mid_idx = len(c.keys) // 2
+                    mid_time = max(0.01, min(c.keys[mid_idx].time, 0.99))
+                    break
+
+    return {
+        'texture': tex,
+        'src_blend': src_blend,
+        'dst_blend': dst_blend,
+        'color_start': _rgba(0.0),
+        'color_end': _rgba(1.0),
+        'color_mid_enabled': mid_enabled,
+        'color_mid': _rgba(mid_time),
+        'color_mid_time': mid_time,
+        'size_start': max(_curve('SIZE', 'SIZEX', 0.3, 0.0), 0.0),
+        'size_end': max(_curve('SIZE', 'SIZEX', 0.5, 1.0), 0.0),
+        'life': max(_curve('EMLIFE', 'LIFE', 1.0, 0.0), 0.0),
+        'life_bias': max(_curve('EMLIFE', 'BIAS', 0.0, 0.0), 0.0),
+        'rate': max(_curve('EMRATE', 'RATE', 10.0, 0.0), 0.0),
+        'speed': max(_curve('EMSPEED', 'SPEED', 1.0, 0.0), 0.0),
+        'speed_bias': max(_curve('EMSPEED', 'BIAS', 0.0, 0.0), 0.0),
+        'direction': (
+            _curve('EMDIR', 'DIRX', 0.0, 0.0),
+            _curve('EMDIR', 'DIRY', 0.0, 0.0),
+            _curve('EMDIR', 'DIRZ', 1.0, 0.0),
+        ),
+        # Extended emission
+        'angle_min': _curve('EMANGLE', 'MIN', 0.0, 0.0),
+        'angle_max': _curve('EMANGLE', 'MAX', 0.0, 0.0),
+        # EMSIZE as half-extent: half the min→max range per axis.
+        # This loses any offset from origin but keeps the box size,
+        # which is all that Box UI needs. Save always writes symmetric.
+        'volume': (
+            max(
+                abs(_curve('EMSIZE', 'SIZEMAXX', 0.0, 0.0)),
+                abs(_curve('EMSIZE', 'SIZEMINX', 0.0, 0.0)),
+            ),
+            max(
+                abs(_curve('EMSIZE', 'SIZEMAXY', 0.0, 0.0)),
+                abs(_curve('EMSIZE', 'SIZEMINY', 0.0, 0.0)),
+            ),
+            max(
+                abs(_curve('EMSIZE', 'SIZEMAXZ', 0.0, 0.0)),
+                abs(_curve('EMSIZE', 'SIZEMINZ', 0.0, 0.0)),
+            ),
+        ),
+        'offset': (
+            _curve('EMPOS', 'X', 0.0, 0.0),
+            _curve('EMPOS', 'Y', 0.0, 0.0),
+            _curve('EMPOS', 'Z', 0.0, 0.0),
+        ),
+        'rotation_min': _curve('EMROTATION', 'ANGLEMIN', 0.0, 0.0),
+        'rotation_max': _curve('EMROTATION', 'ANGLEMAX', 0.0, 0.0),
+        # Physics
+        'force': (
+            _curve('FORCE', 'FORCEX', 0.0, 0.0),
+            _curve('FORCE', 'FORCEY', 0.0, 0.0),
+            _curve('FORCE', 'FORCEZ', 0.0, 0.0),
+        ),
+        'friction': _curve('FRICTION', 'FRICTION', 0.0, 0.0),
+        'wind': _curve('WIND', 'WINDFACTOR', 0.0, 0.0),
+        'noise': _curve('NOISE', 'NOISE', 0.0, 0.0),
+        'jitter': _curve('JITTER', 'JITTERFACTOR', 0.0, 0.0),
+        'rotspeed_min': _curve('ROTSPEED', 'MINCW', 0.0, 0.0),
+        'rotspeed_max': _curve('ROTSPEED', 'MAXCW', 0.0, 0.0),
+        'ground_bounce': _curve('GROUNDCOLLIDE', 'BOUNCE', 0.0, 0.0),
+        'ground_speedmult': _curve('GROUNDCOLLIDE', 'SPEEDMULT', 1.0, 0.0),
+    }
+
+
+def _get_effect_emitter_count(effect_name: str) -> int:
+    """Return number of emitters in a named system, or 0 on any failure."""
+    try:
+        game_root = bpy.path.abspath(
+            getattr(bpy.context.scene, 'gtatools_game_root', '') or ''
+        )
+        if not game_root:
+            return 0
+        fxp_path = os.path.join(game_root, 'models', 'effects.fxp')
+        if not os.path.isfile(fxp_path):
+            return 0
+        from .core import fxp as _fxp
+        fxf = _fxp.load_cached(fxp_path)
+        system = fxf.find(effect_name)
+        return len(system.emitters) if system else 0
+    except Exception:
+        return 0
+
+
+def _populate_particle_props_from_fxp(obj, effect_name: str, emitter_index: int = 0) -> bool:
+    """Copy the Nth emitter's parameters from effects.fxp onto obj.inu."""
+    game_root = bpy.path.abspath(
+        getattr(bpy.context.scene, 'gtatools_game_root', '') or ''
+    )
+    if not game_root:
+        return False
+    fxp_path = os.path.join(game_root, 'models', 'effects.fxp')
+    if not os.path.isfile(fxp_path):
+        return False
+
+    from .core import fxp as _fxp
+    fxf = _fxp.load_cached(fxp_path)
+    system = fxf.find(effect_name)
+    if system is None or not system.emitters:
+        return False
+
+    idx = max(0, min(emitter_index, len(system.emitters) - 1))
+    vals = _sample_particle_from_emitter(system.emitters[idx])
+    inu = obj.inu
+    inu.particle_texture = vals['texture']
+    inu.particle_src_blend = vals['src_blend']
+    inu.particle_dst_blend = vals['dst_blend']
+    inu.particle_color_start = vals['color_start']
+    inu.particle_color_end = vals['color_end']
+    inu.particle_color_mid_enabled = vals['color_mid_enabled']
+    inu.particle_color_mid = vals['color_mid']
+    inu.particle_color_mid_time = vals['color_mid_time']
+    inu.particle_size_start = vals['size_start']
+    inu.particle_size_end = vals['size_end']
+    inu.particle_life = vals['life']
+    inu.particle_life_bias = vals['life_bias']
+    inu.particle_rate = vals['rate']
+    inu.particle_speed = vals['speed']
+    inu.particle_speed_bias = vals['speed_bias']
+    inu.particle_direction = vals['direction']
+
+    # Extended emission
+    inu.particle_angle_min = vals['angle_min']
+    inu.particle_angle_max = vals['angle_max']
+    inu.particle_volume = vals['volume']
+    inu.particle_offset = vals['offset']
+    inu.particle_rotation_min = vals['rotation_min']
+    inu.particle_rotation_max = vals['rotation_max']
+
+    # Physics
+    inu.particle_force = vals['force']
+    inu.particle_friction = vals['friction']
+    inu.particle_wind = vals['wind']
+    inu.particle_noise = vals['noise']
+    inu.particle_jitter = vals['jitter']
+    inu.particle_rotspeed_min = vals['rotspeed_min']
+    inu.particle_rotspeed_max = vals['rotspeed_max']
+    inu.particle_ground_bounce = vals['ground_bounce']
+    inu.particle_ground_speedmult = vals['ground_speedmult']
+
+    # System-level settings from FX_SYSTEM_DATA header
+    try:
+        inu.particle_sys_length = float(system.header_get('LENGTH') or 1.0)
+    except ValueError:
+        pass
+    try:
+        inu.particle_sys_playmode = int(system.header_get('PLAYMODE') or 2)
+    except ValueError:
+        pass
+    try:
+        inu.particle_sys_culldist = float(system.header_get('CULLDIST') or 50.0)
+    except ValueError:
+        pass
+
+    return True
+
+
 class INUObjectProps(bpy.types.PropertyGroup):
     """INU_tools object export properties (replaces DragonFF obj.dff)."""
 
@@ -228,6 +548,278 @@ class INUObjectProps(bpy.types.PropertyGroup):
         ],
         name="2DFX Effect Type",
         default='LIGHT',
+    )
+
+    particle_effect_2dfx : EnumProperty(
+        name="Particle Effect",
+        description=T("Имя эффекта из effects.fxp"),
+        items=_particle_effect_enum_items,
+        get=_particle_effect_get,
+        set=_particle_effect_set,
+    )
+
+    particle_emitter_index : IntProperty(
+        name="Emitter Index",
+        description=T("Индекс редактируемого эмиттера (для систем с несколькими)"),
+        default=0, min=0,
+    )
+
+    # ── Curve editor buffer (B1) ── #
+    particle_curve_name : StringProperty(
+        name="Curve",
+        description=T("Редактируемая кривая в формате INFO.FIELD (например SIZE.SIZEX)"),
+        default="",
+    )
+    particle_curve_keys : CollectionProperty(type=INUParticleKeyframe)
+    particle_curve_key_index : IntProperty(default=0)
+
+    # ── Particle editable per-instance properties ── #
+    # These get populated from effects.fxp when the user picks an effect
+    # from the dropdown. All reads for the billboard preview come from
+    # these fields (not directly from the FXP file), so edits here are
+    # instantly reflected and stored per-object.
+    def _update_particle(self, context):
+        obj = self.id_data
+        if obj and obj.type == 'EMPTY' and self.type == '2DFX' and self.effect_2dfx == 'PARTICLE':
+            try:
+                from .ops.fx_preview import update_particle_preview
+                update_particle_preview(obj)
+            except Exception as e:
+                print(f"[2DFX Particle] update error: {e}")
+
+    particle_texture : StringProperty(
+        name="Texture",
+        description=T("Имя спрайта из particle.txd"),
+        default="",
+        update=_update_particle,
+    )
+    particle_src_blend : IntProperty(
+        name="SRC Blend",
+        description="D3D9 source blend factor (4=SRCALPHA, 2=ONE, ...)",
+        default=4, min=0, max=17,
+        update=_update_particle,
+    )
+    particle_dst_blend : IntProperty(
+        name="DST Blend",
+        description="D3D9 dest blend factor (5=INVSRCALPHA, 2=ONE for additive)",
+        default=5, min=0, max=17,
+        update=_update_particle,
+    )
+    particle_color_start : FloatVectorProperty(
+        name="Color (start)",
+        subtype='COLOR',
+        size=4,
+        min=0.0, max=1.0,
+        default=(1.0, 1.0, 1.0, 1.0),
+        update=_update_particle,
+    )
+    particle_color_end : FloatVectorProperty(
+        name="Color (end)",
+        subtype='COLOR',
+        size=4,
+        min=0.0, max=1.0,
+        default=(1.0, 1.0, 1.0, 0.0),
+        update=_update_particle,
+    )
+    particle_color_mid_enabled : BoolProperty(
+        name="Use middle colour",
+        description=T("Добавить промежуточный ключ для плавного fade-in/fade-out"),
+        default=False,
+        update=_update_particle,
+    )
+    particle_color_mid : FloatVectorProperty(
+        name="Color (mid)",
+        subtype='COLOR',
+        size=4,
+        min=0.0, max=1.0,
+        default=(1.0, 1.0, 1.0, 1.0),
+        update=_update_particle,
+    )
+    particle_color_mid_time : FloatProperty(
+        name="Mid time",
+        description=T("Позиция промежуточного ключа по времени жизни (0..1)"),
+        default=0.5, min=0.01, max=0.99, precision=3,
+        update=_update_particle,
+    )
+    particle_size_start : FloatProperty(
+        name="Size (start)",
+        description=T("Размер частицы в начале жизни"),
+        default=0.3, min=0.0, soft_max=10.0, precision=3,
+        update=_update_particle,
+    )
+    particle_size_end : FloatProperty(
+        name="Size (end)",
+        description=T("Размер частицы в конце жизни"),
+        default=0.5, min=0.0, soft_max=10.0, precision=3,
+        update=_update_particle,
+    )
+    particle_life : FloatProperty(
+        name="Life",
+        description=T("Длительность жизни частицы в секундах"),
+        default=1.0, min=0.0, soft_max=30.0, precision=3,
+        update=_update_particle,
+    )
+    particle_rate : FloatProperty(
+        name="Rate",
+        description=T("Количество частиц в секунду"),
+        default=10.0, min=0.0, soft_max=1000.0,
+        update=_update_particle,
+    )
+    particle_speed : FloatProperty(
+        name="Speed",
+        description=T("Начальная скорость частицы"),
+        default=1.0, min=0.0, soft_max=100.0, precision=3,
+        update=_update_particle,
+    )
+    particle_direction : FloatVectorProperty(
+        name="Direction",
+        description=T("Направление эмиссии"),
+        size=3,
+        default=(0.0, 0.0, 1.0),
+        update=_update_particle,
+    )
+
+    # ── System-level settings (FX_SYSTEM_DATA header) ── #
+    particle_sys_length : FloatProperty(
+        name="System Length",
+        description=T("LENGTH — длительность цикла системы в секундах"),
+        default=1.0, min=0.0, soft_max=100.0, precision=3,
+        update=_update_particle,
+    )
+    particle_sys_playmode : IntProperty(
+        name="Play Mode",
+        description=T("PLAYMODE — режим проигрывания (0-3)"),
+        default=2, min=0, max=3,
+        update=_update_particle,
+    )
+    particle_sys_culldist : FloatProperty(
+        name="Cull Distance",
+        description=T("CULLDIST — расстояние отсечения эффекта в игре"),
+        default=50.0, min=0.0, soft_max=500.0, precision=1,
+        update=_update_particle,
+    )
+
+    # ── Extended emission (EMANGLE / EMSIZE / EMPOS / EMROTATION / biases) ── #
+    particle_angle_min : FloatProperty(
+        name="Angle Min",
+        description=T("EMANGLE MIN — минимальный угол конуса эмиссии"),
+        default=0.0, min=0.0, soft_max=180.0, precision=2,
+        update=_update_particle,
+    )
+    particle_angle_max : FloatProperty(
+        name="Angle Max",
+        description=T("EMANGLE MAX — максимальный угол конуса эмиссии"),
+        default=0.0, min=0.0, soft_max=180.0, precision=2,
+        update=_update_particle,
+    )
+    # Box as half-extents — symmetric around the emitter. On save this
+    # becomes SIZEMIN=-box, SIZEMAX=+box per axis in the FXP EMSIZE block.
+    particle_volume : FloatVectorProperty(
+        name="Box",
+        description=T("EMSIZE половина размера бокса эмиссии (centered)"),
+        size=3,
+        default=(0.0, 0.0, 0.0),
+        min=0.0, precision=3,
+        update=_update_particle,
+    )
+    # Legacy storage — kept for back-compat with older blend files, not in UI
+    particle_volume_radius : FloatProperty(
+        name="Volume Radius (legacy)",
+        default=0.0, min=0.0, precision=3,
+    )
+    particle_volume_min : FloatVectorProperty(
+        name="Volume Min (legacy)",
+        size=3, default=(0.0, 0.0, 0.0), precision=3,
+    )
+    particle_offset : FloatVectorProperty(
+        name="Offset",
+        description=T("EMPOS X/Y/Z — смещение точки спавна"),
+        size=3,
+        default=(0.0, 0.0, 0.0),
+        precision=3,
+        update=_update_particle,
+    )
+    particle_rotation_min : FloatProperty(
+        name="Rotation Min",
+        description=T("EMROTATION ANGLEMIN — мин начальный поворот спрайта"),
+        default=0.0, soft_min=-360.0, soft_max=360.0,
+        update=_update_particle,
+    )
+    particle_rotation_max : FloatProperty(
+        name="Rotation Max",
+        description=T("EMROTATION ANGLEMAX — макс начальный поворот спрайта"),
+        default=0.0, soft_min=-360.0, soft_max=360.0,
+        update=_update_particle,
+    )
+    particle_life_bias : FloatProperty(
+        name="Life Bias",
+        description=T("EMLIFE BIAS — случайный разброс длительности жизни"),
+        default=0.0, min=0.0, soft_max=10.0, precision=3,
+        update=_update_particle,
+    )
+    particle_speed_bias : FloatProperty(
+        name="Speed Bias",
+        description=T("EMSPEED BIAS — случайный разброс начальной скорости"),
+        default=0.0, min=0.0, soft_max=10.0, precision=3,
+        update=_update_particle,
+    )
+
+    # ── Physics (FORCE / FRICTION / WIND / NOISE / JITTER / ROTSPEED / GROUNDCOLLIDE) ── #
+    particle_force : FloatVectorProperty(
+        name="Force",
+        description=T("FORCE X/Y/Z — постоянное ускорение (например -9.8 по Z = гравитация)"),
+        size=3,
+        default=(0.0, 0.0, 0.0),
+        precision=3,
+        update=_update_particle,
+    )
+    particle_friction : FloatProperty(
+        name="Friction",
+        description=T("FRICTION — сопротивление воздуха"),
+        default=0.0, min=0.0, soft_max=10.0, precision=3,
+        update=_update_particle,
+    )
+    particle_wind : FloatProperty(
+        name="Wind",
+        description=T("WIND WINDFACTOR — восприимчивость к ветру игры"),
+        default=0.0, min=0.0, soft_max=10.0, precision=3,
+        update=_update_particle,
+    )
+    particle_noise : FloatProperty(
+        name="Noise",
+        description=T("NOISE — сглаженное случайное движение"),
+        default=0.0, min=0.0, soft_max=10.0, precision=3,
+        update=_update_particle,
+    )
+    particle_jitter : FloatProperty(
+        name="Jitter",
+        description=T("JITTER JITTERFACTOR — резкий случайный дёрг"),
+        default=0.0, min=0.0, soft_max=10.0, precision=3,
+        update=_update_particle,
+    )
+    particle_rotspeed_min : FloatProperty(
+        name="RotSpeed Min",
+        description=T("ROTSPEED MINCW — мин скорость вращения спрайта"),
+        default=0.0, soft_min=-360.0, soft_max=360.0,
+        update=_update_particle,
+    )
+    particle_rotspeed_max : FloatProperty(
+        name="RotSpeed Max",
+        description=T("ROTSPEED MAXCW — макс скорость вращения спрайта"),
+        default=0.0, soft_min=-360.0, soft_max=360.0,
+        update=_update_particle,
+    )
+    particle_ground_bounce : FloatProperty(
+        name="Ground Bounce",
+        description=T("GROUNDCOLLIDE BOUNCE — сила отскока при ударе о землю"),
+        default=0.0, min=0.0, soft_max=2.0, precision=3,
+        update=_update_particle,
+    )
+    particle_ground_speedmult : FloatProperty(
+        name="Ground SpeedMult",
+        description=T("GROUNDCOLLIDE SPEEDMULT — потеря скорости при ударе"),
+        default=1.0, min=0.0, soft_max=2.0, precision=3,
+        update=_update_particle,
     )
 
     def _update_2dfx_preview(self, context):
@@ -391,6 +983,8 @@ class INUObjectProps(bpy.types.PropertyGroup):
 
     light : BoolProperty(default=True, description=T("Флаг rpGEOMETRYLIGHT — динамическое освещение"))
     modulate_color : BoolProperty(default=True, description=T("Флаг rpGEOMETRYMODULATEMATERIALCOLOR — цвет материала влияет на модель"))
+    set_material_alpha : BoolProperty(default=True, description=T("Автоматически ставить material alpha = 254 при наличии vertex alpha < 255.\nНужно для стандартных прозрачных мешей (стёкла, дым). Выключи если материал должен остаться opaque"))
+    light_beam_asi : BoolProperty(default=False, description=T("Помечает меш как объёмный луч света для плагина SA_Light.asi.\nУстанавливает material color = (254,254,254,254) — этот маркер плагин ищет во время рендера.\n\nТРЕБУЕТ SA_Light.asi в корне GTA SA. Без плагина меш будет рендериться как обычный полупрозрачный объект с жёстким срезом alpha.\n\nДля использования:\n1. Собери меш-конус/куб формой луча\n2. Покрась vertex colors как хочешь (любые значения alpha)\n3. Включи этот флаг + Set Material Alpha выключи\n4. Экспорт → плагин автоматически включит плавный alpha blend на этом меше"))
 
     # ── IDE / IPL properties ──
     model_id : IntProperty(
@@ -1278,6 +1872,11 @@ def _ipl_entry_from_obj(obj):
 
 def _clean_model_name_ide(name):
     from .tools.model_utils import get_model_type
+    # Strip Blender duplicate suffix FIRST (.001, .002, etc.)
+    if '.' in name:
+        b, s = name.rsplit('.', 1)
+        if s.isdigit():
+            name = b
     class _Mock:
         def __init__(self, n):
             self.name = n
@@ -6265,56 +6864,6 @@ class GTATOOLS_PT_ide_ipl_panel(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         scn = context.scene
-        obj = context.active_object
-
-        # Show active object IDE/IPL props
-        if obj and obj.type == 'MESH':
-            inu = obj.inu
-            box = layout.box()
-            box.label(text=f"{obj.name}", icon='OBJECT_DATA')
-            col = box.column(align=True)
-            col.prop(inu, "model_id", text="Model ID")
-            col.prop(inu, "draw_distance", text="Draw Dist")
-            col.prop(inu, "lod_draw_distance", text="LOD Dist")
-
-            # Flags with expandable checkboxes
-            row = box.row(align=True)
-            row.prop(inu, "ide_flags", text="Flags")
-            row.prop(scn, "gtatools_show_ide_flags",
-                     icon='TRIA_DOWN' if scn.gtatools_show_ide_flags else 'TRIA_RIGHT',
-                     text="", emboss=False)
-            if scn.gtatools_show_ide_flags:
-                fbox = box.box()
-                fc = fbox.column(align=True)
-                fc.prop(inu, "flag_is_road")
-                fc.prop(inu, "flag_draw_last")
-                fc.prop(inu, "flag_additive")
-                fc.prop(inu, "flag_no_zbuffer")
-                fc.prop(inu, "flag_no_shadows")
-                fc.prop(inu, "flag_glass_1")
-                fc.prop(inu, "flag_glass_2")
-                fc.prop(inu, "flag_garage_door")
-                fc.prop(inu, "flag_damagable")
-                fc.prop(inu, "flag_is_tree")
-                fc.prop(inu, "flag_is_palm")
-                fc.prop(inu, "flag_no_flyer_col")
-                fc.prop(inu, "flag_is_tag")
-                fc.prop(inu, "flag_no_backface")
-                fc.prop(inu, "flag_breakable")
-
-            row = box.row(align=True)
-            row.prop(inu, "interior_id", text="Interior")
-            row.prop(inu, "lod_index", text="LOD")
-
-            # Check for ID conflicts
-            if inu.model_id > 0:
-                conflicts = [o.name for o in bpy.data.objects
-                             if o.type == 'MESH' and o != obj
-                             and hasattr(o, 'inu') and o.inu.model_id == inu.model_id]
-                if conflicts:
-                    box.label(text=f"ID {inu.model_id}: {T('конфликт с')} {', '.join(conflicts[:3])}", icon='ERROR')
-        else:
-            layout.label(text=T("Выделите меш объект"), icon='INFO')
 
         # IDE section
         box = layout.box()
@@ -7185,16 +7734,17 @@ class GTATOOLS_PT_export_panel(bpy.types.Panel):
                      text="DFF Flags", emboss=False)
             if context.scene.gtatools_show_dff_flags:
                 fbox = layout.box()
-                fbox.prop(inu, "export_normals", text="Normals", toggle=True)
-                fbox.prop(inu, "light", text="Light", toggle=True)
-                fbox.prop(inu, "modulate_color", text="Modulate Color", toggle=True)
-                fbox.prop(inu, "export_binsplit", text="Bin Mesh PLG", toggle=True)
-                row = fbox.row(align=True)
-                row.prop(inu, "uv_map1", text="UV1", toggle=True)
-                row.prop(inu, "uv_map2", text="UV2", toggle=True)
-                row = fbox.row(align=True)
-                row.prop(inu, "day_cols", text="Day", toggle=True)
-                row.prop(inu, "night_cols", text="Night", toggle=True)
+                fc = fbox.column(align=True)
+                fc.prop(inu, "export_normals", text="Normals")
+                fc.prop(inu, "light", text="Light")
+                fc.prop(inu, "modulate_color", text="Modulate Color")
+                fc.prop(inu, "set_material_alpha", text="Set Material Alpha")
+                fc.prop(inu, "light_beam_asi", text="Light Beam (SA_Light.asi)")
+                fc.prop(inu, "export_binsplit", text="Bin Mesh PLG")
+                fc.prop(inu, "uv_map1", text="UV1")
+                fc.prop(inu, "uv_map2", text="UV2")
+                fc.prop(inu, "day_cols", text="Day")
+                fc.prop(inu, "night_cols", text="Night")
 
 
 
@@ -7503,10 +8053,13 @@ class GTATOOLS_OT_create_2dfx(bpy.types.Operator):
             context.scene.collection.children.link(fx_col)
         fx_col.objects.link(obj)
 
-        # Визуальный превью для Light
+        # Визуальный превью
         if self.effect_type == 'LIGHT':
             from .ops.fx_preview import create_light_preview
             create_light_preview(obj)
+        elif self.effect_type == 'PARTICLE':
+            from .ops.fx_preview import create_particle_preview
+            create_particle_preview(obj)
 
         bpy.ops.object.select_all(action='DESELECT')
         obj.select_set(True)
@@ -7528,11 +8081,16 @@ class GTATOOLS_OT_refresh_2dfx_preview(bpy.types.Operator):
         return (obj and obj.type == 'EMPTY'
                 and getattr(obj, 'inu', None)
                 and obj.inu.type == '2DFX'
-                and obj.inu.effect_2dfx == 'LIGHT')
+                and obj.inu.effect_2dfx in ('LIGHT', 'PARTICLE'))
 
     def execute(self, context):
-        from .ops.fx_preview import update_light_preview
-        update_light_preview(context.active_object)
+        obj = context.active_object
+        if obj.inu.effect_2dfx == 'LIGHT':
+            from .ops.fx_preview import update_light_preview
+            update_light_preview(obj)
+        else:
+            from .ops.fx_preview import update_particle_preview
+            update_particle_preview(obj)
         self.report({'INFO'}, "2DFX preview updated")
         return {'FINISHED'}
 
@@ -7554,6 +8112,1206 @@ class GTATOOLS_OT_remove_2dfx_preview(bpy.types.Operator):
         from .ops.fx_preview import remove_preview_children
         remove_preview_children(context.active_object)
         self.report({'INFO'}, "2DFX preview removed")
+        return {'FINISHED'}
+
+
+def _particle_effect_items(self, context):
+    """Enum items callback — lazily loads effects.fxp from the game root."""
+    from .core import fxp as _fxp
+    game_root = bpy.path.abspath(getattr(context.scene, 'gtatools_game_root', '') or '')
+    if not game_root or not os.path.isdir(game_root):
+        return [('', "<Game Root не задан>", "")]
+    path = os.path.join(game_root, 'models', 'effects.fxp')
+    if not os.path.isfile(path):
+        return [('', "<effects.fxp не найден>", "")]
+    try:
+        fxf = _fxp.load_cached(path)
+    except Exception as ex:
+        return [('', f"<ошибка: {ex}>", "")]
+    return [(s.name, s.name, "") for s in fxf.systems]
+
+
+class GTATOOLS_OT_select_particle_effect(bpy.types.Operator):
+    """Выбрать имя эффекта из effects.fxp"""
+    bl_idname = "gtatools.select_particle_effect"
+    bl_label = "Select Particle Effect"
+    bl_property = "effect_name"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    effect_name: EnumProperty(
+        name="Effect",
+        items=_particle_effect_items,
+    )
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj and obj.type == 'EMPTY'
+                and getattr(obj, 'inu', None)
+                and obj.inu.type == '2DFX'
+                and obj.inu.effect_2dfx == 'PARTICLE')
+
+    def execute(self, context):
+        obj = context.active_object
+        if obj is not None and self.effect_name:
+            obj['2dfx_effect_name'] = self.effect_name
+            from .ops.fx_preview import update_particle_preview
+            update_particle_preview(obj)
+            self.report({'INFO'}, f"2DFX effect: {self.effect_name}")
+        return {'FINISHED'}
+
+    def invoke(self, context, event):
+        context.window_manager.invoke_search_popup(self)
+        return {'RUNNING_MODAL'}
+
+
+def _get_current_emitter(obj):
+    """Return (fxf, system, emitter) for the obj's current effect+emitter, or None."""
+    effect_name = obj.get('2dfx_effect_name', '') or ''
+    if not effect_name:
+        return None
+    game_root = bpy.path.abspath(
+        getattr(bpy.context.scene, 'gtatools_game_root', '') or ''
+    )
+    if not game_root:
+        return None
+    fxp_path = os.path.join(game_root, 'models', 'effects.fxp')
+    if not os.path.isfile(fxp_path):
+        return None
+    from .core import fxp as _fxp
+    fxf = _fxp.load_cached(fxp_path)
+    system = fxf.find(effect_name)
+    if not system or not system.emitters:
+        return None
+    idx = max(0, min(int(obj.inu.particle_emitter_index), len(system.emitters) - 1))
+    return fxf, system, system.emitters[idx]
+
+
+def _load_curve_into_buffer(obj, curve_key: str) -> bool:
+    """Parse 'INFO.FIELD' and populate obj.inu.particle_curve_keys."""
+    if '.' not in curve_key:
+        return False
+    info_type, field_name = curve_key.split('.', 1)
+
+    result = _get_current_emitter(obj)
+    if not result:
+        return False
+    _fxf, _system, em = result
+
+    info = em.info(info_type)
+    if not info:
+        return False
+    curve = info.curves.get(field_name)
+    if not curve:
+        return False
+
+    obj.inu.particle_curve_keys.clear()
+    for kf in curve.keys:
+        item = obj.inu.particle_curve_keys.add()
+        item.time = float(kf.time)
+        item.val = float(kf.val)
+    obj.inu.particle_curve_key_index = 0
+    return True
+
+
+# Curve picker — search popup of all curves in current emitter.
+_particle_curve_items_cache = [('', '<none>', '')]
+
+
+def _particle_curve_items(self, context):
+    global _particle_curve_items_cache
+    obj = context.active_object
+    if not obj:
+        _particle_curve_items_cache = [('', '<no object>', '')]
+        return _particle_curve_items_cache
+    result = _get_current_emitter(obj)
+    if not result:
+        _particle_curve_items_cache = [('', '<no emitter>', '')]
+        return _particle_curve_items_cache
+    _fxf, _system, em = result
+    items = []
+    for info in em.infos:
+        for field_name in info.curves.keys():
+            key = f"{info.type}.{field_name}"
+            items.append((key, key, ""))
+    if not items:
+        items = [('', '<no curves>', '')]
+    _particle_curve_items_cache = items
+    return _particle_curve_items_cache
+
+
+def _create_blank_particle_system(name: str):
+    """Return a brand-new FXSystem with sensible defaults — single emitter,
+    a 'sphere' texture, basic emission/colour/size info blocks set to neutral
+    values. Everything is plain Python objects from core.fxp; no Blender state.
+    """
+    from .core.fxp import (
+        FXSystem, FXEmitter, FXInfoBlock, FXCurve, FXKeyframe,
+    )
+
+    system = FXSystem()
+    system.version = "109"
+    system.header = [
+        ('FILENAME', f'X:\\INU\\effects\\particles/{name}.fxs'),
+        ('NAME', name),
+        ('LENGTH', '1.000'),
+        ('LOOPINTERVALMIN', '0.000'),
+        ('LENGTH', '0.000'),
+        ('PLAYMODE', '2'),
+        ('CULLDIST', '50.000'),
+        ('BOUNDINGSPHERE', '0.0 0.0 0.0 0.0'),
+    ]
+    system.footer = [
+        ('OMITTEXTURES', '0'),
+        ('TXDNAME', 'NOTXDSET'),
+    ]
+
+    em = FXEmitter()
+    em.base = [
+        ('NAME', 'ParticleEmitter'),
+        ('MATRIX', '1.000 0.000 0.000 0.000 1.000 0.000 0.000 0.000 1.000 0.000 0.000 0.000 '),
+        ('TEXTURE', 'sphere'),
+        ('TEXTURE2', 'NULL'),
+        ('TEXTURE3', 'NULL'),
+        ('TEXTURE4', 'NULL'),
+        ('ALPHAON', '1'),
+        ('SRCBLENDID', '4'),
+        ('DSTBLENDID', '5'),
+    ]
+    em.footer = [
+        ('LODSTART', '30.000'),
+        ('LODEND', '50.000'),
+    ]
+
+    def _single(val):
+        return FXCurve(looped=0, keys=[FXKeyframe(time=0.0, val=float(val))])
+
+    def _start_end(a, b):
+        return FXCurve(looped=0, keys=[
+            FXKeyframe(time=0.0, val=float(a)),
+            FXKeyframe(time=1.0, val=float(b)),
+        ])
+
+    # Emission: EMLIFE, EMRATE, EMSPEED, EMDIR
+    em.infos.append(FXInfoBlock(
+        type='EMLIFE',
+        curves={'LIFE': _single(1.0), 'BIAS': _single(0.0)},
+    ))
+    em.infos.append(FXInfoBlock(
+        type='EMRATE',
+        curves={'RATE': _single(10.0)},
+    ))
+    em.infos.append(FXInfoBlock(
+        type='EMSPEED',
+        curves={'SPEED': _single(1.0), 'BIAS': _single(0.0)},
+    ))
+    em.infos.append(FXInfoBlock(
+        type='EMDIR',
+        curves={'DIRX': _single(0.0), 'DIRY': _single(0.0), 'DIRZ': _single(1.0)},
+    ))
+
+    # Rendering: SIZE, COLOUR (white, full alpha → white, zero alpha for fade-out)
+    em.infos.append(FXInfoBlock(
+        type='SIZE',
+        scalars=[('TIMEMODEPRT', '1')],
+        curves={
+            'SIZEX': _start_end(0.3, 0.5),
+            'SIZEY': _start_end(0.3, 0.5),
+            'SIZEXBIAS': _single(0.0),
+            'SIZEYBIAS': _single(0.0),
+        },
+    ))
+    em.infos.append(FXInfoBlock(
+        type='COLOUR',
+        scalars=[('TIMEMODEPRT', '1')],
+        curves={
+            'RED': _start_end(255.0, 255.0),
+            'GREEN': _start_end(255.0, 255.0),
+            'BLUE': _start_end(255.0, 255.0),
+            'ALPHA': _start_end(255.0, 0.0),
+        },
+    ))
+
+    system.emitters.append(em)
+    return system
+
+
+class GTATOOLS_OT_particle_effect_new(bpy.types.Operator):
+    """Создать новый пустой эффект в effects.fxp"""
+    bl_idname = "gtatools.particle_effect_new"
+    bl_label = "New Particle Effect"
+    bl_options = {'REGISTER'}
+
+    effect_name: StringProperty(
+        name="Name",
+        description=T("Имя нового эффекта (должно быть уникальным)"),
+        default="prt_custom",
+    )
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj and obj.type == 'EMPTY'
+                and getattr(obj, 'inu', None)
+                and obj.inu.type == '2DFX'
+                and obj.inu.effect_2dfx == 'PARTICLE')
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, width=340)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, 'effect_name')
+        layout.label(text=T("Создастся пустая система с одним эмиттером"), icon='INFO')
+        layout.label(text=T("Текстура: sphere. Жизнь 1с, rate 10/с, цвет белый"))
+
+    def execute(self, context):
+        obj = context.active_object
+        name = self.effect_name.strip()
+        if not name:
+            self.report({'ERROR'}, "Имя пустое")
+            return {'CANCELLED'}
+
+        game_root = bpy.path.abspath(context.scene.gtatools_game_root or '')
+        if not game_root:
+            self.report({'ERROR'}, "Game Root не задан")
+            return {'CANCELLED'}
+        fxp_path = os.path.join(game_root, 'models', 'effects.fxp')
+        if not os.path.isfile(fxp_path):
+            self.report({'ERROR'}, f"effects.fxp не найден: {fxp_path}")
+            return {'CANCELLED'}
+
+        # Auto-backup on first write
+        backup_path = fxp_path + '.bak'
+        if not os.path.isfile(backup_path):
+            import shutil
+            try:
+                shutil.copy2(fxp_path, backup_path)
+                print(f"[FXP] backed up to {backup_path}")
+            except Exception as e:
+                self.report({'ERROR'}, f"Не удалось создать бэкап: {e}")
+                return {'CANCELLED'}
+
+        from .core import fxp as _fxp
+        try:
+            fxf = _fxp.read_fxp(fxp_path)
+        except Exception as e:
+            self.report({'ERROR'}, f"Ошибка парсинга: {e}")
+            return {'CANCELLED'}
+
+        if fxf.find(name) is not None:
+            self.report({'ERROR'}, f"Эффект '{name}' уже существует")
+            return {'CANCELLED'}
+
+        new_system = _create_blank_particle_system(name)
+        fxf.systems.append(new_system)
+
+        try:
+            _fxp.write_fxp(fxp_path, fxf)
+        except Exception as e:
+            self.report({'ERROR'}, f"Ошибка записи: {e}")
+            return {'CANCELLED'}
+
+        _fxp.clear_cache()
+        # Force the enum to rebuild its cached item list on next draw
+        global _particle_enum_cache_key
+        _particle_enum_cache_key = None
+
+        # Switch the object to the newly created effect
+        obj['2dfx_effect_name'] = name
+        obj.inu.particle_emitter_index = 0
+        try:
+            _populate_particle_props_from_fxp(obj, name, 0)
+        except Exception as e:
+            print(f"[2DFX Particle] populate failed: {e}")
+        try:
+            from .ops.fx_preview import update_particle_preview
+            update_particle_preview(obj)
+        except Exception:
+            pass
+
+        self.report({'INFO'}, f"Создан эффект: {name}")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_particle_effect_delete(bpy.types.Operator):
+    """Удалить текущий эффект из effects.fxp (с автобэкапом)"""
+    bl_idname = "gtatools.particle_effect_delete"
+    bl_label = "Delete Particle Effect"
+    bl_options = {'REGISTER'}
+
+    confirm: BoolProperty(
+        name="Я понимаю что это перезапишет effects.fxp",
+        default=False,
+    )
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj and obj.type == 'EMPTY'
+                and getattr(obj, 'inu', None)
+                and obj.inu.type == '2DFX'
+                and obj.inu.effect_2dfx == 'PARTICLE'
+                and (obj.get('2dfx_effect_name', '') or ''))
+
+    def invoke(self, context, event):
+        self.confirm = False
+        return context.window_manager.invoke_props_dialog(self, width=380)
+
+    def draw(self, context):
+        layout = self.layout
+        obj = context.active_object
+        name = obj.get('2dfx_effect_name', '') or ''
+        layout.label(text=T(f"Удалить '{name}' из effects.fxp?"), icon='ERROR')
+        layout.label(text=T("Действие необратимо (хотя есть .bak)"), icon='INFO')
+
+        # Warn if other scene objects reference the same effect
+        count = 0
+        for o in bpy.data.objects:
+            if o.type != 'EMPTY':
+                continue
+            inu = getattr(o, 'inu', None)
+            if not inu or inu.type != '2DFX' or inu.effect_2dfx != 'PARTICLE':
+                continue
+            if (o.get('2dfx_effect_name', '') or '') == name:
+                count += 1
+        if count > 1:
+            layout.label(
+                text=T(f"⚠ {count} объектов в сцене используют этот эффект"),
+                icon='ERROR',
+            )
+
+        layout.prop(self, 'confirm')
+
+    def execute(self, context):
+        if not self.confirm:
+            self.report({'WARNING'}, "Подтверждение не получено")
+            return {'CANCELLED'}
+
+        obj = context.active_object
+        name = (obj.get('2dfx_effect_name', '') or '').strip()
+        if not name:
+            self.report({'ERROR'}, "Имя эффекта пустое")
+            return {'CANCELLED'}
+
+        game_root = bpy.path.abspath(context.scene.gtatools_game_root or '')
+        if not game_root:
+            self.report({'ERROR'}, "Game Root не задан")
+            return {'CANCELLED'}
+        fxp_path = os.path.join(game_root, 'models', 'effects.fxp')
+        if not os.path.isfile(fxp_path):
+            self.report({'ERROR'}, f"effects.fxp не найден: {fxp_path}")
+            return {'CANCELLED'}
+
+        backup_path = fxp_path + '.bak'
+        if not os.path.isfile(backup_path):
+            import shutil
+            try:
+                shutil.copy2(fxp_path, backup_path)
+                print(f"[FXP] backed up to {backup_path}")
+            except Exception as e:
+                self.report({'ERROR'}, f"Не удалось создать бэкап: {e}")
+                return {'CANCELLED'}
+
+        from .core import fxp as _fxp
+        try:
+            fxf = _fxp.read_fxp(fxp_path)
+        except Exception as e:
+            self.report({'ERROR'}, f"Ошибка парсинга: {e}")
+            return {'CANCELLED'}
+
+        before = len(fxf.systems)
+        fxf.systems = [s for s in fxf.systems if s.name != name]
+        removed = before - len(fxf.systems)
+        if removed == 0:
+            self.report({'WARNING'}, f"Эффект '{name}' не найден в effects.fxp")
+            return {'CANCELLED'}
+
+        try:
+            _fxp.write_fxp(fxp_path, fxf)
+        except Exception as e:
+            self.report({'ERROR'}, f"Ошибка записи: {e}")
+            return {'CANCELLED'}
+
+        _fxp.clear_cache()
+        global _particle_enum_cache_key
+        _particle_enum_cache_key = None
+
+        # Clear the object's effect name so it doesn't point at a missing entry
+        obj['2dfx_effect_name'] = ""
+        obj.inu.particle_emitter_index = 0
+
+        try:
+            from .ops.fx_preview import update_particle_preview
+            update_particle_preview(obj)
+        except Exception:
+            pass
+
+        self.report({'INFO'}, f"Удалено: {name}")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_particle_curve_select(bpy.types.Operator):
+    """Выбрать кривую для редактирования"""
+    bl_idname = "gtatools.particle_curve_select"
+    bl_label = "Select Curve"
+    bl_property = "curve_name"
+    bl_options = {'REGISTER'}
+
+    curve_name: EnumProperty(name="Curve", items=_particle_curve_items)
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj and obj.type == 'EMPTY'
+                and getattr(obj, 'inu', None)
+                and obj.inu.type == '2DFX'
+                and obj.inu.effect_2dfx == 'PARTICLE')
+
+    def execute(self, context):
+        obj = context.active_object
+        if obj is None or not self.curve_name:
+            return {'CANCELLED'}
+        obj.inu.particle_curve_name = self.curve_name
+        if _load_curve_into_buffer(obj, self.curve_name):
+            n = len(obj.inu.particle_curve_keys)
+            self.report({'INFO'}, f"{self.curve_name}: {n} ключей")
+        else:
+            self.report({'WARNING'}, f"Не удалось загрузить {self.curve_name}")
+        return {'FINISHED'}
+
+    def invoke(self, context, event):
+        context.window_manager.invoke_search_popup(self)
+        return {'RUNNING_MODAL'}
+
+
+class GTATOOLS_OT_particle_curve_key_add(bpy.types.Operator):
+    """Добавить ключевой кадр в конец кривой"""
+    bl_idname = "gtatools.particle_curve_key_add"
+    bl_label = "Add Keyframe"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj and getattr(obj, 'inu', None) and obj.inu.particle_curve_name
+
+    def execute(self, context):
+        obj = context.active_object
+        keys = obj.inu.particle_curve_keys
+        item = keys.add()
+        # Default new key to t=1 and the last val, or fallback
+        if len(keys) >= 2:
+            prev = keys[-2]
+            item.time = min(prev.time + 0.1, 1.0)
+            item.val = prev.val
+        else:
+            item.time = 0.0
+            item.val = 0.0
+        obj.inu.particle_curve_key_index = len(keys) - 1
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_particle_curve_key_select_row(bpy.types.Operator):
+    """Выбрать активный ключ для удаления"""
+    bl_idname = "gtatools.particle_curve_key_select_row"
+    bl_label = "Select Keyframe Row"
+    bl_options = {'REGISTER'}
+
+    index: IntProperty(default=0)
+
+    def execute(self, context):
+        obj = context.active_object
+        if obj and getattr(obj, 'inu', None):
+            obj.inu.particle_curve_key_index = self.index
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_particle_curve_key_remove(bpy.types.Operator):
+    """Удалить активный ключевой кадр"""
+    bl_idname = "gtatools.particle_curve_key_remove"
+    bl_label = "Remove Keyframe"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj and getattr(obj, 'inu', None)
+                and len(obj.inu.particle_curve_keys) > 0)
+
+    def execute(self, context):
+        obj = context.active_object
+        keys = obj.inu.particle_curve_keys
+        idx = max(0, min(obj.inu.particle_curve_key_index, len(keys) - 1))
+        keys.remove(idx)
+        if obj.inu.particle_curve_key_index >= len(keys):
+            obj.inu.particle_curve_key_index = max(0, len(keys) - 1)
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_particle_curve_write(bpy.types.Operator):
+    """Записать буфер ключей обратно в effects.fxp для выбранной кривой"""
+    bl_idname = "gtatools.particle_curve_write"
+    bl_label = "Write Curve to FXP"
+    bl_options = {'REGISTER'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj and getattr(obj, 'inu', None)
+                and obj.inu.particle_curve_name
+                and len(obj.inu.particle_curve_keys) > 0)
+
+    def execute(self, context):
+        obj = context.active_object
+        curve_key = obj.inu.particle_curve_name
+        if '.' not in curve_key:
+            self.report({'ERROR'}, f"Неверный ключ кривой: {curve_key}")
+            return {'CANCELLED'}
+        info_type, field_name = curve_key.split('.', 1)
+
+        game_root = bpy.path.abspath(context.scene.gtatools_game_root or '')
+        if not game_root:
+            self.report({'ERROR'}, "Game Root не задан")
+            return {'CANCELLED'}
+        fxp_path = os.path.join(game_root, 'models', 'effects.fxp')
+        if not os.path.isfile(fxp_path):
+            self.report({'ERROR'}, f"effects.fxp не найден: {fxp_path}")
+            return {'CANCELLED'}
+
+        effect_name = obj.get('2dfx_effect_name', '') or ''
+        if not effect_name:
+            self.report({'ERROR'}, "Эффект не выбран")
+            return {'CANCELLED'}
+
+        # Auto-backup on first write
+        backup_path = fxp_path + '.bak'
+        if not os.path.isfile(backup_path):
+            import shutil
+            try:
+                shutil.copy2(fxp_path, backup_path)
+                print(f"[FXP] backed up to {backup_path}")
+            except Exception as e:
+                self.report({'ERROR'}, f"Не удалось создать бэкап: {e}")
+                return {'CANCELLED'}
+
+        from .core import fxp as _fxp
+        from .core.fxp import FXCurve, FXKeyframe, FXInfoBlock
+        try:
+            fxf = _fxp.read_fxp(fxp_path)
+        except Exception as e:
+            self.report({'ERROR'}, f"Ошибка парсинга: {e}")
+            return {'CANCELLED'}
+
+        system = fxf.find(effect_name)
+        if not system or not system.emitters:
+            self.report({'ERROR'}, f"Система '{effect_name}' не найдена")
+            return {'CANCELLED'}
+
+        em_idx = max(0, min(int(obj.inu.particle_emitter_index), len(system.emitters) - 1))
+        em = system.emitters[em_idx]
+
+        info = em.info(info_type)
+        if info is None:
+            info = FXInfoBlock(type=info_type, scalars=[('TIMEMODEPRT', '1')])
+            em.infos.append(info)
+
+        # Build the new curve from the buffer, sorted by time
+        keys_sorted = sorted(
+            ((float(k.time), float(k.val)) for k in obj.inu.particle_curve_keys),
+            key=lambda kv: kv[0],
+        )
+        info.curves[field_name] = FXCurve(
+            looped=0,
+            keys=[FXKeyframe(time=t, val=v) for t, v in keys_sorted],
+        )
+
+        try:
+            _fxp.write_fxp(fxp_path, fxf)
+        except Exception as e:
+            self.report({'ERROR'}, f"Ошибка записи: {e}")
+            return {'CANCELLED'}
+
+        _fxp.clear_cache()
+
+        # Refresh the scalar fields from the updated FXP and rebuild preview
+        try:
+            _populate_particle_props_from_fxp(obj, effect_name, em_idx)
+        except Exception:
+            pass
+        try:
+            from .ops.fx_preview import update_particle_preview
+            update_particle_preview(obj)
+        except Exception:
+            pass
+
+        self.report({'INFO'}, f"{curve_key}: {len(keys_sorted)} ключей записано")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_particle_emitter_switch(bpy.types.Operator):
+    """Переключить редактируемый эмиттер в системе с несколькими"""
+    bl_idname = "gtatools.particle_emitter_switch"
+    bl_label = "Switch Particle Emitter"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    direction: IntProperty(default=1)  # +1 = next, -1 = prev
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj and obj.type == 'EMPTY'
+                and getattr(obj, 'inu', None)
+                and obj.inu.type == '2DFX'
+                and obj.inu.effect_2dfx == 'PARTICLE')
+
+    def execute(self, context):
+        obj = context.active_object
+        name = obj.get('2dfx_effect_name', '') or ''
+        if not name:
+            self.report({'WARNING'}, "Эффект не выбран")
+            return {'CANCELLED'}
+        total = _get_effect_emitter_count(name)
+        if total <= 1:
+            self.report({'INFO'}, "У эффекта один эмиттер")
+            return {'CANCELLED'}
+
+        cur = int(obj.inu.particle_emitter_index)
+        new_idx = (cur + self.direction) % total
+        obj.inu.particle_emitter_index = new_idx
+        try:
+            _populate_particle_props_from_fxp(obj, name, new_idx)
+        except Exception as e:
+            self.report({'ERROR'}, f"populate error: {e}")
+            return {'CANCELLED'}
+        try:
+            from .ops.fx_preview import update_particle_preview
+            update_particle_preview(obj)
+        except Exception as e:
+            print(f"[2DFX Particle] preview update failed: {e}")
+
+        self.report({'INFO'}, f"Emitter {new_idx + 1}/{total}")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_reload_effects_fxp(bpy.types.Operator):
+    """Перечитать effects.fxp с диска (сбросить кэш)"""
+    bl_idname = "gtatools.reload_effects_fxp"
+    bl_label = "Reload effects.fxp"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        from .core import fxp as _fxp
+        _fxp.clear_cache()
+        self.report({'INFO'}, "effects.fxp cache cleared")
+        return {'FINISHED'}
+
+
+# Zone assignment per FX_INFO block type, matching GTA SA / FX Editor order.
+# The native parser reads blocks sequentially and expects them grouped by
+# zone: Emission(1) → Physics(2) → Rendering(3). Out-of-order blocks
+# (e.g. EMANGLE after COLOUR) are silently ignored by the game engine.
+_INFO_ZONES = {
+    # Zone 1 — Emission / birth
+    'EMLIFE': 1, 'EMRATE': 1, 'EMSPEED': 1, 'EMANGLE': 1, 'EMDIR': 1,
+    'EMSIZE': 1, 'EMROTATION': 1, 'EMPOS': 1, 'EMWEATHER': 1,
+    # Zone 2 — Physics / movement
+    'FORCE': 2, 'FRICTION': 2, 'WIND': 2, 'ROTSPEED': 2, 'NOISE': 2,
+    'JITTER': 2, 'GROUNDCOLLIDE': 2, 'ATTRACTPT': 2, 'FLOAT': 2,
+    'UNDERWATER': 2,
+    # Zone 3 — Rendering / visuals
+    'SIZE': 3, 'COLOUR': 3, 'COLOURBRIGHT': 3, 'SPRITERECT': 3, 'DIR': 3,
+    'ANIMTEX': 3, 'TRAIL': 3, 'FLAT': 3, 'HEATHAZE': 3, 'SELFLIT': 3,
+}
+
+
+def _info_zone(type_name: str) -> int:
+    return _INFO_ZONES.get(type_name, 3)
+
+
+def _sort_infos_by_zone(em) -> None:
+    """Stable-sort an emitter's info blocks into canonical zone order."""
+    em.infos.sort(key=lambda i: _info_zone(i.type))
+
+
+# Mandatory curve fields per FX_INFO block type, with sensible defaults.
+# When we create a new info block from scratch during save, the game crashes
+# if any of these fields are missing — the native parser allocates a fixed
+# struct per block and reads garbage for absent fields. These defaults come
+# from analysing the pristine effects.fxp across all 161 emitters.
+_INFO_TEMPLATES = {
+    'COLOUR': (
+        [('TIMEMODEPRT', '1')],
+        {'RED': 255.0, 'GREEN': 255.0, 'BLUE': 255.0, 'ALPHA': 255.0},
+    ),
+    'COLOURBRIGHT': (
+        [('TIMEMODEPRT', '1')],
+        {'RED': 255.0, 'GREEN': 255.0, 'BLUE': 255.0, 'ALPHA': 255.0, 'BIAS': 0.0},
+    ),
+    'SIZE': (
+        [('TIMEMODEPRT', '1')],
+        {'SIZEX': 1.0, 'SIZEY': 1.0, 'SIZEXBIAS': 0.0, 'SIZEYBIAS': 0.0},
+    ),
+    'EMLIFE':     ([], {'LIFE': 1.0, 'BIAS': 0.0}),
+    'EMRATE':     ([], {'RATE': 10.0}),
+    'EMSPEED':    ([], {'SPEED': 1.0, 'BIAS': 0.0}),
+    'EMDIR':      ([], {'DIRX': 0.0, 'DIRY': 0.0, 'DIRZ': 1.0}),
+    'EMANGLE':    ([], {'MIN': 0.0, 'MAX': 0.0}),
+    'EMSIZE': (
+        # Zone 1 blocks never carry TIMEMODEPRT in original GTA SA data;
+        # adding one here desynchronises the native field-order parser.
+        [],
+        # Interleaved axis order — GTA SA's native parser reads these
+        # sequentially by position, not by name. Wrong order => particles
+        # emit along a degenerate line/point instead of the intended volume.
+        {
+            'RADIUS': 0.0,
+            'SIZEMINX': 0.0, 'SIZEMAXX': 0.0,
+            'SIZEMINY': 0.0, 'SIZEMAXY': 0.0,
+            'SIZEMINZ': 0.0, 'SIZEMAXZ': 0.0,
+        },
+    ),
+    'EMPOS':      ([], {'X': 0.0, 'Y': 0.0, 'Z': 0.0}),
+    'EMROTATION': ([], {'ANGLEMIN': 0.0, 'ANGLEMAX': 0.0}),
+    'FORCE': (
+        [('TIMEMODEPRT', '1')],
+        {'FORCEX': 0.0, 'FORCEY': 0.0, 'FORCEZ': 0.0},
+    ),
+    'FRICTION':   ([('TIMEMODEPRT', '1')], {'FRICTION': 0.0}),
+    'WIND':       ([('TIMEMODEPRT', '1')], {'WINDFACTOR': 0.0}),
+    'NOISE':      ([('TIMEMODEPRT', '1')], {'NOISE': 0.0}),
+    'JITTER':     ([('TIMEMODEPRT', '1')], {'JITTERFACTOR': 0.0}),
+    'ROTSPEED': (
+        [('TIMEMODEPRT', '1')],
+        {'MINCW': 0.0, 'MAXCW': 0.0, 'MINCCW': 0.0, 'MAXCCW': 0.0},
+    ),
+    'GROUNDCOLLIDE': (
+        [('TIMEMODEPRT', '1')],
+        {'BOUNCE': 0.0, 'SPEEDMULT': 1.0, 'BOUNCEERROR': 0.0},
+    ),
+}
+
+
+def _apply_particle_props_to_emitter(obj, em) -> int:
+    """Write obj.inu.particle_* back into an FXEmitter, but ONLY for fields
+    that differ from what a fresh sample of `em` would produce.
+
+    This preserves multi-keyframe curves the user hasn't touched: if the
+    user only edited `particle_size_start`, we rewrite just SIZE.SIZEX/SIZEY
+    with a 2-keyframe curve and leave every other curve alone.
+
+    Returns the number of fields actually applied.
+    """
+    from .core.fxp import FXCurve, FXKeyframe, FXInfoBlock
+    inu = obj.inu
+    fresh = _sample_particle_from_emitter(em)
+
+    applied = 0
+    eps = 1e-4
+
+    def _close_scalar(a, b):
+        return abs(float(a) - float(b)) < eps
+
+    def _close_vec(a, b):
+        if len(a) != len(b):
+            return False
+        return all(abs(float(x) - float(y)) < eps for x, y in zip(a, b))
+
+    def _set_base(key, value):
+        sv = str(value)
+        for i, (k, _) in enumerate(em.base):
+            if k == key:
+                em.base[i] = (k, sv)
+                return
+        em.base.append((key, sv))
+
+    def _get_or_create_info(type_name):
+        info = em.info(type_name)
+        if info is not None:
+            return info
+        # Build fresh block populated with ALL mandatory fields at sensible
+        # defaults. The subsequent per-field writes below will overwrite the
+        # specific fields the user actually changed, while non-touched fields
+        # remain as defaults — so the game sees a complete struct.
+        tmpl = _INFO_TEMPLATES.get(type_name, ([], {}))
+        scalars, default_curves = tmpl
+        info = FXInfoBlock(type=type_name, scalars=list(scalars))
+        for field, default_val in default_curves.items():
+            info.curves[field] = FXCurve(
+                looped=0,
+                keys=[FXKeyframe(time=0.0, val=float(default_val))],
+            )
+        em.infos.append(info)
+        return info
+
+    def _set_start_end(info, field, start_val, end_val):
+        info.curves[field] = FXCurve(looped=0, keys=[
+            FXKeyframe(time=0.0, val=float(start_val)),
+            FXKeyframe(time=1.0, val=float(end_val)),
+        ])
+
+    def _set_single(info, field, value):
+        info.curves[field] = FXCurve(looped=0, keys=[
+            FXKeyframe(time=0.0, val=float(value)),
+        ])
+
+    # ── Base scalars ── #
+    cur_tex = inu.particle_texture.strip()
+    cur_tex_to_write = cur_tex if cur_tex else 'NULL'
+    if cur_tex != fresh['texture']:
+        _set_base('TEXTURE', cur_tex_to_write)
+        applied += 1
+
+    if int(inu.particle_src_blend) != fresh['src_blend']:
+        _set_base('SRCBLENDID', int(inu.particle_src_blend))
+        applied += 1
+    if int(inu.particle_dst_blend) != fresh['dst_blend']:
+        _set_base('DSTBLENDID', int(inu.particle_dst_blend))
+        applied += 1
+
+    # ── COLOUR curves ── #
+    c0 = tuple(inu.particle_color_start)
+    c1 = tuple(inu.particle_color_end)
+    cm = tuple(inu.particle_color_mid)
+    mid_enabled = bool(inu.particle_color_mid_enabled)
+    mid_time = float(inu.particle_color_mid_time)
+    fresh_mid_enabled = bool(fresh.get('color_mid_enabled', False))
+    fresh_mid = tuple(fresh.get('color_mid', (1.0, 1.0, 1.0, 1.0)))
+    fresh_mid_time = float(fresh.get('color_mid_time', 0.5))
+
+    colour_changed_start = not _close_vec(c0, fresh['color_start'])
+    colour_changed_end = not _close_vec(c1, fresh['color_end'])
+    mid_mode_changed = mid_enabled != fresh_mid_enabled
+    mid_value_changed = mid_enabled and (
+        not _close_vec(cm, fresh_mid)
+        or abs(mid_time - fresh_mid_time) >= eps
+    )
+
+    def _set_3key(info, field, v0, vm, v1, tm):
+        info.curves[field] = FXCurve(looped=0, keys=[
+            FXKeyframe(time=0.0, val=float(v0)),
+            FXKeyframe(time=float(tm), val=float(vm)),
+            FXKeyframe(time=1.0, val=float(v1)),
+        ])
+
+    if colour_changed_start or colour_changed_end or mid_mode_changed or mid_value_changed:
+        colour = _get_or_create_info('COLOUR')
+        # Rewrite channels that changed; if middle is enabled, always use
+        # 3-key curves for those channels to preserve the middle keyframe.
+        for idx, name in enumerate(('RED', 'GREEN', 'BLUE', 'ALPHA')):
+            ch_a_changed = abs(c0[idx] - fresh['color_start'][idx]) >= eps
+            ch_b_changed = abs(c1[idx] - fresh['color_end'][idx]) >= eps
+            ch_m_changed = mid_enabled and abs(cm[idx] - fresh_mid[idx]) >= eps
+            if ch_a_changed or ch_b_changed or ch_m_changed or mid_mode_changed:
+                if mid_enabled:
+                    _set_3key(colour, name,
+                              c0[idx] * 255.0, cm[idx] * 255.0, c1[idx] * 255.0,
+                              mid_time)
+                else:
+                    _set_start_end(colour, name, c0[idx] * 255.0, c1[idx] * 255.0)
+                applied += 1
+
+    # ── SIZE curves (SIZEX/SIZEY) ── #
+    sz_start_changed = not _close_scalar(inu.particle_size_start, fresh['size_start'])
+    sz_end_changed = not _close_scalar(inu.particle_size_end, fresh['size_end'])
+    if sz_start_changed or sz_end_changed:
+        size_info = _get_or_create_info('SIZE')
+        _set_start_end(size_info, 'SIZEX', inu.particle_size_start, inu.particle_size_end)
+        _set_start_end(size_info, 'SIZEY', inu.particle_size_start, inu.particle_size_end)
+        applied += 1
+
+    # ── Scalar emission curves ── #
+    if not _close_scalar(inu.particle_life, fresh['life']):
+        _set_single(_get_or_create_info('EMLIFE'), 'LIFE', inu.particle_life)
+        applied += 1
+    if not _close_scalar(inu.particle_rate, fresh['rate']):
+        _set_single(_get_or_create_info('EMRATE'), 'RATE', inu.particle_rate)
+        applied += 1
+    if not _close_scalar(inu.particle_speed, fresh['speed']):
+        _set_single(_get_or_create_info('EMSPEED'), 'SPEED', inu.particle_speed)
+        applied += 1
+
+    # ── EMDIR ── #
+    dir_cur = tuple(inu.particle_direction)
+    if not _close_vec(dir_cur, fresh['direction']):
+        emdir = _get_or_create_info('EMDIR')
+        if abs(dir_cur[0] - fresh['direction'][0]) >= eps:
+            _set_single(emdir, 'DIRX', dir_cur[0])
+            applied += 1
+        if abs(dir_cur[1] - fresh['direction'][1]) >= eps:
+            _set_single(emdir, 'DIRY', dir_cur[1])
+            applied += 1
+        if abs(dir_cur[2] - fresh['direction'][2]) >= eps:
+            _set_single(emdir, 'DIRZ', dir_cur[2])
+            applied += 1
+
+    # ── Biases (EMLIFE BIAS, EMSPEED BIAS) ── #
+    if not _close_scalar(inu.particle_life_bias, fresh['life_bias']):
+        _set_single(_get_or_create_info('EMLIFE'), 'BIAS', inu.particle_life_bias)
+        applied += 1
+    if not _close_scalar(inu.particle_speed_bias, fresh['speed_bias']):
+        _set_single(_get_or_create_info('EMSPEED'), 'BIAS', inu.particle_speed_bias)
+        applied += 1
+
+    # ── EMANGLE ── #
+    if not _close_scalar(inu.particle_angle_min, fresh['angle_min']):
+        _set_single(_get_or_create_info('EMANGLE'), 'MIN', inu.particle_angle_min)
+        applied += 1
+    if not _close_scalar(inu.particle_angle_max, fresh['angle_max']):
+        _set_single(_get_or_create_info('EMANGLE'), 'MAX', inu.particle_angle_max)
+        applied += 1
+
+    # ── EMSIZE (Box as symmetric half-extent around emitter) ── #
+    # UI stores `particle_volume` as half-extent; FXP needs pairs of
+    # SIZEMIN=-v SIZEMAX=+v. Writing both sides keeps the parser happy.
+    vol_cur = tuple(inu.particle_volume)
+    if not _close_vec(vol_cur, fresh['volume']):
+        emsize = _get_or_create_info('EMSIZE')
+        for idx, (fld_min, fld_max) in enumerate(
+            (('SIZEMINX', 'SIZEMAXX'),
+             ('SIZEMINY', 'SIZEMAXY'),
+             ('SIZEMINZ', 'SIZEMAXZ'))
+        ):
+            half = float(vol_cur[idx])
+            _set_single(emsize, fld_min, -half)
+            _set_single(emsize, fld_max, half)
+            applied += 2
+
+    # ── EMPOS ── #
+    off_cur = tuple(inu.particle_offset)
+    if not _close_vec(off_cur, fresh['offset']):
+        empos = _get_or_create_info('EMPOS')
+        for idx, fld in enumerate(('X', 'Y', 'Z')):
+            if abs(off_cur[idx] - fresh['offset'][idx]) >= eps:
+                _set_single(empos, fld, off_cur[idx])
+                applied += 1
+
+    # ── EMROTATION ── #
+    if not _close_scalar(inu.particle_rotation_min, fresh['rotation_min']):
+        _set_single(_get_or_create_info('EMROTATION'), 'ANGLEMIN', inu.particle_rotation_min)
+        applied += 1
+    if not _close_scalar(inu.particle_rotation_max, fresh['rotation_max']):
+        _set_single(_get_or_create_info('EMROTATION'), 'ANGLEMAX', inu.particle_rotation_max)
+        applied += 1
+
+    # ── FORCE ── #
+    force_cur = tuple(inu.particle_force)
+    if not _close_vec(force_cur, fresh['force']):
+        finfo = _get_or_create_info('FORCE')
+        for idx, fld in enumerate(('FORCEX', 'FORCEY', 'FORCEZ')):
+            if abs(force_cur[idx] - fresh['force'][idx]) >= eps:
+                _set_single(finfo, fld, force_cur[idx])
+                applied += 1
+
+    # ── FRICTION / WIND / NOISE / JITTER ── #
+    if not _close_scalar(inu.particle_friction, fresh['friction']):
+        _set_single(_get_or_create_info('FRICTION'), 'FRICTION', inu.particle_friction)
+        applied += 1
+    if not _close_scalar(inu.particle_wind, fresh['wind']):
+        _set_single(_get_or_create_info('WIND'), 'WINDFACTOR', inu.particle_wind)
+        applied += 1
+    if not _close_scalar(inu.particle_noise, fresh['noise']):
+        _set_single(_get_or_create_info('NOISE'), 'NOISE', inu.particle_noise)
+        applied += 1
+    if not _close_scalar(inu.particle_jitter, fresh['jitter']):
+        _set_single(_get_or_create_info('JITTER'), 'JITTERFACTOR', inu.particle_jitter)
+        applied += 1
+
+    # ── ROTSPEED ── #
+    if not _close_scalar(inu.particle_rotspeed_min, fresh['rotspeed_min']):
+        _set_single(_get_or_create_info('ROTSPEED'), 'MINCW', inu.particle_rotspeed_min)
+        applied += 1
+    if not _close_scalar(inu.particle_rotspeed_max, fresh['rotspeed_max']):
+        _set_single(_get_or_create_info('ROTSPEED'), 'MAXCW', inu.particle_rotspeed_max)
+        applied += 1
+
+    # ── GROUNDCOLLIDE ── #
+    if not _close_scalar(inu.particle_ground_bounce, fresh['ground_bounce']):
+        _set_single(_get_or_create_info('GROUNDCOLLIDE'), 'BOUNCE', inu.particle_ground_bounce)
+        applied += 1
+    if not _close_scalar(inu.particle_ground_speedmult, fresh['ground_speedmult']):
+        _set_single(_get_or_create_info('GROUNDCOLLIDE'), 'SPEEDMULT', inu.particle_ground_speedmult)
+        applied += 1
+
+    # Enforce canonical zone order — the native GTA SA parser ignores
+    # info blocks that appear out of Emission→Physics→Rendering sequence.
+    if applied > 0:
+        _sort_infos_by_zone(em)
+
+    # Strip stray TIMEMODEPRT from Zone 1 blocks (the native parser never
+    # expects it there; its presence desyncs the field-order reader and
+    # crashes the game). Zone 2/3 blocks always keep TIMEMODEPRT: 1.
+    for info in em.infos:
+        if _info_zone(info.type) == 1:
+            if any(k == 'TIMEMODEPRT' for k, _ in info.scalars):
+                info.scalars = [(k, v) for k, v in info.scalars if k != 'TIMEMODEPRT']
+                applied += 1
+
+    return applied
+
+
+class GTATOOLS_OT_save_particle_effect(bpy.types.Operator):
+    """Сохранить правки эффекта обратно в effects.fxp (с автобэкапом)"""
+    bl_idname = "gtatools.save_particle_effect"
+    bl_label = "Save Particle Effect"
+    bl_options = {'REGISTER'}
+
+    effect_name: StringProperty(
+        name="Effect Name",
+        description=T("Имя системы в effects.fxp (можно новое — тогда клонируется из текущей)"),
+        default="",
+    )
+    overwrite: BoolProperty(
+        name="Overwrite existing",
+        description=T("Перезаписать существующую систему с таким именем"),
+        default=True,
+    )
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj and obj.type == 'EMPTY'
+                and getattr(obj, 'inu', None)
+                and obj.inu.type == '2DFX'
+                and obj.inu.effect_2dfx == 'PARTICLE')
+
+    def invoke(self, context, event):
+        obj = context.active_object
+        self.effect_name = obj.get('2dfx_effect_name', '') or ''
+        return context.window_manager.invoke_props_dialog(self, width=360)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, 'effect_name')
+        layout.prop(self, 'overwrite')
+        layout.label(text=T("При первой записи создастся effects.fxp.bak"), icon='INFO')
+
+    def execute(self, context):
+        obj = context.active_object
+        game_root = bpy.path.abspath(context.scene.gtatools_game_root or '')
+        if not game_root:
+            self.report({'ERROR'}, "Game Root не задан")
+            return {'CANCELLED'}
+
+        fxp_path = os.path.join(game_root, 'models', 'effects.fxp')
+        if not os.path.isfile(fxp_path):
+            self.report({'ERROR'}, f"effects.fxp не найден: {fxp_path}")
+            return {'CANCELLED'}
+
+        target_name = self.effect_name.strip()
+        if not target_name:
+            self.report({'ERROR'}, "Имя эффекта пустое")
+            return {'CANCELLED'}
+
+        # Read fresh (don't mutate cached object)
+        from .core import fxp as _fxp
+        try:
+            fxf = _fxp.read_fxp(fxp_path)
+        except Exception as e:
+            self.report({'ERROR'}, f"Ошибка парсинга effects.fxp: {e}")
+            return {'CANCELLED'}
+
+        existing = fxf.find(target_name)
+
+        if existing is None:
+            # Clone current system under new name
+            source_name = obj.get('2dfx_effect_name', '') or ''
+            source = fxf.find(source_name)
+            if source is None:
+                self.report({'ERROR'}, f"Исходная система '{source_name}' не найдена — нечего клонировать")
+                return {'CANCELLED'}
+            import copy
+            new_system = copy.deepcopy(source)
+            renamed = False
+            for i, (k, v) in enumerate(new_system.header):
+                if k == 'NAME':
+                    new_system.header[i] = (k, target_name)
+                    renamed = True
+                    break
+            if not renamed:
+                new_system.header.append(('NAME', target_name))
+            fxf.systems.append(new_system)
+            target_system = new_system
+        else:
+            if not self.overwrite:
+                self.report({'ERROR'}, f"Система '{target_name}' уже существует (снимите галку 'Overwrite' нельзя, включите её)")
+                return {'CANCELLED'}
+            target_system = existing
+
+        if not target_system.emitters:
+            self.report({'ERROR'}, f"У системы '{target_name}' нет эмиттеров")
+            return {'CANCELLED'}
+
+        em_idx = max(0, min(int(obj.inu.particle_emitter_index), len(target_system.emitters) - 1))
+        try:
+            applied = _apply_particle_props_to_emitter(obj, target_system.emitters[em_idx])
+        except Exception as e:
+            self.report({'ERROR'}, f"Ошибка применения правок: {e}")
+            return {'CANCELLED'}
+
+        # System-level header fields (LENGTH/PLAYMODE/CULLDIST) — dirty check
+        def _set_header(key, value):
+            sv = str(value)
+            for i, (k, _) in enumerate(target_system.header):
+                if k == key:
+                    target_system.header[i] = (k, sv)
+                    return
+            target_system.header.append((key, sv))
+
+        def _header_float(key, default):
+            try:
+                return float(target_system.header_get(key) or default)
+            except ValueError:
+                return default
+
+        def _header_int(key, default):
+            try:
+                return int(target_system.header_get(key) or default)
+            except ValueError:
+                return default
+
+        inu = obj.inu
+        if abs(float(inu.particle_sys_length) - _header_float('LENGTH', 1.0)) > 1e-4:
+            _set_header('LENGTH', f"{float(inu.particle_sys_length):.3f}")
+            applied += 1
+        if int(inu.particle_sys_playmode) != _header_int('PLAYMODE', 2):
+            _set_header('PLAYMODE', int(inu.particle_sys_playmode))
+            applied += 1
+        if abs(float(inu.particle_sys_culldist) - _header_float('CULLDIST', 50.0)) > 1e-4:
+            _set_header('CULLDIST', f"{float(inu.particle_sys_culldist):.3f}")
+            applied += 1
+
+        # No-op early exit: if we didn't clone a new system and no fields
+        # changed, don't touch the file (and don't create a pointless backup).
+        is_clone = existing is None
+        if not is_clone and applied == 0:
+            self.report({'INFO'}, "Нет изменений — файл не тронут")
+            return {'FINISHED'}
+
+        # Auto-backup on first actual write
+        backup_path = fxp_path + '.bak'
+        if not os.path.isfile(backup_path):
+            import shutil
+            try:
+                shutil.copy2(fxp_path, backup_path)
+                print(f"[FXP] backed up to {backup_path}")
+            except Exception as e:
+                self.report({'ERROR'}, f"Не удалось создать бэкап: {e}")
+                return {'CANCELLED'}
+
+        try:
+            _fxp.write_fxp(fxp_path, fxf)
+        except Exception as e:
+            self.report({'ERROR'}, f"Ошибка записи: {e}")
+            return {'CANCELLED'}
+
+        _fxp.clear_cache()
+
+        if obj.get('2dfx_effect_name') != target_name:
+            obj['2dfx_effect_name'] = target_name
+
+        msg = f"Клон '{target_name}' сохранён" if is_clone else f"'{target_name}': применено полей — {applied}"
+        self.report({'INFO'}, msg)
         return {'FINISHED'}
 
 
@@ -7594,22 +9352,59 @@ class GTATOOLS_OT_detach_2dfx(bpy.types.Operator):
     bl_label = "Detach from Model"
     bl_options = {'REGISTER', 'UNDO'}
 
+    fx_name: StringProperty(default="")
+
     @classmethod
     def poll(cls, context):
-        obj = context.active_object
-        return (obj and obj.type == 'EMPTY'
-                and getattr(obj, 'inu', None)
-                and obj.inu.type == '2DFX'
-                and obj.parent is not None)
+        return context.active_object is not None
 
     def execute(self, context):
-        fx_obj = context.active_object
+        # Если указано имя — отвязываем конкретный объект
+        if self.fx_name:
+            fx_obj = bpy.data.objects.get(self.fx_name)
+        else:
+            fx_obj = context.active_object
+
+        if not fx_obj or not fx_obj.parent:
+            self.report({'WARNING'}, "Nothing to detach")
+            return {'CANCELLED'}
+
         parent_name = fx_obj.parent.name
-        # Keep world position when unparenting
         world_matrix = fx_obj.matrix_world.copy()
         fx_obj.parent = None
         fx_obj.matrix_world = world_matrix
-        self.report({'INFO'}, f"2DFX detached from '{parent_name}'")
+        self.report({'INFO'}, f"'{fx_obj.name}' detached from '{parent_name}'")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_detach_all_2dfx(bpy.types.Operator):
+    """Отвязать все 2DFX/частицы от выделенного меша"""
+    bl_idname = "gtatools.detach_all_2dfx"
+    bl_label = "Detach All from Mesh"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj and obj.type == 'MESH'
+
+    def execute(self, context):
+        mesh_obj = context.active_object
+        # Собрать всех дочерних 2DFX
+        children = [c for c in bpy.data.objects
+                    if c.parent == mesh_obj and c.type == 'EMPTY'
+                    and getattr(c, 'inu', None) and c.inu.type == '2DFX']
+
+        if not children:
+            self.report({'WARNING'}, "No attached 2DFX found")
+            return {'CANCELLED'}
+
+        for fx in children:
+            world_matrix = fx.matrix_world.copy()
+            fx.parent = None
+            fx.matrix_world = world_matrix
+
+        self.report({'INFO'}, f"{len(children)} 2DFX detached from '{mesh_obj.name}'")
         return {'FINISHED'}
 
 
@@ -7660,6 +9455,24 @@ class GTATOOLS_PT_2dfx_panel(bpy.types.Panel):
                        and o.inu.type == '2DFX')
         layout.label(text=f"2DFX objects in scene: {fx_count}", icon='INFO')
 
+        # ── Если выделен меш — показываем привязанные 2DFX ──
+        if not is_active and obj and obj.type == 'MESH':
+            attached = [c for c in bpy.data.objects
+                        if c.parent == obj and c.type == 'EMPTY'
+                        and getattr(c, 'inu', None) and c.inu.type == '2DFX']
+            if attached:
+                box = layout.box()
+                box.label(text=f"{T('Привязанные 2DFX:')} {len(attached)}", icon='LINKED')
+                for fx in attached:
+                    row = box.row(align=True)
+                    row.label(text=fx.name, icon='LIGHT' if fx.inu.effect_2dfx == 'LIGHT' else 'PARTICLES')
+                    op = row.operator("gtatools.detach_2dfx", text="", icon='X')
+                    op.fx_name = fx.name
+                layout.operator("gtatools.detach_all_2dfx", text=T("Отвязать все"), icon='UNLINKED')
+                layout.separator()
+            layout.label(text=T("Выберите 2DFX Empty для редактирования"), icon='RESTRICT_SELECT_ON')
+            return
+
         # ── Если не выбран 2DFX — показываем подсказку ──
         if not is_active:
             layout.label(text=T("Выберите 2DFX Empty для редактирования"), icon='RESTRICT_SELECT_ON')
@@ -7689,7 +9502,7 @@ class GTATOOLS_PT_2dfx_panel(bpy.types.Panel):
         effect = settings.effect_2dfx
 
         # Preview buttons
-        if effect == 'LIGHT':
+        if effect in ('LIGHT', 'PARTICLE'):
             row = main_box.row(align=True)
             row.operator("gtatools.refresh_2dfx_preview", text=T("Обновить превью"), icon='FILE_REFRESH')
             row.operator("gtatools.remove_2dfx_preview", text=T("Удалить превью"), icon='X')
@@ -7755,8 +9568,171 @@ class GTATOOLS_PT_2dfx_panel(bpy.types.Panel):
         elif effect == 'PARTICLE':
             box = main_box.box()
             box.label(text=T("Свойства частицы:"), icon='PARTICLES')
-            if '2dfx_effect_name' in obj:
-                box.prop(obj, '["2dfx_effect_name"]', text=T("Имя эффекта"))
+            row = box.row(align=True)
+            row.prop(obj.inu, 'particle_effect_2dfx', text=T("Эффект"))
+            row.operator("gtatools.particle_effect_new", text="", icon='ADD')
+            row.operator("gtatools.particle_effect_delete", text="", icon='REMOVE')
+            row.operator("gtatools.reload_effects_fxp", text="", icon='FILE_REFRESH')
+
+            # Emitter switcher (only if system has > 1 emitter)
+            eff_name = obj.get('2dfx_effect_name', '') or ''
+            if eff_name:
+                em_total = _get_effect_emitter_count(eff_name)
+                if em_total > 1:
+                    em_row = box.row(align=True)
+                    op = em_row.operator("gtatools.particle_emitter_switch", text="", icon='TRIA_LEFT')
+                    op.direction = -1
+                    em_row.label(text=f"Emitter {obj.inu.particle_emitter_index + 1} / {em_total}")
+                    op = em_row.operator("gtatools.particle_emitter_switch", text="", icon='TRIA_RIGHT')
+                    op.direction = 1
+                    box.label(text=T("Переключение сбросит правки — сохраняйте первыми"), icon='INFO')
+
+            # Live simulation toggle (scene-global)
+            sim_row = box.row(align=True)
+            sim_row.prop(
+                context.scene, 'gtatools_particle_sim',
+                text=T("Симуляция"),
+                icon='PLAY' if context.scene.gtatools_particle_sim else 'PAUSE',
+                toggle=True,
+            )
+
+            inu = obj.inu
+            scene = context.scene
+
+            def _section(parent, prop_name: str, label: str, icon: str):
+                """Collapsible section helper. Returns the content box or None."""
+                expanded = getattr(scene, prop_name)
+                header = parent.row(align=True)
+                header.prop(
+                    scene, prop_name,
+                    icon='TRIA_DOWN' if expanded else 'TRIA_RIGHT',
+                    text="", emboss=False,
+                )
+                header.label(text=label, icon=icon)
+                if expanded:
+                    return parent.box()
+                return None
+
+            # ── Texture / blend ── #
+            tex_box = _section(box, 'gtatools_pfx_exp_texture', T("Спрайт и смешивание"), 'TEXTURE')
+            if tex_box:
+                tex_box.prop(inu, 'particle_texture', text=T("Текстура"))
+                row = tex_box.row(align=True)
+                row.prop(inu, 'particle_src_blend', text="SRC")
+                row.prop(inu, 'particle_dst_blend', text="DST")
+
+            # ── Colour ── #
+            col_box = _section(box, 'gtatools_pfx_exp_color', T("Цвет (start → end)"), 'COLOR')
+            if col_box:
+                col_box.prop(inu, 'particle_color_start', text=T("Начало"))
+                col_box.prop(inu, 'particle_color_mid_enabled', text=T("Средний"), toggle=True)
+                if inu.particle_color_mid_enabled:
+                    col_box.prop(inu, 'particle_color_mid', text=T("Middle"))
+                    col_box.prop(inu, 'particle_color_mid_time', text=T("Mid time"), slider=True)
+                col_box.prop(inu, 'particle_color_end', text=T("Конец"))
+
+            # ── Size ── #
+            size_box = _section(box, 'gtatools_pfx_exp_size', T("Размер"), 'FULLSCREEN_ENTER')
+            if size_box:
+                row = size_box.row(align=True)
+                row.prop(inu, 'particle_size_start', text=T("Начало"))
+                row.prop(inu, 'particle_size_end', text=T("Конец"))
+
+            # ── Emission ── #
+            em_box = _section(box, 'gtatools_pfx_exp_emission', T("Эмиссия"), 'OUTLINER_OB_FORCE_FIELD')
+            if em_box:
+                em_box.prop(inu, 'particle_life', text=T("Жизнь"))
+                em_box.prop(inu, 'particle_life_bias', text=T("Life bias"))
+                em_box.prop(inu, 'particle_rate', text=T("Rate"))
+                em_box.prop(inu, 'particle_speed', text=T("Скорость"))
+                em_box.prop(inu, 'particle_speed_bias', text=T("Speed bias"))
+                em_box.prop(inu, 'particle_direction', text=T("Направление"))
+                row = em_box.row(align=True)
+                row.prop(inu, 'particle_angle_min', text=T("Angle min"))
+                row.prop(inu, 'particle_angle_max', text=T("Angle max"))
+                em_box.prop(inu, 'particle_volume', text=T("Box"))
+                em_box.prop(inu, 'particle_offset', text=T("Offset"))
+                row = em_box.row(align=True)
+                row.prop(inu, 'particle_rotation_min', text=T("Rot min"))
+                row.prop(inu, 'particle_rotation_max', text=T("Rot max"))
+
+            # ── Physics ── #
+            ph_box = _section(box, 'gtatools_pfx_exp_physics', T("Физика"), 'PHYSICS')
+            if ph_box:
+                ph_box.prop(inu, 'particle_force', text=T("Force"))
+                row = ph_box.row(align=True)
+                row.prop(inu, 'particle_friction', text=T("Friction"))
+                row.prop(inu, 'particle_wind', text=T("Wind"))
+                row = ph_box.row(align=True)
+                row.prop(inu, 'particle_noise', text=T("Noise"))
+                row.prop(inu, 'particle_jitter', text=T("Jitter"))
+                row = ph_box.row(align=True)
+                row.prop(inu, 'particle_rotspeed_min', text=T("RotSpd min"))
+                row.prop(inu, 'particle_rotspeed_max', text=T("RotSpd max"))
+                row = ph_box.row(align=True)
+                row.prop(inu, 'particle_ground_bounce', text=T("Bounce"))
+                row.prop(inu, 'particle_ground_speedmult', text=T("SpeedMult"))
+
+            # ── System-level (FX_SYSTEM_DATA header) ── #
+            sys_box = _section(box, 'gtatools_pfx_exp_system', T("Система"), 'WORLD')
+            if sys_box:
+                sys_box.prop(inu, 'particle_sys_length', text=T("Length"))
+                sys_box.prop(inu, 'particle_sys_playmode', text=T("Play mode"))
+                sys_box.prop(inu, 'particle_sys_culldist', text=T("Cull dist"))
+
+            # ── Curve editor (B1) ── #
+            cv_box = _section(box, 'gtatools_pfx_exp_curves', T("Кривые (keyframes)"), 'FCURVE')
+            if cv_box:
+                # Curve picker row
+                pick_row = cv_box.row(align=True)
+                pick_row.operator(
+                    "gtatools.particle_curve_select",
+                    text=inu.particle_curve_name or T("Выбрать кривую..."),
+                    icon='VIEWZOOM',
+                )
+
+                if inu.particle_curve_name:
+                    keys = inu.particle_curve_keys
+                    # Header
+                    hdr = cv_box.row(align=True)
+                    hdr.label(text=T(f"Ключи ({len(keys)}):"))
+                    hdr.operator("gtatools.particle_curve_key_add", text="", icon='ADD')
+                    hdr.operator("gtatools.particle_curve_key_remove", text="", icon='REMOVE')
+
+                    # Keyframe rows (time, val)
+                    if len(keys) == 0:
+                        cv_box.label(text=T("Нет ключей"), icon='INFO')
+                    else:
+                        for i, kf in enumerate(keys):
+                            r = cv_box.row(align=True)
+                            # Active-row indicator (click selects for deletion)
+                            is_active = (i == inu.particle_curve_key_index)
+                            op = r.operator(
+                                "gtatools.particle_curve_key_select_row",
+                                text="", depress=is_active,
+                                icon='RADIOBUT_ON' if is_active else 'RADIOBUT_OFF',
+                            )
+                            op.index = i
+                            r.prop(kf, 'time', text="t")
+                            r.prop(kf, 'val', text="v")
+
+                    # Write to FXP button
+                    write_row = cv_box.row(align=True)
+                    write_row.scale_y = 1.2
+                    write_row.operator(
+                        "gtatools.particle_curve_write",
+                        text=T("Записать кривую в effects.fxp"),
+                        icon='FILE_TICK',
+                    )
+
+            # Save to effects.fxp
+            save_row = box.row(align=True)
+            save_row.scale_y = 1.3
+            save_row.operator(
+                "gtatools.save_particle_effect",
+                text=T("Сохранить в effects.fxp"),
+                icon='FILE_TICK',
+            )
 
         elif effect == 'PED_ATTRACTOR':
             box = main_box.box()
@@ -8001,6 +9977,68 @@ def _draw_sort_materials_menu(self, context):
     """Append sort button to material context menu"""
     self.layout.separator()
     self.layout.operator("gtatools.sort_materials", text=T("Сортировка материалов"), icon='SORTALPHA')
+
+
+class GTATOOLS_PT_object_ide_ipl_panel(bpy.types.Panel):
+    """IDE/IPL свойства в Object Properties"""
+    bl_label = "GTA SA: IDE / IPL"
+    bl_idname = "GTATOOLS_PT_object_ide_ipl_panel"
+    bl_space_type = 'PROPERTIES'
+    bl_region_type = 'WINDOW'
+    bl_context = 'object'
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and obj.type == 'MESH'
+
+    def draw(self, context):
+        layout = self.layout
+        scn = context.scene
+        obj = context.active_object
+        inu = obj.inu
+
+        col = layout.column(align=True)
+        col.prop(inu, "model_id", text="Model ID")
+        col.prop(inu, "draw_distance", text="Draw Dist")
+        col.prop(inu, "lod_draw_distance", text="LOD Dist")
+
+        # Flags with expandable checkboxes
+        row = layout.row(align=True)
+        row.prop(inu, "ide_flags", text="Flags")
+        row.prop(scn, "gtatools_show_ide_flags",
+                 icon='TRIA_DOWN' if scn.gtatools_show_ide_flags else 'TRIA_RIGHT',
+                 text="", emboss=False)
+        if scn.gtatools_show_ide_flags:
+            fbox = layout.box()
+            fc = fbox.column(align=True)
+            fc.prop(inu, "flag_is_road")
+            fc.prop(inu, "flag_draw_last")
+            fc.prop(inu, "flag_additive")
+            fc.prop(inu, "flag_no_zbuffer")
+            fc.prop(inu, "flag_no_shadows")
+            fc.prop(inu, "flag_glass_1")
+            fc.prop(inu, "flag_glass_2")
+            fc.prop(inu, "flag_garage_door")
+            fc.prop(inu, "flag_damagable")
+            fc.prop(inu, "flag_is_tree")
+            fc.prop(inu, "flag_is_palm")
+            fc.prop(inu, "flag_no_flyer_col")
+            fc.prop(inu, "flag_is_tag")
+            fc.prop(inu, "flag_no_backface")
+            fc.prop(inu, "flag_breakable")
+
+        row = layout.row(align=True)
+        row.prop(inu, "interior_id", text="Interior")
+        row.prop(inu, "lod_index", text="LOD")
+
+        # Check for ID conflicts
+        if inu.model_id > 0:
+            conflicts = [o.name for o in bpy.data.objects
+                         if o.type == 'MESH' and o != obj
+                         and hasattr(o, 'inu') and o.inu.model_id == inu.model_id]
+            if conflicts:
+                layout.label(text=f"ID {inu.model_id}: {T('конфликт с')} {', '.join(conflicts[:3])}", icon='ERROR')
 
 
 class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
@@ -9907,6 +11945,7 @@ class GTATOOLS_PT_paths_panel(bpy.types.Panel):
 # =============================================================================
 
 classes = (
+    INUParticleKeyframe,
     INUObjectProps,
     INUMaterialProps,
     GTATOOLS_ImgFileEntry,
@@ -10063,12 +12102,25 @@ classes = (
     GTATOOLS_OT_create_2dfx,
     GTATOOLS_OT_attach_2dfx,
     GTATOOLS_OT_detach_2dfx,
+    GTATOOLS_OT_detach_all_2dfx,
     GTATOOLS_OT_refresh_2dfx_preview,
     GTATOOLS_OT_remove_2dfx_preview,
+    GTATOOLS_OT_select_particle_effect,
+    GTATOOLS_OT_particle_effect_new,
+    GTATOOLS_OT_particle_effect_delete,
+    GTATOOLS_OT_particle_emitter_switch,
+    GTATOOLS_OT_particle_curve_select,
+    GTATOOLS_OT_particle_curve_key_add,
+    GTATOOLS_OT_particle_curve_key_remove,
+    GTATOOLS_OT_particle_curve_key_select_row,
+    GTATOOLS_OT_particle_curve_write,
+    GTATOOLS_OT_reload_effects_fxp,
+    GTATOOLS_OT_save_particle_effect,
     GTATOOLS_OT_set_col_surface,
     GTATOOLS_OT_col_surface_menu,
     GTATOOLS_PT_col_material_panel,
     GTATOOLS_PT_material_effects_panel,
+    GTATOOLS_PT_object_ide_ipl_panel,
     GTATOOLS_PT_inu_tools_panel,
     GTATOOLS_PT_itera_panel,
     GTATOOLS_PT_prelight_panel,
@@ -10451,6 +12503,29 @@ def register():
 
     bpy.types.Scene.gtatools_lightmap_result = StringProperty(name="Result", default="")
     bpy.types.Scene.gtatools_lightmap_path = StringProperty(name="Lightmap Path", default="lightmaps/lightmap.png")
+
+    # Collapsible-section state for the PARTICLE 2DFX editor panel
+    bpy.types.Scene.gtatools_pfx_exp_texture = BoolProperty(default=True)
+    bpy.types.Scene.gtatools_pfx_exp_color = BoolProperty(default=True)
+    bpy.types.Scene.gtatools_pfx_exp_size = BoolProperty(default=True)
+    bpy.types.Scene.gtatools_pfx_exp_emission = BoolProperty(default=False)
+    bpy.types.Scene.gtatools_pfx_exp_physics = BoolProperty(default=False)
+    bpy.types.Scene.gtatools_pfx_exp_system = BoolProperty(default=False)
+    bpy.types.Scene.gtatools_pfx_exp_curves = BoolProperty(default=False)
+
+    def _update_particle_sim(self, context):
+        from .ops import particle_sim
+        if self.gtatools_particle_sim:
+            particle_sim.start_simulation()
+        else:
+            particle_sim.stop_simulation()
+
+    bpy.types.Scene.gtatools_particle_sim = BoolProperty(
+        name="Particle Simulation",
+        description=T("Анимировать 2DFX частицы в viewport"),
+        default=False,
+        update=_update_particle_sim,
+    )
     bpy.types.Scene.gtatools_model_id = StringProperty(name="Model ID", default="0")
     bpy.types.Scene.gtatools_vc_analysis = StringProperty(name="VC Analysis", default="")
 
@@ -11017,6 +13092,16 @@ _2dfx_sync_busy = False
 def _on_depsgraph_update_2dfx(scene, depsgraph):
     """Auto-sync 2DFX preview when properties change in UI."""
     global _2dfx_sync_busy
+
+    # Ensure billboard timer is alive (restart after scene switch etc.)
+    try:
+        from .ops.fx_preview import _update_billboard_rotations, start_billboard_timer
+        import bpy as _bpy
+        if not _bpy.app.timers.is_registered(_update_billboard_rotations):
+            start_billboard_timer()
+    except Exception:
+        pass
+
     if _2dfx_sync_busy:
         return
     obj = bpy.context.active_object
@@ -11178,6 +13263,25 @@ def unregister():
     del bpy.types.Scene.gtatools_lightmap_result
     del bpy.types.Scene.gtatools_lightmap_path
     del bpy.types.Scene.gtatools_model_id
+
+    # Stop particle sim timer and drop meshes
+    try:
+        from .ops import particle_sim
+        particle_sim.stop_simulation()
+    except Exception:
+        pass
+    try:
+        del bpy.types.Scene.gtatools_particle_sim
+    except Exception:
+        pass
+    for k in ('gtatools_pfx_exp_texture', 'gtatools_pfx_exp_color',
+              'gtatools_pfx_exp_size', 'gtatools_pfx_exp_emission',
+              'gtatools_pfx_exp_physics', 'gtatools_pfx_exp_system',
+              'gtatools_pfx_exp_curves'):
+        try:
+            delattr(bpy.types.Scene, k)
+        except Exception:
+            pass
 
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)

@@ -34,6 +34,7 @@
   - [COL Light](#col-light)
   - [Presets](#presets)
 - [2DFX Effects](#2dfx-effects)
+- [Particle Effects (effects.fxp)](#particle-effects-effectsfxp-new-in-163)
 - [UV Tools](#uv-tools)
 - [Check](#check)
 - [Characters (Skinned DFF)](#characters-skinned-dff)
@@ -190,6 +191,9 @@ Drag PNG/JPG/TGA images from File Browser into the 3D viewport to automatically 
 - Duplicates (`.001`, `.002`) moved to `_Instances` sub-collections
 
 ### IDE (Definitions)
+
+> **Per-object properties** *(new in 1.6.3):* Model ID, Draw Distance, LOD Distance, IDE Flags, Interior, LOD index now live in **Properties → Object → "GTA SA: IDE / IPL"** (previously in N-panel). The same panel shows **ID conflict detection** — if multiple objects share the same Model ID, the addon highlights the error with names of conflicting objects.
+
 
 IDE files define model properties: ID, texture dictionary, draw distance, flags.
 
@@ -352,6 +356,9 @@ When exporting IDE/IPL, LOD models are always written with `LOD` prefix (GTA SA 
 
 ## Prelight (Vertex Colors)
 
+> **Important in 1.6.3:** baking now respects **smooth/flat shading** (uses `loop.normal` instead of `poly.normal`). Also **hidden lights** (via 👁 viewport, 📷 render, or hidden collection) **are skipped** during baking — previously all point lights in the scene were used.
+
+
 **Panel:** View3D → Sidebar (N) → GTA Tools → Prelight
 
 ### Baking
@@ -448,7 +455,105 @@ Create and configure 2DFX effects that export into DFF files.
 
 **Attach to Model:** parent 2DFX Empty to mesh object. Coordinates auto-recalculate on export.
 
-**Preview:** real-time corona/shadow visualization in viewport.
+**Detach All from Mesh** *(new in 1.6.3):* batch detach all 2DFX from selected mesh. The mesh's UI shows a list of all attached 2DFX with individual detach buttons.
+
+**Preview:** real-time corona/shadow visualization in viewport. Billboard tracking implemented via **draw handler** *(1.6.3)* — works reliably across scene switches.
+
+---
+
+## Particle Effects (effects.fxp) *(new in 1.6.3)*
+
+Full GTA SA `effects.fxp` editor — text file with 82 particle systems (fire, smoke, blood, sparks, water, etc.).
+
+**File location:** `GTA SA/models/effects.fxp` (auto-detected from game root)
+
+### Basic workflow
+
+1. Create a 2DFX Particle via 2DFX panel → **Particle**
+2. In particle properties, pick an effect from dropdown (`prt_blood`, `prt_fire`, `prt_water_splash`, ...)
+3. Enable **Simulation** — particles start flying in viewport
+4. Edit parameters — changes are visible instantly
+5. **Save to effects.fxp** — auto-backup `.fxp.bak` is created on first write
+
+### Emitter parameters
+
+**Sprite & blending:**
+| Parameter | Description |
+|-----------|-------------|
+| Texture | Sprite name from `particle.txd` (sphere, smoke, fire, etc.) |
+| SrcBlend / DstBlend | D3D9 blend factors (4=SrcAlpha, 5=InvSrcAlpha, 2=One for additive) |
+
+**Color (start → end):**
+- Start, middle, end RGBA colors interpolated over particle lifetime
+- Middle color toggle for three-point interpolation
+
+**Size:**
+- Start and end size with smooth transition
+
+**Emission:**
+| Parameter | Description |
+|-----------|-------------|
+| Life | Particle lifetime in seconds |
+| Speed | Initial speed |
+| Direction | Emission direction vector |
+| Rate | Particles per second |
+| Angle | Cone spread angle |
+| Volume box | Spawn volume |
+
+**Physics:**
+| Parameter | Description |
+|-----------|-------------|
+| Force | Gravity force (XYZ vector) |
+| Friction | Air resistance |
+| Wind | Wind influence |
+| Noise | Perlin noise turbulence |
+| Jitter | Random jitter |
+| Ground bounce | Ground collision response |
+
+**System:**
+| Parameter | Description |
+|-----------|-------------|
+| LENGTH | Total system duration (seconds) |
+| PLAYMODE | Playback mode (0-3) |
+| CULLDIST | Culling distance for LOD |
+| Bounding sphere | Radius for culling |
+
+### Curves (keyframes)
+
+Any parameter can be **animated over particle lifetime** via keyframe curves:
+
+1. In "Curves" section, pick a parameter (e.g. `SIZE.SIZEX` or `COLOUR.RED`)
+2. A list of keys appears with **+** and **-** buttons
+3. Each key is a `(TIME, VAL)` pair where TIME = 0..1 (normalized lifetime)
+4. After editing click **"Write curve to effects.fxp"**
+
+Example: for fire — size grows from 0.5 to 2.0, color transitions from yellow to red to black, alpha from 1.0 to 0.0.
+
+### Operators
+
+| Operator | Description |
+|----------|-------------|
+| New Effect | Create new effect (cloned from current template) |
+| Delete Effect | Remove effect from effects.fxp |
+| Switch Emitter | Browse emitters within multi-emitter system (e.g. `prt_cardebris` has 4 emitters) |
+| Reload effects.fxp | Re-read file from disk (clear cache) |
+| Save to effects.fxp | Write edits back to file with auto-backup |
+
+### Simulation
+
+- **30 FPS** particle position updates via frame_change handler
+- Up to **64 particles per emitter** (shared mesh pool, memory efficient)
+- **Camera-facing billboards** via draw handler — particles always face viewport
+- **Vertex color emission** shader — real color/alpha by particle age
+- Simulation is **non-destructive** — DFF model is unchanged
+
+### Important notes
+
+> **When switching effects** all unsaved edits are reset — save first via **"Save to effects.fxp"**
+
+> **Backup:** on first write `effects.fxp.bak` is created next to the original — you can revert if something goes wrong
+
+> **Particle textures** are stored in `particle.txd` (next to effects.fxp). Import the TXD into Blender to see sprites in materials browser
 
 ---
 

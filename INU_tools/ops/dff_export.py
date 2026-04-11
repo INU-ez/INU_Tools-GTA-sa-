@@ -244,6 +244,8 @@ def _get_obj_export_flags(obj) -> dict:
         'night_cols': True,
         'light': True,
         'modulate_color': True,
+        'set_material_alpha': True,
+        'light_beam_asi': False,
         'pipeline': 0,
     }
     inu = getattr(obj, 'inu', None)
@@ -537,13 +539,35 @@ def _process_mesh(obj, clump: DffClump, frame_index: int):
     geom.prelit_colors = day_colors
 
     # Auto-detect vertex alpha: if any vertex has alpha < 255,
-    # set material color alpha to 254 to enable alpha blending in GTA SA
-    if day_colors:
+    # set material color alpha to 254 to enable alpha blending in GTA SA.
+    # Can be disabled (Rockstar-style) via "Set Material Alpha" flag —
+    # vanilla SA volumetric light beams (e.g. vgsecnstrct11.dff) use
+    # material alpha 255 with only vertex alpha to drive transparency.
+    if day_colors and flags.get('set_material_alpha', True):
         has_vertex_alpha = any(c.a < 255 for c in day_colors)
         if has_vertex_alpha:
             for m in materials:
                 if m.color.a == 255:
                     m.color = RGBA(m.color.r, m.color.g, m.color.b, 254)
+
+    # Light Beam marker for SA_Light.asi plugin.
+    # When enabled, overrides the first material's color to the magic
+    # marker RGBA(254,254,254,254). The plugin detects this at render
+    # time and applies volumetric-beam render states (alpha test off,
+    # proper alpha blend). Without the plugin, mesh renders as a plain
+    # near-opaque object.
+    #
+    # Also: expand the bounding sphere to prevent frustum culling when
+    # the player turns the camera. SA culls geometry whose bounding
+    # sphere doesn't intersect the camera frustum — with a small offset
+    # sphere, the mesh can disappear on slight camera rotation.
+    # Light beams need to stay visible from any angle within range.
+    if flags.get('light_beam_asi', False):
+        if materials:
+            materials[0].color = RGBA(254, 254, 254, 254)
+        # Expand bounding sphere: center at origin + radius x5
+        center = mathutils.Vector((0, 0, 0))
+        radius = max(radius, 1.0) * 5.0
 
     geom.materials = materials
     geom.bounding_sphere = BoundingSphere(center.x, center.y, center.z, radius)

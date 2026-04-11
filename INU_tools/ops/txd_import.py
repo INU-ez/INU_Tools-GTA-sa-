@@ -4,7 +4,50 @@
 import numpy as np
 import bpy
 
-from ..core.txd import read_txd_file
+from ..core.txd import read_txd_file, read_txd
+
+
+def _textures_to_blender_images(textures):
+    """Convert a list of TxdTexture objects into bpy.data.images.
+
+    Creates or replaces images in-place. Returns the list of Blender images.
+    """
+    images = []
+    for tex in textures:
+        name = tex.name.rstrip('\x00')
+        if not name:
+            continue
+
+        w, h = tex.width, tex.height
+        if w == 0 or h == 0 or not tex.pixels:
+            continue
+
+        if name in bpy.data.images:
+            img = bpy.data.images[name]
+            if img.size[0] != w or img.size[1] != h:
+                bpy.data.images.remove(img)
+                img = bpy.data.images.new(name, w, h, alpha=True)
+        else:
+            img = bpy.data.images.new(name, w, h, alpha=True)
+
+        arr = np.frombuffer(tex.pixels, dtype=np.uint8).reshape(h, w, 4)
+        flipped = arr[::-1].astype(np.float32) / 255.0
+        img.pixels.foreach_set(flipped.ravel())
+        img.pack()
+        img.use_fake_user = True  # keep around even when no shader uses it yet
+        img.update()
+        images.append(img)
+        print(f"[INU_tools TXD] Loaded: {name} ({w}x{h})")
+    return images
+
+
+def import_txd_bytes(data: bytes, assign_to_materials: bool = False):
+    """Import a TXD from in-memory bytes (e.g. extracted from an IMG archive)."""
+    textures = read_txd(data)
+    images = _textures_to_blender_images(textures)
+    if assign_to_materials:
+        _assign_textures_to_materials(images)
+    return images
 
 
 def import_txd(filepath: str, assign_to_materials: bool = True):
@@ -16,39 +59,9 @@ def import_txd(filepath: str, assign_to_materials: bool = True):
     whose names match the texture names.
     """
     textures = read_txd_file(filepath)
-    images = []
-
-    for tex in textures:
-        name = tex.name.rstrip('\x00')
-        if not name:
-            continue
-
-        w, h = tex.width, tex.height
-        if w == 0 or h == 0 or not tex.pixels:
-            continue
-
-        # Create or replace Blender image
-        if name in bpy.data.images:
-            img = bpy.data.images[name]
-            if img.size[0] != w or img.size[1] != h:
-                bpy.data.images.remove(img)
-                img = bpy.data.images.new(name, w, h, alpha=True)
-        else:
-            img = bpy.data.images.new(name, w, h, alpha=True)
-
-        # Convert RGBA uint8 → float32, flip vertically — all via numpy
-        arr = np.frombuffer(tex.pixels, dtype=np.uint8).reshape(h, w, 4)
-        flipped = arr[::-1].astype(np.float32) / 255.0
-        img.pixels.foreach_set(flipped.ravel())
-        img.pack()
-        img.update()
-        images.append(img)
-        print(f"[INU_tools TXD] Loaded: {name} ({w}x{h})")
-
-    # Auto-assign to materials
+    images = _textures_to_blender_images(textures)
     if assign_to_materials:
         _assign_textures_to_materials(images)
-
     return images
 
 

@@ -4,7 +4,7 @@
 
 ![Blender](https://img.shields.io/badge/Blender-4.2+-orange?logo=blender)
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue)
-![Version](https://img.shields.io/badge/Version-1.6.1-green)
+![Version](https://img.shields.io/badge/Version-1.6.3-green)
 ![Views](https://komarev.com/ghpvc/?username=INU-ez&color=orange&style=flat-square&label=REPO+VIEWS)
 
 > **[English version](README_eng.md)**
@@ -63,7 +63,9 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 > - ✅ Fill Colors — покраска полигонов с пипеткой и системой уровней
 > - ✅ Scatter Light — рассеивание света с настраиваемыми параметрами
 > - ✅ Day/Night — раздельные атрибуты цвета для дня и ночи
-> - ✅ LightMap UV2 — подключение текстуры лайтмапа на второй UV канал (Multiply)
+> - ✅ LightMap UV2 — подключение текстуры лайтмапа на второй UV канал (Multiply blend)
+> - ✅ **Smooth shading при запекании** *(1.6.3)* — учитывает loop.normal вместо poly.normal
+> - ✅ **Скрытые лампы пропускаются** при запекании *(1.6.3)*
 > - ✅ Анализ и предпросмотр вертексных цветов
 > - ✅ Prelight COL — конвертация vertex colors в COL Day/Night Light
 > - ✅ Превью COL Light — визуализация с настройками Край/Порог/Контраст
@@ -94,6 +96,8 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 
 > - ✅ Создание 2DFX эффектов (Light, Particle, Ped Attractor, Sun Glare)
 > - ✅ Привязка/отвязка 2DFX к мешу — координаты автоматически пересчитываются при экспорте
+> - ✅ **Detach All from Mesh** — массовое отвязывание всех 2DFX от выделенного меша
+> - ✅ Список привязанных 2DFX в UI меша с кнопками отвязки
 > - ✅ Пресеты: Default, OnAllDay, Lamp Post, Lamp Post Coast, BB Pickup, Flashing, Train Crossing, Traffic
 > - ✅ Выпадающие списки для Corona Texture (34 текстуры), Shadow Texture, Show Mode, Flare Type
 > - ✅ Экспорт 2DFX в DFF (RW Light chunk + 2DFX PLG)
@@ -105,6 +109,23 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 > ![Itera_Inu_tools](gif/2DFX.gif)
 >
 > </details>
+
+</details>
+
+<details>
+<summary><b>Particle Effects (effects.fxp)</b></summary>
+
+> - ✅ Полноценный парсер GTA SA `effects.fxp` (text-based, 82 эффекта)
+> - ✅ Симуляция частиц прямо в Blender viewport (30 FPS, до 64 частиц на эмиттер)
+> - ✅ Dropdown выбора эффекта из всех систем effects.fxp
+> - ✅ Multi-emitter switching — перебор эмиттеров внутри одной системы
+> - ✅ Редактирование 40+ параметров: цвет (start/mid/end), размер, скорость, направление, физика
+> - ✅ Эмиссия: rate, life, speed, direction, angle, volume box, offset
+> - ✅ Физика: force (gravity), friction, wind, noise, jitter, ground bounce
+> - ✅ Keyframe editor для curves (size/color/alpha over lifetime)
+> - ✅ Сохранение правок обратно в `effects.fxp` с авто-бэкапом (`.fxp.bak`)
+> - ✅ Operators: New Effect, Delete Effect, Switch Emitter, Reload effects.fxp
+> - ✅ Billboard к камере для частиц (как для Light corona)
 
 </details>
 
@@ -224,9 +245,10 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 Аддон добавляет панели в:
 - **Properties > Scene > INU Tools** — пути IDE/IPL/IMG, текстуры, NVTT, суффиксы моделей, менеджер ID, пресеты
 - **Properties > Object > GTA SA Object** — тип объекта (OBJ/COL/SHA/2DFX), DFF Flags, Pipeline, UV Maps
+- **Properties > Object > GTA SA: IDE / IPL** *(новое в 1.6.3)* — Model ID, Draw Dist, LOD Dist, IDE Flags, Interior, проверка конфликтов
 - **Properties > Material > GTA SA Material Effects** — Environment Map, Bump Map, Reflection, Specular, UV Animation
 - **Properties > Material > COL Surface Type** — выбор типа поверхности коллизии
-- **View3D > Sidebar (N) > GTA Tools** — экспорт/импорт, прелайт, 2DFX, vertex paint
+- **View3D > Sidebar (N) > GTA Tools** — экспорт/импорт, прелайт, 2DFX (с симуляцией частиц), vertex paint
 - **UV Editor > Sidebar (N) > GTA Tools** — UV инструменты
 
 <details>
@@ -252,6 +274,7 @@ INU_Tools — Blender аддон для работы с моделями GTA San
 <details>
 <summary><b>История изменений</b></summary>
 
+- **v1.6.3** — **Particle Effects**: полноценный редактор GTA SA effects.fxp (парсер 82 эффектов, симуляция в viewport 30 FPS, редактирование 40+ параметров эмиттеров, keyframe editor для curves, сохранение в .fxp с авто-бэкапом, multi-emitter switching); **Object Properties**: новая панель "GTA SA: IDE / IPL" (Model ID, Draw Dist, Flags, Interior, конфликты); **LightMap UV2**: Add/Toggle/Remove кнопки в Prelight (Multiply blend на UV2); Prelight Bake: smooth shading через loop.normal, пропуск скрытых ламп; Reset Transform; Batch Set Type (OBJ/COL/SHA/NON); 2DFX Detach All from Mesh + список привязанных в UI; 2DFX billboard через draw handler (фикс tracking при смене сцены); DFF Flags компактным списком; IDE/IPL: очистка .001 при экспорте, поддержка нескольких instances одной модели; DFF Export: _read_texture идёт через Prelight_Mix/LM_Mix; TXD Export: пропускает LM_Texture ноды; ID Manager: Assign from ID..., Extend IDs (FLA); Nodes: мультифайловый импорт, экспорт по зонам 8x8; .gitattributes; Alpha threshold 57% задокументирован
 - **v1.6.1** — IPL Import: перемещение COL вместе с DFF, Empty-плейсхолдеры с _empty суффиксом в коллекции IPL_Empty, кнопка Заменить Empty; Префиксы моделей в настройках с авто-очисткой конфликтов; Model Links — визуализация связей DFF↔LOD↔COL пунктирными линиями; LOD/COL → DFF snap; Скрытие DFF/LOD/COL по отдельности; Удалить из IMG по типу объекта; Список файлов IMG с прокруткой и поиском; Менеджер ID: очистка выделенных, синхронизация сцены, файл 321-19999, проверка конфликтов; Normals toggle; Drag & Drop TXD с созданием материалов
 - **v1.6.0** — Import Map: полный workflow импорта карты (Extract → Build .glb → Import), автосортировка по коллекциям (Buildings/Vegetation/Props/Small/LOD), дубликаты в _Instances подколлекциях; BBox Mode: переключение далёких объектов в Bounding Box с радиусом 300м от выделения; IPL ZONE секция: парсинг/запись/визуализация зон карты; динамические регионы карты из gta.dat (вместо захардкоженных); TXD: исправлена декомпрессия RASTER_888 (32-bit BGRX), улучшена детекция DXT по compression_flag; GPU NVTT автодетект (без toggle кнопки); UI: объединены панели Экспорт/Импорт, компактный layout IDE/IPL/IMG, панель Проверка переведена на русский; экспорт коллекций (если ничего не выделено — экспорт активной коллекции); убраны: Fake mode, Bounds mode, LOD view, Auto-discover кнопка
 - **v1.5.3** — Импорт/экспорт персонажей (skinned DFF): скелет, vertex weights, bone matrices; IFP анимации: импорт 294+ анимаций из ped.ifp, применение к скелету, выбор через поиск; Water IO: импорт/экспорт water.dat, текстура waterclear256, анимация течения, типы воды; Path IO: импорт/экспорт paths.ipl, tracks.dat, NODES.dat, создание/конвертация путей; Bin Mesh PLG — корректные material indices для skinned моделей; пользовательские настройки в INU_Preset (не удаляются при обновлении); совместимость Blender 5.1 (layered actions API); исправлен SkinPLG reader (bones_used, num_used, max_weights)

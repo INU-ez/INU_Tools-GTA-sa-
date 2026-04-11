@@ -760,8 +760,8 @@ def upsert_ipl(filepath: str, entries: list[IplInstance]) -> tuple[int, int]:
     """
     Insert or update inst entries in an existing IPL file.
 
-    Matching is by model_id + model_name (both must match).
-    Returns (updated_count, added_count).
+    Matching is by model_id + model_name + position (to allow multiple
+    instances of the same model). Returns (updated_count, added_count).
     """
     if not os.path.isfile(filepath):
         write_ipl(filepath, IplFile(instances=entries))
@@ -770,9 +770,15 @@ def upsert_ipl(filepath: str, entries: list[IplInstance]) -> tuple[int, int]:
     with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
         lines = f.readlines()
 
-    pending: dict[tuple[int, str], IplInstance] = {}
-    for e in entries:
-        pending[(e.model_id, e.model_name.lower())] = e
+    # Keep entries as list — allow duplicates (multiple instances of same model)
+    pending = list(entries)
+
+    def _pos_match(a: IplInstance, b: IplInstance, eps: float = 0.001) -> bool:
+        return (a.model_id == b.model_id
+                and a.model_name.lower() == b.model_name.lower()
+                and abs(a.pos_x - b.pos_x) < eps
+                and abs(a.pos_y - b.pos_y) < eps
+                and abs(a.pos_z - b.pos_z) < eps)
 
     updated = 0
     result_lines = []
@@ -800,9 +806,14 @@ def upsert_ipl(filepath: str, entries: list[IplInstance]) -> tuple[int, int]:
         if section == 'inst' and stripped and not stripped.startswith('#'):
             parsed = _parse_inst_line(stripped)
             if parsed:
-                key = (parsed.model_id, parsed.model_name.lower())
-                if key in pending:
-                    entry = pending.pop(key)
+                # Find matching entry by position — allows multiple instances
+                match_idx = None
+                for i, e in enumerate(pending):
+                    if _pos_match(parsed, e):
+                        match_idx = i
+                        break
+                if match_idx is not None:
+                    entry = pending.pop(match_idx)
                     result_lines.append(_format_inst_line(entry) + '\n')
                     updated += 1
                     continue
@@ -811,20 +822,21 @@ def upsert_ipl(filepath: str, entries: list[IplInstance]) -> tuple[int, int]:
 
     added = len(pending)
     if added > 0:
-        remaining = list(pending.values())
         if inst_end_idx >= 0:
-            insert_lines = [_format_inst_line(e) + '\n' for e in remaining]
+            insert_lines = [_format_inst_line(e) + '\n' for e in pending]
             result_lines = (result_lines[:inst_end_idx]
                           + insert_lines
                           + result_lines[inst_end_idx:])
         else:
             result_lines.append('inst\n')
-            for e in remaining:
+            for e in pending:
                 result_lines.append(_format_inst_line(e) + '\n')
             result_lines.append('end\n')
 
     with open(filepath, 'w', encoding='utf-8', newline='\n') as f:
         f.writelines(result_lines)
+
+    return (updated, added)
 
     return (updated, added)
 

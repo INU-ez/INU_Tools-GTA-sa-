@@ -4,7 +4,7 @@
 
 | Инструмент | Платформа | Автор | Функций |
 |------------|-----------|-------|--------:|
-| **INU_Tools** | Blender 4.2+ | INU | ~178 |
+| **INU_Tools** | Blender 4.2+ | INU | ~195 |
 | **DragonFF** | Blender 4.x | Parik | ~132 |
 | **GTA_Tools(GF)** | 3ds Max | Kam / Goldfish | ~150 |
 | **DeniskaMax** | 3ds Max | Deniska | ~54 |
@@ -145,6 +145,20 @@
 | NODES мультифайловый импорт | ✅ | — | — | — | — | — | ✅ |
 | NODES экспорт (зоны 8x8) | ✅ | — | — | — | — | — | ✅ |
 | Очистка .001 при экспорте IDE/IPL | ✅ | — | — | — | — | — | — |
+| **PARTICLE EFFECTS (effects.fxp)** | | | | | | | |
+| Парсер effects.fxp | ✅ | — | — | — | — | — | — |
+| Симуляция частиц в viewport | ✅ | — | — | — | — | — | — |
+| Редактор параметров эмиттера | ✅ | — | — | — | — | — | — |
+| Keyframe editor для curves | ✅ | — | — | — | — | — | — |
+| Сохранение в effects.fxp | ✅ | — | — | — | — | — | — |
+| Multi-emitter switching | ✅ | — | — | — | — | — | — |
+| **OBJECT PROPERTIES** | | | | | | | |
+| GTA SA: IDE / IPL панель | ✅ | — | — | — | — | — | — |
+| 2DFX Detach All from Mesh | ✅ | — | — | — | — | — | — |
+| Список привязанных 2DFX | ✅ | — | — | — | — | — | — |
+| LightMap UV2 (Add/Toggle/Remove) | ✅ | — | — | — | — | — | — |
+| Smooth shading prelight bake | ✅ | — | — | — | — | — | — |
+| Скрытые лампы пропускаются | ✅ | — | — | — | — | — | — |
 
 ---
 

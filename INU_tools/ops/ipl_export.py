@@ -49,15 +49,15 @@ def export_ipl(filepath: str, objects: list) -> None:
 
 
 def _clean_model_name(name: str) -> str:
-    """Remove suffixes/prefixes and Blender duplicate suffixes (.001, .002)."""
+    """Remove Blender duplicate suffixes (.001) and model suffixes/prefixes."""
     from ..tools.model_utils import get_model_type
+    # Strip Blender duplicate suffix FIRST (before suffix matching)
+    if '.' in name:
+        b, s = name.rsplit('.', 1)
+        if s.isdigit():
+            name = b
     class _Mock:
         def __init__(self, n):
             self.name = n
     _, base = get_model_type(_Mock(name))
-    # Strip Blender duplicate suffix (.001, .002, etc.)
-    if '.' in base:
-        b, s = base.rsplit('.', 1)
-        if s.isdigit():
-            base = b
     return base

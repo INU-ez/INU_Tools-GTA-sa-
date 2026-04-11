@@ -37,6 +37,13 @@ def get_model_type(obj):
     suffixes = _get_suffixes()
     prefixes = _get_prefixes()
 
+    # Shadow mesh suffix (_SHA) — Rockstar/Kam's convention.
+    # Treated as COL so IMG export packs it into the .col file; the COL
+    # exporter's _is_shadow_mesh() then writes it into shadow mesh section
+    # (non-blocking collision, used for bounds and bullet tests only).
+    if name_upper.endswith('_SHA'):
+        return 'COL', name[:-4]
+
     # Check suffixes first (higher priority)
     for model_type in ('LOD', 'COL', 'DFF'):
         sfx = suffixes[model_type]

@@ -1,0 +1,48 @@
+# Auto-detect text files and normalize line endings
+* text=auto eol=lf
+
+# Source code — always LF
+*.py    text eol=lf
+*.md    text eol=lf
+*.json  text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.txt   text eol=lf
+*.ini   text eol=lf
+*.cfg   text eol=lf
+*.toml  text eol=lf
+*.fx    text eol=lf
+*.lua   text eol=lf
+*.html  text eol=lf
+*.css   text eol=lf
+*.js    text eol=lf
+
+# Windows-specific files — keep CRLF
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
+
+# Binary files — never touch
+*.dff   binary
+*.col   binary
+*.txd   binary
+*.img   binary
+*.ifp   binary
+*.dat   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.bmp   binary
+*.tga   binary
+*.tif   binary
+*.tiff  binary
+*.dds   binary
+*.blend binary
+*.zip   binary
+*.7z    binary
+*.rar   binary
+*.exe   binary
+*.dll   binary
+*.so    binary
+*.pyd   binary

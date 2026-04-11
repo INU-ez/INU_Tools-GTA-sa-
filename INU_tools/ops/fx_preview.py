@@ -273,6 +273,278 @@ def create_light_preview(parent_obj):
     return light_obj, billboard
 
 
+_particle_txd_loaded_for: str = ""  # game_root we've already auto-loaded from
+
+
+def _ensure_particle_txd_loaded() -> int:
+    """One-shot auto-load of particle textures for the current game_root.
+
+    Looks first for standalone `models/particle.txd` (and siblings), then
+    falls back to extracting them from `models/gta3.img`. Loaded textures
+    land in `bpy.data.images` with fake_user=True. Re-runs if the key
+    texture `sphere` disappears.
+
+    Returns the number of images added on this call.
+    """
+    global _particle_txd_loaded_for
+    try:
+        game_root = bpy.path.abspath(
+            getattr(bpy.context.scene, 'gtatools_game_root', '') or ''
+        )
+        if not game_root or not os.path.isdir(game_root):
+            print(f"[2DFX Particle] auto-load: game_root invalid ({game_root!r})")
+            return 0
+
+        # Skip if already auto-loaded and sphere is available.
+        if _particle_txd_loaded_for == game_root and 'sphere' in bpy.data.images:
+            return 0
+
+        from .txd_import import import_txd, import_txd_bytes
+
+        candidate_txds = (
+            'particle.txd', 'particle2.txd',
+            'effectsPC.txd', 'misc.txd',
+        )
+
+        total = 0
+
+        # 1) Standalone files in models/
+        models_dir = os.path.join(game_root, 'models')
+        for txd_name in candidate_txds:
+            path = os.path.join(models_dir, txd_name)
+            if os.path.isfile(path):
+                try:
+                    imgs = import_txd(path, assign_to_materials=False)
+                    total += len(imgs)
+                    print(f"[2DFX Particle] auto-loaded {len(imgs)} textures from standalone {txd_name}")
+                except Exception as e:
+                    print(f"[2DFX Particle] failed to parse standalone {txd_name}: {e}")
+
+        # 2) Fallback: inside gta3.img
+        if 'sphere' not in bpy.data.images:
+            img_path = os.path.join(models_dir, 'gta3.img')
+            if os.path.isfile(img_path):
+                from ..core import img as _img
+                for txd_name in candidate_txds:
+                    data = _img.extract_file(img_path, txd_name)
+                    if data is None:
+                        continue
+                    try:
+                        imgs = import_txd_bytes(data, assign_to_materials=False)
+                        total += len(imgs)
+                        print(f"[2DFX Particle] auto-loaded {len(imgs)} textures from gta3.img/{txd_name}")
+                    except Exception as e:
+                        print(f"[2DFX Particle] failed to parse gta3.img/{txd_name}: {e}")
+
+        if total == 0:
+            print(f"[2DFX Particle] auto-load found no particle TXDs in {models_dir}")
+
+        _particle_txd_loaded_for = game_root
+        return total
+    except Exception as e:
+        import traceback
+        print(f"[2DFX Particle] auto-load error: {e}")
+        traceback.print_exc()
+        return 0
+
+
+def _find_particle_image(tex_name: str):
+    """Find a loaded image for a particle texture name.
+
+    Matches (case-insensitive):
+      - exact name
+      - name with common extension
+      - image name stem (filename without extension)
+      - filepath basename stem
+      - image name or stem CONTAINING the target as a substring (last resort)
+    """
+    if not tex_name:
+        return None
+
+    # Exact match first (fast path)
+    img = bpy.data.images.get(tex_name)
+    if img is not None:
+        print(f"[2DFX Particle] texture '{tex_name}' -> exact match '{img.name}'")
+        return img
+
+    target = tex_name.lower()
+    target_exts = (target, target + ".png", target + ".tga", target + ".dds", target + ".bmp")
+
+    # Strict passes
+    for image in bpy.data.images:
+        name_lower = image.name.lower()
+        if name_lower in target_exts:
+            print(f"[2DFX Particle] texture '{tex_name}' -> ext match '{image.name}'")
+            return image
+        stem = os.path.splitext(name_lower)[0]
+        if stem == target:
+            print(f"[2DFX Particle] texture '{tex_name}' -> stem match '{image.name}'")
+            return image
+        fp = getattr(image, 'filepath', '') or ''
+        if fp:
+            fp_stem = os.path.splitext(os.path.basename(fp).lower())[0]
+            if fp_stem == target:
+                print(f"[2DFX Particle] texture '{tex_name}' -> filepath match '{image.name}'")
+                return image
+
+    # Fuzzy substring pass (last resort, helps with prefixed/suffixed names)
+    for image in bpy.data.images:
+        name_lower = image.name.lower()
+        stem = os.path.splitext(name_lower)[0]
+        if target in stem or target in name_lower:
+            print(f"[2DFX Particle] texture '{tex_name}' -> fuzzy match '{image.name}'")
+            return image
+
+    all_names = [i.name for i in bpy.data.images]
+    print(f"[2DFX Particle] texture '{tex_name}' NOT FOUND among {len(all_names)} images: {all_names[:20]}{'...' if len(all_names) > 20 else ''}")
+    return None
+
+
+def _create_particle_material(effect_name: str, color_rgb, tex_name) -> bpy.types.Material:
+    """Emission material for a particle billboard, optionally textured.
+
+    color_rgb — (r,g,b) floats 0..1 (sampled from the COLOUR curve at t=0).
+    tex_name  — name of an already-loaded bpy.data.image, or None for flat plane.
+    """
+    mat_name = f"2dfx_particle_{effect_name}"
+    if mat_name in bpy.data.materials:
+        bpy.data.materials.remove(bpy.data.materials[mat_name], do_unlink=True)
+
+    mat = bpy.data.materials.new(mat_name)
+    mat.use_nodes = True
+    if hasattr(mat, 'blend_method'):
+        mat.blend_method = 'BLEND'
+    mat.use_backface_culling = False
+
+    tree = mat.node_tree
+    nodes = tree.nodes
+    links = tree.links
+    nodes.clear()
+
+    r, g, b = color_rgb[0], color_rgb[1], color_rgb[2]
+
+    output = nodes.new('ShaderNodeOutputMaterial')
+    output.location = (600, 0)
+
+    transparent = nodes.new('ShaderNodeBsdfTransparent')
+    transparent.location = (200, 100)
+
+    emission = nodes.new('ShaderNodeEmission')
+    emission.location = (200, -100)
+    emission.inputs['Color'].default_value = (r, g, b, 1.0)
+    emission.inputs['Strength'].default_value = 1.0
+
+    mix_shader = nodes.new('ShaderNodeMixShader')
+    mix_shader.location = (400, 0)
+    links.new(transparent.outputs['BSDF'], mix_shader.inputs[1])
+    links.new(emission.outputs['Emission'], mix_shader.inputs[2])
+    links.new(mix_shader.outputs['Shader'], output.inputs['Surface'])
+
+    img = _find_particle_image(tex_name) if tex_name else None
+    if img is None:
+        # Diagnostic: bright magenta so "missing texture" is visually distinct
+        # from a genuinely-white particle effect.
+        emission.inputs['Color'].default_value = (1.0, 0.0, 1.0, 1.0)
+        mix_shader.inputs[0].default_value = 0.9
+        print(f"[2DFX Particle] material '{mat_name}' created WITHOUT texture (tex_name={tex_name!r})")
+        return mat
+
+    tex_node = nodes.new('ShaderNodeTexImage')
+    tex_node.image = img
+    tex_node.location = (-400, 0)
+
+    # Texture colour tinted by the particle colour
+    mix_rgb = nodes.new('ShaderNodeMixRGB')
+    mix_rgb.blend_type = 'MULTIPLY'
+    mix_rgb.inputs['Fac'].default_value = 1.0
+    mix_rgb.inputs['Color2'].default_value = (r, g, b, 1.0)
+    mix_rgb.location = (-100, -100)
+    links.new(tex_node.outputs['Color'], mix_rgb.inputs['Color1'])
+    links.new(mix_rgb.outputs['Color'], emission.inputs['Color'])
+
+    # Texture alpha → mix factor (0 transparent, 1 emission)
+    links.new(tex_node.outputs['Alpha'], mix_shader.inputs[0])
+    print(f"[2DFX Particle] material '{mat_name}' using image '{img.name}'")
+
+    return mat
+
+
+def _particle_appearance_from_obj(obj):
+    """Return (tint_rgb, scale, tex_name) for the billboard preview.
+
+    Reads from `obj.inu.particle_*` which is populated when the user picks
+    an effect from the dropdown. Falls back to the largest value between
+    size_start and size_end, and the brightest of the two colors.
+    """
+    inu = getattr(obj, 'inu', None)
+    if inu is None:
+        return (1.0, 1.0, 1.0), 1.0, None
+
+    tex_name = (inu.particle_texture or '').strip() or None
+
+    # Use start colour for the billboard tint (it's usually the fully-lit
+    # moment of the particle, and avoids a faded preview when alpha=0 at t=1).
+    c = inu.particle_color_start
+    tint = (c[0], c[1], c[2])
+
+    scale = max(inu.particle_size_start, inu.particle_size_end, 0.05)
+    scale = min(scale, 20.0)
+
+    return tint, scale, tex_name
+
+
+def create_particle_preview(parent_obj):
+    """Create a billboard preview child for a Particle2dfx Empty.
+
+    Reads effects.fxp for the selected effect name, samples its first emitter's
+    COLOUR/SIZE/TEXTURE, and builds a single camera-facing plane. No simulation.
+    Also ensures particle textures are auto-loaded from gta3.img on first use.
+    """
+    _ensure_particle_txd_loaded()
+
+    effect_name = parent_obj.get('2dfx_effect_name', '') or ''
+    inu = getattr(parent_obj, 'inu', None)
+
+    # Lazy migration: if an effect is set but our editable fields are still
+    # at defaults (blend opened with older addon version, or the user just
+    # typed a name), populate them from the FXP now.
+    if (effect_name and inu is not None
+            and not (inu.particle_texture or '').strip()):
+        try:
+            from .. import _populate_particle_props_from_fxp
+            _populate_particle_props_from_fxp(
+                parent_obj, effect_name,
+                int(getattr(inu, 'particle_emitter_index', 0)),
+            )
+        except Exception as e:
+            print(f"[2DFX Particle] lazy populate failed: {e}")
+
+    tint, scale, tex_name = _particle_appearance_from_obj(parent_obj)
+
+    collection = parent_obj.users_collection[0] if parent_obj.users_collection else bpy.context.collection
+
+    billboard_name = f"{parent_obj.name}_particle"
+    plane_mesh = _create_plane_mesh(billboard_name, size=1.0)
+    billboard = bpy.data.objects.new(billboard_name, plane_mesh)
+    billboard.parent = parent_obj
+    billboard.location = (0, 0, 0)
+    billboard.scale = (scale, scale, scale)
+    collection.objects.link(billboard)
+
+    mat = _create_particle_material(effect_name or "empty", tint, tex_name)
+    billboard.data.materials.append(mat)
+
+    _lock_child(billboard, lock_rotation=False)
+    _face_billboard_to_view(billboard)
+    return billboard
+
+
+def update_particle_preview(parent_obj):
+    """Recreate particle preview for a Particle2dfx Empty."""
+    remove_preview_children(parent_obj)
+    create_particle_preview(parent_obj)
+
+
 def create_shadow_preview(parent_obj):
     """Create shadow projection plane below a Light2dfx Empty."""
     shadow_tex = parent_obj.get('2dfx_shadow_tex', 'shad_exp')
@@ -444,11 +716,6 @@ def _set_corona_emission(corona_obj, strength):
 
 def _update_billboard_rotations():
     """Timer: rotate all corona billboards to face the active 3D viewport camera."""
-    global _billboard_timer_running
-    if not _billboard_timer_running:
-        print("[2DFX Billboard] Timer stopped (_billboard_timer_running=False)")
-        return None  # Stop timer
-
     try:
         # Find active 3D viewport — check all windows (not just context.screen)
         view_quat = None
@@ -494,19 +761,102 @@ def _update_billboard_rotations():
     return 0.1  # Repeat every 0.1 sec
 
 
+_billboard_draw_handler = None
+_last_view_quat = None
+
+
+def _current_view_rotation():
+    """Return the active 3D viewport's view_rotation, or None.
+
+    Safe to call from property-update callbacks where `context.region_data`
+    is not available — scans all windows for a VIEW_3D area.
+    """
+    try:
+        wm = bpy.context.window_manager
+        if wm is None:
+            return None
+        for window in wm.windows:
+            screen = window.screen
+            if screen is None:
+                continue
+            for area in screen.areas:
+                if area.type != 'VIEW_3D':
+                    continue
+                for space in area.spaces:
+                    if space.type == 'VIEW_3D' and space.region_3d is not None:
+                        return space.region_3d.view_rotation.copy()
+    except Exception:
+        pass
+    return None
+
+
+def _face_billboard_to_view(obj):
+    """Snap a freshly-created billboard so it faces the current viewport."""
+    quat = _current_view_rotation()
+    if quat is not None:
+        obj.rotation_euler = quat.to_euler()
+    # Invalidate the draw-handler cache so the next redraw won't short-circuit.
+    global _last_view_quat
+    _last_view_quat = None
+
+
+def _billboard_draw_callback():
+    """Draw handler: runs on every VIEW_3D redraw, updates billboards to face camera."""
+    global _last_view_quat
+    try:
+        region_3d = bpy.context.region_data
+        if region_3d is None:
+            return
+        view_quat = region_3d.view_rotation.copy()
+
+        # Skip if view hasn't changed (optimization)
+        if _last_view_quat is not None:
+            diff = (view_quat - _last_view_quat).magnitude
+            if diff < 0.0001:
+                return
+        _last_view_quat = view_quat
+
+        billboard_euler = view_quat.to_euler()
+
+        for obj in bpy.data.objects:
+            if (obj.type == 'MESH'
+                    and ('_corona' in obj.name or '_particle' in obj.name)
+                    and getattr(obj, 'inu', None)
+                    and obj.inu.type == 'NON'):
+                obj.rotation_euler = billboard_euler
+
+                parent = obj.parent
+                if parent and getattr(parent, 'inu', None) and parent.inu.type == '2DFX':
+                    if '_corona' in obj.name:
+                        _apply_show_mode_visibility(obj, parent)
+    except Exception as e:
+        print(f"[2DFX Billboard] Draw handler error: {e}")
+
+
 def start_billboard_timer():
-    """Start the billboard rotation timer."""
-    global _billboard_timer_running
-    # Always kill old timer first
+    """Register draw handler for billboard rotation updates."""
+    global _billboard_draw_handler
+    # Keep timer fallback too
     if bpy.app.timers.is_registered(_update_billboard_rotations):
         bpy.app.timers.unregister(_update_billboard_rotations)
-        print("[2DFX Billboard] Old timer unregistered")
-    _billboard_timer_running = True
     bpy.app.timers.register(_update_billboard_rotations, first_interval=0.1)
-    print("[2DFX Billboard] Timer started")
+
+    # Register draw handler on VIEW_3D space
+    if _billboard_draw_handler is None:
+        try:
+            _billboard_draw_handler = bpy.types.SpaceView3D.draw_handler_add(
+                _billboard_draw_callback, (), 'WINDOW', 'POST_VIEW')
+            print("[2DFX Billboard] Draw handler registered")
+        except Exception as e:
+            print(f"[2DFX Billboard] Failed to register draw handler: {e}")
 
 
 def stop_billboard_timer():
-    """Stop the billboard rotation timer."""
-    global _billboard_timer_running
-    _billboard_timer_running = False
+    """Unregister draw handler and timer."""
+    global _billboard_draw_handler
+    if _billboard_draw_handler is not None:
+        try:
+            bpy.types.SpaceView3D.draw_handler_remove(_billboard_draw_handler, 'WINDOW')
+        except Exception:
+            pass
+        _billboard_draw_handler = None

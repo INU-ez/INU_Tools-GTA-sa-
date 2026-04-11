@@ -74,6 +74,24 @@ def _collect_mesh(obj, model: ColModel):
         bm.free()
 
 
+def _is_shadow_mesh(obj) -> bool:
+    """Detect if a Blender object should be treated as shadow mesh.
+
+    Two ways to mark a mesh as shadow-only (Kam's/Rockstar convention):
+      1. obj.inu.type == 'SHA'  (INU_Tools dropdown)
+      2. Object name ends with '_SHA' / '_sha'  (Kam's suffix convention)
+    """
+    # Explicit type on inu property
+    inu = getattr(obj, 'inu', None)
+    if inu is not None and getattr(inu, 'type', '') == 'SHA':
+        return True
+    # Name suffix
+    name = obj.name.lower()
+    if name.endswith('_sha') or '_sha.' in name:  # .001 suffix variants
+        return True
+    return False
+
+
 def _collect_shadow_mesh(obj, model: ColModel):
     """Same as _collect_mesh but writes to shadow_vertices/shadow_faces."""
     mesh = obj.data
@@ -125,28 +143,46 @@ def _collect_sphere(obj, model: ColModel):
 
 
 def _compute_bounds(model: ColModel) -> Bounds:
-    """Calculate bounding sphere and AABB from all geometry."""
-    all_verts = model.vertices + model.shadow_vertices
+    """Calculate bounding sphere and AABB from all geometry.
 
-    if not all_verts:
+    Accounts for vertices (mesh + shadow mesh), spheres AND boxes.
+    Missing boxes was a bug that broke bounds for COL files that
+    only have box collision (e.g. light beams with dummy box bounds).
+    """
+    all_verts = model.vertices + model.shadow_vertices
+    has_any = bool(all_verts) or bool(model.spheres) or bool(model.boxes)
+
+    if not has_any:
         return Bounds()
 
-    # AABB
-    xs = [v.x for v in all_verts]
-    ys = [v.y for v in all_verts]
-    zs = [v.z for v in all_verts]
+    # Seed AABB from first available source
+    INF = float('inf')
+    bb_min = Vec3(INF, INF, INF)
+    bb_max = Vec3(-INF, -INF, -INF)
 
-    bb_min = Vec3(min(xs), min(ys), min(zs))
-    bb_max = Vec3(max(xs), max(ys), max(zs))
+    for v in all_verts:
+        if v.x < bb_min.x: bb_min.x = v.x
+        if v.y < bb_min.y: bb_min.y = v.y
+        if v.z < bb_min.z: bb_min.z = v.z
+        if v.x > bb_max.x: bb_max.x = v.x
+        if v.y > bb_max.y: bb_max.y = v.y
+        if v.z > bb_max.z: bb_max.z = v.z
 
-    # Also include sphere centers
     for s in model.spheres:
-        bb_min.x = min(bb_min.x, s.center.x - s.radius)
-        bb_min.y = min(bb_min.y, s.center.y - s.radius)
-        bb_min.z = min(bb_min.z, s.center.z - s.radius)
-        bb_max.x = max(bb_max.x, s.center.x + s.radius)
-        bb_max.y = max(bb_max.y, s.center.y + s.radius)
-        bb_max.z = max(bb_max.z, s.center.z + s.radius)
+        if s.center.x - s.radius < bb_min.x: bb_min.x = s.center.x - s.radius
+        if s.center.y - s.radius < bb_min.y: bb_min.y = s.center.y - s.radius
+        if s.center.z - s.radius < bb_min.z: bb_min.z = s.center.z - s.radius
+        if s.center.x + s.radius > bb_max.x: bb_max.x = s.center.x + s.radius
+        if s.center.y + s.radius > bb_max.y: bb_max.y = s.center.y + s.radius
+        if s.center.z + s.radius > bb_max.z: bb_max.z = s.center.z + s.radius
+
+    for b in model.boxes:
+        if b.min.x < bb_min.x: bb_min.x = b.min.x
+        if b.min.y < bb_min.y: bb_min.y = b.min.y
+        if b.min.z < bb_min.z: bb_min.z = b.min.z
+        if b.max.x > bb_max.x: bb_max.x = b.max.x
+        if b.max.y > bb_max.y: bb_max.y = b.max.y
+        if b.max.z > bb_max.z: bb_max.z = b.max.z
 
     # Bounding sphere
     center = Vec3(
@@ -182,13 +218,7 @@ def export_col(filepath: str, objects, version: int = 3, model_name: str = ""):
 
     for obj in objects:
         if obj.type == 'MESH':
-            # Determine if this is a shadow mesh or collision mesh
-            obj_type = 'COL'
-            inu = getattr(obj, 'inu', None)
-            if inu is not None:
-                obj_type = getattr(inu, 'type', 'COL')
-
-            if obj_type == 'SHA':
+            if _is_shadow_mesh(obj):
                 _collect_shadow_mesh(obj, model)
             else:
                 _collect_mesh(obj, model)
@@ -209,12 +239,7 @@ def export_col_bytes(objects, version: int = 3, model_name: str = "") -> bytes:
 
     for obj in objects:
         if obj.type == 'MESH':
-            obj_type = 'COL'
-            inu = getattr(obj, 'inu', None)
-            if inu is not None:
-                obj_type = getattr(inu, 'type', 'COL')
-
-            if obj_type == 'SHA':
+            if _is_shadow_mesh(obj):
                 _collect_shadow_mesh(obj, model)
             else:
                 _collect_mesh(obj, model)
