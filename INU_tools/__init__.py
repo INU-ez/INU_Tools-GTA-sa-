@@ -1802,6 +1802,9 @@ class GTATOOLS_OT_file_import_col(bpy.types.Operator, ImportHelper):
 
 
 def menu_func_export(self, context):
+    self.layout.operator(GTATOOLS_OT_inu_export.bl_idname,
+                         text="INU Export (.dff/.col/.txd/.ide/.ipl)")
+    self.layout.separator()
     self.layout.operator(GTATOOLS_OT_file_export_dff.bl_idname)
     self.layout.operator(GTATOOLS_OT_file_export_col.bl_idname)
     self.layout.operator(GTATOOLS_OT_file_export_txd.bl_idname)
@@ -1927,9 +1930,10 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
     bl_label = "Extract Resources"
     bl_options = {'REGISTER'}
 
-    def execute(self, context):
-        import numpy as np
+    _timer = None
+    _gen = None
 
+    def invoke(self, context, event):
         scene = context.scene
         game_root = bpy.path.abspath(scene.gtatools_game_root)
 
@@ -1938,8 +1942,7 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
             return {'CANCELLED'}
 
         from .core.gta_dat import find_all_resources
-        from .core.img import ImgReader, read_directory
-        from .core.txd import read_txd_file
+        from .core.img import read_directory
 
         info = find_all_resources(game_root)
 
@@ -1964,11 +1967,10 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
         tex_dir = os.path.join(cache_dir, 'textures')
         os.makedirs(tex_dir, exist_ok=True)
 
-        # GPU mode: check nvdecompress availability
+        # GPU mode
         use_gpu = check_nvtt_available(getattr(scene, 'gtatools_nvtt_path', ''))[0]
         nvdecompress = None
         dds_dir = None
-        dds_queue = []
         if use_gpu:
             nvtt_path = getattr(scene, 'gtatools_nvtt_path', '')
             if nvtt_path:
@@ -1978,22 +1980,7 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
                     dds_dir = os.path.join(cache_dir, '_dds_tmp')
                     os.makedirs(dds_dir, exist_ok=True)
 
-        # Pre-count total entries across all IMGs for progress
-        total_entries = 0
-        for ip in img_paths:
-            try:
-                total_entries += len(read_directory(ip))
-            except Exception:
-                pass
-
-        wm = context.window_manager
-
-        dff_count = 0
-        col_count = 0
-        tex_count = 0
-        skipped = 0
-
-        # Count TXD entries for progress (slow part)
+        # Pre-count TXDs for progress
         txd_total = 0
         for ip in img_paths:
             try:
@@ -2002,35 +1989,68 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
                         txd_total += 1
             except Exception:
                 pass
-        wm.progress_begin(0, max(txd_total, 1))
-        txd_progress = 0
 
-        for img_idx, ip in enumerate(img_paths):
+        # Store state
+        self._img_paths = img_paths
+        self._cache_dir = cache_dir
+        self._tex_dir = tex_dir
+        self._use_gpu = use_gpu
+        self._nvdecompress = nvdecompress
+        self._dds_dir = dds_dir
+        self._txd_total = txd_total
+        self._dff_count = 0
+        self._col_count = 0
+        self._tex_count = 0
+        self._skipped = 0
+        self._txd_progress = 0
+        self._phase = 'TXD'
+        self._gpu_done = 0
+        self._gpu_total = 0
+        self._dds_queue = []
+
+        self._gen = self._work(context)
+        wm = context.window_manager
+        wm.progress_begin(0, max(txd_total, 1))
+        self._timer = wm.event_timer_add(0.01, window=context.window)
+        wm.modal_handler_add(self)
+        context.workspace.status_text_set(T("Извлечение ресурсов..."))
+        return {'RUNNING_MODAL'}
+
+    def _work(self, context):
+        from .core.img import ImgReader
+        from .core.txd import read_txd_file
+
+        cache_dir = self._cache_dir
+        tex_dir = self._tex_dir
+        use_gpu = self._use_gpu
+        nvdecompress = self._nvdecompress
+        dds_dir = self._dds_dir
+        dds_queue = self._dds_queue
+
+        for ip in self._img_paths:
             try:
                 with ImgReader(ip) as img:
-                    # Step 1: Batch extract DFF + COL (fast, sequential read)
+                    # DFF + COL batch extraction (fast)
                     counts = img.extract_all_to(
                         cache_dir,
                         extensions={'.dff', '.col'},
                         skip_existing=True)
-                    dff_count += counts['dff']
-                    col_count += counts['col']
-                    skipped += counts['skipped']
+                    self._dff_count += counts['dff']
+                    self._col_count += counts['col']
+                    self._skipped += counts['skipped']
 
-                    # Step 2: Extract TXD → convert to PNG (slow part)
+                    # TXD processing (slow — yield per entry)
                     for entry in img.entries:
                         if not entry.name.lower().endswith('.txd'):
                             continue
-                        txd_progress += 1
-                        if txd_progress % 5 == 0:
-                            wm.progress_update(txd_progress)
+                        self._txd_progress += 1
+                        yield
 
                         txd_data = img.read(entry.name)
                         if not txd_data:
                             continue
 
                         tmp_path = os.path.join(cache_dir, entry.name)
-
                         with open(tmp_path, 'wb') as f:
                             f.write(txd_data)
 
@@ -2042,21 +2062,20 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
                                     continue
                                 png_path = os.path.join(tex_dir, name + '.png')
                                 if os.path.isfile(png_path):
-                                    # Keep larger resolution version
                                     existing_size = os.path.getsize(png_path)
                                     new_size = tex.width * tex.height * 4
                                     if new_size <= existing_size:
-                                        skipped += 1
+                                        self._skipped += 1
                                         continue
 
                                 if use_gpu and nvdecompress:
                                     dds_path = os.path.join(dds_dir, name + '.dds')
                                     _write_dds(dds_path, tex)
                                     dds_queue.append((dds_path, png_path))
-                                    tex_count += 1
+                                    self._tex_count += 1
                                 else:
                                     _write_png(png_path, tex.pixels, tex.width, tex.height)
-                                    tex_count += 1
+                                    self._tex_count += 1
                         except Exception as _e:
                             _log = os.path.join(cache_dir, '_txd_errors.log')
                             with open(_log, 'a', encoding='utf-8') as _lf:
@@ -2069,11 +2088,12 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
             except Exception:
                 pass
 
-        # Batch GPU conversion: nvdecompress DDS → PNG (parallel)
+        # GPU batch conversion
         if dds_queue and nvdecompress:
-            import subprocess
-            wm.progress_begin(0, len(dds_queue))
-            done = [0]
+            self._phase = 'GPU'
+            self._gpu_total = len(dds_queue)
+
+            workers = min(os.cpu_count() or 4, 8)
 
             def _convert(args):
                 dds_p, png_p = args
@@ -2083,15 +2103,16 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
                         capture_output=True, timeout=10)
                 except Exception:
                     pass
-                done[0] += 1
-                return done[0]
 
-            workers = min(os.cpu_count() or 4, 8)
             with ThreadPoolExecutor(max_workers=workers) as pool:
-                for count in pool.map(_convert, dds_queue):
-                    if count % 50 == 0:
-                        wm.progress_update(count)
-            # Cleanup DDS temp dir
+                futures = [pool.submit(_convert, args) for args in dds_queue]
+                while True:
+                    done = sum(1 for f in futures if f.done())
+                    self._gpu_done = done
+                    if done >= len(futures):
+                        break
+                    yield
+
             if dds_dir:
                 try:
                     import shutil
@@ -2099,12 +2120,51 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
                 except Exception:
                     pass
 
-        wm.progress_end()
-        gpu_str = " (GPU)" if (use_gpu and nvdecompress) else ""
-        self.report({'INFO'},
-                    f"DFF: {dff_count}, COL: {col_count}, "
-                    f"{T('Извлечено текстур:')} {tex_count}{gpu_str}, {T('пропущено:')} {skipped}")
-        return {'FINISHED'}
+    def modal(self, context, event):
+        if event.type == 'ESC':
+            self._cleanup(context)
+            self.report({'WARNING'}, T("Отменено"))
+            return {'CANCELLED'}
+
+        if event.type != 'TIMER':
+            return {'PASS_THROUGH'}
+
+        import time
+        wm = context.window_manager
+        deadline = time.monotonic() + 0.1
+
+        while time.monotonic() < deadline:
+            try:
+                next(self._gen)
+            except StopIteration:
+                self._cleanup(context)
+                gpu_str = " (GPU)" if (self._use_gpu and self._nvdecompress) else ""
+                self.report({'INFO'},
+                    f"DFF: {self._dff_count}, COL: {self._col_count}, "
+                    f"{T('Извлечено текстур:')} {self._tex_count}{gpu_str}, "
+                    f"{T('пропущено:')} {self._skipped}")
+                return {'FINISHED'}
+
+        # Update UI
+        if self._phase == 'GPU':
+            wm.progress_begin(0, max(self._gpu_total, 1))
+            wm.progress_update(self._gpu_done)
+            context.workspace.status_text_set(
+                f"GPU DDS→PNG: {self._gpu_done}/{self._gpu_total}")
+        else:
+            wm.progress_update(self._txd_progress)
+            context.workspace.status_text_set(
+                f"TXD: {self._txd_progress}/{self._txd_total} | "
+                f"DFF: {self._dff_count} COL: {self._col_count}")
+
+        return {'RUNNING_MODAL'}
+
+    def _cleanup(self, context):
+        if self._timer:
+            context.window_manager.event_timer_remove(self._timer)
+            self._timer = None
+        context.window_manager.progress_end()
+        context.workspace.status_text_set(None)
 
 
 _bbox_mode_active = False
@@ -2120,7 +2180,10 @@ def _bbox_selection_handler(scene, depsgraph):
     if not _bbox_mode_active:
         return
 
-    selected = {o.name for o in bpy.context.selected_objects if o.type == 'MESH'}
+    try:
+        selected = {o.name for o in bpy.context.selected_objects if o.type == 'MESH'}
+    except Exception:
+        return
     if selected == _bbox_last_selection:
         return
     _bbox_last_selection = selected
@@ -2276,7 +2339,7 @@ class GTATOOLS_OT_toggle_bbox(bpy.types.Operator):
     bl_options = {'REGISTER'}
 
     def execute(self, context):
-        global _bbox_mode_active, _bbox_last_selection
+        global _bbox_mode_active, _bbox_last_selection, _bbox_near_set
 
         _bbox_mode_active = not _bbox_mode_active
 
@@ -2338,6 +2401,9 @@ class GTATOOLS_OT_load_map_glb(bpy.types.Operator, ImportHelper):
     files: CollectionProperty(type=bpy.types.OperatorFileListElement)
     directory: StringProperty(subtype='DIR_PATH')
 
+    _timer = None
+    _gen = None
+
     def execute(self, context):
         from .core.gta_dat import find_all_resources
         from .core.ide import read_ide
@@ -2361,22 +2427,74 @@ class GTATOOLS_OT_load_map_glb(bpy.types.Operator, ImportHelper):
                     except Exception:
                         pass
 
-        total = 0
+        # Collect valid files
+        glb_files = []
         for f in self.files:
             glb_path = os.path.join(self.directory, f.name)
-            if not os.path.isfile(glb_path):
-                continue
+            if os.path.isfile(glb_path):
+                glb_files.append(glb_path)
+
+        if not glb_files:
+            self.report({'WARNING'}, T("Нет файлов для импорта"))
+            return {'CANCELLED'}
+
+        self._ide_models = ide_models
+        self._glb_files = glb_files
+        self._total_imported = 0
+        self._file_idx = 0
+
+        self._gen = self._work(context)
+        wm = context.window_manager
+        wm.progress_begin(0, len(glb_files))
+        self._timer = wm.event_timer_add(0.01, window=context.window)
+        wm.modal_handler_add(self)
+        context.workspace.status_text_set(T("Импорт .glb..."))
+        return {'RUNNING_MODAL'}
+
+    def _work(self, context):
+        for idx, glb_path in enumerate(self._glb_files):
+            self._file_idx = idx
+            fname = os.path.basename(glb_path)
+            yield  # let UI update before blocking import
 
             before = set(context.scene.objects)
             bpy.ops.import_scene.gltf(filepath=glb_path)
             after = set(context.scene.objects)
             new_objs = list(after - before)
 
-            _sort_map_objects(context, new_objs, ide_models)
-            total += len(new_objs)
+            _sort_map_objects(context, new_objs, self._ide_models)
+            self._total_imported += len(new_objs)
 
-        self.report({'INFO'}, f"{T('Импортировано:')} {total}")
-        return {'FINISHED'}
+    def modal(self, context, event):
+        if event.type == 'ESC':
+            self._cleanup(context)
+            self.report({'WARNING'}, T("Отменено"))
+            return {'CANCELLED'}
+
+        if event.type != 'TIMER':
+            return {'PASS_THROUGH'}
+
+        wm = context.window_manager
+
+        try:
+            next(self._gen)
+        except StopIteration:
+            self._cleanup(context)
+            self.report({'INFO'}, f"{T('Импортировано:')} {self._total_imported}")
+            return {'FINISHED'}
+
+        wm.progress_update(self._file_idx)
+        fname = os.path.basename(self._glb_files[self._file_idx]) if self._file_idx < len(self._glb_files) else ""
+        context.workspace.status_text_set(
+            f"{T('Импорт .glb:')} {self._file_idx + 1}/{len(self._glb_files)} {fname}")
+        return {'RUNNING_MODAL'}
+
+    def _cleanup(self, context):
+        if self._timer:
+            context.window_manager.event_timer_remove(self._timer)
+            self._timer = None
+        context.window_manager.progress_end()
+        context.workspace.status_text_set(None)
 
 
 class GTATOOLS_OT_build_map_glb(bpy.types.Operator):
@@ -2385,7 +2503,10 @@ class GTATOOLS_OT_build_map_glb(bpy.types.Operator):
     bl_label = "Build Map glTF"
     bl_options = {'REGISTER'}
 
-    def execute(self, context):
+    _timer = None
+    _thread = None
+
+    def invoke(self, context, event):
         from .core.gta_dat import find_all_resources
         from .core.ide import read_ide
         from .core.ipl import read_ipl, _read_binary_ipl
@@ -2403,7 +2524,6 @@ class GTATOOLS_OT_build_map_glb(bpy.types.Operator):
             self.report({'ERROR'}, T("Укажите корневую папку GTA SA"))
             return {'CANCELLED'}
 
-        # Check DFF files in cache
         dff_count = len([f for f in os.listdir(cache_dir) if f.lower().endswith('.dff')])
         if dff_count == 0:
             self.report({'WARNING'}, T("Нет DFF файлов в кэше. Сначала извлеките ресурсы."))
@@ -2432,7 +2552,6 @@ class GTATOOLS_OT_build_map_glb(bpy.types.Operator):
             for i, part in enumerate(parts):
                 if part == 'MAPS' and i + 1 < len(parts):
                     return parts[i + 1] == region
-            # Binary IPL from IMG: match filename prefix
             name = path.replace('\\', '/').rsplit('/', 1)[-1].upper()
             return name.startswith(region)
 
@@ -2466,7 +2585,6 @@ class GTATOOLS_OT_build_map_glb(bpy.types.Operator):
             except Exception:
                 pass
 
-        # Resolve names for binary IPL
         for inst in instances:
             if not inst.model_name and inst.model_id in ide_models:
                 inst.model_name = ide_models[inst.model_id].model_name
@@ -2475,7 +2593,6 @@ class GTATOOLS_OT_build_map_glb(bpy.types.Operator):
             self.report({'WARNING'}, T("IPL файл пуст или не указан"))
             return {'CANCELLED'}
 
-        # Output path (always rebuild — delete old)
         out_name = f"map_{region.lower()}.glb"
         out_path = os.path.join(cache_dir, out_name)
         if os.path.isfile(out_path):
@@ -2484,42 +2601,101 @@ class GTATOOLS_OT_build_map_glb(bpy.types.Operator):
             except Exception:
                 pass
 
+        # Store state
+        self._out_path = out_path
+        self._ide_models = ide_models
+        self._instance_count = len(instances)
+        self._pg_current = 0
+        self._pg_name = ''
+        self._result = None
+        self._error = None
+
+        # Progress callback (called from thread — GIL-safe)
+        def _progress_cb(current, total, name):
+            self._pg_current = current
+            self._pg_name = name
+
+        # Start build in background thread
+        import threading
+
+        def _thread_fn():
+            try:
+                self._result = build_map_glb(
+                    cache_dir=cache_dir,
+                    instances=instances,
+                    ide_models=ide_models,
+                    output_path=out_path,
+                    tex_dir=tex_dir,
+                    skip_lod=skip_lod,
+                    callback=_progress_cb,
+                )
+            except Exception as e:
+                self._error = str(e)
+
+        self._thread = threading.Thread(target=_thread_fn, daemon=True)
+        self._thread.start()
+
         wm = context.window_manager
         wm.progress_begin(0, len(instances))
+        self._timer = wm.event_timer_add(0.1, window=context.window)
+        wm.modal_handler_add(self)
+        context.workspace.status_text_set(T("Сборка карты..."))
+        return {'RUNNING_MODAL'}
 
-        def _progress(current, total, name):
-            wm.progress_update(current)
+    def modal(self, context, event):
+        if event.type == 'ESC':
+            self._cleanup(context)
+            self.report({'WARNING'}, T("Отменено"))
+            return {'CANCELLED'}
 
-        result = build_map_glb(
-            cache_dir=cache_dir,
-            instances=instances,
-            ide_models=ide_models,
-            output_path=out_path,
-            tex_dir=tex_dir,
-            skip_lod=skip_lod,
-            callback=_progress,
-        )
+        if event.type != 'TIMER':
+            return {'PASS_THROUGH'}
 
-        wm.progress_end()
+        wm = context.window_manager
+        wm.progress_update(self._pg_current)
+        context.workspace.status_text_set(
+            f"{T('Сборка карты:')} {self._pg_current}/{self._instance_count} {self._pg_name}")
 
-        if result['placed'] > 0:
-            # Auto-import the built .glb
+        if self._thread.is_alive():
+            return {'RUNNING_MODAL'}
+
+        # Thread finished
+        self._thread.join()
+        self._thread = None
+
+        if self._error:
+            self._cleanup(context)
+            self.report({'ERROR'}, f"Build error: {self._error}")
+            return {'CANCELLED'}
+
+        result = self._result
+        if result and result['placed'] > 0:
+            context.workspace.status_text_set(T("Импорт .glb..."))
+
             before = set(context.scene.objects)
-            bpy.ops.import_scene.gltf(filepath=out_path)
+            bpy.ops.import_scene.gltf(filepath=self._out_path)
             after = set(context.scene.objects)
             new_objs = list(after - before)
 
-            # Sort into collections by category
-            _sort_map_objects(context, new_objs, ide_models)
+            _sort_map_objects(context, new_objs, self._ide_models)
 
+            self._cleanup(context)
             self.report({'INFO'},
                         f"{T('Импортировано:')} {len(new_objs)} obj, "
                         f"{result['meshes']} {T('уникальных моделей')}, "
                         f"{result['skipped']} {T('пропущено')}")
         else:
+            self._cleanup(context)
             self.report({'WARNING'}, T("Нет моделей для импорта"))
 
         return {'FINISHED'}
+
+    def _cleanup(self, context):
+        if self._timer:
+            context.window_manager.event_timer_remove(self._timer)
+            self._timer = None
+        context.window_manager.progress_end()
+        context.workspace.status_text_set(None)
 
 
 class GTATOOLS_OT_import_map(bpy.types.Operator):
@@ -2528,15 +2704,15 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
     bl_label = "Import Map"
     bl_options = {'REGISTER', 'UNDO'}
 
-    def execute(self, context):
-        import tempfile
+    _timer = None
+    _gen = None
+
+    def invoke(self, context, event):
         from .core.gta_dat import find_all_resources
         from .core.img import extract_file, read_directory
         from .core.ide import read_ide
         from .core.ipl import read_ipl, _read_binary_ipl
         from .ops.ipl_sections import import_ipl_sections
-        from mathutils import Quaternion, Vector
-        import bmesh
 
         scene = context.scene
         game_root = bpy.path.abspath(scene.gtatools_game_root)
@@ -2556,15 +2732,12 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
 
         # Collect ALL available IMG archives
         img_paths = []
-        # 1. From gta.dat
         for p in info.img_paths:
             if os.path.isfile(p) and p not in img_paths:
                 img_paths.append(p)
-        # 2. Standard gta3.img (not listed in gta.dat)
         std = os.path.join(game_root, 'models', 'gta3.img')
         if os.path.isfile(std) and std not in img_paths:
-            img_paths.insert(0, std)  # primary archive first
-        # 3. IMG field from settings
+            img_paths.insert(0, std)
         fallback = bpy.path.abspath(scene.gtatools_img_path)
         if fallback and os.path.isfile(fallback) and fallback not in img_paths:
             img_paths.append(fallback)
@@ -2586,7 +2759,7 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
                 except Exception:
                     pass
 
-        # Region filter for IPL paths
+        # Region filter
         region = getattr(scene, 'gtatools_map_region', 'ALL')
         def _ipl_matches_region(path: str) -> bool:
             if region == 'ALL':
@@ -2595,11 +2768,10 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
             for i, part in enumerate(parts):
                 if part == 'MAPS' and i + 1 < len(parts):
                     return parts[i + 1] == region
-            # Binary IPL from IMG: match filename prefix
             name = path.replace('\\', '/').rsplit('/', 1)[-1].upper()
             return name.startswith(region)
 
-        # Read text IPL files (filtered by region)
+        # Read text IPL files
         instances = []
         for p in info.ipl_paths:
             if os.path.isfile(p) and _ipl_matches_region(p):
@@ -2612,8 +2784,7 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
                 except Exception:
                     pass
 
-        # Build unified file index across ALL IMG archives
-        # img_files: filename.lower() → (original_name, img_archive_path)
+        # Build unified file index
         img_files = {}
         for ip in img_paths:
             try:
@@ -2621,8 +2792,6 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
                     key = e.name.lower()
                     if key not in img_files:
                         img_files[key] = (e.name, ip)
-                    # Read binary IPL from IMG (stream files)
-                    # e.g. LAn_stream0.ipl → region filter by prefix
                     if key.endswith('.ipl') and _ipl_matches_region(key):
                         try:
                             ipl_data = extract_file(ip, e.name)
@@ -2638,7 +2807,6 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
             self.report({'WARNING'}, T("IPL файл пуст или не указан"))
             return {'CANCELLED'}
 
-        # Resolve model names for binary IPL
         for inst in instances:
             if not inst.model_name and inst.model_id in ide_models:
                 inst.model_name = ide_models[inst.model_id].model_name
@@ -2651,38 +2819,67 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
                 context.scene.collection.children.link(c)
             return c
 
-        dff_far = _get_col("Map_DFF_Far")    # draw dist 300+
-        dff_mid = _get_col("Map_DFF_Mid")    # draw dist 100-299
-        dff_near = _get_col("Map_DFF_Near")  # draw dist < 100
+        dff_far = _get_col("Map_DFF_Far")
+        dff_mid = _get_col("Map_DFF_Mid")
+        dff_near = _get_col("Map_DFF_Near")
         lod_col = _get_col("Map_LOD")
 
-        def _pick_dff_col(model_id):
-            """Pick collection based on draw distance from IDE."""
-            if model_id in ide_models:
-                dd = ide_models[model_id].draw_distance
-                if dd >= 300:
-                    return dff_far
-                elif dd >= 100:
-                    return dff_mid
-                else:
-                    return dff_near
-            return dff_far  # default: far (buildings)
-
-        wm = context.window_manager
-        wm.progress_begin(0, len(instances))
-
-        # Hide collections during import to prevent viewport updates
+        # Hide collections during import
         dff_far.hide_viewport = True
         dff_mid.hide_viewport = True
         dff_near.hide_viewport = True
         lod_col.hide_viewport = True
 
-        imported = 0
-        skipped = 0
+        # Store state
+        self._instances = instances
+        self._ide_models = ide_models
+        self._img_files = img_files
+        self._skip_lod = skip_lod
+        self._fake_mode = fake_mode
+        self._dff_far = dff_far
+        self._dff_mid = dff_mid
+        self._dff_near = dff_near
+        self._lod_col = lod_col
+        self._imported = 0
+        self._skipped = 0
+        self._progress = 0
+        self._total = len(instances)
+        self._scene = scene
 
-        if fake_mode:
-            # ── FAKE MODE: create planes with model names ──
-            # Shared plane mesh (1x1, reused by all fakes)
+        self._gen = self._work(context)
+        wm = context.window_manager
+        wm.progress_begin(0, len(instances))
+        self._timer = wm.event_timer_add(0.01, window=context.window)
+        wm.modal_handler_add(self)
+        context.workspace.status_text_set(T("Импорт карты..."))
+        return {'RUNNING_MODAL'}
+
+    def _pick_dff_col(self, model_id):
+        ide_models = self._ide_models
+        if model_id in ide_models:
+            dd = ide_models[model_id].draw_distance
+            if dd >= 300:
+                return self._dff_far
+            elif dd >= 100:
+                return self._dff_mid
+            else:
+                return self._dff_near
+        return self._dff_far
+
+    def _work(self, context):
+        from .core.img import extract_file
+        from mathutils import Quaternion
+        import bmesh
+
+        instances = self._instances
+        ide_models = self._ide_models
+        img_files = self._img_files
+        skip_lod = self._skip_lod
+        scene = self._scene
+        lod_col = self._lod_col
+
+        if self._fake_mode:
+            # ── FAKE MODE ──
             plane_mesh = bpy.data.meshes.new("_fake_plane")
             bm = bmesh.new()
             bm.verts.new((-25, -25, 0))
@@ -2694,22 +2891,20 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
             bm.free()
 
             for idx, inst in enumerate(instances):
-                if idx % 500 == 0:
-                    wm.progress_update(idx)
+                self._progress = idx
 
                 model_name = inst.model_name
                 if not model_name:
-                    skipped += 1
+                    self._skipped += 1
                     continue
 
                 is_lod = model_name.upper().startswith('LOD') or '_LOD' in model_name.upper()
                 if skip_lod and is_lod:
-                    skipped += 1
+                    self._skipped += 1
                     continue
 
-                target = lod_col if is_lod else _pick_dff_col(inst.model_id)
+                target = lod_col if is_lod else self._pick_dff_col(inst.model_id)
 
-                # Create object with SHARED mesh (linked duplicate)
                 obj = bpy.data.objects.new(model_name, plane_mesh)
                 obj.location = (inst.pos_x, inst.pos_y, inst.pos_z)
                 rot = Quaternion((inst.rot_w, inst.rot_x, inst.rot_y, inst.rot_z)).conjugated()
@@ -2717,14 +2912,12 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
                 obj.rotation_quaternion = rot
                 obj.display_type = 'WIRE'
 
-                # Store data for later DFF replacement
                 obj['map_fake'] = True
                 obj['map_model_name'] = model_name
                 obj['map_model_id'] = inst.model_id
                 obj['map_interior'] = inst.interior
                 obj['map_lod_index'] = inst.lod_index
 
-                # IDE properties
                 if inst.model_id in ide_models:
                     ide_obj = ide_models[inst.model_id]
                     obj['map_txd_name'] = ide_obj.txd_name
@@ -2732,136 +2925,157 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
                     obj['map_flags'] = ide_obj.flags
 
                 target.objects.link(obj)
-                imported += 1
+                self._imported += 1
+                yield
 
         else:
-            # ── FULL MODE: import DFF models ──
-            errors = []
+            # ── FULL MODE ──
             imported_models = {}
             tmpdir = _get_cache_dir()
 
-            if True:
-                for idx, inst in enumerate(instances):
-                    wm.progress_update(idx)
-                    model_name = inst.model_name
-                    if not model_name:
-                        skipped += 1
-                        continue
+            for idx, inst in enumerate(instances):
+                self._progress = idx
+                model_name = inst.model_name
+                if not model_name:
+                    self._skipped += 1
+                    continue
 
-                    is_lod = model_name.upper().startswith('LOD') or '_LOD' in model_name.upper()
-                    if skip_lod and is_lod:
-                        skipped += 1
-                        continue
+                is_lod = model_name.upper().startswith('LOD') or '_LOD' in model_name.upper()
+                if skip_lod and is_lod:
+                    self._skipped += 1
+                    continue
 
-                    target = lod_col if is_lod else _pick_dff_col(inst.model_id)
-                    dff_fn = model_name + '.dff'
+                target = lod_col if is_lod else self._pick_dff_col(inst.model_id)
+                dff_fn = model_name + '.dff'
 
-                    if dff_fn.lower() not in img_files:
-                        skipped += 1
-                        continue
+                if dff_fn.lower() not in img_files:
+                    self._skipped += 1
+                    continue
 
-                    if model_name in imported_models:
-                        new_objs = []
-                        for src in imported_models[model_name]:
-                            o = src.copy()
-                            o.data = src.data  # linked duplicate
-                            target.objects.link(o)
-                            new_objs.append(o)
-                    else:
-                        dff_path = os.path.join(tmpdir, dff_fn)
-                        if not os.path.isfile(dff_path):
-                            dff_entry = img_files[dff_fn.lower()]
-                            dff_data = extract_file(dff_entry[1], dff_entry[0])
-                            if not dff_data:
-                                errors.append(f"{model_name}: extract fail")
-                                continue
-                            with open(dff_path, 'wb') as f:
-                                f.write(dff_data)
-
-                        try:
-                            before = set(context.scene.objects)
-                            # Prefer glTF (fast C importer) over DFF (slow Python)
-                            glb_path = os.path.splitext(dff_path)[0] + '.glb'
-                            if os.path.isfile(glb_path):
-                                bpy.ops.import_scene.gltf(filepath=glb_path)
-                            else:
-                                from .ops.dff_import import import_dff as inu_import_dff
-                                inu_import_dff(filepath=dff_path, context=context)
-                            after = set(context.scene.objects)
-                            new_objs = list(after - before)
-
-                            load_txd = getattr(scene, 'gtatools_img_load_txd', True)
-                            if load_txd:
-                                # Try pre-extracted PNG textures first
-                                tex_cache = os.path.join(tmpdir, 'textures')
-                                _loaded_from_cache = False
-                                if os.path.isdir(tex_cache):
-                                    _loaded_from_cache = _load_textures_from_cache(
-                                        tex_cache, new_objs)
-
-                                if not _loaded_from_cache:
-                                    # Fallback: extract TXD from IMG
-                                    from .ops.txd_import import import_txd as inu_import_txd
-                                    txd_name = model_name
-                                    if inst.model_id in ide_models:
-                                        txd_name = ide_models[inst.model_id].txd_name
-                                    txd_fn = txd_name + '.txd'
-                                    if txd_fn.lower() in img_files:
-                                        txd_path = os.path.join(tmpdir, txd_fn)
-                                        if not os.path.isfile(txd_path):
-                                            txd_entry = img_files[txd_fn.lower()]
-                                            txd_data = extract_file(txd_entry[1], txd_entry[0])
-                                            if txd_data:
-                                                with open(txd_path, 'wb') as f:
-                                                    f.write(txd_data)
-                                        if os.path.isfile(txd_path):
-                                            try:
-                                                inu_import_txd(filepath=txd_path)
-                                            except Exception:
-                                                pass
-
-                            for o in new_objs:
-                                for c in list(o.users_collection):
-                                    c.objects.unlink(o)
-                                target.objects.link(o)
-
-                            imported_models[model_name] = new_objs
-                        except Exception as e:
-                            errors.append(f"{model_name}: {e}")
+                if model_name in imported_models:
+                    new_objs = []
+                    for src in imported_models[model_name]:
+                        o = src.copy()
+                        o.data = src.data
+                        target.objects.link(o)
+                        new_objs.append(o)
+                else:
+                    dff_path = os.path.join(tmpdir, dff_fn)
+                    if not os.path.isfile(dff_path):
+                        dff_entry = img_files[dff_fn.lower()]
+                        dff_data = extract_file(dff_entry[1], dff_entry[0])
+                        if not dff_data:
                             continue
+                        with open(dff_path, 'wb') as f:
+                            f.write(dff_data)
 
-                    pos = (inst.pos_x, inst.pos_y, inst.pos_z)
-                    rot = Quaternion((inst.rot_w, inst.rot_x, inst.rot_y, inst.rot_z)).conjugated()
-                    for o in new_objs:
-                        if o.type == 'MESH':
-                            o.location = pos
-                            o.rotation_mode = 'QUATERNION'
-                            o.rotation_quaternion = rot
-                            if hasattr(o, 'inu'):
-                                o.inu.model_id = inst.model_id
+                    try:
+                        before = set(context.scene.objects)
+                        glb_path = os.path.splitext(dff_path)[0] + '.glb'
+                        if os.path.isfile(glb_path):
+                            bpy.ops.import_scene.gltf(filepath=glb_path)
+                        else:
+                            from .ops.dff_import import import_dff as inu_import_dff
+                            inu_import_dff(filepath=dff_path, context=context)
+                        after = set(context.scene.objects)
+                        new_objs = list(after - before)
+
+                        load_txd = getattr(scene, 'gtatools_img_load_txd', True)
+                        if load_txd:
+                            tex_cache = os.path.join(tmpdir, 'textures')
+                            _loaded_from_cache = False
+                            if os.path.isdir(tex_cache):
+                                _loaded_from_cache = _load_textures_from_cache(
+                                    tex_cache, new_objs)
+
+                            if not _loaded_from_cache:
+                                from .ops.txd_import import import_txd as inu_import_txd
+                                txd_name = model_name
                                 if inst.model_id in ide_models:
-                                    ide_obj = ide_models[inst.model_id]
-                                    o.inu.draw_distance = ide_obj.draw_distance
-                                    o.inu.ide_flags = ide_obj.flags
-                                    o.inu.txd_name = ide_obj.txd_name
-                    imported += 1
+                                    txd_name = ide_models[inst.model_id].txd_name
+                                txd_fn = txd_name + '.txd'
+                                if txd_fn.lower() in img_files:
+                                    txd_path = os.path.join(tmpdir, txd_fn)
+                                    if not os.path.isfile(txd_path):
+                                        txd_entry = img_files[txd_fn.lower()]
+                                        txd_data = extract_file(txd_entry[1], txd_entry[0])
+                                        if txd_data:
+                                            with open(txd_path, 'wb') as f:
+                                                f.write(txd_data)
+                                    if os.path.isfile(txd_path):
+                                        try:
+                                            inu_import_txd(filepath=txd_path)
+                                        except Exception:
+                                            pass
 
-        wm.progress_end()
+                        for o in new_objs:
+                            for c in list(o.users_collection):
+                                c.objects.unlink(o)
+                            target.objects.link(o)
 
-        # Re-enable viewport for collections
-        dff_far.hide_viewport = False
-        dff_mid.hide_viewport = False
-        dff_near.hide_viewport = False
-        lod_col.hide_viewport = False
+                        imported_models[model_name] = new_objs
+                    except Exception:
+                        continue
 
-        # Single viewport update
+                pos = (inst.pos_x, inst.pos_y, inst.pos_z)
+                rot = Quaternion((inst.rot_w, inst.rot_x, inst.rot_y, inst.rot_z)).conjugated()
+                for o in new_objs:
+                    if o.type == 'MESH':
+                        o.location = pos
+                        o.rotation_mode = 'QUATERNION'
+                        o.rotation_quaternion = rot
+                        if hasattr(o, 'inu'):
+                            o.inu.model_id = inst.model_id
+                            if inst.model_id in ide_models:
+                                ide_obj = ide_models[inst.model_id]
+                                o.inu.draw_distance = ide_obj.draw_distance
+                                o.inu.ide_flags = ide_obj.flags
+                                o.inu.txd_name = ide_obj.txd_name
+                self._imported += 1
+                yield
+
+    def modal(self, context, event):
+        if event.type == 'ESC':
+            self._finish(context)
+            self.report({'WARNING'}, T("Отменено"))
+            return {'CANCELLED'}
+
+        if event.type != 'TIMER':
+            return {'PASS_THROUGH'}
+
+        import time
+        wm = context.window_manager
+        deadline = time.monotonic() + 0.1
+
+        while time.monotonic() < deadline:
+            try:
+                next(self._gen)
+            except StopIteration:
+                self._finish(context)
+                msg = f"{T('Импортировано:')} {self._imported}"
+                if self._skipped:
+                    msg += f", {T('пропущено:')} {self._skipped}"
+                self.report({'INFO'}, msg)
+                return {'FINISHED'}
+
+        wm.progress_update(self._progress)
+        context.workspace.status_text_set(
+            f"{T('Импорт карты:')} {self._progress}/{self._total}")
+        return {'RUNNING_MODAL'}
+
+    def _finish(self, context):
+        if self._timer:
+            context.window_manager.event_timer_remove(self._timer)
+            self._timer = None
+        context.window_manager.progress_end()
+        context.workspace.status_text_set(None)
+
+        # Re-enable viewport
+        for col in (self._dff_far, self._dff_mid, self._dff_near, self._lod_col):
+            if col:
+                col.hide_viewport = False
+
         context.view_layer.update()
-
-        msg = f"{T('Импортировано:')} {imported}"
-        if skipped:
-            msg += f", {T('пропущено:')} {skipped}"
-        self.report({'INFO'}, msg)
-        return {'FINISHED'}
 
 
 class GTATOOLS_OT_replace_fake_with_dff(bpy.types.Operator):
@@ -4187,9 +4401,295 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
         if all_exported:
             self.report({'INFO'}, f"{T('Экспортировано:')} {len(all_exported)} файлов ({num_groups} моделей)")
         if all_errors:
-            self.report({'WARNING'}, f"{T('Ошибки:')} {'; '.join(errors)}")
+            self.report({'WARNING'}, f"{T('Ошибки:')} {'; '.join(all_errors)}")
 
         return {'FINISHED'}
+
+
+class GTATOOLS_OT_inu_export(bpy.types.Operator, ExportHelper):
+    """Единый экспорт INU — DFF, COL, TXD, IDE, IPL в одну папку"""
+    bl_idname = "gtatools.inu_export"
+    bl_label = "INU Export"
+    bl_options = {'REGISTER', 'PRESET'}
+
+    filename_ext = ""
+    use_filter_folder = True
+
+    # ── Format checkboxes ──
+    export_dff: BoolProperty(name="DFF", default=True, description="Export DFF models")
+    export_col: BoolProperty(name="COL", default=True, description="Export COL collision")
+    export_txd: BoolProperty(name="TXD", default=True, description="Export TXD textures")
+    export_ide: BoolProperty(name="IDE", default=False, description="Export IDE definitions")
+    export_ipl: BoolProperty(name="IPL", default=False, description="Export IPL placements")
+
+    # ── Source ──
+    source: EnumProperty(
+        name="Source",
+        items=[
+            ('SELECTED', "Selected", "Export selected objects"),
+            ('COLLECTION', "Active Collection", "Export objects from active collection"),
+            ('SCENE', "Entire Scene", "Export all mesh objects in scene"),
+        ],
+        default='SELECTED',
+    )
+
+    # ── DFF settings ──
+    dff_include_2dfx: BoolProperty(name="Include 2DFX", default=True)
+    dff_auto_lod: BoolProperty(name="Auto-LOD", default=True,
+        description="Automatically export LOD models (LOD*.dff)")
+
+    # ── TXD settings ──
+    txd_selected_only: BoolProperty(name="Selected Only", default=True,
+        description="Export only textures used by exported models")
+
+    # ── IDE/IPL settings ──
+    ide_ipl_upsert: BoolProperty(name="Upsert (add/update)", default=False,
+        description="Add or update entries in existing IDE/IPL files instead of creating new ones")
+    ide_upsert_path: StringProperty(name="IDE File", subtype='FILE_PATH',
+        description="Path to existing IDE file for upsert")
+    ipl_upsert_path: StringProperty(name="IPL File", subtype='FILE_PATH',
+        description="Path to existing IPL file for upsert")
+
+    def draw(self, context):
+        layout = self.layout
+
+        # Format
+        box = layout.box()
+        box.label(text=T("Формат:"), icon='EXPORT')
+        col = box.column(align=True)
+        col.prop(self, "export_dff")
+        col.prop(self, "export_col")
+        col.prop(self, "export_txd")
+        col.prop(self, "export_ide")
+        col.prop(self, "export_ipl")
+
+        # Source
+        box = layout.box()
+        box.label(text=T("Источник:"), icon='OBJECT_DATA')
+        box.prop(self, "source", text="")
+
+        # DFF settings
+        if self.export_dff:
+            box = layout.box()
+            box.label(text="DFF:", icon='MESH_DATA')
+            box.prop(self, "dff_include_2dfx")
+            box.prop(self, "dff_auto_lod")
+            # Pipeline
+            box.prop(context.scene, "gtatools_export_pipeline", text="Pipeline")
+
+        # TXD settings
+        if self.export_txd:
+            box = layout.box()
+            box.label(text="TXD:", icon='IMAGE_DATA')
+            box.prop(self, "txd_selected_only")
+            nvtt_path = getattr(context.scene, 'gtatools_nvtt_path', '')
+            available, _ = check_nvtt_available(nvtt_path)
+            if available:
+                box.label(text="GPU (NVTT)", icon='CHECKMARK')
+            else:
+                box.label(text="CPU", icon='INFO')
+
+        # IDE/IPL settings
+        if self.export_ide or self.export_ipl:
+            box = layout.box()
+            box.label(text="IDE / IPL:", icon='TEXT')
+            box.prop(self, "ide_ipl_upsert")
+            if self.ide_ipl_upsert:
+                if self.export_ide:
+                    box.prop(self, "ide_upsert_path")
+                if self.export_ipl:
+                    box.prop(self, "ipl_upsert_path")
+
+    def _get_source_objects(self, context):
+        """Get objects based on source setting."""
+        if self.source == 'SELECTED':
+            return [o for o in context.selected_objects if o.type in ('MESH', 'EMPTY')]
+        elif self.source == 'COLLECTION':
+            col = context.view_layer.active_layer_collection.collection
+            return [o for o in col.objects if o.type in ('MESH', 'EMPTY')]
+        else:  # SCENE
+            return [o for o in context.scene.objects if o.type in ('MESH', 'EMPTY')]
+
+    def execute(self, context):
+        directory = os.path.dirname(self.filepath) if self.filepath else self.filepath
+        if not directory or not os.path.isdir(directory):
+            self.report({'ERROR'}, T("Выберите папку для экспорта"))
+            return {'CANCELLED'}
+
+        source_objects = self._get_source_objects(context)
+        mesh_objects = [o for o in source_objects if o.type == 'MESH']
+
+        if not mesh_objects:
+            self.report({'ERROR'}, T("Нет меш объектов для экспорта"))
+            return {'CANCELLED'}
+
+        # Build model groups from source objects
+        groups = {}
+        for obj in mesh_objects:
+            model_type, base_name = get_model_type(obj)
+            if not base_name:
+                continue
+            base_name_clean = base_name.rstrip('_')
+            if base_name_clean not in groups:
+                groups[base_name_clean] = {'DFF': None, 'LOD': None, 'COL': None}
+            if model_type and groups[base_name_clean][model_type] is None:
+                groups[base_name_clean][model_type] = obj
+
+        if not groups:
+            self.report({'ERROR'}, T("Не найдено моделей для экспорта"))
+            return {'CANCELLED'}
+
+        # Disable prelight preview
+        prelight_was_on = set()
+        for base_name, models in groups.items():
+            for mt in ('DFF', 'LOD', 'COL'):
+                obj = models[mt]
+                if obj and obj.type == 'MESH':
+                    for mat_slot in obj.material_slots:
+                        mat = mat_slot.material
+                        if mat and mat.use_nodes and mat.node_tree.nodes.get("Prelight_Mix"):
+                            prelight_was_on.add(obj)
+                            setup_prelight_preview(obj, enable=False)
+                            break
+
+        all_exported = []
+        all_errors = []
+        use_gpu = check_nvtt_available(getattr(context.scene, 'gtatools_nvtt_path', ''))[0]
+
+        wm = context.window_manager
+        wm.progress_begin(0, len(groups))
+
+        for idx, (base_name, models) in enumerate(groups.items()):
+            wm.progress_update(idx)
+
+            # ── DFF ──
+            if self.export_dff and models['DFF']:
+                dff_path = os.path.join(directory, f"{base_name}.dff")
+                try:
+                    from .ops.dff_export import export_dff as inu_export_dff
+                    dff_objects = [models['DFF']]
+                    if self.dff_include_2dfx:
+                        for child in models['DFF'].children:
+                            if child.type == 'EMPTY' and getattr(child, 'inu', None) and child.inu.type == '2DFX':
+                                dff_objects.append(child)
+                    inu_export_dff(filepath=dff_path, objects=dff_objects)
+                    all_exported.append(f"{base_name}.dff")
+                except Exception as e:
+                    all_errors.append(f"{base_name}.dff: {e}")
+
+            # ── LOD ──
+            if self.export_dff and self.dff_auto_lod and models['LOD']:
+                lod_path = os.path.join(directory, f"LOD{base_name}.dff")
+                try:
+                    from .ops.dff_export import export_dff as inu_export_dff
+                    inu_export_dff(filepath=lod_path, objects=[models['LOD']])
+                    all_exported.append(f"LOD{base_name}.dff")
+                except Exception as e:
+                    all_errors.append(f"LOD{base_name}.dff: {e}")
+
+            # ── COL ──
+            if self.export_col and models['COL']:
+                col_path = os.path.join(directory, f"{base_name}.col")
+                try:
+                    from .ops.col_export import export_col as inu_export_col
+                    original_loc = models['COL'].location.copy()
+                    models['COL'].location = (0, 0, 0)
+                    inu_export_col(filepath=col_path, objects=[models['COL']], version=3, model_name=base_name)
+                    models['COL'].location = original_loc
+                    all_exported.append(f"{base_name}.col")
+                except Exception as e:
+                    all_errors.append(f"{base_name}.col: {e}")
+
+            # ── TXD ──
+            if self.export_txd and (models['DFF'] or models['LOD']):
+                txd_path = os.path.join(directory, f"{base_name}.txd")
+                try:
+                    bpy.ops.object.select_all(action='DESELECT')
+                    if models['DFF']:
+                        models['DFF'].select_set(True)
+                        context.view_layer.objects.active = models['DFF']
+                    if models['LOD']:
+                        models['LOD'].select_set(True)
+                        if not models['DFF']:
+                            context.view_layer.objects.active = models['LOD']
+                    result, msg, _ = export_txd(txd_path, context, self.txd_selected_only, use_gpu)
+                    if result == {'FINISHED'}:
+                        all_exported.append(f"{base_name}.txd")
+                    else:
+                        all_errors.append(f"{base_name}.txd: {msg}")
+                except Exception as e:
+                    all_errors.append(f"{base_name}.txd: {e}")
+
+        # ── IDE ──
+        if self.export_ide:
+            if self.ide_ipl_upsert and self.ide_upsert_path:
+                try:
+                    from .core.ide import upsert_ide
+                    entries = []
+                    for base_name, models in groups.items():
+                        if models['DFF']:
+                            entries.append(_ide_entry_from_obj(models['DFF']))
+                        if models['LOD']:
+                            lod_entry = _ide_entry_from_obj(models['LOD'])
+                            lod_entry.model_name = "LOD" + base_name
+                            lod_entry.txd_name = _clean_model_name_ide(base_name)
+                            entries.append(lod_entry)
+                    ide_path = bpy.path.abspath(self.ide_upsert_path)
+                    updated, added = upsert_ide(ide_path, entries)
+                    all_exported.append(f"IDE: +{added} ~{updated}")
+                except Exception as e:
+                    all_errors.append(f"IDE upsert: {e}")
+            else:
+                ide_path = os.path.join(directory, "objects.ide")
+                try:
+                    from .ops.ide_export import export_ide as inu_export_ide
+                    inu_export_ide(filepath=ide_path, objects=mesh_objects)
+                    all_exported.append("objects.ide")
+                except Exception as e:
+                    all_errors.append(f"IDE: {e}")
+
+        # ── IPL ──
+        if self.export_ipl:
+            if self.ide_ipl_upsert and self.ipl_upsert_path:
+                try:
+                    from .core.ipl import upsert_ipl
+                    entries = []
+                    for base_name, models in groups.items():
+                        if models['DFF']:
+                            entries.append(_ipl_entry_from_obj(models['DFF']))
+                        if models['LOD']:
+                            lod_entry = _ipl_entry_from_obj(models['LOD'])
+                            lod_entry.model_name = "LOD" + base_name
+                            entries.append(lod_entry)
+                    ipl_path = bpy.path.abspath(self.ipl_upsert_path)
+                    updated, added = upsert_ipl(ipl_path, entries)
+                    all_exported.append(f"IPL: +{added} ~{updated}")
+                except Exception as e:
+                    all_errors.append(f"IPL upsert: {e}")
+            else:
+                ipl_path = os.path.join(directory, "objects.ipl")
+                try:
+                    from .ops.ipl_export import export_ipl as inu_export_ipl
+                    inu_export_ipl(filepath=ipl_path, objects=mesh_objects)
+                    all_exported.append("objects.ipl")
+                except Exception as e:
+                    all_errors.append(f"IPL: {e}")
+
+        wm.progress_end()
+
+        # Restore prelight
+        for obj in prelight_was_on:
+            setup_prelight_preview(obj, enable=True)
+
+        # Report
+        if all_exported:
+            self.report({'INFO'}, f"INU Export: {len(all_exported)} — {', '.join(all_exported)}")
+        if all_errors:
+            self.report({'WARNING'}, f"{T('Ошибки:')} {'; '.join(all_errors)}")
+        if not all_exported and not all_errors:
+            self.report({'WARNING'}, T("Нечего экспортировать"))
+
+        return {'FINISHED'} if all_exported else {'CANCELLED'}
 
 
 class GTATOOLS_OT_info_tooltip(bpy.types.Operator):
@@ -11961,6 +12461,7 @@ classes = (
     GTATOOLS_OT_export_dff,
     GTATOOLS_OT_export_col,
     GTATOOLS_OT_export_all,
+    GTATOOLS_OT_inu_export,
     GTATOOLS_OT_info_tooltip,
     GTATOOLS_OT_detect_models,
     GTATOOLS_OT_prelight,
@@ -12706,7 +13207,7 @@ def register():
     bpy.types.Scene.gtatools_nvtt_path = StringProperty(
         name="NVTT Path",
         description=T("Путь к папке NVIDIA Texture Tools (для GPU сжатия)"),
-        default=r"D:\NVIDIA Corporation\NVIDIA Texture Tools",
+        default="",
         subtype='DIR_PATH',
         update=_save_paths,
     )
@@ -12839,7 +13340,7 @@ def register():
     bpy.types.Scene.gtatools_texture_path1 = StringProperty(
         name="System Textures Path",
         description=T("Путь к папке с системными текстурами GTA"),
-        default=r"E:\Project MTA\System_textures",
+        default="",
         subtype='DIR_PATH',
         update=_save_paths,
     )
@@ -13076,6 +13577,7 @@ def _on_file_load_restore_paths(dummy):
     _load_paths(bpy.context.scene)
 
 
+@persistent
 def _on_file_load_restart_timer(dummy):
     """Restart billboard timer after loading a new .blend file."""
     print("[2DFX] load_post handler fired — scheduling timer restart in 1s...")
@@ -13104,7 +13606,10 @@ def _on_depsgraph_update_2dfx(scene, depsgraph):
 
     if _2dfx_sync_busy:
         return
-    obj = bpy.context.active_object
+    try:
+        obj = bpy.context.active_object
+    except Exception:
+        return
     if not obj or obj.type != 'EMPTY':
         return
     inu = getattr(obj, 'inu', None)

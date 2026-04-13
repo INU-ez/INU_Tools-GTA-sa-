@@ -97,7 +97,7 @@
 | **СКЕЛЕТ / АНИМАЦИИ** | | | | | | | |
 | Skinned Mesh Import/Export | ✅ | ✅ | ✅ | — | — | — | — |
 | IFP Animation IO | ✅ | — | ✅ | ✅ | — | — | — |
-| Bone Management | ❌ | ✅ | ✅ | — | — | — | — |
+| Bone Management | ✅ | ✅ | ✅ | — | — | — | — |
 | **MAP** | | | | | | | |
 | Map Import (.glb workflow) | ✅ | ✅ | ✅ | — | — | — | — |
 | Map Build (DFF→glTF) | ✅ | — | — | — | — | — | — |

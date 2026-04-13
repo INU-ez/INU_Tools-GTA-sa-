@@ -925,4 +925,22 @@ LANG = {
 
     # v1.6.3 — Object Properties IDE/IPL panel
     "GTA SA: IDE / IPL": "GTA SA: IDE / IPL",
+
+    # v1.6.3 — Bone Management
+    "Выделите кость в Armature": "Select a bone in Armature",
+    "Выделите Armature": "Select an Armature",
+    "Не найдены пары костей L/R": "No L/R bone pairs found",
+    "Armature не найден": "Armature not found",
+    "Костей:": "Bones:",
+    "Переименовать": "Rename",
+    "Выделить": "Select",
+    "Выделите кость для редактирования": "Select a bone to edit",
+    "Инструменты весов:": "Weight Tools:",
+    "Нормализовать (4 кости)": "Normalize (4 bones)",
+    "Зеркалировать X (L↔R)": "Mirror X (L↔R)",
+    "Список костей:": "Bone List:",
+
+    # v1.6.3 — Vertex Paint panel
+    "Пост-обработка:": "Post-processing:",
+    "Объект": "Object",
 }

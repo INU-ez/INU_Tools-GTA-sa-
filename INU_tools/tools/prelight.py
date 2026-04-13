@@ -782,6 +782,8 @@ def adjust_vertex_colors_contrast(obj, contrast=1.0):
     # Compute average brightness
     total_r, total_g, total_b = 0.0, 0.0, 0.0
     count = len(color_attr.data)
+    if count == 0:
+        return True, "No vertex data"
     for data in color_attr.data:
         c = data.color
         total_r += c[0]
