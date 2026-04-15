@@ -1,154 +1,154 @@
-# INU_Tools (GTA SA) — Документация
+# INU_Tools (GTA SA) — Documentation
 
-> **[English version](DOCS_eng.md)**
+> **[Русская версия / Russian version](DOCS_rus.md)**
 
 ---
 
-## Содержание
+## Table of Contents
 
-- [Установка](#установка)
-- [Быстрый старт](#быстрый-старт)
-- [Экспорт / Импорт](#экспорт--импорт)
-  - [DFF (Модели)](#dff-модели)
-  - [COL (Коллизия)](#col-коллизия)
-  - [TXD (Текстуры)](#txd-текстуры)
-  - [Экспорт всего (Batch)](#экспорт-всего-batch)
-  - [Экспорт коллекции](#экспорт-коллекции)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Export / Import](#export--import)
+  - [DFF (Models)](#dff-models)
+  - [COL (Collision)](#col-collision)
+  - [TXD (Textures)](#txd-textures)
+  - [Export All (Batch)](#export-all-batch)
+  - [Collection Export](#collection-export)
 - [IDE / IPL / IMG](#ide--ipl--img)
-  - [Импорт карты](#импорт-карты)
-  - [IDE (Определения)](#ide-определения)
-  - [IPL (Размещение)](#ipl-размещение)
-  - [Секции IPL](#секции-ipl)
-  - [IMG Архив](#img-архив)
-  - [BBox режим](#bbox-режим)
-  - [Менеджер ID](#менеджер-id)
-- [Материалы](#материалы)
-  - [Эффекты материалов GTA SA](#эффекты-материалов-gta-sa)
-  - [Типы поверхностей COL](#типы-поверхностей-col)
-  - [Текстуры](#текстуры)
-- [Прелайт (Vertex Colors)](#прелайт-vertex-colors)
-  - [Запекание](#запекание)
-  - [Заливка цветом](#заливка-цветом)
-  - [Рассеивание света](#рассеивание-света)
-  - [Пост-обработка](#пост-обработка)
+  - [Import Map Workflow](#import-map-workflow)
+  - [IDE (Definitions)](#ide-definitions)
+  - [IPL (Placement)](#ipl-placement)
+  - [IPL Sections](#ipl-sections)
+  - [IMG Archive](#img-archive)
+  - [BBox Mode](#bbox-mode)
+  - [Model ID Manager](#model-id-manager)
+- [Materials](#materials)
+  - [GTA SA Material Effects](#gta-sa-material-effects)
+  - [COL Surface Types](#col-surface-types)
+  - [Textures](#textures)
+- [Prelight (Vertex Colors)](#prelight-vertex-colors)
+  - [Baking](#baking)
+  - [Fill Colors](#fill-colors)
+  - [Scatter Light](#scatter-light)
+  - [Post-Processing](#post-processing)
   - [COL Light](#col-light)
-  - [Пресеты](#пресеты)
-- [2DFX Эффекты](#2dfx-эффекты)
-- [Particle Effects (effects.fxp)](#particle-effects-effectsfxp-новое-в-163)
-- [UV Инструменты](#uv-инструменты)
-- [Проверка](#проверка)
-- [Персонажи (Skinned DFF)](#персонажи-skinned-dff)
-- [Вода](#вода)
-- [Пути](#пути)
+  - [Presets](#presets)
+- [2DFX Effects](#2dfx-effects)
+- [Particle Effects (effects.fxp)](#particle-effects-effectsfxp-new-in-163)
+- [UV Tools](#uv-tools)
+- [Check](#check)
+- [Characters (Skinned DFF)](#characters-skinned-dff)
+- [Water IO](#water-io)
+- [Path IO](#path-io)
 - [LightMap (beta_MTA)](#lightmap-beta_mta)
-- [Интеграции](#интеграции)
-- [Техническая документация](#техническая-документация)
-  - [Структура проекта](#структура-проекта)
-  - [Модули ядра](#модули-ядра)
-  - [Форматы файлов](#форматы-файлов)
-  - [Свойства объекта (INUObjectProps)](#свойства-объекта-inuobjectprops)
-  - [Свойства материала (INUMaterialProps)](#свойства-материала-inumaterialprops)
-  - [Свойства сцены](#свойства-сцены)
+- [Integrations](#integrations)
+- [Technical Reference](#technical-reference)
+  - [Project Structure](#project-structure)
+  - [Core Modules](#core-modules)
+  - [File Formats](#file-formats)
+  - [Object Properties (INUObjectProps)](#object-properties-inuobjectprops)
+  - [Material Properties (INUMaterialProps)](#material-properties-inumaterialprops)
+  - [Scene Properties](#scene-properties)
 
 ---
 
-## Установка
+## Installation
 
-1. Скачайте папку `INU_tools/` (или zip-архив)
-2. Поместите `INU_tools/` в папку аддонов Blender:
-   - **Windows:** `%APPDATA%/Blender Foundation/Blender/<версия>/scripts/addons/`
-   - **Linux:** `~/.config/blender/<версия>/scripts/addons/`
-   - **macOS:** `/Users/<имя>/Library/Application Support/Blender/<версия>/scripts/addons/`
-3. Blender → Edit → Preferences → Add-ons → включите **"INU_tools(gta_sa)"**
+1. Download the `INU_tools/` folder (or zip archive)
+2. Place `INU_tools/` into Blender addons folder:
+   - **Windows:** `%APPDATA%/Blender Foundation/Blender/<version>/scripts/addons/`
+   - **Linux:** `~/.config/blender/<version>/scripts/addons/`
+   - **macOS:** `/Users/<name>/Library/Application Support/Blender/<version>/scripts/addons/`
+3. Blender → Edit → Preferences → Add-ons → enable **"INU_tools(gta_sa)"**
 
-**Требования:**
+**Requirements:**
 - Blender 4.2+
-- NVIDIA Texture Tools — опционально, для GPU сжатия текстур (автодетект)
-- Itera Tools 3 — опционально, для vertex lighting
+- NVIDIA Texture Tools — optional, for GPU texture compression (auto-detected)
+- Itera Tools 3 — optional, for vertex lighting
 
-**Сохранение настроек:** все пути (Game Root, IDE, IPL, IMG, текстуры, NVTT) сохраняются в `INU_Preset/paths.json` рядом с папкой аддонов. Настройки переживают обновления аддона и восстанавливаются автоматически при запуске Blender.
-
----
-
-## Быстрый старт
-
-### Экспорт модели в GTA SA
-
-1. Назовите объекты с суффиксами: `mybuilding_DFF`, `mybuilding_COL`, `mybuilding_LOD`
-2. Задайте **Model ID**, **TXD Name**, **Draw Distance** в свойствах объекта (`obj.inu`)
-3. Выделите все, нажмите **Export All** → выберите папку
-4. Результат: `mybuilding.dff`, `mybuilding.col`, `LODmybuilding.dff`, `mybuilding.txd`
-
-### Импорт карты GTA SA
-
-1. Укажите **Game Root** — папку GTA SA (например `D:\GTA San Andreas\`)
-2. Нажмите **Извлечь ресурсы** — извлечёт DFF/COL/текстуры из IMG (один раз)
-3. Нажмите **Собрать карту в .glb** — конвертирует в glTF (один раз на регион)
-4. Нажмите **Импорт карты .glb** — загрузит в Blender с авто-сортировкой по коллекциям
-
-### Горячие клавиши
-
-| Клавиша | Действие |
-|---------|----------|
-| `Shift+T` | Открыть/закрыть UV Editor |
-| `Shift+A` | Добавить модель GTA SA (Army.dff / Admiral.dff) |
+**Settings persistence:** all paths (Game Root, IDE, IPL, IMG, textures, NVTT) are saved in `INU_Preset/paths.json` next to the addons folder. Settings survive addon updates and are restored automatically when Blender starts.
 
 ---
 
-## Экспорт / Импорт
+## Quick Start
 
-**Панель:** View3D → Sidebar (N) → GTA Tools → Экспорт / Импорт
+### Export a model to GTA SA
 
-### DFF (Модели)
+1. Name objects with suffixes: `mybuilding_DFF`, `mybuilding_COL`, `mybuilding_LOD`
+2. Set **Model ID**, **TXD Name**, **Draw Distance** in object properties (`obj.inu`)
+3. Select all, click **Export All** → choose folder
+4. Output: `mybuilding.dff`, `mybuilding.col`, `LODmybuilding.dff`, `mybuilding.txd`
 
-| Кнопка | Оператор | Описание |
-|--------|----------|----------|
-| Импорт DFF | `gtatools.import_dff` | Импорт .dff файла с мешем, материалами, UV |
-| Экспорт DFF | `gtatools.export_dff` | Экспорт выделенного меша в .dff (GTA SA v3.6.0.3) |
+### Import the entire GTA SA map
 
-**Экспорт включает:** геометрию, материалы, vertex colors (Day/Night), UV карты, нормали, 2DFX эффекты, BinMesh PLG.
+1. Set **Game Root** to GTA SA folder (e.g. `D:\GTA San Andreas\`)
+2. Click **Extract Resources** — extracts DFF/COL/textures from IMG (one-time)
+3. Click **Build Map .glb** — converts to glTF (one-time per region)
+4. Click **Import Map .glb** — loads into Blender with auto-sorted collections
 
-**Авто TXD:** при импорте DFF автоматически импортирует .txd из той же папки.
+### Hotkeys
 
-### COL (Коллизия)
+| Key | Action |
+|-----|--------|
+| `Shift+T` | Toggle UV Editor |
+| `Shift+A` | Add GTA SA model (Army.dff / Admiral.dff) |
 
-| Кнопка | Оператор | Описание |
-|--------|----------|----------|
-| Импорт COL | `gtatools.import_col` | Импорт .col с типами поверхностей |
-| Экспорт COL | `gtatools.export_col` | Экспорт в формате COL3 |
+---
 
-Экспорт автоматически центрирует объект в начало координат и записывает ID типов поверхностей.
+## Export / Import
 
-### TXD (Текстуры)
+**Panel:** View3D → Sidebar (N) → GTA Tools → Export / Import
 
-| Кнопка | Оператор | Описание |
-|--------|----------|----------|
-| Импорт TXD | `gtatools.import_txd` | Извлечение текстур и привязка к материалам |
-| Экспорт TXD | `gtatools.export_txd` | Сборка текстур в .txd архив |
+### DFF (Models)
 
-**GPU режим:** если установлен NVIDIA Texture Tools (NVTT) и путь указан в Настройки → NVTT, сжатие использует GPU автоматически. Иначе — CPU.
+| Button | Operator | Description |
+|--------|----------|-------------|
+| Import DFF | `gtatools.import_dff` | Import .dff file with mesh, materials, UV maps |
+| Export DFF | `gtatools.export_dff` | Export selected mesh to .dff (GTA SA v3.6.0.3) |
 
-**Поддерживаемые форматы:** DXT1 (непрозрачные), DXT3 (резкая альфа), DXT5 (плавная альфа). Автоопределение по альфа-каналу.
+**Export includes:** geometry, materials, vertex colors (Day/Night), UV maps, normals, 2DFX effects, BinMesh PLG.
 
-### Экспорт всего (Batch)
+**Auto TXD:** when importing DFF, automatically imports .txd from the same directory if found.
 
-| Кнопка | Оператор | Описание |
-|--------|----------|----------|
-| Экспорт всего | `gtatools.export_all` | Массовый экспорт DFF+COL+LOD+TXD |
+### COL (Collision)
 
-Выделите объекты с суффиксами (`_DFF`, `_LOD`, `_COL`), нажмите Экспорт всего, выберите папку.
+| Button | Operator | Description |
+|--------|----------|-------------|
+| Import COL | `gtatools.import_col` | Import .col with surface materials |
+| Export COL | `gtatools.export_col` | Export as COL3 format |
 
-**Переключатели:** DFF / COL / LOD / TXD — включить/выключить каждый формат.
+COL export automatically sets object type to Collision, centers at origin, and writes surface material IDs.
 
-**Pipeline:** None / Building (Day/Night vertex colors) / Reflections (отражения на окнах).
+### TXD (Textures)
 
-### Экспорт коллекции
+| Button | Operator | Description |
+|--------|----------|-------------|
+| Import TXD | `gtatools.import_txd` | Extract textures and assign to materials |
+| Export TXD | `gtatools.export_txd` | Compile textures into .txd archive |
 
-Если **ничего не выделено**, Экспорт всего берёт все меш-объекты из **активной коллекции** (включая дочерние). Это позволяет экспортировать всю коллекцию без выделения.
+**GPU mode:** if NVIDIA Texture Tools (NVTT) is installed and path is configured in Settings → NVTT, compression uses GPU automatically. Otherwise falls back to CPU.
 
-### Меню File
+**Supported formats:** DXT1 (opaque), DXT3 (sharp alpha), DXT5 (smooth alpha). Auto-detected based on alpha channel.
 
-Все форматы доступны через **File > Import** и **File > Export**:
+### Export All (Batch)
+
+| Button | Operator | Description |
+|--------|----------|-------------|
+| Export All | `gtatools.export_all` | Batch export DFF+COL+LOD+TXD |
+
+Select objects with suffixes (`_DFF`, `_LOD`, `_COL`), click Export All, choose output folder.
+
+**Toggles:** DFF / COL / LOD / TXD — enable/disable each format.
+
+**Pipeline:** None / Building (Day/Night vertex colors) / Reflections (window reflections).
+
+### Collection Export
+
+If **no objects are selected**, Export All takes all mesh objects from the **active collection** (including child collections). This allows exporting an entire collection without selecting everything.
+
+### File Menu
+
+All formats are also accessible via **File > Import** and **File > Export**:
 - GTA SA DFF (.dff)
 - GTA SA COL (.col)
 - GTA SA TXD (.txd)
@@ -157,585 +157,607 @@
 
 ### Drag & Drop
 
-Перетаскивание PNG/JPG/TGA из File Browser во вьюпорт автоматически создаёт материал с назначенной текстурой.
+Drag PNG/JPG/TGA images from File Browser into the 3D viewport to automatically create a material with that texture assigned.
 
 ---
 
 ## IDE / IPL / IMG
 
-**Панель:** View3D → Sidebar (N) → GTA Tools → IDE / IPL / IMG
-**Настройки:** Properties → Scene → INU Tools → Import Map
+**Panel:** View3D → Sidebar (N) → GTA Tools → IDE / IPL / IMG
+**Settings:** Properties → Scene → INU Tools → Import Map
 
-### Импорт карты
+### Import Map Workflow
 
-**Шаг 1: Настройка**
-- Укажите **Game Root** — папку установки GTA SA
-- Выберите **Регион** (автоопределение из gta.dat: LA, SF, VEGAS, COUNTRY и т.д.)
+**Step 1: Setup**
+- Set **Game Root** to GTA SA installation folder
+- Select **Region** (auto-detected from gta.dat: LA, SF, VEGAS, COUNTRY, etc.)
 
-**Шаг 2: Извлечение ресурсов**
-- Нажмите **Извлечь ресурсы** — извлечёт DFF, COL и текстуры из IMG архивов в папку `.inu_cache/` рядом с вашим .blend файлом (поэтому .blend нужно сначала сохранить)
-- Долго, но только один раз — при повторном запуске уже извлечённые файлы пропускаются
+**Step 2: Extract Resources**
+- Click **Extract Resources** — extracts all DFF, COL, and textures from IMG archives into `.inu_cache/` folder next to your .blend file (so save the .blend first)
+- This is slow but only needed once — already extracted files are skipped on re-run
 
-**Шаг 3: Сборка .glb**
-- Нажмите **Собрать карту в .glb** — конвертирует DFF модели с позициями из IPL в один .glb
-- Один файл на регион, кешируется в `.inu_cache/`
+**Step 3: Build .glb**
+- Click **Build Map .glb** — converts DFF models with IPL positions into a single .glb file
+- One file per region, cached in `.inu_cache/`
 
-**Шаг 4: Импорт**
-- Нажмите **Импорт карты .glb** — откроется файловый браузер, выберите один или несколько .glb
-- Объекты автоматически сортируются по коллекциям:
-  - **Map_Buildings** — дальность прорисовки 300+
-  - **Map_Props** — дальность 100-299
-  - **Map_Small** — дальность <100
-  - **Map_Vegetation** — деревья, трава, растения
-  - **Map_LOD** — LOD модели
-- Дубликаты (`.001`, `.002`) перемещаются в подколлекции `_Instances`
+**Step 4: Import**
+- Click **Import Map .glb** — opens file browser, select one or more .glb files
+- Objects auto-sorted into collections:
+  - **Map_Buildings** — draw distance 300+
+  - **Map_Props** — draw distance 100-299
+  - **Map_Small** — draw distance <100
+  - **Map_Vegetation** — trees, grass, plants
+  - **Map_LOD** — LOD models
+- Duplicates (`.001`, `.002`) moved to `_Instances` sub-collections
 
-### IDE (Определения)
+### IDE (Definitions)
 
-> **Свойства per-object** *(новое в 1.6.3):* Model ID, Draw Distance, LOD Distance, IDE Flags, Interior, LOD index — теперь живут в **Properties → Object → "GTA SA: IDE / IPL"** (раньше были в N-панели). Там же показывается **проверка конфликтов ID** — если несколько объектов имеют одинаковый Model ID, аддон подсветит ошибку с именами конфликтующих объектов.
+> **Per-object properties** *(new in 1.6.3):* Model ID, Draw Distance, LOD Distance, IDE Flags, Interior, LOD index now live in **Properties → Object → "GTA SA: IDE / IPL"** (previously in N-panel). The same panel shows **ID conflict detection** — if multiple objects share the same Model ID, the addon highlights the error with names of conflicting objects.
 
-IDE файлы определяют свойства моделей: ID, словарь текстур, дальность прорисовки, флаги.
 
-| Кнопка | Оператор | Описание |
-|--------|----------|----------|
-| Добавить | `gtatools.upsert_ide` | Добавить/обновить запись в IDE (авто-LOD) |
-| Удалить | `gtatools.remove_ide` | Удалить запись по Model ID |
-| Импорт | `gtatools.import_ide` | Загрузить определения → применить к объектам |
-| Экспорт | `gtatools.export_ide` | Записать выделенные объекты в IDE файл |
+IDE files define model properties: ID, texture dictionary, draw distance, flags.
 
-**Все секции:** objs, tobj, anim, cars, peds, weap, hier, txdp.
+| Button | Operator | Description |
+|--------|----------|-------------|
+| Add | `gtatools.upsert_ide` | Insert/update entry in IDE file (auto-LOD) |
+| Remove | `gtatools.remove_ide` | Remove entry by Model ID |
+| Import | `gtatools.import_ide` | Load definitions → apply to matching objects |
+| Export | `gtatools.export_ide` | Write selected objects as IDE file |
 
-**Авто-LOD:** при добавлении пары DFF+LOD автоматически назначаются:
-- **Model ID:** LOD = DFF ID + 1 (например DFF ID 3500 → LOD ID 3501)
-- **Draw Distance:** LOD = 999 (максимальная видимость). HD модель видна до своей дальности (например 299м), после чего появляется LOD и виден до 999м
-- **TXD:** LOD использует тот же словарь текстур что и DFF
+**All sections supported:** objs, tobj, anim, cars, peds, weap, hier, txdp.
 
-**Флаги IDE** (15 чекбоксов в свойствах объекта):
+**Auto-LOD:** when adding DFF+LOD pair, the following are assigned automatically:
+- **Model ID:** LOD = DFF ID + 1 (e.g. DFF ID 3500 → LOD ID 3501)
+- **Draw Distance:** LOD = 999 (maximum visibility). The HD model is visible up to its draw distance (e.g. 299m), then LOD appears and stays visible up to 999m
+- **TXD:** LOD uses the same texture dictionary as DFF
 
-| Флаг | Бит | Описание |
-|------|-----|----------|
-| IS_ROAD | 1 | Дорога |
-| DRAW_LAST | 4 | Прозрачный, рисовать последним |
-| ADDITIVE | 8 | Аддитивный блендинг |
-| NO_ZBUFFER_WRITE | 64 | Не писать в Z-буфер |
-| NO_SHADOWS | 128 | Не получать тени |
-| GLASS_TYPE_1 | 512 | Разбиваемое стекло |
-| GLASS_TYPE_2 | 1024 | Стекло с трещинами |
-| GARAGE_DOOR | 2048 | Дверь гаража |
-| DAMAGABLE | 4096 | Разрушаемый |
-| IS_TREE | 8192 | Дерево, качается на ветру |
-| IS_PALM | 16384 | Пальма, качается на ветру |
-| NO_FLYER_COL | 32768 | Нет коллизии с летающим |
-| IS_TAG | 1048576 | Граффити тег |
-| NO_BACKFACE_CULL | 2097152 | Рисовать обе стороны |
-| BREAKABLE_STATUE | 4194304 | Разрушаемая статуя |
+**IDE Flags** (15 checkboxes in object properties):
 
-### IPL (Размещение)
+| Flag | Bit | Description |
+|------|-----|-------------|
+| IS_ROAD | 1 | Road surface |
+| DRAW_LAST | 4 | Transparent, draw last |
+| ADDITIVE | 8 | Additive blending |
+| NO_ZBUFFER_WRITE | 64 | Don't write to Z-buffer |
+| NO_SHADOWS | 128 | Don't receive shadows |
+| GLASS_TYPE_1 | 512 | Breakable glass |
+| GLASS_TYPE_2 | 1024 | Cracked glass |
+| GARAGE_DOOR | 2048 | Garage door |
+| DAMAGABLE | 4096 | Destructible |
+| IS_TREE | 8192 | Tree, sways in wind |
+| IS_PALM | 16384 | Palm tree, sways in wind |
+| NO_FLYER_COL | 32768 | No collision with aircraft |
+| IS_TAG | 1048576 | Graffiti tag |
+| NO_BACKFACE_CULL | 2097152 | Render both sides |
+| BREAKABLE_STATUE | 4194304 | Breakable statue |
 
-IPL файлы определяют позиции, повороты и связи LOD объектов на карте.
+### IPL (Placement)
 
-| Кнопка | Оператор | Описание |
-|--------|----------|----------|
-| Добавить | `gtatools.upsert_ipl` | Добавить/обновить размещение (авто-LOD привязка) |
-| Удалить | `gtatools.remove_ipl` | Удалить по Model ID. При удалении записи из середины файла все LOD индексы остальных объектов автоматически пересчитываются — иначе игра будет ссылаться на неправильные строки и может вылететь |
-| Импорт | `gtatools.import_ipl` | Расставить объекты или создать Empty |
-| Экспорт | `gtatools.export_ipl` | Записать выделенные объекты с мировыми трансформами |
+IPL files define object positions, rotations, and LOD links on the map.
 
-**Конвертация кватернионов:** GTA SA хранит (X,Y,Z,W) сопряжённый, Blender использует (W,X,Y,Z). Конвертация автоматическая.
+| Button | Operator | Description |
+|--------|----------|-------------|
+| Add | `gtatools.upsert_ipl` | Insert/update placement (auto-LOD linking) |
+| Remove | `gtatools.remove_ipl` | Remove by Model ID. When an entry is deleted from the middle of the file, all LOD indices of remaining objects are automatically recalculated — otherwise the game would reference wrong lines and may crash |
+| Import | `gtatools.import_ipl` | Place objects or create Empties at positions |
+| Export | `gtatools.export_ipl` | Write selected objects with world transforms |
 
-**Бинарный IPL:** файлы с заголовком `bnry` (внутри IMG архивов) читаются автоматически.
+**Quaternion conversion:** GTA SA stores (X,Y,Z,W) conjugated, Blender uses (W,X,Y,Z). Conversion is automatic.
 
-### Секции IPL
+**Binary IPL:** files with `bnry` header (inside IMG archives) are read automatically.
 
-Все секции IPL поддерживаются для импорта/экспорта как объекты Blender:
+### IPL Sections
 
-| Секция | Коллекция | Визуализация |
-|--------|-----------|-------------|
-| cull | IPL_Cull | Wireframe куб |
-| grge | IPL_Garage | Empty (куб) |
-| enex | IPL_Enex | Empty (оси) — вход + выход |
-| pick | IPL_Pickup | Empty (сфера) |
-| cars | IPL_Cars | Empty (стрелка) |
-| auzo | IPL_Auzo | Куб или Empty (сфера) |
-| jump | IPL_Jump | Куб — старт + цель + камера |
-| occl | IPL_Occl | Wireframe куб с поворотом |
-| zone | IPL_Zone | Wireframe куб |
+All IPL sections are supported for import/export as Blender objects:
 
-| Кнопка | Оператор | Описание |
-|--------|----------|----------|
-| Секции IPL ↓ | `gtatools.import_ipl_sections` | Импорт всех секций из IPL файла |
-| Секции IPL ↑ | `gtatools.export_ipl_sections` | Экспорт всех секций из коллекций в IPL |
-| Заменить Empty | `gtatools.replace_ipl_placeholders` | Если при импорте IPL модели не было в сцене — создаётся Empty с суффиксом `_empty` в коллекции IPL_Empty. После добавления нужной модели в сцену, нажмите эту кнопку — модель переместится на координаты Empty, а Empty удалится |
+| Section | Collection | Visualization |
+|---------|-----------|---------------|
+| cull | IPL_Cull | Wireframe cube |
+| grge | IPL_Garage | Empty (cube) |
+| enex | IPL_Enex | Empty (axes) — enter + exit points |
+| pick | IPL_Pickup | Empty (sphere) |
+| cars | IPL_Cars | Empty (arrow) |
+| auzo | IPL_Auzo | Cube mesh or Empty (sphere) |
+| jump | IPL_Jump | Cube mesh — start + target + camera |
+| occl | IPL_Occl | Wireframe cube with rotation |
+| zone | IPL_Zone | Wireframe cube |
 
-### IMG Архив
+| Button | Operator | Description |
+|--------|----------|-------------|
+| Sections IPL ↓ | `gtatools.import_ipl_sections` | Import all sections from IPL file |
+| Sections IPL ↑ | `gtatools.export_ipl_sections` | Export all section collections to IPL file |
+| Replace Empty | `gtatools.replace_ipl_placeholders` | When IPL import can't find a model, it creates an Empty with `_empty` suffix in IPL_Empty collection. After adding the model to the scene, click this button — the model moves to the Empty's position and the Empty is removed |
 
-| Кнопка | Оператор | Описание |
-|--------|----------|----------|
-| Импорт из IMG | `gtatools.import_from_img` | Извлечь и импортировать модели по IDE/IPL |
-| Экспорт в IMG | `gtatools.export_to_img` | Упаковать DFF+COL+TXD в .img архив |
+### IMG Archive
 
-**Переключатели экспорта:** DFF / COL / TXD.
+| Button | Operator | Description |
+|--------|----------|-------------|
+| Import from IMG | `gtatools.import_from_img` | Extract and import models by IDE/IPL listing |
+| Export to IMG | `gtatools.export_to_img` | Pack DFF+COL+TXD directly into .img archive |
 
-**Опции импорта:** Skip LOD / Загрузить TXD.
+**Export toggles:** DFF / COL / TXD — choose what to pack.
 
-### BBox режим
+**Import options:** Skip LOD / Load TXD.
 
-| Кнопка | Оператор | Описание |
-|--------|----------|----------|
-| BBox: ON/OFF | `gtatools.toggle_bbox` | Переключить отображение Bounding Box |
+### BBox Mode
 
-При включении все объекты Map_ коллекций переключаются в `BOUNDS`. Объекты в радиусе 300м от выделенного остаются `TEXTURED`. Обновляется автоматически при смене выделения.
+| Button | Operator | Description |
+|--------|----------|-------------|
+| BBox: ON/OFF | `gtatools.toggle_bbox` | Toggle Bounding Box display for map objects |
 
-### Суффиксы / Префиксы
+When enabled, all Map_ collection objects switch to `BOUNDS` display. Objects within 300m of the selected object stay as `TEXTURED`. Updates automatically when selection changes.
 
-**Панель:** Properties → Scene → INU Tools → Суффиксы / Префиксы
+### Suffixes / Prefixes
 
-Определяют как аддон распознаёт тип модели по имени объекта в Blender.
+**Panel:** Properties → Scene → INU Tools → Suffixes / Prefixes
 
-**Суффиксы** (в конце имени):
-- DFF: `_DFF` → `mybuilding_DFF` определяется как DFF модель
-- LOD: `_LOD` → `mybuilding_LOD` определяется как LOD модель
-- COL: `_COL` → `mybuilding_COL` определяется как коллизия
+Determine how the addon recognizes model type by object name in Blender.
 
-**Префиксы** (в начале имени):
-- LOD: `LOD` → `LODmybuilding` определяется как LOD модель
+**Suffixes** (end of name):
+- DFF: `_DFF` → `mybuilding_DFF` recognized as DFF model
+- LOD: `_LOD` → `mybuilding_LOD` recognized as LOD model
+- COL: `_COL` → `mybuilding_COL` recognized as collision
 
-Можно использовать **либо суффикс, либо префикс** для каждого типа — не оба одновременно. При вводе одного второй автоматически очищается. Если ни суффикса ни префикса нет — модель считается DFF.
+**Prefixes** (start of name):
+- LOD: `LOD` → `LODmybuilding` recognized as LOD model
 
-При экспорте IDE/IPL LOD модель всегда записывается с префиксом `LOD` перед именем (формат GTA SA).
+You can use **either suffix or prefix** for each type — not both. When entering one, the other is automatically cleared. If neither is set — the model is treated as DFF.
 
-### Менеджер ID
+When exporting IDE/IPL, LOD models are always written with `LOD` prefix (GTA SA format).
 
-**Панель:** Properties → Scene → INU Tools → Менеджер ID
+### Model ID Manager
 
-- Показывает количество свободных/занятых ID
-- **Следующий свободный ID**
-- **Назначить ID** — следующий свободный ID выделенным объектам
-- **Назначить с ID...** — назначение ID начиная с указанного номера, с пропуском уже занятых
-- **Освободить** — пометить ID как свободный
-- **Расширить ID (FLA)** — добавить ID сверх 19999 для Fastman Limit Adjuster
-- ID хранятся в `model_ids.txt` в папке INU_Preset
+**Panel:** Properties → Scene → INU Tools → ID Manager
 
----
-
-## Материалы
-
-### Эффекты материалов GTA SA
-
-**Панель:** Properties → Material → GTA SA Material Effects
-
-| Свойство | Описание |
-|----------|----------|
-| Environment Map | Текстура отражения с коэффициентом (0-1) |
-| Bump Map | Текстура нормалей |
-| Reflection | Зеркальное отражение с масштабом, смещением, интенсивностью |
-| Specular | Блик с уровнем и текстурой |
-| Dual Texture | Вторая текстура с режимами смешивания (11 вариантов Src/Dst) |
-| UV Animation | Анимированная прокрутка UV с именем анимации |
-
-### Типы поверхностей COL
-
-**Панель:** Properties → Material → COL Surface Type
-
-179 типов поверхностей GTA SA в 13 категориях. Выпадающий список с поиском. Каждая поверхность имеет:
-- ID поверхности (0-178)
-- Флаги, Яркость, Свет
-- Дневной свет (0-15), Ночной свет (0-15)
-
-### Текстуры
-
-**Панель:** Properties → Scene → INU Tools → Текстуры
-
-- **Системные текстуры** — путь к общей папке с текстурами (например `System_textures` от MTA/GTA)
-- **Папка .blend** — автоматически указывает на папку текущего .blend файла. Кнопка 🔄 обновляет путь
-- **Загрузить текстуры** — ищет PNG/TGA/JPG файлы с именами, совпадающими с названиями материалов на объекте. Поиск идёт по обеим папкам: системной и .blend. Если материал называется `brick_wall`, аддон найдёт `brick_wall.png` в указанных папках и назначит как текстуру
-- **Drag & Drop** — перетаскивание изображений из File Browser прямо во вьюпорт создаёт новый материал с текстурой
+- Shows free/used ID count
+- **Next free ID** displayed
+- **Auto Assign** — assigns next free ID to selected objects
+- **Assign from ID...** — assign IDs starting from a specific number, skipping occupied
+- **Release** — marks ID as free
+- **Extend IDs (FLA)** — add IDs beyond 19999 for Fastman Limit Adjuster
+- IDs stored in `model_ids.txt` in INU_Preset folder
 
 ---
 
-## Прелайт (Vertex Colors)
+## Materials
 
-> **Важное в 1.6.3:** запекание теперь учитывает **smooth/flat shading** (использует `loop.normal` вместо `poly.normal`). Также **скрытые лампы** (через 👁 viewport, 📷 render или скрытая коллекция) **пропускаются** при запекании — раньше брались все point lights в сцене.
+### GTA SA Material Effects
+
+**Panel:** Properties → Material → GTA SA Material Effects
+
+| Property | Description |
+|----------|-------------|
+| Environment Map | Reflection texture with coefficient (0-1) |
+| Bump Map | Normal map texture |
+| Reflection | Mirror reflection with scale, offset, intensity |
+| Specular | Specular highlight with level and texture |
+| Dual Texture | Second texture with blend modes (11 options for Src/Dst) |
+| UV Animation | Animated UV scrolling with animation name |
+
+### COL Surface Types
+
+**Panel:** Properties → Material → COL Surface Type
+
+179 GTA SA surface materials organized in 13 categories. Searchable dropdown with category filtering. Each surface has:
+- Surface ID (0-178)
+- Flags, Brightness, Light
+- Day Light (0-15), Night Light (0-15)
+
+### Textures
+
+**Panel:** Properties → Scene → INU Tools → Textures
+
+- **System textures** — path to a shared texture folder (e.g. `System_textures` from MTA/GTA)
+- **.blend folder** — automatically points to the current .blend file's directory. Refresh button 🔄 updates the path
+- **Load Textures** — searches for PNG/TGA/JPG files matching material names on the object. Searches both folders: system and .blend. If a material is named `brick_wall`, the addon finds `brick_wall.png` in the specified folders and assigns it as texture
+- **Drag & Drop** — drag images from File Browser directly into the viewport to create a new material with the texture
+
+---
+
+## Prelight (Vertex Colors)
+
+> **Important in 1.6.3:** baking now respects **smooth/flat shading** (uses `loop.normal` instead of `poly.normal`). Also **hidden lights** (via 👁 viewport, 📷 render, or hidden collection) **are skipped** during baking — previously all point lights in the scene were used.
 
 
-**Панель:** View3D → Sidebar (N) → GTA Tools → Prelight
+**Panel:** View3D → Sidebar (N) → GTA Tools → Prelight
 
-### Запекание
+### Baking
 
-1. **Создать Day/Night** — создаёт атрибуты `Day` и `Night`
-2. **Создать 8 ламп** — расставляет 8 точечных источников вокруг объекта
-3. **Bake** (Fast) — быстрое запекание на CPU без теней
-4. **Bake с тенями** — запекание с raycast тенями через depsgraph
+1. **Create Day/Night** — creates `Day` and `Night` color attributes
+2. **Create 8 Lights** — places 8 point lights around the object
+3. **Bake** (Fast) — CPU bake without shadows
+4. **Bake with Shadows** — raycast shadow baking via depsgraph
 
-**Настройки:**
-- Ambient (0-1) — базовая яркость
-- Intensity (0-1) — сила света
-- Gamma (0.5-3.0) — гамма-коррекция
-- Тени — вкл/выкл
+**Settings:**
+- Ambient (0-1) — base brightness
+- Intensity (0-1) — light strength
+- Gamma (0.5-3.0) — gamma correction
+- Shadows toggle
 
-### Заливка цветом
+### Fill Colors
 
-Покраска выделенных полигонов выбранным цветом. Поддержка уровней (слоёв заливки) и отмены.
+Paint selected faces with a chosen color. Supports levels (layers of fill) and undo/restore.
 
-### Рассеивание света
+### Scatter Light
 
-Распространение света от выделенных полигонов наружу. Параметры:
-- Интенсивность, Затухание, Радиус, Итерации
+Distribute light from selected faces outward. Parameters:
+- Intensity, Falloff, Radius, Iterations
 
-### Пост-обработка
+### Post-Processing
 
-| Инструмент | Описание |
-|-----------|----------|
-| Smooth | Сглаживание цветов между соседними вершинами |
-| Smooth между объектами | Сглаживание на стыках разных мешей |
-| Contrast | Настройка контраста |
-| Brightness | Настройка яркости |
-| Gamma | Гамма-коррекция |
+| Tool | Description |
+|------|-------------|
+| Smooth | Average colors between neighboring vertices |
+| Smooth Between Objects | Smooth at seams between different meshes |
+| Contrast | Adjust color contrast |
+| Brightness | Adjust brightness offset |
+| Gamma | Gamma correction |
 
 ### COL Light
 
-**Панель:** View3D → Sidebar (N) → GTA Tools → Prelight COL
+**Panel:** View3D → Sidebar (N) → GTA Tools → Prelight COL
 
-Конвертация vertex colors в COL Day/Night Light значения (0-15). Авторазбиение материалов по яркости.
+Convert vertex colors to COL Day/Night Light values (0-15). Auto-splits materials by brightness ranges.
 
-- **Preview** — визуализация значений света на меше
-- **Bake** — запись значений в свойства COL материалов
-- **Диапазоны Day/Night** — настраиваемые пороги
+- **Preview** — visualize light values on mesh
+- **Bake** — write values to COL material properties
+- **Day/Night ranges** — adjustable thresholds
 
-### Пресеты
+### Presets
 
-Сохранение/загрузка настроек прелайта (Ambient, Intensity, Gamma, Shadows) как именованных пресетов. Хранятся в папке `INU_Preset/`.
+Save/load prelight settings (Ambient, Intensity, Gamma, Shadows) as named presets. Stored in `INU_Preset/` folder.
 
-### Управление Vertex Colors
+### Vertex Color Management
 
-| Кнопка | Описание |
-|--------|----------|
-| Создать Day/Night | Создаёт оба атрибута `Day` и `Night` |
-| Day + / Night + | Создать отдельный атрибут |
-| Day - / Night - | Удалить отдельный атрибут |
-| Превью | Включить/выключить визуализацию Day/Night микса |
-| Добавить LightMap | Загрузить текстуру лайтмапа и подключить на UV2 (Multiply) |
-| 👁 LightMap | Включить/выключить отображение лайтмапа (mute/unmute) |
-| ➖ LightMap | Удалить лайтмап ноды из материалов |
-| Анализ | Показать гистограмму vertex colors (min/max/avg) |
-| Сброс | Сбросить настройки запекания |
+| Button | Description |
+|--------|-------------|
+| Create Day/Night | Creates both `Day` and `Night` color attributes |
+| Day + / Night + | Create individual color attribute |
+| Day - / Night - | Remove individual color attribute |
+| Toggle Preview | Enable/disable Day/Night mix visualization in viewport |
+| Add LightMap | Load lightmap texture and connect to UV2 (Multiply blend) |
+| 👁 LightMap | Toggle lightmap visibility (mute/unmute) |
+| ➖ LightMap | Remove lightmap nodes from materials |
+| Analyze | Show vertex color histogram (min/max/avg) |
+| Reset | Reset bake settings to defaults |
 
-**Режимы Edit/Paint:** кнопки переключения между Object, Edit и Vertex Paint режимами.
+**Edit/Paint modes:** buttons to switch between Object, Edit, and Vertex Paint modes for quick workflow.
 
 ---
 
-## 2DFX Эффекты
+## 2DFX Effects
 
-**Панель:** View3D → Sidebar (N) → GTA Tools → 2DFX Effects
+**Panel:** View3D → Sidebar (N) → GTA Tools → 2DFX Effects
 
-Создание и настройка 2DFX эффектов, экспортируемых в DFF файлы.
+Create and configure 2DFX effects that export into DFF files.
 
-**Типы эффектов:**
-- **Light** — уличные фонари, неон, короны
-- **Particle** — дым, огонь
-- **Ped Attractor** — банкомат, скамейка, остановка
-- **Sun Glare** — отражение солнца на поверхности
+**Effect types:**
+- **Light** — street lights, neons, coronas
+- **Particle** — smoke, fire
+- **Ped Attractor** — ATM, bench, bus stop
+- **Sun Glare** — sun reflection on surfaces
 
-### Свойства света
+### Light Properties
 
-| Свойство | Варианты |
+| Property | Options |
 |----------|---------|
-| Пресеты | Default, OnAllDay, Lamp Post, Lamp Post Coast, BB Pickup, Flashing (3 типа), Train Crossing, Traffic |
-| Текстура короны | 34 текстуры (coronastar, coronamoon, headlight и др.) |
-| Текстура тени | 13 текстур (shad_exp, shad_car, lamp_shad_64 и др.) |
-| Режим показа | Default, Random Flashing, Flash Rain, Only Rain, No Rain |
-| Тип бликов | None, Type 1-3 |
-| Цвет | RGBA палитра |
-| Размер короны | Float |
-| Дальность прорисовки | Float |
-| Дальность света | Float |
-| Размер тени | Float |
-| Флаги 1/2 | Integer |
+| Presets | Default, OnAllDay, Lamp Post, Lamp Post Coast, BB Pickup, Flashing (3 types), Train Crossing, Traffic |
+| Corona Texture | 34 textures (coronastar, coronamoon, headlight, etc.) |
+| Shadow Texture | 13 textures (shad_exp, shad_car, lamp_shad_64, etc.) |
+| Show Mode | Default, Random Flashing, Flash Rain, Only Rain, No Rain |
+| Flare Type | None, Type 1-3 |
+| Color | RGBA color picker |
+| Corona Size | Float |
+| Draw Distance | Float |
+| Light Range | Float |
+| Shadow Size | Float |
+| Flags 1/2 | Integer |
 
-**Привязка к модели:** родительство Empty к мешу. Координаты автоматически пересчитываются при экспорте.
+**Attach to Model:** parent 2DFX Empty to mesh object. Coordinates auto-recalculate on export.
 
-**Detach All from Mesh** *(новое в 1.6.3):* массовое отвязывание всех 2DFX от выделенного меша. В UI меша показывается список всех привязанных 2DFX с кнопками индивидуальной отвязки.
+**Detach All from Mesh** *(new in 1.6.3):* batch detach all 2DFX from selected mesh. The mesh's UI shows a list of all attached 2DFX with individual detach buttons.
 
-**Превью:** визуализация короны/тени в реальном времени во вьюпорте. Billboard tracking реализован через **draw handler** *(1.6.3)* — стабильно работает при переключении между сценами.
+**Preview:** real-time corona/shadow visualization in viewport. Billboard tracking implemented via **draw handler** *(1.6.3)* — works reliably across scene switches.
 
 ---
 
-## Particle Effects (effects.fxp) *(новое в 1.6.3)*
+## Particle Effects (effects.fxp) *(new in 1.6.3)*
 
-Полноценный редактор GTA SA `effects.fxp` — текстового файла с 82 системами частиц (огонь, дым, кровь, искры, вода и т.д.).
+Full GTA SA `effects.fxp` editor — text file with 82 particle systems (fire, smoke, blood, sparks, water, etc.).
 
-**Расположение файла:** `GTA SA/models/effects.fxp` (автодетект из game root)
+**File location:** `GTA SA/models/effects.fxp` (auto-detected from game root)
 
-### Основное использование
+### Basic workflow
 
-1. Создай 2DFX Particle через панель 2DFX → **Частица**
-2. В свойствах частицы выбери эффект из dropdown (`prt_blood`, `prt_fire`, `prt_water_splash`, ...)
-3. Включи **Симуляция** — частицы начнут лететь в viewport
-4. Редактируй параметры — изменения видны мгновенно
-5. **Сохрани в effects.fxp** — авто-бэкап `.fxp.bak` создаётся при первой записи
+1. Create a 2DFX Particle via 2DFX panel → **Particle**
+2. In particle properties, pick an effect from dropdown (`prt_blood`, `prt_fire`, `prt_water_splash`, ...)
+3. Enable **Simulation** — particles start flying in viewport
+4. Edit parameters — changes are visible instantly
+5. **Save to effects.fxp** — auto-backup `.fxp.bak` is created on first write
 
-### Параметры эмиттера
+### Emitter parameters
 
-**Спрайт и смешивание:**
-| Параметр | Описание |
-|----------|----------|
-| Текстура | Имя спрайта из `particle.txd` (sphere, smoke, fire и т.д.) |
-| SrcBlend / DstBlend | D3D9 blend factors (4=SrcAlpha, 5=InvSrcAlpha, 2=One для additive) |
+**Sprite & blending:**
+| Parameter | Description |
+|-----------|-------------|
+| Texture | Sprite name from `particle.txd` (sphere, smoke, fire, etc.) |
+| SrcBlend / DstBlend | D3D9 blend factors (4=SrcAlpha, 5=InvSrcAlpha, 2=One for additive) |
 
-**Цвет (start → end):**
-- Начальный, средний и конечный цвета RGBA с интерполяцией по времени жизни
-- Средний цвет включается чекбоксом для трёхточечной интерполяции
+**Color (start → end):**
+- Start, middle, end RGBA colors interpolated over particle lifetime
+- Middle color toggle for three-point interpolation
 
-**Размер:**
-- Размер в начале и в конце жизни (плавный переход)
+**Size:**
+- Start and end size with smooth transition
 
-**Эмиссия:**
-| Параметр | Описание |
-|----------|----------|
-| Жизнь | Длительность жизни частицы в секундах |
-| Скорость | Начальная скорость |
-| Направление | Вектор направления эмиссии |
-| Rate | Количество частиц в секунду |
-| Angle | Угол конуса разброса |
-| Volume box | Объём спавна |
+**Emission:**
+| Parameter | Description |
+|-----------|-------------|
+| Life | Particle lifetime in seconds |
+| Speed | Initial speed |
+| Direction | Emission direction vector |
+| Rate | Particles per second |
+| Angle | Cone spread angle |
+| Volume box | Spawn volume |
 
-**Физика:**
-| Параметр | Описание |
-|----------|----------|
-| Force | Сила гравитации (XYZ вектор) |
-| Friction | Сопротивление воздуха |
-| Wind | Влияние ветра |
+**Physics:**
+| Parameter | Description |
+|-----------|-------------|
+| Force | Gravity force (XYZ vector) |
+| Friction | Air resistance |
+| Wind | Wind influence |
 | Noise | Perlin noise turbulence |
-| Jitter | Случайное дрожание |
-| Ground bounce | Отскок от земли |
+| Jitter | Random jitter |
+| Ground bounce | Ground collision response |
 
-**Система:**
-| Параметр | Описание |
-|----------|----------|
-| LENGTH | Длительность всей системы (секунды) |
-| PLAYMODE | Режим воспроизведения (0-3) |
-| CULLDIST | Дистанция отсечения для LOD |
-| Bounding sphere | Радиус для culling |
+**System:**
+| Parameter | Description |
+|-----------|-------------|
+| LENGTH | Total system duration (seconds) |
+| PLAYMODE | Playback mode (0-3) |
+| CULLDIST | Culling distance for LOD |
+| Bounding sphere | Radius for culling |
 
-### Кривые (keyframes)
+### Curves (keyframes)
 
-Любой параметр можно сделать **анимированным во времени жизни** через keyframe curves:
+Any parameter can be **animated over particle lifetime** via keyframe curves:
 
-1. В секции "Кривые" выбери параметр (например `SIZE.SIZEX` или `COLOUR.RED`)
-2. Появится список ключей с кнопками **+** и **-**
-3. Каждый ключ — пара `(TIME, VAL)`, где TIME = 0..1 (нормализованное время жизни)
-4. После редактирования нажми **"Записать кривую в effects.fxp"**
+1. In "Curves" section, pick a parameter (e.g. `SIZE.SIZEX` or `COLOUR.RED`)
+2. A list of keys appears with **+** and **-** buttons
+3. Each key is a `(TIME, VAL)` pair where TIME = 0..1 (normalized lifetime)
+4. After editing click **"Write curve to effects.fxp"**
 
-Пример: для огня — размер увеличивается от 0.5 до 2.0, цвет переходит от жёлтого к красному к чёрному, alpha от 1.0 к 0.0.
+Example: for fire — size grows from 0.5 to 2.0, color transitions from yellow to red to black, alpha from 1.0 to 0.0.
 
 ### Operators
 
-| Operator | Описание |
-|----------|----------|
-| New Effect | Создать новый эффект (клонируется из текущего шаблона) |
-| Delete Effect | Удалить эффект из effects.fxp |
-| Switch Emitter | Перебрать эмиттеры внутри multi-emitter системы (например `prt_cardebris` имеет 4 эмиттера) |
-| Reload effects.fxp | Перечитать файл с диска (сбросить кэш) |
-| Save to effects.fxp | Записать правки обратно в файл с авто-бэкапом |
+| Operator | Description |
+|----------|-------------|
+| New Effect | Create new effect (cloned from current template) |
+| Delete Effect | Remove effect from effects.fxp |
+| Switch Emitter | Browse emitters within multi-emitter system (e.g. `prt_cardebris` has 4 emitters) |
+| Reload effects.fxp | Re-read file from disk (clear cache) |
+| Save to effects.fxp | Write edits back to file with auto-backup |
 
-### Симуляция
+### Simulation
 
-- **30 FPS** обновление позиций частиц через frame_change handler
-- До **64 частиц на эмиттер** (shared mesh pool, экономия памяти)
-- **Billboard к камере** через draw handler — частицы всегда смотрят на viewport
-- **Vertex color emission** shader — реальный цвет/прозрачность по возрасту
-- Симуляция **non-destructive** — модель в DFF не меняется
+- **30 FPS** particle position updates via frame_change handler
+- Up to **64 particles per emitter** (shared mesh pool, memory efficient)
+- **Camera-facing billboards** via draw handler — particles always face viewport
+- **Vertex color emission** shader — real color/alpha by particle age
+- Simulation is **non-destructive** — DFF model is unchanged
 
-### Важные моменты
+### Important notes
 
-> **При переключении эффекта** все несохранённые правки сбрасываются — сначала сохрани через **"Сохранить в effects.fxp"**
+> **When switching effects** all unsaved edits are reset — save first via **"Save to effects.fxp"**
 
-> **Бэкап:** при первой записи создаётся `effects.fxp.bak` рядом с оригиналом — можно откатить если что-то пошло не так
+> **Backup:** on first write `effects.fxp.bak` is created next to the original — you can revert if something goes wrong
 
-> **Текстуры частиц** хранятся в `particle.txd` (рядом с effects.fxp). Импортируй TXD в Blender чтобы видеть нужные спрайты в materials browser
-
----
-
-## UV Инструменты
-
-**Панель:** UV Editor → Sidebar (N) → GTA Tools
-
-| Инструмент | Описание |
-|-----------|----------|
-| UV Grid Randomizer | Рандомизация позиций UV в ячейках сетки |
-| Snap to Grid | Привязка UV островов к ближайшей ячейке |
-| 9 точек выравнивания | Выбор позиции в ячейке (верх-лево, центр и т.д.) |
-| Связать полигоны | Перемещение полигонов с пересекающимися UV вместе |
-| Показать UV сетку | Визуализация сетки текстурного атласа GTA |
-
-**Настройки сетки:** столбцы × строки (по умолчанию 4×4).
+> **Particle textures** are stored in `particle.txd` (next to effects.fxp). Import the TXD into Blender to see sprites in materials browser
 
 ---
 
-## Проверка
+## UV Tools
 
-**Панель:** View3D → Sidebar (N) → GTA Tools → Проверка
+**Panel:** UV Editor → Sidebar (N) → GTA Tools
 
-| Кнопка | Описание |
-|--------|----------|
-| Проверка вершин | Найти висящие вершины и рёбра |
-| Проверка N-gon | Найти полигоны с 5+ вершинами |
-| Проверка материалов | Проверить лимит 50 материалов на объект |
-| Очистка материалов | Удалить дубликаты (.001, .002) |
-| Сортировка материалов | Отсортировать материалы по имени (натуральная сортировка) |
-| Сброс трансформ | Обнулить Location и Rotation для выделенных мешей (Scale не трогает) |
-| LOD/COL → DFF | Подтянуть LOD и COL к позиции соответствующего DFF |
-| DFF / LOD / COL | Скрыть/показать объекты по типу |
-| Тип: OBJ/COL/SHA/NON | Массовое назначение типа выделенным объектам с автопереименованием |
+| Tool | Description |
+|------|-------------|
+| UV Grid Randomizer | Randomize UV positions within grid cells |
+| Snap to Grid | Snap UV islands to nearest cell |
+| 9 Alignment Points | Choose position within cell (top-left, center, etc.) |
+| Link Polygons | Move polygons with overlapping UVs together |
+| Show UV Grid | Visualize GTA texture atlas grid |
 
-> **Очистка .001:** при экспорте IDE и IPL суффиксы дубликатов Blender (.001, .002 и т.д.) автоматически убираются из имён моделей.
+**Grid settings:** columns × rows (default 4×4).
 
 ---
 
-## Персонажи (Skinned DFF)
+## Check
 
-Импорт/экспорт моделей персонажей GTA SA со скелетом и анимациями.
+**Panel:** View3D → Sidebar (N) → GTA Tools → Check
 
-**Импорт:**
-- Armature с иерархией костей
-- Vertex weights (скин)
+| Button | Description |
+|--------|-------------|
+| Check Vertex | Find loose vertex and edges |
+| Check N-gon | Find polygons with 5+ vertex |
+| Check Materials | Check 50 material limit per object |
+| Cleanup Materials | Merge duplicate materials and textures (.001, .002) |
+| Sort Materials | Sort materials by name (natural sorting) |
+| Reset Transform | Zero out Location and Rotation for selected meshes (Scale untouched) |
+| LOD/COL → DFF | Snap LOD and COL to their corresponding DFF position |
+| DFF / LOD / COL | Hide/show objects by type |
+| Type: OBJ/COL/SHA/NON | Batch assign type to selected objects with auto-rename |
+
+> **Duplicate cleanup:** on IDE and IPL export, Blender duplicate suffixes (.001, .002, etc.) are automatically stripped from model names.
+
+### Cleanup Materials — details
+
+The button finds datablocks with `.001`, `.002`, etc. suffix and merges them with the original in a single pass — materials and textures (images) are processed separately.
+
+**Materials:**
+- All `material_slots` on meshes that reference a duplicate are switched to the original.
+- If no original with the base name exists — the first duplicate is renamed to the base name and becomes the original.
+- Unused duplicates (`users == 0`) are removed from `bpy.data.materials`.
+
+**Textures (safe mode):**
+- The image reference is replaced inside `Image Texture` nodes in all materials **and** node groups (shader/geometry/compositor).
+- A duplicate is merged with the original **only if the absolute file path matches** (`bpy.path.abspath` with library awareness). This prevents false merges in GTA SA, where identically-named textures often come from different TXDs.
+- For packed/generated images (no filepath), a weak `source + size` key is used.
+- Textures with different paths are **not merged** and counted in the "Skipped" stat.
+
+**Status bar report:**
+```
+Materials: 12/3 | Textures: 8/2 | Skipped (different paths): 1
+```
+Format — `merged_slots/removed_duplicates`.
+
+---
+
+## Characters (Skinned DFF)
+
+Import/export GTA SA character models with skeleton and animations.
+
+**Import:**
+- Armature with bone hierarchy
+- Vertex weights (skin data)
 - Bone matrices (Skin PLG)
-- Совместимость с Kams Script и оригинальными моделями
+- Compatible with Kams Script and original game models
 
-**Экспорт:**
-- Round-trip с побайтовой точностью
-- Корректные material indices в BinMesh PLG
+**Export:**
+- Round-trip with byte-level accuracy
+- Correct material indices in BinMesh PLG
 
-**Настройки экспорта для персонажей:** в свойствах объекта (`obj.inu`) рекомендуется включить **Normals** и отключить **Vertex Colors** — персонажи GTA SA используют нормали для динамического освещения движком, а не запечённые vertex colors как у зданий
+**Export settings for characters:** in object properties (`obj.inu`) it's recommended to enable **Normals** and disable **Vertex Colors** — GTA SA characters use normals for dynamic engine lighting instead of baked vertex colors like buildings
 
-### IFP Анимации
+### IFP Animations
 
-| Кнопка | Оператор | Описание |
-|--------|----------|----------|
-| Импорт IFP | `gtatools.import_ifp` | Загрузка анимаций (294+ в ped.ifp) |
-| Экспорт IFP | `gtatools.export_ifp` | Сохранение Actions в IFP |
-| Применить | `gtatools.apply_ifp` | Назначить анимацию скелету |
+| Button | Operator | Description |
+|--------|----------|-------------|
+| Import IFP | `gtatools.import_ifp` | Load animation file (294+ animations in ped.ifp) |
+| Export IFP | `gtatools.export_ifp` | Save Blender Actions as IFP |
+| Apply | `gtatools.apply_ifp` | Assign animation to armature |
 
-Список анимаций с поиском в панели.
-
----
-
-## Вода
-
-**Панель:** View3D → Sidebar (N) → GTA Tools → Вода
-
-| Кнопка | Описание |
-|--------|----------|
-| Импорт воды | Загрузка water.dat |
-| Экспорт воды | Сохранение water.dat (из коллекции Water) |
-| Добавить воду | Создать водный квад с текущими настройками |
-| Привязать к сетке | Выравнивание вершин по сетке (x4) |
-| Сшить края | Объединение перекрывающихся квадов |
-
-**Свойства воды:**
-- Флаг: 0=Обычная видимая, 1=Невидимая, 2=Мелкая видимая, 3=Мелкая невидимая
-- Скорость X/Y/Z — скорость течения
-- Высота волн — интенсивность волн
-- Текстура: waterclear256 с анимацией течения
+Searchable animation list in the panel.
 
 ---
 
-## Пути
+## Water IO
 
-**Панель:** View3D → Sidebar (N) → GTA Tools → Пути
+**Panel:** View3D → Sidebar (N) → GTA Tools → Water
 
-### Paths IPL (Авто/пешеходные)
+| Button | Description |
+|--------|-------------|
+| Import Water | Load water.dat |
+| Export Water | Save water.dat (from Water collection) |
+| Add Water | Create water quad with current settings |
+| Snap to Grid | Align vertices to 4-unit grid |
+| Stitch Edges | Merge overlapping water quads |
 
-| Кнопка | Описание |
-|--------|----------|
-| Импорт paths.ipl | Загрузка путей |
-| Экспорт paths.ipl | Сохранение путей для gta.dat |
-| Создать путь | Новая кривая пути |
-| Конвертировать в путь | Конвертация рёбер/кривой в данные пути |
-
-Автоматическое разбиение на группы по 12 нод (лимит GTA SA).
-
-### Ж/д пути
-
-| Кнопка | Описание |
-|--------|----------|
-| Импорт tracks.dat | Загрузка ж/д путей |
-| Экспорт tracks.dat | Сохранение путей |
-| Создать трек | Новая кривая трека |
-| Отметить станцию | Пометить точку как станцию (edit mode) |
-
-### Скомпилированные ноды
-
-| Кнопка | Описание |
-|--------|----------|
-| Импорт NODES.dat | Загрузка бинарных нод (поддержка нескольких файлов одновременно) |
-| Экспорт NODES.dat | Сохранение скомпилированных нод в выбранную папку |
-
-**Импорт:** можно выбрать несколько файлов (nodes0.dat, nodes1.dat, ...) за раз. При импорте каждый объект получает свойство `nodes_filename` с именем исходного файла.
-
-**Экспорт** работает в двух режимах:
-1. **По имени файла** — если у объектов есть свойство `nodes_filename` (установлено при импорте), ноды группируются по исходным файлам и сохраняются с теми же именами
-2. **Авто-разбиение по зонам** — объекты без `nodes_filename` автоматически распределяются по зонам карты GTA SA (сетка 8x8, 64 зоны, 750 единиц на зону). Каждая вершина попадает в зону по координатам: `gx = (X + 3000) / 750`, `gy = (3000 - Y) / 750`. Файлы сохраняются как `nodes0.dat` ... `nodes63.dat`
-
-> **Сетка зон:** карта GTA SA: от -3000 до +3000 по X и Y. Зоны нумеруются слева направо, сверху вниз (zone = gy × 8 + gx).
+**Water properties:**
+- Flag: 0=Default visible, 1=Invisible, 2=Shallow visible, 3=Shallow invisible
+- Speed X/Y/Z — flow velocity
+- Wave Height — wave intensity
+- Texture: waterclear256 with flow animation
 
 ---
 
-## Интеграции
+## Path IO
+
+**Panel:** View3D → Sidebar (N) → GTA Tools → Paths
+
+### Paths IPL (Vehicle/Pedestrian)
+
+| Button | Description |
+|--------|-------------|
+| Import paths.ipl | Load path definitions |
+| Export paths.ipl | Save path data for gta.dat |
+| Create Path | New path curve |
+| Convert to Path | Convert edges/curve to path data |
+
+Auto-splits into groups of 12 nodes (GTA SA limit).
+
+### Train Tracks
+
+| Button | Description |
+|--------|-------------|
+| Import tracks.dat | Load train track data |
+| Export tracks.dat | Save track definitions |
+| Create Track | New track curve |
+| Mark Station | Toggle station point (edit mode) |
+
+### Compiled Nodes
+
+| Button | Description |
+|--------|-------------|
+| Import NODES.dat | Load compiled binary path nodes (multi-file selection) |
+| Export NODES.dat | Save compiled nodes to selected folder |
+
+**Import:** select multiple files (nodes0.dat, nodes1.dat, ...) at once. Each imported object gets a `nodes_filename` property with the source file name.
+
+**Export** works in two modes:
+1. **By filename** — if objects have `nodes_filename` property (set on import), nodes are grouped by source files and saved with the same names
+2. **Auto-split by zones** — objects without `nodes_filename` are automatically distributed across the GTA SA map zone grid (8x8, 64 zones, 750 units per zone). Each vertex is assigned to a zone by coordinates: `gx = (X + 3000) / 750`, `gy = (3000 - Y) / 750`. Files are saved as `nodes0.dat` ... `nodes63.dat`
+
+> **Zone grid:** GTA SA map ranges from -3000 to +3000 on X and Y. Zones are numbered left-to-right, top-to-bottom (zone = gy × 8 + gx).
+
+---
+
+## Integrations
 
 ### Itera Tools 3
 
-**Панель:** View3D → Sidebar (N) → GTA Tools → Itera Tools 3
+**Panel:** View3D → Sidebar (N) → GTA Tools → Itera Tools 3
 
-| Кнопка | Описание |
-|--------|----------|
-| Vertex Lit Linear | Накладывает специальный материал для отображения освещения Itera |
-| Quickstart | Создаёт модификатор на модели и коллекцию с источниками света |
-| Убрать Itera | Снимает материал освещения и возвращает оригинальные материалы на модель |
+| Button | Description |
+|--------|-------------|
+| Vertex Lit Linear | Applies a special material for previewing Itera lighting on the model |
+| Quickstart | Creates a modifier on the model and a collection with light sources |
+| Remove Itera | Removes the lighting material and restores the original materials |
 
-**Порядок работы:**
-1. Нажмите **Vertex Lit Linear** — на модель наложится материал для просмотра освещения
-2. Нажмите **Quickstart** — появится модификатор и коллекция с лампами
-3. Расставьте и настройте освещение как нужно
-4. В модификаторе модели выставьте **Output Type / Bake → Цвета вершин**
-5. В поле **Export Vertex Color** впишите имя вашего атрибута цвета — `Day` или `Night`
-6. Когда освещение готово — **примените модификатор**
-7. Появится лишний третий атрибут цвета — его можно удалить
-8. Нажмите **Убрать Itera** — оригинальные материалы вернутся на модель
+**Workflow:**
+1. Click **Vertex Lit Linear** — a lighting preview material is applied to the model
+2. Click **Quickstart** — a modifier and light collection appear
+3. Position and configure the lights as needed
+4. In the model's modifier, set **Output Type / Bake → Vertex Colors**
+5. In the **Export Vertex Color** field, type your color attribute name — `Day` or `Night`
+6. When lighting is finalized — **apply the modifier**
+7. A third extra color attribute will appear — you can delete it
+8. Click **Remove Itera** — original materials are restored on the model
 
-> **ВАЖНО:** Пока на модели активен материал Itera — не редактируйте геометрию и материалы модели. Если изменить модель в этом состоянии, UV координаты материалов могут сбиться и часть текстур окажется испорчена.
+> **IMPORTANT:** Do not edit the model's geometry or materials while Itera material is active. Modifying the model in this state can corrupt UV coordinates and break texture assignments.
 
-Панель видна только когда Itera Tools 3 установлена в Asset Libraries.
+Panel is only visible when Itera Tools 3 is installed in Asset Libraries.
 
 ### LightMap (beta_MTA)
 
-**Панель:** View3D → Sidebar (N) → GTA Tools → Lightmap Generator (beta)
+**Panel:** View3D → Sidebar (N) → GTA Tools → Lightmap Generator (beta)
 
-Генерация Lua кода для MTA SA скриптов лайтмапов. MTA скрипт в рантайме заменяет шейдеры на моделях, добавляя второй UV слой с лайтмапом поверх основных текстур.
+Generate Lua code for MTA SA lightmap scripts. The MTA script replaces shaders at runtime, adding a second UV layer with the lightmap over the base textures.
 
-**Полный порядок работы:**
+**Full workflow:**
 
-1. **Создайте UV1** — основная развёртка для текстур модели (кирпичи, крыша и т.д.)
-2. **Создайте UV2** — вторая развёртка специально для лайтмапа. Каждый полигон должен занимать уникальное место, без перекрытий. В Blender: UV Editor → UV → Smart UV Project или вручную
-3. **Запеките освещение в текстуру по UV2** — используйте любой удобный способ запекания (Blender Bake, Cycles, сторонние аддоны). Главное — результат должен быть записан в текстуру по развёртке UV2
-4. **Сохраните лайтмап** как PNG файл (например `lightmaps/building01.png`)
-5. **Экспортируйте DFF** — убедитесь что в свойствах объекта включены оба UV слоя (`uv_map1` и `uv_map2`). Аддон запишет оба UV в DFF файл
-6. **Генерируйте код:**
-   - Выделите объект
-   - Укажите **путь к лайтмапу** (относительный, как в ресурсах MTA)
-   - Укажите **Model ID**
-   - Нажмите **Генерировать**
-7. **Скопируйте** результат в MTA Lua скрипт
+1. **Create UV1** — main UV layout for model textures (bricks, roof, etc.)
+2. **Create UV2** — second UV layout specifically for the lightmap. Each polygon must occupy a unique space with no overlaps. In Blender: UV Editor → UV → Smart UV Project or manually
+3. **Bake lighting to a texture using UV2** — use any baking method you prefer (Blender Bake, Cycles, third-party addons). The result must be baked to a texture using the UV2 layout
+4. **Save lightmap** as a PNG file (e.g. `lightmaps/building01.png`)
+5. **Export DFF** — make sure both UV layers are enabled in object properties (`uv_map1` and `uv_map2`). The addon writes both UVs to the DFF file
+6. **Generate code:**
+   - Select the object
+   - Set the **lightmap path** (relative, as in MTA resources)
+   - Set the **Model ID**
+   - Click **Generate**
+7. **Copy** the result into your MTA Lua script
 
-| Кнопка | Оператор | Описание |
-|--------|----------|----------|
-| Загрузить лайтмап | `gtatools.load_lightmap` | Загрузить изображение лайтмапа для превью |
-| Удалить лайтмап | `gtatools.remove_lightmap` | Удалить загруженный лайтмап |
-| Генерировать | `gtatools.lightmap_generate` | Генерировать Lua код из текстур объекта |
-| Копировать | `gtatools.lightmap_copy` | Копировать результат в буфер обмена |
-| Очистить | `gtatools.lightmap_clear` | Очистить код |
+| Button | Operator | Description |
+|--------|----------|-------------|
+| Load Lightmap | `gtatools.load_lightmap` | Load lightmap image for preview |
+| Remove Lightmap | `gtatools.remove_lightmap` | Remove loaded lightmap |
+| Generate | `gtatools.lightmap_generate` | Generate Lua code from object textures |
+| Copy | `gtatools.lightmap_copy` | Copy result to clipboard |
+| Clear | `gtatools.lightmap_clear` | Clear generated code |
 
-**Результат:** Lua таблица с именами текстур и ссылками на лайтмап:
+**Output:** Lua table with texture names and lightmap references:
 ```lua
 {
     textures = {
@@ -747,202 +769,202 @@ IPL файлы определяют позиции, повороты и связ
 },
 ```
 
-> **ВАЖНО:** UV2 обязателен — без второго UV слоя лайтмап наложится по координатам UV1 и будет выглядеть неправильно.
+> **IMPORTANT:** UV2 is required — without a second UV layer, the lightmap will use UV1 coordinates and look incorrect.
 
-Сам MTA скрипт для лайтмапов доступен в разделе [Issues](../../issues) репозитория.
+The MTA lightmap script itself is available in the [Issues](../../issues) section of the repository.
 
 ### Pipeline
 
-Выбор рендер-пайплайна определяет как движок GTA SA обрабатывает модель:
-- **None** — без пайплайна. Подходит для большинства объектов: мебель, заборы, растения, персонажи
-- **Building** (0x53F2009A) — Day/Night vertex colors. Обязателен для зданий и объектов карты у которых есть vertex colors — без этого пайплайна цвета дня/ночи не будут переключаться при смене времени суток в игре
-- **Reflections** (0x53F20098) — отражения на окнах. Только для моделей окон, которые должны отражать окружение. Окна должны быть отдельной моделью от здания
+Render pipeline determines how the GTA SA engine processes the model:
+- **None** — no pipeline. Suitable for most objects: furniture, fences, vegetation, characters
+- **Building** (0x53F2009A) — Day/Night vertex colors. Required for buildings and map objects that have vertex colors — without this pipeline, day/night color transitions won't work in-game
+- **Reflections** (0x53F20098) — window reflections. Only for window models that should reflect the environment. Windows must be a separate model from the building
 
 ### Normals
 
-Переключатель **Normals** управляет экспортом нормалей вершин в DFF:
-- **Включено** — модель получает динамическое освещение от движка GTA SA. Нужно для: персонажей, транспорта, оружия, интерактивных объектов
-- **Выключено** — модель освещается только запечёнными vertex colors. Используется для: зданий, дорог, объектов карты
+The **Normals** toggle controls vertex normal export in DFF:
+- **Enabled** — the model receives dynamic lighting from the GTA SA engine. Required for: characters, vehicles, weapons, interactive objects
+- **Disabled** — the model is lit only by baked vertex colors. Used for: buildings, roads, map objects
 
 ---
 
-## Техническая документация
+## Technical Reference
 
-### Структура проекта
+### Project Structure
 
 ```
 INU_tools/
-├── __init__.py          # Основной файл: операторы, панели, регистрация (~9700 строк)
-├── core/                # Чистый Python (без Blender)
-│   ├── dff.py           # RenderWare DFF чтение/запись
-│   ├── col.py           # COL1/2/3/4 формат коллизий
-│   ├── txd.py           # TXD текстуры (numpy DXT декомпрессия)
-│   ├── ide.py           # IDE файлы определений
-│   ├── ipl.py           # IPL файлы размещения (текст + бинарный)
-│   ├── ifp.py           # IFP анимации
-│   ├── img.py           # IMG v2 архивы (чтение/запись/извлечение/замена)
-│   ├── paths.py         # Пути (flight, track, nodes)
-│   ├── water.py         # water.dat формат
-│   ├── gta_dat.py       # Парсер gta.dat/gta_int.dat
-│   └── rwbinary.py      # RenderWare бинарные утилиты
-├── ops/                 # Операторы Blender (логика импорта/экспорта)
-│   ├── dff_import.py    # DFF → меш Blender
-│   ├── dff_export.py    # Меш Blender → DFF
-│   ├── col_import.py    # COL → меш Blender
-│   ├── col_export.py    # Меш Blender → COL
-│   ├── txd_import.py    # TXD → изображения Blender
-│   ├── ide_import.py    # IDE → свойства объектов
-│   ├── ide_export.py    # Свойства → IDE
-│   ├── ipl_import.py    # IPL → размещение объектов
-│   ├── ipl_export.py    # Трансформы → IPL
-│   ├── ipl_sections.py  # Секции IPL ↔ коллекции Blender
-│   ├── ifp_import.py    # IFP → Actions Blender
-│   ├── ifp_export.py    # Actions → IFP
-│   ├── path_import.py   # Пути → кривые Blender
-│   ├── path_export.py   # Кривые → пути
-│   ├── water_import.py  # water.dat → меш
-│   ├── water_export.py  # Меш → water.dat
-│   └── fx_preview.py    # 2DFX превью визуализация
-├── tools/               # Утилиты
-│   ├── txd_export.py    # Компиляция TXD (CPU/GPU)
-│   ├── prelight.py      # Запекание vertex colors и пост-обработка
-│   ├── col_light.py     # COL Light превью и запекание
-│   ├── uv_tools.py      # UV инструменты и панель
-│   ├── model_utils.py   # Определение моделей по суффиксам
-│   └── dff2gltf.py      # DFF → glTF конвертация для импорта карты
+├── __init__.py          # Main addon: operators, panels, registration (~9700 lines)
+├── core/                # Pure Python parsers (no Blender dependency)
+│   ├── dff.py           # RenderWare DFF reader/writer
+│   ├── col.py           # COL1/2/3/4 collision format
+│   ├── txd.py           # TXD texture dictionary (numpy DXT decompression)
+│   ├── ide.py           # IDE definition file I/O
+│   ├── ipl.py           # IPL instance file I/O (text + binary)
+│   ├── ifp.py           # IFP animation format
+│   ├── img.py           # IMG v2 archive (read/write/extract/replace)
+│   ├── paths.py         # Path data (flight, track, nodes)
+│   ├── water.py         # water.dat format
+│   ├── gta_dat.py       # gta.dat/gta_int.dat parser
+│   └── rwbinary.py      # Low-level RenderWare binary helpers
+├── ops/                 # Blender operators (import/export logic)
+│   ├── dff_import.py    # DFF → Blender mesh
+│   ├── dff_export.py    # Blender mesh → DFF
+│   ├── col_import.py    # COL → Blender mesh
+│   ├── col_export.py    # Blender mesh → COL
+│   ├── txd_import.py    # TXD → Blender images
+│   ├── ide_import.py    # IDE → object properties
+│   ├── ide_export.py    # Object properties → IDE
+│   ├── ipl_import.py    # IPL → object placement
+│   ├── ipl_export.py    # Object transforms → IPL
+│   ├── ipl_sections.py  # IPL sections ↔ Blender collections
+│   ├── ifp_import.py    # IFP → Blender Actions
+│   ├── ifp_export.py    # Blender Actions → IFP
+│   ├── path_import.py   # Paths → Blender curves
+│   ├── path_export.py   # Blender curves → paths
+│   ├── water_import.py  # water.dat → mesh
+│   ├── water_export.py  # Mesh → water.dat
+│   └── fx_preview.py    # 2DFX light preview visualization
+├── tools/               # Utility modules
+│   ├── txd_export.py    # TXD compilation (CPU/GPU)
+│   ├── prelight.py      # Vertex color baking & post-processing
+│   ├── col_light.py     # COL lighting preview & bake
+│   ├── uv_tools.py      # UV grid tools & panel
+│   ├── model_utils.py   # Model detection by suffixes
+│   └── dff2gltf.py      # DFF → glTF conversion for map import
 ├── data/
-│   ├── surface_materials.py  # 179 типов поверхностей GTA SA
-│   └── id_manager.py         # Менеджер ID моделей
+│   ├── surface_materials.py  # 179 GTA SA surface types
+│   └── id_manager.py         # Model ID allocation
 └── locale/
-    ├── __init__.py       # Загрузчик переводов
-    └── eng.py            # Английские переводы
+    ├── __init__.py       # Translation loader
+    └── eng.py            # English translations
 ```
 
-### Модули ядра
+### Core Modules
 
-#### dff.py — RenderWare DFF
-Чтение/запись бинарных RW потоков. Обрабатывает: Clump, Frame List, Geometry List, Geometry (вершины, нормали, UV, vertex colors), Material List, Material, Texture, Atomic, Skin PLG, 2DFX PLG, BinMesh PLG.
+#### dff.py — RenderWare DFF Format
+Reads/writes RenderWare binary streams. Handles: Clump, Frame List, Geometry List, Geometry (vertices, normals, UV, vertex colors), Material List, Material, Texture, Atomic, Skin PLG, 2DFX PLG, BinMesh PLG.
 
-#### col.py — Формат коллизий
-Поддержка COL1, COL2, COL3 (стандарт GTA SA), COL4. Чтение/запись: полигоны, вершины, группы, сферы, боксы, свойства поверхностей (материал, флаги, яркость, свет).
+#### col.py — Collision Format
+Supports COL1, COL2, COL3 (GTA SA default), COL4. Reads/writes: mesh faces, vertices, face groups, spheres, boxes, surface properties (material, flags, brightness, light).
 
-#### txd.py — Текстуры
-Numpy-ускоренная DXT декомпрессия. Форматы: DXT1, DXT3, DXT5, RASTER_8888, RASTER_888 (32-bit BGRX), RASTER_565, RASTER_1555, RASTER_4444, PAL8 (палитра). Платформа: D3D8/D3D9.
+#### txd.py — Texture Dictionary
+Numpy-accelerated DXT decompression. Handles: DXT1, DXT3, DXT5, RASTER_8888, RASTER_888 (32-bit BGRX), RASTER_565, RASTER_1555, RASTER_4444, PAL8 (paletted). Platform: D3D8/D3D9.
 
-#### ide.py — Определения объектов
-Все секции: objs (статика), tobj (по времени), anim (анимированные), cars (транспорт), peds (пешеходы), weap (оружие), hier (иерархия), txdp (родители TXD).
+#### ide.py — Item Definition
+All sections: objs (static), tobj (timed), anim (animated), cars (vehicles), peds (pedestrians), weap (weapons), hier (hierarchy), txdp (TXD parents).
 
-#### ipl.py — Размещение объектов
-Все секции: inst (экземпляры), cull (зоны отсечения), grge (гаражи), enex (входы/выходы), pick (подбираемые), cars (припаркованные), auzo (аудио зоны), jump (трюковые прыжки), occl (окклюзия), tcyc (циклы времени), zone (зоны карты). Поддержка бинарного IPL (`bnry`).
+#### ipl.py — Item Placement
+All sections: inst (instances), cull (cull zones), grge (garages), enex (entry/exit), pick (pickups), cars (parked vehicles), auzo (audio zones), jump (stunt jumps), occl (occlusion), tcyc (time cycle), zone (map zones). Supports binary IPL (`bnry` header).
 
-#### img.py — IMG v2 архивы
-Контекстный менеджер `ImgReader` для быстрого последовательного чтения. Функции: `read_directory`, `extract_file`, `replace_or_add`, `remove_file`, `create_img`. Выравнивание по секторам (2048 байт).
+#### img.py — IMG v2 Archive
+`ImgReader` context manager for fast sequential reads. Functions: `read_directory`, `extract_file`, `replace_or_add`, `remove_file`, `create_img`. Sector-aligned (2048 bytes).
 
-#### gta_dat.py — Данные игры
-Парсинг `gta.dat` и `gta_int.dat`. Извлечение путей IDE/IPL/IMG. `extract_regions()` возвращает имена папок из директории MAPS для динамической фильтрации регионов.
+#### gta_dat.py — Game Data
+Parses `gta.dat` and `gta_int.dat`. Extracts IDE/IPL/IMG paths. `extract_regions()` returns folder names from MAPS directory for dynamic region filtering.
 
-### Форматы файлов
+### File Formats
 
-| Формат | Расширение | Описание |
-|--------|-----------|----------|
-| DFF | .dff | Модель RenderWare (геометрия, материалы, UV, vertex colors, 2DFX) |
-| COL | .col | Коллизия с типами поверхностей |
-| TXD | .txd | Архив текстур (DXT сжатие) |
-| IDE | .ide | Определения объектов (текст, через запятую) |
-| IPL | .ipl | Размещение объектов (текст или бинарный с `bnry`) |
-| IFP | .ifp | Скелетные анимации |
-| IMG | .img | VER2 архив с DFF/COL/TXD/IPL файлами |
-| water.dat | .dat | Определения водных квадов |
-| paths.ipl | .ipl | Пути транспорта/пешеходов |
-| tracks.dat | .dat | Ж/д пути |
-| NODES*.dat | .dat | Скомпилированные бинарные ноды путей |
+| Format | Extension | Description |
+|--------|-----------|-------------|
+| DFF | .dff | RenderWare model (geometry, materials, UV, vertex colors, 2DFX) |
+| COL | .col | Collision mesh with surface properties |
+| TXD | .txd | Texture archive (DXT compressed) |
+| IDE | .ide | Object definitions (text, comma-separated) |
+| IPL | .ipl | Object placement (text or binary with `bnry` header) |
+| IFP | .ifp | Skeletal animations |
+| IMG | .img | VER2 archive containing DFF/COL/TXD/IPL files |
+| water.dat | .dat | Water quad definitions |
+| paths.ipl | .ipl | Vehicle/pedestrian path definitions |
+| tracks.dat | .dat | Train track definitions |
+| NODES*.dat | .dat | Compiled binary path nodes |
 
-### Свойства объекта (INUObjectProps)
+### Object Properties (INUObjectProps)
 
-Доступ через `obj.inu` на любом объекте Blender.
+Accessed via `obj.inu` on any Blender object.
 
-| Свойство | Тип | По умолчанию | Описание |
-|----------|-----|-------------|----------|
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
 | type | Enum | OBJ | OBJ / COL / SHA / 2DFX / NON |
-| model_id | Int | 0 | ID модели GTA SA |
-| txd_name | String | "" | Имя словаря текстур |
-| draw_distance | Float | 300.0 | Дальность прорисовки |
-| ide_flags | Int | 0 | Флаги IDE (битовое поле) |
-| interior_id | Int | 0 | ID интерьера (0=экстерьер) |
-| lod_index | Int | -1 | Индекс LOD модели (-1=нет) |
+| model_id | Int | 0 | GTA SA model ID |
+| txd_name | String | "" | Texture dictionary name |
+| draw_distance | Float | 300.0 | Render distance |
+| ide_flags | Int | 0 | IDE flags (bitfield) |
+| interior_id | Int | 0 | Interior ID (0=exterior) |
+| lod_index | Int | -1 | LOD model index (-1=none) |
 | pipeline | Enum | NONE | NONE / Building / Reflections / Custom |
-| light | Bool | True | Флаг rpGEOMETRYLIGHT |
-| modulate_color | Bool | True | Флаг rpGEOMETRYMODULATEMATERIALCOLOR |
-| export_normals | Bool | True | Экспорт нормалей вершин |
-| export_binsplit | Bool | True | Экспорт BinMesh PLG |
-| uv_map1/2 | Bool | True | Экспорт UV карт |
-| day_cols / night_cols | Bool | True | Экспорт vertex colors |
-| effect_2dfx | Enum | LIGHT | Тип 2DFX эффекта |
-| color_2dfx | RGBA | (1,1,0.78,1) | Цвет 2DFX |
-| preset_2dfx | Enum | DEFAULT | Пресет света |
-| corona_tex_2dfx | Enum | coronastar | Текстура короны (34 варианта) |
-| shadow_tex_2dfx | Enum | shad_exp | Текстура тени |
-| show_mode_2dfx | Enum | 0 | Режим показа (6 вариантов) |
-| flare_type_2dfx | Enum | 0 | Тип блика (4 варианта) |
+| light | Bool | True | rpGEOMETRYLIGHT flag |
+| modulate_color | Bool | True | rpGEOMETRYMODULATEMATERIALCOLOR flag |
+| export_normals | Bool | True | Export vertex normals |
+| export_binsplit | Bool | True | Export BinMesh PLG |
+| uv_map1/2 | Bool | True | Export UV maps |
+| day_cols / night_cols | Bool | True | Export vertex colors |
+| effect_2dfx | Enum | LIGHT | 2DFX effect type |
+| color_2dfx | RGBA | (1,1,0.78,1) | 2DFX color |
+| preset_2dfx | Enum | DEFAULT | Light preset |
+| corona_tex_2dfx | Enum | coronastar | Corona texture (34 options) |
+| shadow_tex_2dfx | Enum | shad_exp | Shadow texture |
+| show_mode_2dfx | Enum | 0 | Display mode (6 options) |
+| flare_type_2dfx | Enum | 0 | Lens flare type (4 options) |
 
-### Свойства материала (INUMaterialProps)
+### Material Properties (INUMaterialProps)
 
-Доступ через `mat.inu` на любом материале Blender.
+Accessed via `mat.inu` on any Blender material.
 
-| Свойство | Тип | По умолчанию | Описание |
-|----------|-----|-------------|----------|
-| ambient | Float | 1.0 | Ambient освещение |
-| col_mat_index | Int | 0 | ID поверхности COL (0-178) |
-| col_flags | Int | 0 | Флаги коллизии |
-| col_brightness | Int | 0 | Яркость поверхности |
-| col_light | Int | 0 | Свет поверхности |
-| col_day_light | Int | 0 | Дневной свет (0-15) |
-| col_night_light | Int | 0 | Ночной свет (0-15) |
-| export_env_map | Bool | False | Включить карту окружения |
-| env_map_tex | String | "" | Текстура env map |
-| env_map_coef | Float | 0.5 | Коэффициент env map |
-| export_bump_map | Bool | False | Включить bump map |
-| bump_map_tex | String | "" | Текстура bump map |
-| export_reflection | Bool | False | Включить отражение |
-| reflection_scale_x/y | Float | 0 | Масштаб отражения |
-| reflection_offset_x/y | Float | 0 | Смещение отражения |
-| reflection_intensity | Float | 0 | Интенсивность отражения |
-| export_specular | Bool | False | Включить specular |
-| specular_level | Float | 0 | Уровень specular |
-| specular_texture | String | "" | Текстура specular |
-| export_dual_tex | Bool | False | Включить dual texture |
-| dual_tex_src_blend | Enum | 5 | Режим смешивания Source (11 вариантов) |
-| dual_tex_dst_blend | Enum | 6 | Режим смешивания Dest (11 вариантов) |
-| dual_tex_texture | String | "" | Имя второй текстуры |
-| export_animation | Bool | False | Включить UV анимацию |
-| animation_name | String | "" | Имя анимации |
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| ambient | Float | 1.0 | Ambient shading |
+| col_mat_index | Int | 0 | COL surface ID (0-178) |
+| col_flags | Int | 0 | Collision flags |
+| col_brightness | Int | 0 | Surface brightness |
+| col_light | Int | 0 | Surface light |
+| col_day_light | Int | 0 | Day light (0-15) |
+| col_night_light | Int | 0 | Night light (0-15) |
+| export_env_map | Bool | False | Enable environment map |
+| env_map_tex | String | "" | Env map texture name |
+| env_map_coef | Float | 0.5 | Env map coefficient |
+| export_bump_map | Bool | False | Enable bump map |
+| bump_map_tex | String | "" | Bump map texture name |
+| export_reflection | Bool | False | Enable reflection |
+| reflection_scale_x/y | Float | 0 | Reflection scale |
+| reflection_offset_x/y | Float | 0 | Reflection offset |
+| reflection_intensity | Float | 0 | Reflection intensity |
+| export_specular | Bool | False | Enable specular |
+| specular_level | Float | 0 | Specular level |
+| specular_texture | String | "" | Specular texture |
+| export_dual_tex | Bool | False | Enable dual texture |
+| dual_tex_src_blend | Enum | 5 | Source blend mode (11 options) |
+| dual_tex_dst_blend | Enum | 6 | Dest blend mode (11 options) |
+| dual_tex_texture | String | "" | Second texture name |
+| export_animation | Bool | False | Enable UV animation |
+| animation_name | String | "" | Animation name |
 
-### Свойства сцены
+### Scene Properties
 
-Все настройки сцены хранятся в `bpy.types.Scene`:
+All scene-level settings stored in `bpy.types.Scene`:
 
-| Свойство | Описание |
-|----------|----------|
-| gtatools_game_root | Путь к установке GTA SA |
-| gtatools_ide_path | Активный IDE файл |
-| gtatools_ipl_path | Активный IPL файл |
-| gtatools_img_path | Активный IMG архив |
-| gtatools_map_region | Регион карты (динамически из gta.dat) |
-| gtatools_img_skip_lod | Пропускать LOD при импорте |
-| gtatools_img_load_txd | Автозагрузка TXD при импорте |
-| gtatools_img_export_dff/col/txd | Переключатели экспорта IMG |
-| gtatools_export_all_dff/col/lod/txd | Переключатели Export All |
-| gtatools_export_pipeline | Выбор Pipeline |
-| gtatools_txd_auto_import | Авто TXD при импорте DFF |
-| gtatools_nvtt_path | Путь к NVIDIA Texture Tools |
-| gtatools_texture_path1/2 | Пути поиска текстур |
-| gtatools_suffix_dff/lod/col | Суффиксы моделей |
-| gtatools_bake_ambient/intensity/gamma | Настройки прелайта |
-| gtatools_bake_shadows | Тени при запекании |
-| gtatools_water_flag | Тип воды (0-3) |
-| gtatools_water_speed_x/y/z | Скорость течения |
-| gtatools_uv_grid_cols/rows | Размеры UV сетки |
+| Property | Description |
+|----------|-------------|
+| gtatools_game_root | GTA SA installation path |
+| gtatools_ide_path | Active IDE file path |
+| gtatools_ipl_path | Active IPL file path |
+| gtatools_img_path | Active IMG archive path |
+| gtatools_map_region | Map region (dynamic from gta.dat) |
+| gtatools_img_skip_lod | Skip LOD on import |
+| gtatools_img_load_txd | Auto-load TXD on import |
+| gtatools_img_export_dff/col/txd | IMG export toggles |
+| gtatools_export_all_dff/col/lod/txd | Export All toggles |
+| gtatools_export_pipeline | Pipeline selection |
+| gtatools_txd_auto_import | Auto TXD on DFF import |
+| gtatools_nvtt_path | NVIDIA Texture Tools path |
+| gtatools_texture_path1/2 | Texture search paths |
+| gtatools_suffix_dff/lod/col | Model suffixes |
+| gtatools_bake_ambient/intensity/gamma | Prelight settings |
+| gtatools_bake_shadows | Enable shadow baking |
+| gtatools_water_flag | Water type (0-3) |
+| gtatools_water_speed_x/y/z | Water flow speed |
+| gtatools_uv_grid_cols/rows | UV grid dimensions |
 
 ---
 
-> **[Сравнение с другими инструментами](COMPARISON.md)**
+> **[Feature comparison with other tools](COMPARISON.md)**

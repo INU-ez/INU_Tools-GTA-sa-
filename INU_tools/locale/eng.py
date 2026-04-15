@@ -943,4 +943,13 @@ LANG = {
     # v1.6.3 — Vertex Paint panel
     "Пост-обработка:": "Post-processing:",
     "Объект": "Object",
+
+    # v1.6.3 — Shared TXD
+    "Общий TXD": "Shared TXD",
+    "Имя общего TXD файла для нескольких DFF моделей": "Shared TXD filename for multiple DFF models",
+
+    # v1.6.3 — Copy color attributes
+    "Day → Night": "Day → Night",
+    "Night → Day": "Night → Day",
+    "объектов": "objects",
 }

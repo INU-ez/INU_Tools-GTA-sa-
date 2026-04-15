@@ -524,6 +524,38 @@ def _populate_particle_props_from_fxp(obj, effect_name: str, emitter_index: int 
     return True
 
 
+_inu_flag_propagating = False
+
+
+def _make_inu_flag_update(attr_name):
+    """Propagate a DFF flag toggle from the active object to all other selected mesh objects.
+
+    Only fires when the user edits the flag on the active object's panel — guards against
+    recursion and against runs from import/export where properties are set programmatically
+    on non-active objects.
+    """
+    def _update(self, context):
+        global _inu_flag_propagating
+        if _inu_flag_propagating:
+            return
+        active = context.active_object
+        if not active or self.id_data != active:
+            return
+        selected = [o for o in context.selected_objects
+                    if o.type == 'MESH' and o != active and hasattr(o, 'inu')]
+        if not selected:
+            return
+        value = getattr(self, attr_name)
+        _inu_flag_propagating = True
+        try:
+            for obj in selected:
+                if getattr(obj.inu, attr_name) != value:
+                    setattr(obj.inu, attr_name, value)
+        finally:
+            _inu_flag_propagating = False
+    return _update
+
+
 class INUObjectProps(bpy.types.PropertyGroup):
     """INU_tools object export properties (replaces DragonFF obj.dff)."""
 
@@ -970,21 +1002,23 @@ class INUObjectProps(bpy.types.PropertyGroup):
     export_normals : BoolProperty(
         default=True,
         description=T("Экспорт нормалей вершин (отключить для map объектов)"),
+        update=_make_inu_flag_update("export_normals"),
     )
     export_binsplit : BoolProperty(
         default=True,
         description=T("Экспорт Bin Mesh PLG (совместимость с просмотрщиками DFF)"),
+        update=_make_inu_flag_update("export_binsplit"),
     )
 
-    uv_map1 : BoolProperty(default=True, description=T("Экспорт первой UV карты"))
-    uv_map2 : BoolProperty(default=True, description=T("Экспорт второй UV карты"))
-    day_cols : BoolProperty(default=True, description=T("Экспорт дневных vertex colors"))
-    night_cols : BoolProperty(default=True, description=T("Экспорт ночных vertex colors"))
+    uv_map1 : BoolProperty(default=True, description=T("Экспорт первой UV карты"), update=_make_inu_flag_update("uv_map1"))
+    uv_map2 : BoolProperty(default=True, description=T("Экспорт второй UV карты"), update=_make_inu_flag_update("uv_map2"))
+    day_cols : BoolProperty(default=True, description=T("Экспорт дневных vertex colors"), update=_make_inu_flag_update("day_cols"))
+    night_cols : BoolProperty(default=True, description=T("Экспорт ночных vertex colors"), update=_make_inu_flag_update("night_cols"))
 
-    light : BoolProperty(default=True, description=T("Флаг rpGEOMETRYLIGHT — динамическое освещение"))
-    modulate_color : BoolProperty(default=True, description=T("Флаг rpGEOMETRYMODULATEMATERIALCOLOR — цвет материала влияет на модель"))
-    set_material_alpha : BoolProperty(default=True, description=T("Автоматически ставить material alpha = 254 при наличии vertex alpha < 255.\nНужно для стандартных прозрачных мешей (стёкла, дым). Выключи если материал должен остаться opaque"))
-    light_beam_asi : BoolProperty(default=False, description=T("Помечает меш как объёмный луч света для плагина SA_Light.asi.\nУстанавливает material color = (254,254,254,254) — этот маркер плагин ищет во время рендера.\n\nТРЕБУЕТ SA_Light.asi в корне GTA SA. Без плагина меш будет рендериться как обычный полупрозрачный объект с жёстким срезом alpha.\n\nДля использования:\n1. Собери меш-конус/куб формой луча\n2. Покрась vertex colors как хочешь (любые значения alpha)\n3. Включи этот флаг + Set Material Alpha выключи\n4. Экспорт → плагин автоматически включит плавный alpha blend на этом меше"))
+    light : BoolProperty(default=True, description=T("Флаг rpGEOMETRYLIGHT — динамическое освещение"), update=_make_inu_flag_update("light"))
+    modulate_color : BoolProperty(default=True, description=T("Флаг rpGEOMETRYMODULATEMATERIALCOLOR — цвет материала влияет на модель"), update=_make_inu_flag_update("modulate_color"))
+    set_material_alpha : BoolProperty(default=True, description=T("Автоматически ставить material alpha = 254 при наличии vertex alpha < 255.\nНужно для стандартных прозрачных мешей (стёкла, дым). Выключи если материал должен остаться opaque"), update=_make_inu_flag_update("set_material_alpha"))
+    light_beam_asi : BoolProperty(default=False, description=T("Помечает меш как объёмный луч света для плагина SA_Light.asi.\nУстанавливает material color = (254,254,254,254) — этот маркер плагин ищет во время рендера.\n\nТРЕБУЕТ SA_Light.asi в корне GTA SA. Без плагина меш будет рендериться как обычный полупрозрачный объект с жёстким срезом alpha.\n\nДля использования:\n1. Собери меш-конус/куб формой луча\n2. Покрась vertex colors как хочешь (любые значения alpha)\n3. Включи этот флаг + Set Material Alpha выключи\n4. Экспорт → плагин автоматически включит плавный alpha blend на этом меше"), update=_make_inu_flag_update("light_beam_asi"))
 
     # ── IDE / IPL properties ──
     model_id : IntProperty(
@@ -1442,6 +1476,37 @@ class GTATOOLS_OT_export_txd(bpy.types.Operator, ExportHelper):
     def draw(self, context):
         layout = self.layout
         layout.prop(self, "selected_only")
+
+
+class GTATOOLS_OT_export_shared_txd(bpy.types.Operator, ExportHelper):
+    """Экспортировать один общий TXD для нескольких DFF моделей"""
+    bl_idname = "gtatools.export_shared_txd"
+    bl_label = "Export Shared TXD"
+    bl_options = {'PRESET'}
+    filename_ext = ".txd"
+    filter_glob: StringProperty(default="*.txd", options={'HIDDEN'})
+
+    def invoke(self, context, event):
+        # Pre-fill filename from scene property
+        txd_name = getattr(context.scene, 'gtatools_shared_txd_name', '').strip()
+        if txd_name:
+            if not txd_name.lower().endswith('.txd'):
+                txd_name += '.txd'
+            self.filepath = txd_name
+        return super().invoke(context, event)
+
+    def execute(self, context):
+        # Validate selection
+        selected_meshes = [o for o in context.selected_objects if o.type == 'MESH']
+        if not selected_meshes:
+            self.report({'ERROR'}, T("Выделите меш объекты"))
+            return {'CANCELLED'}
+
+        use_gpu = check_nvtt_available(getattr(context.scene, 'gtatools_nvtt_path', ''))[0]
+        # Force selected_only=True for shared TXD (collects from all selected DFFs)
+        result, message, transparent_list = export_txd(self.filepath, context, True, use_gpu)
+        self.report({'INFO'} if result == {'FINISHED'} else {'ERROR'}, message)
+        return result
 
 
 class GTATOOLS_OT_export_dff(bpy.types.Operator, ExportHelper):
@@ -5566,6 +5631,48 @@ class GTATOOLS_OT_create_day_night(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class GTATOOLS_OT_copy_color_attr(bpy.types.Operator):
+    """Копировать vertex colors из одного атрибута в другой (Day ↔ Night)"""
+    bl_idname = "gtatools.copy_color_attr"
+    bl_label = "Copy Color Attribute"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    source: StringProperty(name="Source", default="Day")
+    target: StringProperty(name="Target", default="Night")
+
+    def execute(self, context):
+        mesh_objects = [o for o in context.selected_objects if o.type == 'MESH']
+        if not mesh_objects:
+            obj = context.active_object
+            if obj and obj.type == 'MESH':
+                mesh_objects = [obj]
+        if not mesh_objects:
+            self.report({'ERROR'}, T("Выберите меш объект!"))
+            return {'CANCELLED'}
+
+        copied = 0
+        for obj in mesh_objects:
+            mesh = obj.data
+            src_attr = mesh.color_attributes.get(self.source)
+            if not src_attr:
+                continue
+
+            tgt_attr = mesh.color_attributes.get(self.target)
+            if not tgt_attr:
+                tgt_attr = mesh.color_attributes.new(
+                    name=self.target, type='BYTE_COLOR', domain='CORNER')
+
+            # Copy all colors
+            n = min(len(src_attr.data), len(tgt_attr.data))
+            for i in range(n):
+                c = src_attr.data[i].color
+                tgt_attr.data[i].color = (c[0], c[1], c[2], c[3])
+            copied += 1
+
+        self.report({'INFO'}, f"{self.source} → {self.target}: {copied} {T('объектов')}")
+        return {'FINISHED'}
+
+
 class GTATOOLS_OT_prelight_preview(bpy.types.Operator):
     """Переключить превью prelight - показать vertex colors с текстурами"""
     bl_idname = "gtatools.prelight_preview"
@@ -6971,13 +7078,14 @@ class GTATOOLS_OT_check_materials(bpy.types.Operator):
 
 
 class GTATOOLS_OT_cleanup_materials(bpy.types.Operator):
-    """Объединить дубликаты материалов (.001, .002, и т.д.) с оригиналами"""
+    """Объединить дубликаты материалов и текстур (.001, .002, и т.д.) с оригиналами"""
     bl_idname = "gtatools.cleanup_materials"
     bl_label = "Cleanup Materials"
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
         import re
+        import os
 
         # Pattern to match .001, .002, etc. suffix
         pattern = re.compile(r'^(.+)\.(\d{3})$')
@@ -7026,8 +7134,81 @@ class GTATOOLS_OT_cleanup_materials(bpy.types.Operator):
             if mat and mat.users == 0:
                 bpy.data.materials.remove(mat)
 
-        if merged_count > 0 or removed_materials:
-            self.report({'INFO'}, f"{T('Объединено:')} {merged_count} {T('слотов, удалено:')} {len(removed_materials)} {T('дубликатов')}")
+        # --- Textures (images) cleanup: safe mode (filepath must match) ---
+        img_merged_count = 0
+        removed_images = []
+        skipped_images = 0
+
+        def _img_key(img):
+            # Compare by absolute filepath when possible; fall back to basename
+            try:
+                fp = bpy.path.abspath(img.filepath, library=img.library) if img.filepath else ""
+            except Exception:
+                fp = img.filepath or ""
+            if fp:
+                return os.path.normcase(os.path.normpath(fp))
+            # No filepath (packed/generated) — use source+size as a weak key
+            return f"<nofile>:{img.source}:{tuple(img.size)}"
+
+        img_duplicates = {}  # {base_name: [list of duplicate images]}
+        for img in bpy.data.images:
+            match = pattern.match(img.name)
+            if match:
+                base_name = match.group(1)
+                img_duplicates.setdefault(base_name, []).append(img)
+
+        for base_name, dup_list in img_duplicates.items():
+            original = bpy.data.images.get(base_name)
+
+            if not original:
+                # No original — promote first duplicate whose key matches the rest
+                first_dup = dup_list[0]
+                first_dup.name = base_name
+                original = first_dup
+                dup_list = dup_list[1:]
+
+            orig_key = _img_key(original)
+
+            for dup_img in dup_list:
+                # Safe check: only merge if filepath matches the original
+                if _img_key(dup_img) != orig_key:
+                    skipped_images += 1
+                    continue
+
+                # Replace in all material node trees
+                for mat in bpy.data.materials:
+                    if not mat.use_nodes or not mat.node_tree:
+                        continue
+                    for node in mat.node_tree.nodes:
+                        if node.type == 'TEX_IMAGE' and node.image == dup_img:
+                            node.image = original
+                            img_merged_count += 1
+
+                # Replace in node groups (shader/geometry/compositor)
+                for ng in bpy.data.node_groups:
+                    for node in ng.nodes:
+                        if node.type == 'TEX_IMAGE' and getattr(node, 'image', None) == dup_img:
+                            node.image = original
+                            img_merged_count += 1
+
+                removed_images.append(dup_img.name)
+
+        for img_name in removed_images:
+            img = bpy.data.images.get(img_name)
+            if img and img.users == 0:
+                bpy.data.images.remove(img)
+
+        # --- Report ---
+        parts = []
+        if merged_count or removed_materials:
+            parts.append(f"{T('Материалов:')} {merged_count}/{len(removed_materials)}")
+        if img_merged_count or removed_images:
+            parts.append(f"{T('Текстур:')} {img_merged_count}/{len(removed_images)}")
+        if skipped_images:
+            parts.append(f"{T('Пропущено (разные пути):')} {skipped_images}")
+
+        if parts:
+            self.report({'INFO'}, " | ".join(parts))
         else:
             self.report({'INFO'}, T("Дубликаты материалов не найдены"))
 
@@ -7446,6 +7627,12 @@ class GTATOOLS_PT_ide_ipl_panel(bpy.types.Panel):
         box.operator("gtatools.import_from_img", text=T("Импорт из IMG"), icon='IMPORT')
         box.operator("gtatools.export_to_img", text=T("Экспорт в IMG"), icon='EXPORT')
         box.operator("gtatools.remove_from_img", text=T("Удалить из IMG"), icon='REMOVE')
+
+        # Shared TXD — one TXD for multiple DFFs
+        box.separator()
+        row = box.row(align=True)
+        row.prop(scn, "gtatools_shared_txd_name", text="")
+        row.operator("gtatools.export_shared_txd", text=T("Общий TXD"), icon='PACKAGE')
 
 
 
@@ -8197,6 +8384,11 @@ class GTATOOLS_PT_export_panel(bpy.types.Panel):
         row = layout.row(align=True)
         row.operator("gtatools.import_txd", text=T("Импорт TXD"), icon='IMPORT')
         row.operator("gtatools.export_txd", text=T("Экспорт TXD"), icon='EXPORT')
+
+        # Shared TXD — single TXD for multiple DFFs
+        row = layout.row(align=True)
+        row.prop(context.scene, "gtatools_shared_txd_name", text="")
+        row.operator("gtatools.export_shared_txd", text=T("Общий TXD"), icon='PACKAGE')
 
         # Auto TXD + GPU status
         row = layout.row(align=True)
@@ -11146,6 +11338,15 @@ class GTATOOLS_PT_prelight_panel(bpy.types.Panel):
             row.operator("gtatools.add_color_attribute", text="", icon='ADD')
             row.operator("gtatools.remove_color_attribute", text="", icon='REMOVE')
 
+            # Copy Day ↔ Night
+            row = layout.row(align=True)
+            op = row.operator("gtatools.copy_color_attr", text=T("Day → Night"), icon='FORWARD')
+            op.source = "Day"
+            op.target = "Night"
+            op = row.operator("gtatools.copy_color_attr", text=T("Night → Day"), icon='BACK')
+            op.source = "Night"
+            op.target = "Day"
+
             # LightMap UV2 row
             row = layout.row(align=True)
             _lm_on = False
@@ -12458,6 +12659,8 @@ classes = (
     GTATOOLS_OT_check_ngons,
     GTATOOLS_OT_clear_raw_dff,
     GTATOOLS_OT_export_txd,
+    GTATOOLS_OT_export_shared_txd,
+    GTATOOLS_OT_copy_color_attr,
     GTATOOLS_OT_export_dff,
     GTATOOLS_OT_export_col,
     GTATOOLS_OT_export_all,
@@ -13197,6 +13400,13 @@ def register():
         default=True,
     )
 
+    # Shared TXD — single TXD for multiple DFF models
+    bpy.types.Scene.gtatools_shared_txd_name = StringProperty(
+        name="Shared TXD Name",
+        description=T("Имя общего TXD файла для нескольких DFF моделей"),
+        default="",
+    )
+
     bpy.types.Scene.gtatools_txd_import_path = StringProperty(
         name="TXD Import Folder",
         description=T("Папка для поиска TXD при импорте DFF (пусто = автопоиск в папке DFF)"),
@@ -13707,6 +13917,7 @@ def unregister():
     del bpy.types.Scene.gtatools_ide_path
     del bpy.types.Scene.gtatools_ipl_path
     del bpy.types.Scene.gtatools_txd_auto_import
+    del bpy.types.Scene.gtatools_shared_txd_name
     del bpy.types.Scene.gtatools_txd_import_path
     del bpy.types.Scene.gtatools_nvtt_path
     del bpy.types.Scene.gtatools_txd_use_gpu
