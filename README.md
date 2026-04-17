@@ -86,7 +86,7 @@ Planned for upcoming releases:
 </details>
 
 <details>
-<summary><h3>🔧 Compatibility</h3></summary>
+<summary><b>🔧 Compatibility</b></summary>
 
 | | |
 |---|---|
@@ -98,7 +98,7 @@ Planned for upcoming releases:
 </details>
 
 <details>
-<summary><h3>📦 Installation</h3></summary>
+<summary><b>📦 Installation</b></summary>
 
 1. Download the `INU_tools/` folder (or zip archive)
 2. Copy it into your Blender addons directory:
@@ -110,7 +110,7 @@ Planned for upcoming releases:
 </details>
 
 <details>
-<summary><h3>🚀 Quick Start</h3></summary>
+<summary><b>🚀 Quick Start</b></summary>
 
 Name your objects with suffixes, select them, and click **Export All**:
 
@@ -125,12 +125,12 @@ The addon auto-assembles DFF + LOD + COL + TXD into one group and exports in a s
 </details>
 
 <details>
-<summary><h3>🧰 Features</h3></summary>
+<summary><b>🧰 Features</b></summary>
 
 Legend: 🆕 new in 1.6.3 · ⚡ performance · 🎨 UI · 📦 format support
 
 <details>
-<summary><h4>📤 Export / Import</h4></summary>
+<summary><b>📤 Export / Import</b></summary>
 
 | Feature | Detail |
 |---|---|
@@ -146,7 +146,7 @@ Legend: 🆕 new in 1.6.3 · ⚡ performance · 🎨 UI · 📦 format support
 </details>
 
 <details>
-<summary><h4>🗺️ IDE / IPL / IMG</h4></summary>
+<summary><b>🗺️ IDE / IPL / IMG</b></summary>
 
 | Feature | Detail |
 |---|---|
@@ -171,7 +171,7 @@ Legend: 🆕 new in 1.6.3 · ⚡ performance · 🎨 UI · 📦 format support
 </details>
 
 <details>
-<summary><h4>💡 Prelight</h4></summary>
+<summary><b>💡 Prelight</b></summary>
 
 | Feature | Detail |
 |---|---|
@@ -196,7 +196,7 @@ Legend: 🆕 new in 1.6.3 · ⚡ performance · 🎨 UI · 📦 format support
 </details>
 
 <details>
-<summary><h4>🎨 Post-Processing</h4></summary>
+<summary><b>🎨 Post-Processing</b></summary>
 
 | Feature | Detail |
 |---|---|
@@ -209,7 +209,7 @@ Legend: 🆕 new in 1.6.3 · ⚡ performance · 🎨 UI · 📦 format support
 </details>
 
 <details>
-<summary><h4>🎯 2DFX Effects</h4></summary>
+<summary><b>🎯 2DFX Effects</b></summary>
 
 | Feature | Detail |
 |---|---|
@@ -232,7 +232,7 @@ Legend: 🆕 new in 1.6.3 · ⚡ performance · 🎨 UI · 📦 format support
 </details>
 
 <details>
-<summary><h4>🎆 Particle Effects (<code>effects.fxp</code>)</h4></summary>
+<summary><b>🎆 Particle Effects (<code>effects.fxp</code>)</b></summary>
 
 > 🆕 **Fully new in 1.6.3** — edit GTA SA particles directly in Blender.
 
@@ -253,7 +253,7 @@ Legend: 🆕 new in 1.6.3 · ⚡ performance · 🎨 UI · 📦 format support
 </details>
 
 <details>
-<summary><h4>🎨 Materials</h4></summary>
+<summary><b>🎨 Materials</b></summary>
 
 | Feature | Detail |
 |---|---|
@@ -272,7 +272,7 @@ Legend: 🆕 new in 1.6.3 · ⚡ performance · 🎨 UI · 📦 format support
 </details>
 
 <details>
-<summary><h4>🧮 UV Editor</h4></summary>
+<summary><b>🧮 UV Editor</b></summary>
 
 | Feature | Detail |
 |---|---|
@@ -291,7 +291,7 @@ Legend: 🆕 new in 1.6.3 · ⚡ performance · 🎨 UI · 📦 format support
 </details>
 
 <details>
-<summary><h4>🔍 Check</h4></summary>
+<summary><b>🔍 Check</b></summary>
 
 | Feature | Detail |
 |---|---|
@@ -314,7 +314,7 @@ Legend: 🆕 new in 1.6.3 · ⚡ performance · 🎨 UI · 📦 format support
 </details>
 
 <details>
-<summary><h4>🌊 Water IO</h4></summary>
+<summary><b>🌊 Water IO</b></summary>
 
 | Feature | Detail |
 |---|---|
@@ -327,7 +327,7 @@ Legend: 🆕 new in 1.6.3 · ⚡ performance · 🎨 UI · 📦 format support
 </details>
 
 <details>
-<summary><h4>🛣️ Path IO</h4></summary>
+<summary><b>🛣️ Path IO</b></summary>
 
 | Feature | Detail |
 |---|---|
@@ -341,7 +341,7 @@ Legend: 🆕 new in 1.6.3 · ⚡ performance · 🎨 UI · 📦 format support
 </details>
 
 <details>
-<summary><h4>🦴 Characters (Skinned DFF)</h4></summary>
+<summary><b>🦴 Characters (Skinned DFF)</b></summary>
 
 | Feature | Detail |
 |---|---|
@@ -353,7 +353,7 @@ Legend: 🆕 new in 1.6.3 · ⚡ performance · 🎨 UI · 📦 format support
 </details>
 
 <details>
-<summary><h4>🔌 Integrations</h4></summary>
+<summary><b>🔌 Integrations</b></summary>
 
 | Integration | Purpose |
 |---|---|
@@ -368,7 +368,7 @@ Legend: 🆕 new in 1.6.3 · ⚡ performance · 🎨 UI · 📦 format support
 </details>
 
 <details>
-<summary><h3>🧭 UI Panels</h3></summary>
+<summary><b>🧭 UI Panels</b></summary>
 
 | Location | Panel | What's there |
 |---|---|---|
@@ -383,7 +383,7 @@ Legend: 🆕 new in 1.6.3 · ⚡ performance · 🎨 UI · 📦 format support
 </details>
 
 <details>
-<summary><h3>⌨️ Hotkeys</h3></summary>
+<summary><b>⌨️ Hotkeys</b></summary>
 
 | Key | Action |
 |---|---|
@@ -393,7 +393,7 @@ Legend: 🆕 new in 1.6.3 · ⚡ performance · 🎨 UI · 📦 format support
 </details>
 
 <details>
-<summary><h3>📹 Video Tutorial</h3></summary>
+<summary><b>📹 Video Tutorial</b></summary>
 
 [![IDE/IPL/IMG/Map Tutorial](https://img.youtube.com/vi/Jw_R9QFYxWE/0.jpg)](https://www.youtube.com/watch?v=Jw_R9QFYxWE)
 

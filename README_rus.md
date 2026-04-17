@@ -86,7 +86,7 @@
 </details>
 
 <details>
-<summary><h3>🔧 Совместимость</h3></summary>
+<summary><b>🔧 Совместимость</b></summary>
 
 | | |
 |---|---|
@@ -98,7 +98,7 @@
 </details>
 
 <details>
-<summary><h3>📦 Установка</h3></summary>
+<summary><b>📦 Установка</b></summary>
 
 1. Скачай папку `INU_tools/` (или zip-архив)
 2. Скопируй её в директорию аддонов Blender:
@@ -110,7 +110,7 @@
 </details>
 
 <details>
-<summary><h3>🚀 Быстрый старт</h3></summary>
+<summary><b>🚀 Быстрый старт</b></summary>
 
 Назови объекты с суффиксами, выдели их и нажми **Export All**:
 
@@ -125,12 +125,12 @@ Building01_COL   ← коллизия
 </details>
 
 <details>
-<summary><h3>🧰 Возможности</h3></summary>
+<summary><b>🧰 Возможности</b></summary>
 
 Обозначения: 🆕 новое в 1.6.3 · ⚡ производительность · 🎨 UI · 📦 поддержка формата
 
 <details>
-<summary><h4>📤 Экспорт / Импорт</h4></summary>
+<summary><b>📤 Экспорт / Импорт</b></summary>
 
 | Фича | Детали |
 |---|---|
@@ -146,7 +146,7 @@ Building01_COL   ← коллизия
 </details>
 
 <details>
-<summary><h4>🗺️ IDE / IPL / IMG</h4></summary>
+<summary><b>🗺️ IDE / IPL / IMG</b></summary>
 
 | Фича | Детали |
 |---|---|
@@ -171,7 +171,7 @@ Building01_COL   ← коллизия
 </details>
 
 <details>
-<summary><h4>💡 Prelight</h4></summary>
+<summary><b>💡 Prelight</b></summary>
 
 | Фича | Детали |
 |---|---|
@@ -196,7 +196,7 @@ Building01_COL   ← коллизия
 </details>
 
 <details>
-<summary><h4>🎨 Post-Processing</h4></summary>
+<summary><b>🎨 Post-Processing</b></summary>
 
 | Фича | Детали |
 |---|---|
@@ -209,7 +209,7 @@ Building01_COL   ← коллизия
 </details>
 
 <details>
-<summary><h4>🎯 2DFX эффекты</h4></summary>
+<summary><b>🎯 2DFX эффекты</b></summary>
 
 | Фича | Детали |
 |---|---|
@@ -232,7 +232,7 @@ Building01_COL   ← коллизия
 </details>
 
 <details>
-<summary><h4>🎆 Particle Effects (<code>effects.fxp</code>)</h4></summary>
+<summary><b>🎆 Particle Effects (<code>effects.fxp</code>)</b></summary>
 
 > 🆕 **Полностью новая фича в 1.6.3** — редактирование частиц GTA SA прямо в Blender.
 
@@ -253,7 +253,7 @@ Building01_COL   ← коллизия
 </details>
 
 <details>
-<summary><h4>🎨 Материалы</h4></summary>
+<summary><b>🎨 Материалы</b></summary>
 
 | Фича | Детали |
 |---|---|
@@ -272,7 +272,7 @@ Building01_COL   ← коллизия
 </details>
 
 <details>
-<summary><h4>🧮 UV Editor</h4></summary>
+<summary><b>🧮 UV Editor</b></summary>
 
 | Фича | Детали |
 |---|---|
@@ -291,7 +291,7 @@ Building01_COL   ← коллизия
 </details>
 
 <details>
-<summary><h4>🔍 Check</h4></summary>
+<summary><b>🔍 Check</b></summary>
 
 | Фича | Детали |
 |---|---|
@@ -314,7 +314,7 @@ Building01_COL   ← коллизия
 </details>
 
 <details>
-<summary><h4>🌊 Water IO</h4></summary>
+<summary><b>🌊 Water IO</b></summary>
 
 | Фича | Детали |
 |---|---|
@@ -327,7 +327,7 @@ Building01_COL   ← коллизия
 </details>
 
 <details>
-<summary><h4>🛣️ Path IO</h4></summary>
+<summary><b>🛣️ Path IO</b></summary>
 
 | Фича | Детали |
 |---|---|
@@ -341,7 +341,7 @@ Building01_COL   ← коллизия
 </details>
 
 <details>
-<summary><h4>🦴 Персонажи (Skinned DFF)</h4></summary>
+<summary><b>🦴 Персонажи (Skinned DFF)</b></summary>
 
 | Фича | Детали |
 |---|---|
@@ -353,7 +353,7 @@ Building01_COL   ← коллизия
 </details>
 
 <details>
-<summary><h4>🔌 Интеграции</h4></summary>
+<summary><b>🔌 Интеграции</b></summary>
 
 | Интеграция | Назначение |
 |---|---|
@@ -368,7 +368,7 @@ Building01_COL   ← коллизия
 </details>
 
 <details>
-<summary><h3>🧭 Панели UI</h3></summary>
+<summary><b>🧭 Панели UI</b></summary>
 
 | Расположение | Панель | Что там |
 |---|---|---|
@@ -383,7 +383,7 @@ Building01_COL   ← коллизия
 </details>
 
 <details>
-<summary><h3>⌨️ Горячие клавиши</h3></summary>
+<summary><b>⌨️ Горячие клавиши</b></summary>
 
 | Клавиша | Действие |
 |---|---|
@@ -393,7 +393,7 @@ Building01_COL   ← коллизия
 </details>
 
 <details>
-<summary><h3>📹 Видеоурок</h3></summary>
+<summary><b>📹 Видеоурок</b></summary>
 
 [![IDE/IPL/IMG/Map Tutorial](https://img.youtube.com/vi/Jw_R9QFYxWE/0.jpg)](https://www.youtube.com/watch?v=Jw_R9QFYxWE)
 
