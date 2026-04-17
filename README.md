@@ -358,7 +358,7 @@ Legend: 🆕 new in 1.6.3 · ⚡ performance · 🎨 UI · 📦 format support
 | Integration | Purpose |
 |---|---|
 | Itera Tools 3 | Vertex Lit Linear / Quickstart |
-| LightMap (beta_MTA) | lightmap baking |
+| LightMap (beta_MTA) | apply pre-baked lightmap via MTA script |
 | Pipeline | Building / Reflections |
 | Hotkeys | `Shift+T`, `Shift+A` |
 | Localization | RU / EN |

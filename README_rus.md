@@ -358,7 +358,7 @@ Building01_COL   ← коллизия
 | Интеграция | Назначение |
 |---|---|
 | Itera Tools 3 | Vertex Lit Linear / Quickstart |
-| LightMap (beta_MTA) | запекание lightmap |
+| LightMap (beta_MTA) | подключение готовой lightmap через MTA-скрипт |
 | Pipeline | Building / Reflections |
 | Hotkeys | `Shift+T`, `Shift+A` |
 | Локализация | RU / EN |
