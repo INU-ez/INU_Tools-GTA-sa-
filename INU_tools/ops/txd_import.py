@@ -66,13 +66,22 @@ def import_txd(filepath: str, assign_to_materials: bool = True):
 
 
 def _assign_textures_to_materials(images):
-    """Assign imported images to materials whose names match texture names."""
+    """Assign imported images to materials whose names match texture names.
+
+    Матчинг идёт в таком порядке:
+    1. IDProp `dff_texture_name` на материале (выставляется при импорте DFF) —
+       самый надёжный способ, не ломается при Blender-suffix'ах `.001` и т.п.
+    2. Имя материала в нижнем регистре (fallback для старых/ручных сцен).
+    """
     image_map = {img.name.lower(): img for img in images}
 
     for mat in bpy.data.materials:
-        mat_name = mat.name.lower()
+        dff_tex = mat.get('dff_texture_name')
+        if dff_tex:
+            img = image_map.get(dff_tex.lower())
+        else:
+            img = image_map.get(mat.name.lower())
 
-        img = image_map.get(mat_name)
         if img is None:
             continue
 

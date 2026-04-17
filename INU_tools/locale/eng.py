@@ -242,8 +242,8 @@ LANG = {
     "Текстура короны (светящийся спрайт)": "Corona texture (glowing sprite)",
     "Текстура тени на земле под источником света": "Shadow texture on ground under light source",
 
-    "None — без pipeline\nBuilding — Day/Night vertex colors (смена освещения по времени суток)\nReflections — отражения на окнах (окна должны быть отдельной моделью)":
-        "None — no pipeline\nBuilding — Day/Night vertex colors (lighting changes by time of day)\nReflections — window reflections (windows must be a separate model)",
+    "None — без pipeline\nVehicle — машины (отражения кузова, env map)\nBuilding DN — здания с day/night vertex colors\nBuilding — обычные здания":
+        "None — no pipeline\nVehicle — cars (body reflections, env map)\nBuilding DN — buildings with day/night vertex colors\nBuilding — plain buildings",
 
     "DFF — модель (меш, материалы, UV)\nCOL — коллизия\nTXD — текстуры\nCheck vertex — висящие вершины и рёбра\nCheck N-gon — полигоны с 5+ вершинами\nCheck Material — лимит 50 материалов\nGPU (NVTT) — сжатие текстур на видеокарте":
         "DFF — model (mesh, materials, UV)\nCOL — collision\nTXD — textures\nCheck vertex — loose vertex and edges\nCheck N-gon — polygons with 5+ vertex\nCheck Material — 50 material limit\nGPU (NVTT) — texture compression on GPU",
@@ -844,8 +844,8 @@ LANG = {
     "Суффикс для COL моделей": "Suffix for COL models",
     "Day — дневные вертексные цвета (prelight)\nNight — ночные вертексные цвета (требует Pipeline: Building)":
         "Day — daytime vertex colors (prelight)\nNight — nighttime vertex colors (requires Pipeline: Building)",
-    "None — без pipeline\nBuilding — Day/Night vertex colors (смена освещения по времени суток)\nReflections — отражения на окнах (окна должны быть отдельной моделью)\n\nNormals — динамическое освещение движком (персонажи, транспорт, оружие)\nОтключить для зданий и объектов карты (используют vertex colors)":
-        "None — no pipeline\nBuilding — Day/Night vertex colors (time-of-day lighting)\nReflections — window reflections (windows must be separate model)\n\nNormals — dynamic engine lighting (characters, vehicles, weapons)\nDisable for buildings and map objects (use vertex colors)",
+    "None — без pipeline\nVehicle — машины (отражения кузова, env map)\nBuilding DN — здания с day/night vertex colors\nBuilding — обычные здания\n\nNormals — динамическое освещение движком (персонажи, транспорт, оружие)\nОтключить для зданий и объектов карты (используют vertex colors)":
+        "None — no pipeline\nVehicle — cars (body reflections, env map)\nBuilding DN — buildings with day/night vertex colors\nBuilding — plain buildings\n\nNormals — dynamic engine lighting (characters, vehicles, weapons)\nDisable for buildings and map objects (use vertex colors)",
     # FLA / ID Manager
     "Расширить ID (FLA)": "Extend IDs (FLA)",
     "Количество ID для добавления": "Number of IDs to add",

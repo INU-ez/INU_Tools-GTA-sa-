@@ -670,8 +670,9 @@ class DffGeometry:
                 ec_data += pack('<4B', c.r, c.g, c.b, c.a)
             ext_data += _chunk(CHUNK_EXTRA_COLORS, ec_data, lib_id)
 
-        if self.pipeline:
-            ext_data += _chunk(CHUNK_PIPELINE_SET, pack('<I', self.pipeline), lib_id)
+        # Pipeline chunk пишем на уровне atomic extension (см. DffClump.to_bytes).
+        # Раньше писался здесь, в geometry extension, но librwgta/Seggaeman/Kam
+        # хранят его в atomic — для полной совместимости делаем как они.
 
         if self.user_data and self.user_data.sections:
             ext_data += self.user_data.to_bytes(lib_id)
@@ -777,6 +778,10 @@ class DffClump:
                     atomic_ext += _chunk(0x0120, pack('<I', 0), lib_id)  # Node Name PLG (required for SA skinned)
                 if any(m.bump_map or m.env_map or m.dual_texture for m in geom.materials):
                     atomic_ext += _chunk(CHUNK_MATFX_PLG, pack('<I', 1), lib_id)
+                # Pipeline chunk (0x253F2F3) — тут его ожидает RenderWare/librwgta/Kam's scripts.
+                # Для Vehicle pipeline (0x53F2009A) кузов машины получает env-map отражения в игре.
+                if geom.pipeline:
+                    atomic_ext += _chunk(CHUNK_PIPELINE_SET, pack('<I', geom.pipeline), lib_id)
 
                 atomic_body += _chunk(CHUNK_EXTENSION, atomic_ext, lib_id)
                 body += _chunk(CHUNK_ATOMIC, atomic_body, lib_id)
@@ -1468,6 +1473,19 @@ def read_dff(data: bytes) -> DffClump:
                     flags=af,
                     unused=au,
                 ))
+                # Parse atomic extension — ищем Pipeline chunk (он может лежать
+                # на уровне атомика, как у Kam's/Seggaeman/librwgta).
+                if r.pos < atom_end:
+                    ect, ecs, ecl = _read_chunk_header(r)
+                    if ect == CHUNK_EXTENSION:
+                        ext_end = r.pos + ecs
+                        while r.pos < ext_end:
+                            pct, pcs, pcl = _read_chunk_header(r)
+                            plugin_end = r.pos + pcs
+                            if pct == CHUNK_PIPELINE_SET and 0 <= gi < len(clump.geometries):
+                                # Пишем на геометрию — у нас geom.pipeline единое поле
+                                clump.geometries[gi].pipeline = r.read_one('<I')
+                            r.seek(plugin_end)
             r.seek(atom_end)
 
         elif ct == CHUNK_EXTENSION:

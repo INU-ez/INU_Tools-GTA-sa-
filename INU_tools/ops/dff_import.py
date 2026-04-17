@@ -47,6 +47,11 @@ def _create_blender_material(dff_mat: DffMaterial, index: int) -> bpy.types.Mate
     mat = bpy.data.materials.new(mat_name)
     mat.use_nodes = True
 
+    # Сохраняем исходное имя текстуры в IDProp — Blender мог добавить .001/.002 к имени
+    # материала при коллизии, а матчинг TXD→материал по имени в таком случае ломался.
+    if tex_name:
+        mat['dff_texture_name'] = tex_name
+
     tree = mat.node_tree
     nodes = tree.nodes
 
@@ -238,7 +243,7 @@ def _set_object_props(obj, geom: DffGeometry):
 
     if geom.pipeline:
         pipeline_hex = f"0x{geom.pipeline:08X}"
-        known = {'0x53F20098', '0x53F2009A'}
+        known = {'0x53F20098', '0x53F2009A', '0x53F2009C'}
         if pipeline_hex in known:
             obj.inu.pipeline = pipeline_hex
         else:
@@ -587,6 +592,9 @@ def import_dff(filepath: str, context=None):
 
     collection = bpy.context.collection
     imported_objects = []
+    frame_to_obj = {}  # frame_index → Blender object (MESH or EMPTY dummy)
+
+    is_skinned = _has_skeleton(clump)
 
     # Создаём объекты из Atomic связей (frame → geometry)
     for atomic in clump.atomics:
@@ -608,17 +616,7 @@ def import_dff(filepath: str, context=None):
         # Создаём объект
         obj = bpy.data.objects.new(obj_name, mesh)
 
-        # Трансформация из фрейма (skip for skinned meshes — armature handles it)
-        if frame and not geom.skin:
-            rot = frame.rotation
-            pos = frame.position
-            matrix = mathutils.Matrix((
-                (rot[0], rot[1], rot[2], pos[0]),
-                (rot[3], rot[4], rot[5], pos[1]),
-                (rot[6], rot[7], rot[8], pos[2]),
-                (0, 0, 0, 1),
-            ))
-            obj.matrix_world = matrix
+        # Трансформация применяется позже в hierarchy-проходе через matrix_world
 
         # INU свойства
         _set_object_props(obj, geom)
@@ -643,6 +641,8 @@ def import_dff(filepath: str, context=None):
 
         collection.objects.link(obj)
         imported_objects.append(obj)
+        if frame is not None:
+            frame_to_obj[fi] = obj
 
     # Если нет Atomic, но есть геометрии — создаём напрямую
     if not clump.atomics and clump.geometries:
@@ -653,6 +653,60 @@ def import_dff(filepath: str, context=None):
             _set_object_props(obj, geom)
             collection.objects.link(obj)
             imported_objects.append(obj)
+
+    # Создаём Empty для каждого фрейма БЕЗ atomic'а (это dummy вроде wheel_lf_dummy)
+    # Пропускаем если в DFF есть скелет — там фреймы представлены костями армутуры
+    if not is_skinned:
+        for fi, frame in enumerate(clump.frames):
+            if fi in frame_to_obj:
+                continue
+            dummy_name = frame.name if frame.name else f"{base_name}_frame_{fi}"
+            dummy = bpy.data.objects.new(dummy_name, None)
+            dummy.empty_display_type = 'PLAIN_AXES'
+            dummy.empty_display_size = 0.2
+
+            dummy['dff_frame_flags'] = frame.flags
+            dummy['dff_frame_rot'] = list(frame.rotation)
+            dummy['dff_frame_pos'] = list(frame.position)
+            dummy['dff_frame_write_name'] = frame.write_name
+
+            if frame.user_data:
+                _store_user_data(dummy, frame.user_data)
+
+            collection.objects.link(dummy)
+            imported_objects.append(dummy)
+            frame_to_obj[fi] = dummy
+
+        # Выставляем parent БЕЗ сохранения transform (matrix_parent_inverse=identity).
+        for fi, frame in enumerate(clump.frames):
+            child_obj = frame_to_obj.get(fi)
+            if child_obj is None:
+                continue
+            parent_idx = frame.parent
+            if 0 <= parent_idx < len(clump.frames):
+                parent_obj = frame_to_obj.get(parent_idx)
+                if parent_obj is not None and parent_obj is not child_obj:
+                    child_obj.parent = parent_obj
+                    child_obj.matrix_parent_inverse.identity()
+
+        # Пишем matrix_basis прямо из DFF frame (rotation + position).
+        # matrix_basis — внутреннее хранилище trans/rot/scale объекта, обходит
+        # любые «умные» пересчёты Blender'а. При matrix_parent_inverse=identity
+        # matrix_local == matrix_basis, а matrix_world = parent.matrix_world @ matrix_basis.
+        for fi, frame in enumerate(clump.frames):
+            obj = frame_to_obj.get(fi)
+            if obj is None:
+                continue
+            rot = frame.rotation
+            pos = frame.position
+            obj.matrix_basis = mathutils.Matrix((
+                (rot[0], rot[1], rot[2], pos[0]),
+                (rot[3], rot[4], rot[5], pos[1]),
+                (rot[6], rot[7], rot[8], pos[2]),
+                (0, 0, 0, 1),
+            ))
+
+        bpy.context.view_layer.update()
 
     # Skeleton: create Armature + apply skin weights if DFF has bones
     if _has_skeleton(clump):

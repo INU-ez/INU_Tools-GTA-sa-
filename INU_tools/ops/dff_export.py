@@ -95,7 +95,15 @@ def _read_texture(mat) -> DffTexture:
     """Read texture name from Principled BSDF image node.
 
     Walks through preview nodes (Prelight_Mix, LM_Mix) to find the real texture.
+    Falls back to IDProp `dff_texture_name` set at import time — это страхует
+    от кейса, когда TXD не был загружен и image=None на Texture-ноде, но имя
+    текстуры всё равно известно из DFF.
     """
+    # 1. Если импорт DFF сохранил имя текстуры — используем его как авторитетный
+    dff_tex_name = mat.get('dff_texture_name')
+    if dff_tex_name:
+        return DffTexture(name=_strip_ext(dff_tex_name), mask="")
+
     principled = _get_principled(mat)
     if not principled:
         return None
@@ -120,12 +128,16 @@ def _read_texture(mat) -> DffTexture:
     if source_node and source_node.name in ("LM_Texture", "Lightmap_Texture"):
         return None
 
-    if not source_node or source_node.type != 'TEX_IMAGE' or not source_node.image:
+    if not source_node or source_node.type != 'TEX_IMAGE':
         return None
 
-    img = source_node.image
-    # Prefer node label if it's a reasonable name
-    name = source_node.label if source_node.label else img.name
+    # Prefer node label (сохранённое имя из DFF-импорта), иначе имя картинки.
+    # Разрешаем источник без прикреплённой картинки — имени label'а достаточно.
+    name = source_node.label
+    if not name and source_node.image:
+        name = source_node.image.name
+    if not name:
+        return None
     name = _strip_ext(name)
 
     return DffTexture(name=name, mask="")
@@ -924,6 +936,53 @@ def _collect_2dfx(objects) -> Extension2dfx:
     return ext if ext.entries else None
 
 
+# ── Hierarchy traversal ──────────────────────────────────────────
+
+def _collect_frame_objects(objects):
+    """Return list of (obj, parent_obj) in DFS order for DFF frame list.
+
+    Includes MESH and EMPTY objects; excludes 2DFX Empties, Armatures, and
+    NON-type objects. Roots are objects whose Blender parent is not in the set.
+    """
+    valid = []
+    for obj in objects:
+        inu = getattr(obj, 'inu', None)
+        itype = getattr(inu, 'type', 'OBJ') if inu else 'OBJ'
+        if itype == 'NON':
+            continue
+        if obj.type == 'MESH':
+            valid.append(obj)
+        elif obj.type == 'EMPTY' and itype != '2DFX':
+            valid.append(obj)
+
+    obj_set = set(valid)
+    input_order = {o: i for i, o in enumerate(valid)}
+    roots = sorted(
+        (o for o in valid if o.parent is None or o.parent not in obj_set),
+        key=lambda o: input_order[o],
+    )
+
+    ordered = []
+    visited = set()
+
+    def dfs(obj, parent_obj):
+        if obj in visited:
+            return
+        visited.add(obj)
+        ordered.append((obj, parent_obj))
+        children = sorted(
+            (c for c in obj.children if c in obj_set),
+            key=lambda c: input_order[c],
+        )
+        for child in children:
+            dfs(child, obj)
+
+    for root in roots:
+        dfs(root, None)
+
+    return ordered
+
+
 # ── Main export function ─────────────────────────────────────────
 
 def export_dff(filepath: str, objects, version: int = GTA_SA_VERSION):
@@ -949,57 +1008,70 @@ def export_dff(filepath: str, objects, version: int = GTA_SA_VERSION):
                 if mod.type == 'ARMATURE' and mod.object:
                     armatures.add(mod.object)
 
-    # Build frames and geometries
-    for obj in mesh_objects:
-        # Create frame for this object
-        frame = _build_frame(obj)
-        frame_idx = len(clump.frames)
+    has_skinned = bool(armatures)
 
-        clump.frames.append(frame)
+    if has_skinned:
+        # Skinned DFF (ped): flat one-mesh-one-frame, armature handles hierarchy
+        for obj in mesh_objects:
+            frame = _build_frame(obj)
+            frame_idx = len(clump.frames)
 
-        # Check if object has armature
-        arm_obj = None
-        for mod in obj.modifiers:
-            if mod.type == 'ARMATURE' and mod.object:
-                arm_obj = mod.object
-                break
+            clump.frames.append(frame)
 
-        if arm_obj:
-            # Skinned DFF: always rebuild geometry from Blender mesh,
-            # but keep raw frame list for skeleton round-trip
-            import base64
-            raw_fl = arm_obj.get('dff_raw_frame_list')
+            arm_obj = None
+            for mod in obj.modifiers:
+                if mod.type == 'ARMATURE' and mod.object:
+                    arm_obj = mod.object
+                    break
 
-            if raw_fl:
-                try:
-                    clump.raw_frame_list = base64.b64decode(raw_fl)
-                    clump.frames.clear()
-                    print(f"[DFF Export] Using raw frame list ({len(clump.raw_frame_list)} bytes)")
-                except Exception:
-                    _export_armature(arm_obj, clump, frame_idx)
-            else:
-                _export_armature(arm_obj, clump, frame_idx)
+            if arm_obj:
+                import base64
+                raw_fl = arm_obj.get('dff_raw_frame_list')
 
-        # Determine correct frame index for mesh atomic
-        if clump.raw_frame_list:
-            # Raw frame list used — get mesh frame index from import or parse from raw
-            stored_fi = obj.get('dff_mesh_frame_index', -1)
-            if stored_fi >= 0:
-                mesh_frame_idx = stored_fi
-            else:
-                # Fallback: mesh frame is always last in skinned DFFs
-                from struct import unpack_from
-                if len(clump.raw_frame_list) >= 16:
-                    frame_count = unpack_from('<I', clump.raw_frame_list, 12)[0]
-                    mesh_frame_idx = frame_count - 1
-                    print(f"[DFF Export] Parsed frame_count={frame_count} from raw, mesh frame={mesh_frame_idx}")
+                if raw_fl:
+                    try:
+                        clump.raw_frame_list = base64.b64decode(raw_fl)
+                        clump.frames.clear()
+                        print(f"[DFF Export] Using raw frame list ({len(clump.raw_frame_list)} bytes)")
+                    except Exception:
+                        _export_armature(arm_obj, clump, frame_idx)
                 else:
-                    mesh_frame_idx = frame_idx
-            print(f"[DFF Export] Skinned mesh: frame_index={mesh_frame_idx}")
-        else:
-            mesh_frame_idx = frame_idx
+                    _export_armature(arm_obj, clump, frame_idx)
 
-        _process_mesh(obj, clump, mesh_frame_idx)
+            if clump.raw_frame_list:
+                stored_fi = obj.get('dff_mesh_frame_index', -1)
+                if stored_fi >= 0:
+                    mesh_frame_idx = stored_fi
+                else:
+                    from struct import unpack_from
+                    if len(clump.raw_frame_list) >= 16:
+                        frame_count = unpack_from('<I', clump.raw_frame_list, 12)[0]
+                        mesh_frame_idx = frame_count - 1
+                        print(f"[DFF Export] Parsed frame_count={frame_count} from raw, mesh frame={mesh_frame_idx}")
+                    else:
+                        mesh_frame_idx = frame_idx
+                print(f"[DFF Export] Skinned mesh: frame_index={mesh_frame_idx}")
+            else:
+                mesh_frame_idx = frame_idx
+
+            _process_mesh(obj, clump, mesh_frame_idx)
+    else:
+        # Static DFF: walk Blender hierarchy, write Empty→dummy frames
+        ordered = _collect_frame_objects(objects)
+        obj_to_frame_idx = {}
+
+        for obj, parent_obj in ordered:
+            parent_idx = obj_to_frame_idx[parent_obj] if parent_obj is not None else -1
+            frame = _build_frame(obj, parent_index=parent_idx)
+            my_idx = len(clump.frames)
+            clump.frames.append(frame)
+            obj_to_frame_idx[obj] = my_idx
+
+            if obj.type == 'MESH':
+                _process_mesh(obj, clump, my_idx)
+
+        print(f"[DFF Export] Static hierarchy: {len(clump.frames)} frames "
+              f"({sum(1 for o, _ in ordered if o.type == 'EMPTY')} dummies)")
 
     # If no frames were created, add a default one
     if not clump.frames:
