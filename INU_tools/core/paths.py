@@ -140,6 +140,53 @@ class PathIPLFile:
     groups: List[PathIPLGroup] = field(default_factory=list)
 
 
+# ── PathIPLNode.flags bit constants ─────────────────────────────────
+#
+# Based on SA path-node reverse-engineering (GTAMods wiki, Fastman92):
+#   bits 0-3   : speed limit           (0 = slow, higher = faster)
+#   bits 4-7   : special behaviour     (traffic lights encoded here)
+#   bits 8-11  : traffic light kind    (0 none, 1 normal, 2 rail, 3 bus)
+#   bit 12     : roadblock             (cops spawn barriers here)
+#   bits 13-15 : reserved
+
+PATH_FLAG_ROADBLOCK       = 1 << 12
+PATH_FLAG_TRAFFIC_MASK    = 0xF << 8
+PATH_FLAG_TRAFFIC_SHIFT   = 8
+PATH_FLAG_SPEED_MASK      = 0xF
+PATH_FLAG_BEHAVIOUR_MASK  = 0xF << 4
+PATH_FLAG_BEHAVIOUR_SHIFT = 4
+
+TRAFFIC_LIGHT_NONE   = 0
+TRAFFIC_LIGHT_NORMAL = 1
+TRAFFIC_LIGHT_RAIL   = 2
+TRAFFIC_LIGHT_BUS    = 3
+
+
+def decode_node_flags(flags: int) -> dict:
+    """Expand the packed flags int into a readable dict."""
+    return {
+        'speed_limit': flags & PATH_FLAG_SPEED_MASK,
+        'behaviour': (flags & PATH_FLAG_BEHAVIOUR_MASK) >> PATH_FLAG_BEHAVIOUR_SHIFT,
+        'traffic_light': (flags & PATH_FLAG_TRAFFIC_MASK) >> PATH_FLAG_TRAFFIC_SHIFT,
+        'roadblock': bool(flags & PATH_FLAG_ROADBLOCK),
+    }
+
+
+def encode_node_flags(*, speed_limit: int = 0, behaviour: int = 0,
+                      traffic_light: int = 0, roadblock: bool = False,
+                      keep_bits: int = 0) -> int:
+    """Pack individual fields back into the flags int. `keep_bits` lets
+    callers preserve unknown bits read from an existing file."""
+    v = keep_bits & ~(PATH_FLAG_SPEED_MASK | PATH_FLAG_BEHAVIOUR_MASK
+                      | PATH_FLAG_TRAFFIC_MASK | PATH_FLAG_ROADBLOCK)
+    v |= speed_limit & PATH_FLAG_SPEED_MASK
+    v |= (behaviour << PATH_FLAG_BEHAVIOUR_SHIFT) & PATH_FLAG_BEHAVIOUR_MASK
+    v |= (traffic_light << PATH_FLAG_TRAFFIC_SHIFT) & PATH_FLAG_TRAFFIC_MASK
+    if roadblock:
+        v |= PATH_FLAG_ROADBLOCK
+    return v
+
+
 def read_paths_ipl(filepath: str) -> PathIPLFile:
     """Parse a paths.ipl file (path section only)."""
     result = PathIPLFile()
@@ -353,6 +400,15 @@ PATH_NODE_SIZE = 28
 NAVI_NODE_SIZE = 14
 LINK_SIZE = 4
 
+# FLA4 (Fastman Limit Adjuster 4) extension — unofficial format that
+# inflates each PathNode by 12 bytes to store per-node speed limit,
+# spawn probability and a lane override. File is tagged with the
+# magic "FLA4" at offset 0 and the original 5-uint32 count header
+# shifts to offset 4.
+FLA4_MAGIC = b'FLA4'
+FLA4_NODE_EXTRA = 12   # bytes appended after a normal PathNode
+FLA4_PATH_NODE_SIZE = PATH_NODE_SIZE + FLA4_NODE_EXTRA  # 40
+
 
 @dataclass
 class PathNode:
@@ -367,6 +423,10 @@ class PathNode:
     node_type: int = 0
     flags: int = 0
     is_vehicle: bool = True  # True = vehicle, False = ped
+    # FLA4 extension fields (unused in vanilla SA format)
+    spawn_probability: int = 0
+    speed_limit_kmh: int = 0
+    lane_count_override: int = 0
 
 
 @dataclass
@@ -396,10 +456,11 @@ class NodesFile:
     navi_nodes: List[NaviNode] = field(default_factory=list)
     links: List[PathLink] = field(default_factory=list)
     extra_data: bytes = b''  # Raw bytes after links (naviLinks, linkLengths, etc.)
+    fla4: bool = False       # True when loaded from / meant to write a FLA4 file
 
 
 def read_nodes(filepath: str) -> NodesFile:
-    """Parse a nodes*.dat binary file."""
+    """Parse a nodes*.dat binary file. Detects FLA4 extended format."""
     result = NodesFile()
 
     with open(filepath, 'rb') as f:
@@ -408,19 +469,37 @@ def read_nodes(filepath: str) -> NodesFile:
     if len(data) < 20:
         return result
 
-    num_nodes, num_vehicle, num_ped, num_navi, num_links = struct.unpack_from('<5I', data, 0)
-    offset = 20
+    # FLA4 marker — skip the 4-byte magic and read the normal header after
+    header_offset = 0
+    if data[:4] == FLA4_MAGIC:
+        result.fla4 = True
+        header_offset = 4
+        if len(data) < 24:
+            return result
+
+    num_nodes, num_vehicle, num_ped, num_navi, num_links = struct.unpack_from(
+        '<5I', data, header_offset)
+    offset = header_offset + 20
+
+    node_size = FLA4_PATH_NODE_SIZE if result.fla4 else PATH_NODE_SIZE
 
     # Read all path nodes
     for i in range(num_nodes):
-        if offset + PATH_NODE_SIZE > len(data):
+        if offset + node_size > len(data):
             break
         # PathNode: uint32 mem, uint32 unk, int16 x/y/z, int16 heuristic,
         #           uint16 linkID/areaID/nodeID, uint8 width/type, uint32 flags
         (mem, unk1, px, py, pz, heuristic,
          link_id, area_id, node_id,
-         path_width, node_type, flags) = struct.unpack_from('<II4h3HBBi', data, offset)
-        offset += PATH_NODE_SIZE
+         path_width, node_type, flags) = struct.unpack_from(
+             '<II4h3HBBi', data, offset)
+
+        extra_spawn = extra_speed = extra_lanes = 0
+        if result.fla4:
+            (extra_spawn, extra_speed, extra_lanes) = struct.unpack_from(
+                '<III', data, offset + PATH_NODE_SIZE)
+
+        offset += node_size
 
         node = PathNode(
             x=px / 8.0,
@@ -433,6 +512,9 @@ def read_nodes(filepath: str) -> NodesFile:
             node_type=node_type,
             flags=flags,
             is_vehicle=(i < num_vehicle),
+            spawn_probability=extra_spawn,
+            speed_limit_kmh=extra_speed,
+            lane_count_override=extra_lanes,
         )
         if i < num_vehicle:
             result.vehicle_nodes.append(node)
@@ -473,7 +555,11 @@ def read_nodes(filepath: str) -> NodesFile:
 
 
 def write_nodes(filepath: str, nodes_file: NodesFile) -> int:
-    """Write nodes*.dat binary file. Returns total node count."""
+    """Write nodes*.dat binary file. Returns total node count.
+
+    If ``nodes_file.fla4`` is set, the output is written in FLA4 extended
+    format (FLA4 magic + 40-byte path nodes with spawn/speed/lane fields).
+    """
     num_vehicle = len(nodes_file.vehicle_nodes)
     num_ped = len(nodes_file.ped_nodes)
     num_nodes = num_vehicle + num_ped
@@ -481,6 +567,9 @@ def write_nodes(filepath: str, nodes_file: NodesFile) -> int:
     num_links = len(nodes_file.links)
 
     with open(filepath, 'wb') as f:
+        if nodes_file.fla4:
+            f.write(FLA4_MAGIC)
+
         # Header
         f.write(struct.pack('<5I', num_nodes, num_vehicle, num_ped, num_navi, num_links))
 
@@ -495,6 +584,11 @@ def write_nodes(filepath: str, nodes_file: NodesFile) -> int:
                                 0x7FFE,  # heuristic
                                 node.link_id, node.area_id, node.node_id,
                                 node.path_width, node.node_type, node.flags))
+            if nodes_file.fla4:
+                f.write(struct.pack('<III',
+                                    node.spawn_probability,
+                                    node.speed_limit_kmh,
+                                    node.lane_count_override))
 
         # Navi nodes
         for navi in nodes_file.navi_nodes:

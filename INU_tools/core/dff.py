@@ -46,6 +46,7 @@ CHUNK_2DFXPLG          = 0x0253F2F8
 CHUNK_EXTRA_COLORS     = 0x0253F2F9
 CHUNK_COLLISION_MODEL  = 0x0253F2FA
 CHUNK_REFLECTION_MAT   = 0x0253F2FC
+CHUNK_BREAKABLE        = 0x0253F2FD
 CHUNK_FRAME_NAME       = 0x0253F2FE
 
 # ── Geometry flags (public RenderWare constants) ─────────────────
@@ -168,6 +169,94 @@ class DualTextureEffect:
     texture: Optional[DffTexture] = None
 
 
+# ── UV Animation ─────────────────────────────────────────────────
+#
+# RenderWare UV anim format (written as CHUNK_UV_ANIM_DICT 0x2B at clump
+# extension, referenced from materials via CHUNK_UV_ANIM_PLG 0x135).
+# Keyframes are 36 bytes each: i32 prev_offset, f32 time, 6×f32 uv matrix
+# (scale_u, scale_v, shear_u, shear_v, trans_u, trans_v).
+
+UV_ANIM_KEYFRAME_SIZE = 32  # bytes — i32 prev_offset + f32 time + 6×f32 uv matrix
+
+
+@dataclass
+class UVAnimKeyframe:
+    time: float = 0.0
+    scale_u: float = 1.0
+    scale_v: float = 1.0
+    shear_u: float = 0.0
+    shear_v: float = 0.0
+    trans_u: float = 0.0
+    trans_v: float = 0.0
+
+
+@dataclass
+class UVAnim:
+    """One named UV animation with up to 8-channel node mapping."""
+    name: str = ""
+    type_id: int = 0x1C0
+    # nodeToUv[0]=1 ties the animation to the first material texture slot;
+    # all zeros would leave the anim inert in the game engine.
+    node_to_uv: tuple = (1, 0, 0, 0, 0, 0, 0, 0)
+    duration: float = 1.0
+    keyframes: list = field(default_factory=list)   # list[UVAnimKeyframe]
+
+    def to_bytes(self, lib_id: int) -> bytes:
+        n = len(self.keyframes)
+        # STRUCT payload
+        data = pack('<IIIIf',
+                    0x100,           # version
+                    self.type_id,
+                    n,
+                    0,               # flags
+                    self.duration)
+        # name[32]
+        raw = self.name.encode('ascii', errors='replace')[:31]
+        data += raw + b'\x00' * (32 - len(raw))
+        # node_to_uv[8]
+        mapping = list(self.node_to_uv) + [0] * (8 - len(self.node_to_uv))
+        data += pack('<8i', *mapping[:8])
+        # keyframes
+        for i, kf in enumerate(self.keyframes):
+            prev = (i - 1) * UV_ANIM_KEYFRAME_SIZE if i > 0 else 0
+            data += pack('<if6f',
+                         prev, kf.time,
+                         kf.scale_u, kf.scale_v,
+                         kf.shear_u, kf.shear_v,
+                         kf.trans_u, kf.trans_v)
+        struct_chunk = _chunk(CHUNK_STRUCT, data, lib_id)
+        # The UV anim chunk has its own 12-byte wrapper inside the dict
+        return _chunk(CHUNK_ANIM_ANIMATION, struct_chunk, lib_id)
+
+
+@dataclass
+class UVAnimDict:
+    """Clump-level dictionary of UV animations (chunk 0x2B)."""
+    anims: list = field(default_factory=list)  # list[UVAnim]
+
+    def to_bytes(self, lib_id: int) -> bytes:
+        body = _chunk(CHUNK_STRUCT, pack('<I', len(self.anims)), lib_id)
+        for a in self.anims:
+            body += a.to_bytes(lib_id)
+        return _chunk(CHUNK_UV_ANIM_DICT, body, lib_id)
+
+
+def _uv_anim_plg_bytes(anim_names: list, lib_id: int) -> bytes:
+    """Build UVAnim PLG chunk (0x135) referencing up to 8 anim names."""
+    if not anim_names:
+        return b''
+    names = list(anim_names)[:8]
+    mask = 0
+    for i in range(len(names)):
+        mask |= 1 << i
+    data = pack('<4I', 0x100, mask, 0, 0)   # version, mask, unknown, unknown
+    for i in range(8):
+        name = names[i] if i < len(names) else ''
+        raw = name.encode('ascii', errors='replace')[:31]
+        data += raw + b'\x00' * (32 - len(raw))
+    return _chunk(CHUNK_UV_ANIM_PLG, data, lib_id)
+
+
 @dataclass
 class DffMaterial:
     """Single material with optional plugins."""
@@ -180,6 +269,7 @@ class DffMaterial:
     specular: Optional[SpecularMaterial] = None
     reflection: Optional[ReflectionMaterial] = None
     user_data: Optional[UserData] = None
+    uv_anim_names: list = field(default_factory=list)  # names in clump UV anim dict
 
     def _matfx_bytes(self, lib_id: int) -> bytes:
         """Build Material Effects PLG content."""
@@ -271,6 +361,9 @@ class DffMaterial:
         if self.user_data and self.user_data.sections:
             ext_data += self.user_data.to_bytes(lib_id)
 
+        if self.uv_anim_names:
+            ext_data += _uv_anim_plg_bytes(self.uv_anim_names, lib_id)
+
         body += _chunk(CHUNK_EXTENSION, ext_data, lib_id)
         return _chunk(CHUNK_MATERIAL, body, lib_id)
 
@@ -343,6 +436,29 @@ class UserData:
 class ExtraVertColors:
     """Night vertex colors (second color layer)."""
     colors: list = field(default_factory=list)  # list[RGBA]
+
+
+@dataclass
+class BreakableData:
+    """Breakable Objects extension (chunk 0x253F2FD) — marks a mesh as
+    destructible by the physics engine. The numbers are pre-allocated
+    buffers used by the game to hold the broken copy; the defaults
+    mirror what Kam's `brakableobjects.ms` writes.
+    """
+    vertices_alloc: int = 100
+    faces_alloc: int = 200
+    materials_alloc: int = 1
+    uvs_alloc: int = 100
+    offset: tuple = (0.0, 0.0, 0.0)   # break-force offset
+    force: float = 1.0                # break-force magnitude
+
+    def to_bytes(self, lib_id: int) -> bytes:
+        data = pack('<4I', self.vertices_alloc, self.faces_alloc,
+                          self.materials_alloc, self.uvs_alloc)
+        data += pack('<3ff',
+                     self.offset[0], self.offset[1], self.offset[2],
+                     self.force)
+        return _chunk(CHUNK_BREAKABLE, data, lib_id)
 
 
 # ── 2DFX Effect structures ──────────────────────────────────────
@@ -531,6 +647,7 @@ class DffGeometry:
     extra_colors: Optional[ExtraVertColors] = None
     user_data: Optional[UserData] = None
     ext_2dfx: Optional[Extension2dfx] = None
+    breakable: Optional[BreakableData] = None
 
     def _build_flags(self) -> int:
         num_uv = len(self.uv_layers)
@@ -689,6 +806,10 @@ class DffGeometry:
         if self.ext_2dfx and self.ext_2dfx.entries:
             ext_data += self.ext_2dfx.to_bytes(lib_id)
 
+        # Breakable Objects extension (0x253F2FD)
+        if self.breakable:
+            ext_data += self.breakable.to_bytes(lib_id)
+
         body += _chunk(CHUNK_EXTENSION, ext_data, lib_id)
         return _chunk(CHUNK_GEOMETRY, body, lib_id)
 
@@ -725,6 +846,7 @@ class DffClump:
     raw_frame_list: bytes = b''  # Raw frame list bytes for round-trip
     raw_geometry_list: bytes = b''  # Raw geometry list bytes for round-trip
     raw_atomics: bytes = b''  # Raw atomic bytes for round-trip
+    uv_anim_dict: Optional['UVAnimDict'] = None  # Clump-level UV anim dictionary
 
     def to_bytes(self) -> bytes:
         lib_id = make_library_id(self.version)
@@ -808,6 +930,8 @@ class DffClump:
         clump_ext = b''
         if self.collision_data:
             clump_ext += _chunk(CHUNK_COLLISION_MODEL, self.collision_data, lib_id)
+        if self.uv_anim_dict and self.uv_anim_dict.anims:
+            clump_ext += self.uv_anim_dict.to_bytes(lib_id)
         body += _chunk(CHUNK_EXTENSION, clump_ext, lib_id)
 
         return _chunk(CHUNK_CLUMP, body, lib_id)

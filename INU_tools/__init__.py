@@ -23,15 +23,53 @@
 bl_info = {
     "name": "INU_tools(gta_sa)",
     "author": "INU",
-    "version": (1, 6, 3),
+    "version": (1, 6, 4),
     "blender": (4, 2, 0),
     "location": "View3D > Sidebar (N) > GTA Tools",
     "description": "Toolset for GTA SA models",
-    "warning": "",
+    "warning": "Experimental features — not fully tested in-game",
     "category": "3D View",
 }
 
 # Changelog:
+# v1.6.4 - (pre-release) 11 экспериментальных фич — проверка в игре ещё не проведена
+#        - Map Export: единый экспорт сцены → DFF + COL + TXD + IDE + IPL одной кнопкой
+#          (tools/map_export.py, авто-паринг LOD/COL, пул ID из настройки для пустых model_id=0)
+#        - Binary IPL Write: запись в формате `bnry` (только inst+cars, как у Rockstar)
+#          (core/ipl.py _write_binary_ipl + чекбокс Binary в GTATOOLS_OT_export_ipl)
+#        - UV-анимация в DFF: простой U/V-скролл через чанки 0x2B + 0x135
+#          (core/dff.py UVAnim/UVAnimDict, material props uv_anim_write/speed_u/v/duration)
+#          ОГРАНИЧЕНИЕ: только запись, обратное чтение не реализовано
+#        - Breakable Objects: чанк 0x253F2FD + сила разрушения per-object
+#          (core/dff.py BreakableData, обj.inu.breakable/breakable_force)
+#        - IFP Batch Import: папка с .ifp → стек на NLA-треке armature
+#          (ops/ifp_import.py batch_apply_sequential, режимы NLA/Actions, зазор между клипами)
+#        - GTA Material Panel: вкладка Properties → Material с dropdown пресетов
+#          (Generic/Vehicle Body/Vehicle Glass/Ped/Env/Dual/Specular + vehicle color slot)
+#        - Bitmaps Manager: scan missing / resolve from folder / batch copy / find duplicates
+#          (tools/bitmaps_manager.py, панель в N-Sidebar GTA Tools)
+#        - CST IO: текстовая сериализация COL (формат Steve's COL Editor, с shadow mesh)
+#          (core/cst.py + ops/cst_import.py + ops/cst_export.py)
+#        - Vehicle Scale Helper: пропорциональное масштабирование иерархии машины
+#          (tools/vehicle_scale.py, опция Dummies Only)
+#        - Train Station Markers: видимые Empty-сферы на станциях train-трека
+#          (ops/ifp_import.py _refresh_station_markers)
+#        - Roadblocks & Traffic Lights: переключение per-node флагов на выделенных path-IPL точках
+#          (core/paths.py PATH_FLAG_* константы, ops/ifp_import.py GTATOOLS_OT_path_node_flag)
+#        - FLA4 Path Format: чтение/запись расширенных nodes*.dat (spawn/speed/lanes per-node)
+#          (core/paths.py FLA4_MAGIC + ветки в read_nodes/write_nodes, чекбокс в Export Path Nodes)
+#        - Фиксы ревью: UV_ANIM_KEYFRAME_SIZE 36→32 (pack был короче на 4 байта),
+#          path_node_flag правильный маппинг spline→IDProp через пропуск empty-нод,
+#          station markers через matrix_parent_inverse.identity() + local pt.co,
+#          map_export переключение в OBJECT mode перед select_all,
+#          UVAnim.node_to_uv дефолт (1,0,...) вместо (0,...) — иначе анимация инертна
+#        - Bitmaps Manager group_by_txd: читает obj.inu.txd_name (а не mat.get('txd_name'))
+#          через обратный индекс материал→TXDs
+#        - DOCS.md + DOCS_rus.md: новая секция "Experimental (v1.6.4)" с 12 подразделами
+#        - README.md + README_rus.md: секция "Experimental (v1.6.4)" с warning-блоком,
+#          Coming Soon сжат до одного пункта (Vehicles Phase 2+)
+#        - bl_info warning: "Experimental features — not fully tested in-game"
+#          (оранжевая метка в Blender Add-ons panel)
 # v1.6.3 - Particle Effects: полноценный редактор GTA SA effects.fxp
 #        - Парсер effects.fxp (text-based, 82 эффекта), кэш с auto-reload
 #        - Симуляция частиц в viewport (30 FPS, до 64 частиц на эмиттер, billboard к камере)
@@ -221,6 +259,27 @@ from .tools.uv_tools import (
     GTATOOLS_OT_set_uv_align, GTATOOLS_PT_uv_tools_panel,
     GTATOOLS_OT_add_gtasa_model, VIEW3D_MT_gtasa_add_menu,
     _gtasa_add_menu_draw,
+)
+from .tools.bitmaps_manager import (
+    GTATOOLS_OT_bitmaps_scan, GTATOOLS_OT_bitmaps_resolve,
+    GTATOOLS_OT_bitmaps_copy, GTATOOLS_OT_bitmaps_find_dupes,
+    GTATOOLS_PT_bitmaps_panel,
+)
+from .ops.ifp_import import (
+    GTATOOLS_OT_ifp_batch_import,
+    GTATOOLS_OT_refresh_station_markers,
+    GTATOOLS_OT_path_node_flag,
+)
+from .ops.cst_import import GTATOOLS_OT_import_cst
+from .ops.cst_export import GTATOOLS_OT_export_cst
+from .tools.vehicle_scale import GTATOOLS_OT_vehicle_scale
+from .tools.map_export import (
+    GTATOOLS_OT_map_export,
+    GTATOOLS_PT_map_export_panel,
+)
+from .tools.gta_material_panel import (
+    GTATOOLS_OT_material_preset,
+    GTATOOLS_PT_gta_material_panel,
 )
 
 addon_keymaps = []
@@ -1052,6 +1111,18 @@ class INUObjectProps(bpy.types.PropertyGroup):
         description=T("Флаги объекта в IDE"),
     )
 
+    # Breakable object extension (chunk 0x253F2FD)
+    breakable : BoolProperty(
+        name="Breakable Object",
+        description=T("Пометить геометрию как разрушаемую (пишет чанк 0x253F2FD в DFF)"),
+        default=False,
+    )
+    breakable_force : FloatProperty(
+        name="Break Force",
+        description=T("Сила, нужная чтобы сломать объект (умолчание 1.0)"),
+        default=1.0, min=0.0,
+    )
+
     # IDE flag checkboxes with auto-sync to ide_flags
     def _update_ide_flag(self, context):
         _FLAG_BITS = [
@@ -1239,6 +1310,27 @@ class INUMaterialProps(bpy.types.PropertyGroup):
     # UV Animation
     export_animation : BoolProperty(name="UV Animation")
     animation_name : StringProperty()
+    # UV Animation written into DFF binary (chunks 0x2B / 0x135)
+    uv_anim_write : BoolProperty(
+        name="Write UV Anim to DFF",
+        description="Embed a simple UV-scroll animation into the exported DFF",
+        default=False,
+    )
+    uv_anim_speed_u : FloatProperty(
+        name="Scroll U",
+        description="UV scroll speed along U per second",
+        default=0.0, precision=4,
+    )
+    uv_anim_speed_v : FloatProperty(
+        name="Scroll V",
+        description="UV scroll speed along V per second",
+        default=0.0, precision=4,
+    )
+    uv_anim_duration : FloatProperty(
+        name="Duration (s)",
+        description="Length of the UV animation cycle",
+        default=1.0, min=0.01, soft_max=60.0, precision=3,
+    )
 
 
 class GTATOOLS_ImgFileEntry(bpy.types.PropertyGroup):
@@ -4006,6 +4098,11 @@ class GTATOOLS_OT_export_ipl(bpy.types.Operator):
 
     filepath: StringProperty(subtype='FILE_PATH')
     filter_glob: StringProperty(default="*.ipl", options={'HIDDEN'})
+    binary: BoolProperty(
+        name="Binary (bnry)",
+        description=T("Писать IPL в бинарном формате (только inst+cars)"),
+        default=False,
+    )
 
     def invoke(self, context, event):
         if not self.filepath:
@@ -4017,7 +4114,7 @@ class GTATOOLS_OT_export_ipl(bpy.types.Operator):
         from .ops.ipl_export import export_ipl as inu_export_ipl
         try:
             objs = [o for o in context.selected_objects if o.type == 'MESH']
-            inu_export_ipl(filepath=self.filepath, objects=objs)
+            inu_export_ipl(filepath=self.filepath, objects=objs, binary=self.binary)
             self.report({'INFO'}, f"Exported IPL: {self.filepath}")
             return {'FINISHED'}
         except Exception as e:
@@ -7907,6 +8004,11 @@ class GTATOOLS_OT_export_nodes(bpy.types.Operator):
     bl_options = {'REGISTER'}
 
     directory: StringProperty(subtype='DIR_PATH')
+    fla4: BoolProperty(
+        name="FLA4 Format",
+        description=T("Писать nodes*.dat в расширенном FLA4 формате (spawn/speed/lanes per-node)"),
+        default=False,
+    )
 
     def invoke(self, context, event):
         context.window_manager.fileselect_add(self)
@@ -7937,7 +8039,7 @@ class GTATOOLS_OT_export_nodes(bpy.types.Operator):
         for fname, objs in groups.items():
             filepath = os.path.join(self.directory, fname)
             try:
-                count = export_nodes(filepath=filepath, objects=objs)
+                count = export_nodes(filepath=filepath, objects=objs, fla4=self.fla4)
                 exported += count
             except Exception as e:
                 self.report({'WARNING'}, f"{fname}: {e}")
@@ -7956,6 +8058,7 @@ class GTATOOLS_OT_export_nodes(bpy.types.Operator):
                     zone = gy * 8 + gx
                     if zone not in zones:
                         zones[zone] = NodesFile()
+                        zones[zone].fla4 = self.fla4
                     node = PathNode(x=co.x, y=co.y, z=co.z)
                     if path_type == 'nodes_vehicle':
                         zones[zone].vehicle_nodes.append(node)
@@ -10729,6 +10832,15 @@ class GTATOOLS_PT_material_effects_panel(bpy.types.Panel):
         if inu.export_animation:
             box.prop(inu, "animation_name", text=T("Имя анимации"))
 
+        # ── UV Animation write into DFF ──
+        box = layout.box()
+        box.prop(inu, "uv_anim_write", text=T("Писать UV Anim в DFF"))
+        if inu.uv_anim_write:
+            row = box.row(align=True)
+            row.prop(inu, "uv_anim_speed_u", text="Speed U")
+            row.prop(inu, "uv_anim_speed_v", text="Speed V")
+            box.prop(inu, "uv_anim_duration", text=T("Длительность"))
+
 
 
 
@@ -10790,6 +10902,12 @@ class GTATOOLS_PT_object_ide_ipl_panel(bpy.types.Panel):
         row = layout.row(align=True)
         row.prop(inu, "interior_id", text="Interior")
         row.prop(inu, "lod_index", text="LOD")
+
+        # Breakable object (DFF chunk 0x253F2FD)
+        box = layout.box()
+        box.prop(inu, "breakable", text=T("Разрушаемый (Breakable)"))
+        if inu.breakable:
+            box.prop(inu, "breakable_force", text=T("Break Force"))
 
         # Check for ID conflicts
         if inu.model_id > 0:
@@ -12312,6 +12430,8 @@ class GTATOOLS_PT_anim_panel(bpy.types.Panel):
         row = box.row(align=True)
         row.operator("gtatools.import_ifp", text=T("Импорт"), icon='IMPORT')
         row.operator("gtatools.export_ifp", text=T("Экспорт"), icon='EXPORT')
+        box.operator("gtatools.ifp_batch_import",
+                     text=T("Batch папка…"), icon='FILE_FOLDER')
 
         # IFP actions list
         ifp_actions = [a for a in bpy.data.actions if a.get('ifp_source')]
@@ -12907,6 +13027,21 @@ classes = (
     GTATOOLS_PT_uv_tools_panel,
     GTATOOLS_OT_add_gtasa_model,
     VIEW3D_MT_gtasa_add_menu,
+    GTATOOLS_OT_bitmaps_scan,
+    GTATOOLS_OT_bitmaps_resolve,
+    GTATOOLS_OT_bitmaps_copy,
+    GTATOOLS_OT_bitmaps_find_dupes,
+    GTATOOLS_PT_bitmaps_panel,
+    GTATOOLS_OT_ifp_batch_import,
+    GTATOOLS_OT_refresh_station_markers,
+    GTATOOLS_OT_path_node_flag,
+    GTATOOLS_OT_map_export,
+    GTATOOLS_PT_map_export_panel,
+    GTATOOLS_OT_material_preset,
+    GTATOOLS_PT_gta_material_panel,
+    GTATOOLS_OT_import_cst,
+    GTATOOLS_OT_export_cst,
+    GTATOOLS_OT_vehicle_scale,
 )
 
 
@@ -13794,6 +13929,13 @@ def register():
         default='NONE',
     )
 
+    from .tools.gta_material_panel import PRESETS as _MAT_PRESETS
+    bpy.types.Scene.gtatools_material_preset = EnumProperty(
+        items=_MAT_PRESETS,
+        name="GTA Material Preset",
+        default='VEHICLE',
+    )
+
     # Export settings
     bpy.types.Scene.gtatools_export_all_dff = BoolProperty(
         name="Export DFF",
@@ -14019,6 +14161,7 @@ def unregister():
     del bpy.types.Scene.gtatools_texture_path2
     del bpy.types.Scene.gtatools_texture_path1
     del bpy.types.Scene.gtatools_export_pipeline
+    del bpy.types.Scene.gtatools_material_preset
     del bpy.types.Scene.gtatools_export_all_dff
     del bpy.types.Scene.gtatools_export_all_col
     del bpy.types.Scene.gtatools_export_all_lod

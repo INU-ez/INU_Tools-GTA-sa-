@@ -45,29 +45,37 @@
 </tr>
 </table>
 
+## 🧪 Experimental (v1.6.4)
+
+> [!WARNING]
+> The features below were freshly implemented and have **not been extensively tested in-game**.
+> Expect rough edges, partial behaviour, or the occasional crash. Please report issues in [Issues](../../issues).
+
+**Export / Import**
+- 🗺️ **Map Export** — scene → DFF + COL + TXD + IDE + IPL in one click (auto-pairs LOD/COL by name, fills empty Model IDs from a pool)
+- 💾 **Binary IPL Write** — emit IPL as `bnry` binary (only `inst` + `cars` sections, as Rockstar does)
+- 🪨 **CST IO** — text serialisation of COL models (Steve's COL Editor format, shadow meshes supported)
+
+**DFF**
+- 🎞️ **UV Animation in DFF** — write a simple U/V scroll animation into chunks `0x2B` + `0x135` (material panel → *Write UV Anim to DFF* + Speed U/V + Duration). Read-back is not implemented yet
+- 💥 **Breakable Objects** — chunk `0x253F2FD` on geometry with per-object *Break Force* in the IDE/IPL panel
+
+**Animations**
+- 🎬 **IFP Batch Import** — pick a folder of `.ifp` files and stack them on one NLA track of the active armature (optional gap between clips)
+
+**Materials & Textures**
+- 🎨 **GTA Material Panel** — new Properties tab with a preset dropdown (Generic / Vehicle Body / Vehicle Glass / Ped / Env / Dual / Specular) and the vehicle color slot
+- 🖼️ **Bitmaps Manager** — scan missing textures, resolve from a search folder, batch-copy used textures (with optional subfolder per TXD), find duplicates by MD5
+
+**Paths / Traffic**
+- 🚂 **Station Markers** — refresh visible Empty spheres on train-track curves at every station point
+- 🚧 **Roadblocks & Traffic Lights** — flip the roadblock bit or set traffic-light kind on selected path-IPL points in Edit Curve mode
+- 🛣️ **FLA4 Path Format** — read/write extended `nodes*.dat` with per-node spawn probability, speed limit, lane override (magic `FLA4`)
+- 📏 **Vehicle Scale Helper** — uniform rescale of a whole vehicle hierarchy (meshes + dummies), preserving structure
+
 ## 🔮 Coming Soon
 
-Planned for upcoming releases, grouped by priority:
-
-**High priority**
-- 🗺️ **Map Export** — unified one-click scene → IPL + IDE + COL + TXD export with auto-LOD pairing and ID pool management
-
-**Medium priority**
-- 💾 **Binary IPL Write** — save IPL as `bnry` binary format (read already supported)
-- 🎞️ **UV Animation in DFF** — write UV-animated materials directly into the DFF binary (chunks `0x2B` / `0x135`)
-- 🎬 **IFP Batch Import** — range-apply a folder of animations to an armature via NLA tracks
-- 🖼️ **Bitmaps Manager** — missing texture report, batch copy to folder, duplicate search
-
-**Low priority**
 - 🚗 **Vehicles (Phase 2+)** — color slots (Primary / Secondary / Headlight), damage dummies, vehicle env-map presets
-- 🎨 **Custom GTA Material** — dedicated material panel with vehicle colors, blend modes, one-click presets
-- 💥 **Breakable Objects** — breakable mesh extension (chunk `0x253F2FD` in DFF)
-- 🛡️ **DFF Lock** — ZModeler-style DFF locking for protected releases
-- 🪨 **CST IO** — import/export Steve's COL Editor format
-- 🚂 **Train Path Splines** — edit `tracks.dat` as Blender curves with station markers
-- 📏 **Vehicle Scale Helper** — uniform rescale of vehicle hierarchy preserving structure
-- 🚧 **Roadblocks & Traffic Lights** — extended path node flags
-- 🛣️ **FLA4 Path Format** — extended node format for Fastman Limit Adjuster 4
 
 > [!NOTE]
 > The addon is under active development. Bug reports are welcome in [Issues](../../issues).

@@ -42,6 +42,19 @@
 - [Пути](#пути)
 - [LightMap (beta_MTA)](#lightmap-beta_mta)
 - [Интеграции](#интеграции)
+- [Экспериментальное (v1.6.4)](#экспериментальное-v164)
+  - [Map Export](#map-export)
+  - [Binary IPL Write](#binary-ipl-write)
+  - [UV-анимация в DFF](#uv-анимация-в-dff)
+  - [Breakable Objects](#breakable-objects)
+  - [IFP Batch Import](#ifp-batch-import)
+  - [Панель GTA Material](#панель-gta-material)
+  - [Bitmaps Manager](#bitmaps-manager)
+  - [CST IO](#cst-io)
+  - [Vehicle Scale Helper](#vehicle-scale-helper)
+  - [Train Station Markers](#train-station-markers)
+  - [Roadblocks & Traffic Lights](#roadblocks--traffic-lights)
+  - [FLA4 Path Format](#fla4-path-format)
 - [Техническая документация](#техническая-документация)
   - [Структура проекта](#структура-проекта)
   - [Модули ядра](#модули-ядра)
@@ -784,6 +797,190 @@ IPL файлы определяют позиции, повороты и связ
 Переключатель **Normals** управляет экспортом нормалей вершин в DFF:
 - **Включено** — модель получает динамическое освещение от движка GTA SA. Нужно для: персонажей, транспорта, оружия, интерактивных объектов
 - **Выключено** — модель освещается только запечёнными vertex colors. Используется для: зданий, дорог, объектов карты
+
+---
+
+## Экспериментальное (v1.6.4)
+
+> ⚠️ **Внимание:** Функции в этой секции только что добавлены и не тестировались в полной мере в игре. Возможны баги, частичное поведение или редкие падения. Сообщайте о проблемах в [Issues](../../issues).
+
+### Map Export
+
+Единый экспорт района сцены одной кнопкой: DFF + COL + TXD + IDE + IPL в одну папку.
+
+**Где:** View3D → Сайдбар (N) → GTA Tools → панель *Map Export* → кнопка **Export Map…**
+
+**Workflow:**
+1. Выдели объекты, формирующие район (DFF меши, их LOD и COL — определяется по суффиксу/префиксу).
+2. Жми *Export Map…*, выбери целевую папку.
+3. Переключи что писать (DFF / COL / TXD / IDE / IPL) и опционально *Binary IPL*.
+4. Задай *Base Name* (используется как имя общего TXD/IDE/IPL) и *ID Pool Start* (первый авто-присваиваемый Model ID для DFF с `model_id == 0`).
+
+**Что делает:**
+- Группирует объекты по базовому имени через `get_model_type()` — один DFF + опционально LOD + ноль-или-больше COL на группу
+- Авто-присваивает Model ID из диапазона `[id_pool_start, 19999]` тем DFF у которых `inu.model_id == 0`, записывая обратно в объект
+- Экспортирует per-group `*.dff` и `*.col` существующими экспортёрами
+- Собирает один общий `{base_name}.txd` со всеми текстурами DFF
+- Пишет один `{base_name}.ide` (секция objs) и один `{base_name}.ipl` (секция inst), покрывающие всю выборку
+
+Источник: [`tools/map_export.py`](INU_tools/tools/map_export.py).
+
+### Binary IPL Write
+
+Добавляет запись в формате `bnry` в IPL-экспортёр (чтение уже было).
+
+**Где:** File → Export → *Export IPL* → чекбокс **Binary (bnry)**.
+
+**Формат:** 76-байтный заголовок (магия `bnry` + 6 uint32 счётчиков + 12 uint32 смещений), потом массивы `inst` (40 байт на запись: 7 float + 3 int) и `cars` (48 байт: 4 float + 8 int). Другие секции (`cull`, `grge`, `zone`, …) **не** пишутся — бинарные IPL от Rockstar содержат только `inst` и `cars`.
+
+Источник: [`core/ipl.py`](INU_tools/core/ipl.py) → `_write_binary_ipl`, `write_binary_ipl`, `write_ipl(..., binary=True)`.
+
+### UV-анимация в DFF
+
+Запись простой линейной U/V-прокрутки прямо в бинарь DFF через чанки `0x2B` (словарь UV-анимаций) + `0x135` (UV anim PLG на материале).
+
+**Где:** Properties → Material → *GTA SA Material Effects* → блок **Писать UV Anim в DFF**.
+
+**Поля:**
+- **Писать UV Anim в DFF** — чекбокс включает запись чанков при экспорте
+- **Speed U / Speed V** — скорость сдвига по осям в единицах UV в секунду
+- **Длительность** — длина цикла анимации в секундах
+
+**Как кодируется:** два keyframe'а (t=0 с identity-трансформом, t=duration со сдвигом = speed × duration), `node_to_uv[0] = 1` — привязка к первому слоту текстуры. Для циклических сдвигов (конвейеры, вода) выбирай duration так, чтобы `speed × duration` был целым числом UV-единиц.
+
+**Ограничение:** обратное чтение не реализовано. Импорт существующего UV-анимированного DFF теряет анимацию, и повторный экспорт её не сохраняет. Только запись.
+
+Источник: [`core/dff.py`](INU_tools/core/dff.py) → `UVAnim`, `UVAnimDict`, `_uv_anim_plg_bytes`; [`ops/dff_export.py`](INU_tools/ops/dff_export.py) → `_collect_uv_anim_dict`.
+
+### Breakable Objects
+
+Помечает меш как разрушаемый физическим движком GTA SA через чанк `0x253F2FD`.
+
+**Где:** Properties → Object → панель *GTA SA: IDE / IPL* → блок **Разрушаемый (Breakable)** (чекбокс) + **Break Force**.
+
+**Что пишется:** 32-байтный breakable-чанк в geometry extension с размерами буферов vertex/face/material/UV, взятыми из экспортируемого меша, плюс сила разрушения. Дефолты повторяют то, что пишет `brakableobjects.ms` от Kams.
+
+Источник: [`core/dff.py`](INU_tools/core/dff.py) → `BreakableData`, `CHUNK_BREAKABLE`; [`ops/dff_export.py`](INU_tools/ops/dff_export.py) → breakable-блок внутри `_process_mesh`.
+
+### IFP Batch Import
+
+Импорт папки с `.ifp` файлами и укладка всех анимаций на один NLA-трек активного armature.
+
+**Где:** View3D → Сайдбар (N) → GTA Tools → панель *Анимации* → кнопка **Batch папка…**.
+
+**Опции:**
+- **Name Prefix** — применять только анимации с именем, начинающимся с этого префикса (регистронезависимо). Пусто = все.
+- **Режим: NLA Sequential** — укладка клипов на один NLA-трек с зазором
+- **Режим: Actions Only** — просто создать Actions, без NLA
+- **Gap Between Clips** — кадров между соседними strip'ами (только для NLA)
+
+**Юзкейс:** прокрутить все 294 анимации из `ped.ifp` подряд, не импортируя каждую руками.
+
+Источник: [`ops/ifp_import.py`](INU_tools/ops/ifp_import.py) → `enumerate_animations`, `batch_apply_sequential`, `GTATOOLS_OT_ifp_batch_import`.
+
+### Панель GTA Material
+
+Компактная панель материала с dropdown пресетов, которые записывают GTA-специфичные свойства одним кликом.
+
+**Где:** Properties → Material → панель *GTA Material*.
+
+**Пресеты:**
+- **Generic** — сбрасывает все эффект-флаги (плоский текстурный материал)
+- **Vehicle Body** — `xvehicleenv128` env map + `vehiclespecdot64` specular + reflection blend 0.05
+- **Vehicle Glass** — `xvehicleenv128` env map с framebuffer alpha
+- **Ped / Skinned** — плоский скиннед-материал
+- **Env Mapped** — только env map
+- **Dual Texture** — src=SRCALPHA, dst=INVSRCALPHA
+- **Specular** — specular level 1.0
+
+Плюс dropdown **Vehicle Color Slot** (Primary / Secondary / Third / Fourth / Headlights / Taillights) — пишет carcols-метку в базовый RGB материала.
+
+Источник: [`tools/gta_material_panel.py`](INU_tools/tools/gta_material_panel.py).
+
+### Bitmaps Manager
+
+Утилиты управления текстурами: поиск недостающих файлов, resolve путей из папки, batch-копирование используемых текстур, поиск дубликатов.
+
+**Где:** View3D → Сайдбар (N) → GTA Tools → панель *Bitmaps Manager*.
+
+**Операторы:**
+- **Scan Missing Textures** — обходит все материалы, перечисляет изображения, чей `filepath` не находится. Счётчик сохраняется на сцене и показывается в панели.
+- **Resolve From Folder…** — рекурсивно обходит указанную папку, матчит по basename (с расширением или без), патчит `image.filepath` и делает reload.
+- **Copy Used To Folder…** — копирует все текстуры, используемые хотя бы одним материалом, в целевую папку. Опция **Subfolder per TXD** создаёт `target/{txd_name}/texture.png` — обходит mesh-объекты и читает `obj.inu.txd_name`. Если материал используется в нескольких TXD, текстура попадает в каждую подпапку.
+- **Find Duplicates** — MD5-хэширует каждый доступный файл текстуры и выводит группы идентичных файлов в System Console.
+
+Источник: [`tools/bitmaps_manager.py`](INU_tools/tools/bitmaps_manager.py).
+
+### CST IO
+
+Текстовая сериализация данных COL-коллизии, совместимая по духу со Steve's COL Editor. Альтернатива бинарному `.col` для ручного редактирования или diff'а.
+
+**Где:** Операторы `gtatools.import_cst` / `gtatools.export_cst`.
+
+**Формат:** построчный, одна директива на структуру. Поддерживается несколько MODEL-блоков в файле.
+```
+MODEL my_col
+ID 1234
+VERSION 3
+BOUNDS 0 0 0 5.0 -2 -2 -2 2 2 2
+SPHERE 0 0 1 0.5  0 0 0 0
+BOX -1 -1 0 1 1 2  0 0 0 0
+VERTEX 1.0 2.0 0.0
+FACE 0 1 2  0 0 0 0
+SHADOW_VERTEX 0 0 0
+SHADOW_FACE 0 1 2  0 0 0 0
+END
+```
+
+Каждый `SPHERE` / `BOX` / `FACE` заканчивается 4 токенами поверхности: `material flags brightness light`. Всё после `#` — комментарий.
+
+Источник: [`core/cst.py`](INU_tools/core/cst.py), [`ops/cst_import.py`](INU_tools/ops/cst_import.py), [`ops/cst_export.py`](INU_tools/ops/cst_export.py).
+
+### Vehicle Scale Helper
+
+Пропорциональное масштабирование всей иерархии машины (Empty-корень + меши + дамми-дети) с сохранением структуры для DFF-экспорта.
+
+**Где:** Оператор `gtatools.vehicle_scale` (диалог).
+
+**Опции:**
+- **Factor** — множитель равномерного масштаба
+- **Dummies Only** — если включено, двигаются только дамми-Empty, вершины мешей остаются в прежнем размере
+
+**Что делает:** обходит иерархию DFS, умножает `obj.location` каждого объекта на factor, сбрасывает `matrix_parent_inverse` в identity, применяет `Matrix.Scale(factor)` к данным меша (копирует shared-меши) и Armature, сбрасывает `scale` в `(1,1,1)` на каждом объекте. Empty display size тоже масштабируется.
+
+Источник: [`tools/vehicle_scale.py`](INU_tools/tools/vehicle_scale.py).
+
+### Train Station Markers
+
+Видимые Empty-сферы на кривых train-треков в каждой точке-станции, чтобы станции были видны в Object mode без входа в Edit mode.
+
+**Где:** Оператор `gtatools.refresh_station_markers` (активная track-кривая с `path_type == 'track'`).
+
+**Что делает:** стирает старые маркеры, прикреплённые к треку, читает `station_indices` (устанавливаемые существующим `gtatools.mark_station`), размещает Empty-сферу в каждой станции с `empty_display_size = 3.0`, парентит к треку с identity-parent-inverse, чтобы локальная позиция совпадала с точкой кривой 1:1.
+
+Источник: [`ops/ifp_import.py`](INU_tools/ops/ifp_import.py) → `_refresh_station_markers`, `GTATOOLS_OT_refresh_station_markers`.
+
+### Roadblocks & Traffic Lights
+
+Редактор per-node флагов для кривых paths.ipl: бит roadblock + тип светофора.
+
+**Где:** Edit Curve mode на кривой с `path_type == 'path_ipl'` → оператор `gtatools.path_node_flag` с действиями:
+- **Toggle Roadblock** — переключает бит 12 (барьер копов) на каждой выделенной точке
+- **Clear / Normal / Rail / Bus Traffic Light** — ставит биты 8–11 в 0 / 1 / 2 / 3
+
+Работает на отфильтрованных точках сплайна, но пишет в оригинальные IDProp-слоты (которые включают empty-padding ноды из формата 12-на-группу в IPL).
+
+Источник: [`core/paths.py`](INU_tools/core/paths.py) → константы флагов + `decode_node_flags` / `encode_node_flags`; [`ops/ifp_import.py`](INU_tools/ops/ifp_import.py) → `GTATOOLS_OT_path_node_flag`.
+
+### FLA4 Path Format
+
+Расширенный формат `nodes*.dat` от Fastman Limit Adjuster 4. Добавляет 12 байт на path-ноду (spawn probability, speed limit в км/ч, lane count override) поверх ванильной 28-байтной структуры, итого 40 байт на ноду.
+
+**Детекция:** файл считается FLA4 если начинается с ASCII-магии `FLA4`. Layout счётчиков и смещений в остальном идентичен ванильному.
+
+**Где:** File → Export → *Export Path Nodes* → чекбокс **FLA4 Format**. Импорт определяет автоматически.
+
+Источник: [`core/paths.py`](INU_tools/core/paths.py) → `FLA4_MAGIC`, `FLA4_PATH_NODE_SIZE`, FLA4-ветки в `read_nodes` / `write_nodes`; [`ops/path_export.py`](INU_tools/ops/path_export.py) → `export_nodes(..., fla4=True)`.
 
 ---
 

@@ -14,6 +14,8 @@ from ..core.dff import (
     UserData, UserDataSection,
     USERDATA_INT, USERDATA_FLOAT, USERDATA_STRING,
     Extension2dfx, Light2dfx, Particle2dfx, PedAttractor2dfx, SunGlare2dfx,
+    UVAnim, UVAnimDict, UVAnimKeyframe,
+    BreakableData,
     GTA_SA_VERSION, write_dff_file,
 )
 
@@ -240,7 +242,44 @@ def _build_material(mat) -> DffMaterial:
     dff_mat.reflection = plugins.get('reflection')
     dff_mat.user_data = _load_user_data(mat)
 
+    inu = getattr(mat, 'inu', None)
+    if inu and getattr(inu, 'uv_anim_write', False):
+        anim_name = (getattr(inu, 'animation_name', '') or mat.name)[:31]
+        dff_mat.uv_anim_names = [anim_name]
+
     return dff_mat
+
+
+def _collect_uv_anim_dict(materials) -> "UVAnimDict | None":
+    """Scan Blender materials used in this clump and build a UVAnimDict
+    containing one UVAnim per material that has `uv_anim_write` set.
+    """
+    anims = []
+    seen = set()
+    for mat in materials:
+        if mat is None:
+            continue
+        inu = getattr(mat, 'inu', None)
+        if not inu or not getattr(inu, 'uv_anim_write', False):
+            continue
+        anim_name = (getattr(inu, 'animation_name', '') or mat.name)[:31]
+        if anim_name in seen:
+            continue
+        seen.add(anim_name)
+        duration = max(0.01, float(getattr(inu, 'uv_anim_duration', 1.0)))
+        su = float(getattr(inu, 'uv_anim_speed_u', 0.0))
+        sv = float(getattr(inu, 'uv_anim_speed_v', 0.0))
+        kf0 = UVAnimKeyframe(time=0.0, scale_u=1.0, scale_v=1.0,
+                             trans_u=0.0, trans_v=0.0)
+        kf1 = UVAnimKeyframe(time=duration, scale_u=1.0, scale_v=1.0,
+                             trans_u=su * duration, trans_v=sv * duration)
+        anims.append(UVAnim(
+            name=anim_name, type_id=0x1C0,
+            duration=duration, keyframes=[kf0, kf1],
+        ))
+    if not anims:
+        return None
+    return UVAnimDict(anims=anims)
 
 
 # ── Export flags from DragonFF properties ────────────────────────
@@ -703,6 +742,20 @@ def _process_mesh(obj, clump: DffClump, frame_index: int):
 
         geom.skin = skin
 
+    # ── Breakable extension (chunk 0x253F2FD) ──
+    inu_props = getattr(obj, 'inu', None)
+    if inu_props and getattr(inu_props, 'breakable', False):
+        num_verts_local = len(geom.vertices)
+        num_tris_local = len(geom.triangles)
+        num_uv_local = len(geom.uv_layers) * num_verts_local if geom.uv_layers else 0
+        geom.breakable = BreakableData(
+            vertices_alloc=max(num_verts_local, 1),
+            faces_alloc=max(num_tris_local, 1),
+            materials_alloc=max(len(geom.materials), 1),
+            uvs_alloc=max(num_uv_local, 1),
+            force=float(getattr(inu_props, 'breakable_force', 1.0)),
+        )
+
     # ── Add to clump ──
     geom_idx = len(clump.geometries)
     clump.geometries.append(geom)
@@ -1121,5 +1174,18 @@ def export_dff(filepath: str, objects, version: int = GTA_SA_VERSION):
         from .col_export import export_col_bytes
         model_name = os.path.splitext(os.path.basename(filepath))[0]
         clump.collision_data = export_col_bytes(col_objects, version=3, model_name=model_name)
+
+    # Collect UV animations from materials used across all exported meshes
+    uv_mats = []
+    seen_mat_ids = set()
+    for obj in objects:
+        if obj.type != 'MESH':
+            continue
+        for slot in obj.data.materials:
+            if slot is None or id(slot) in seen_mat_ids:
+                continue
+            seen_mat_ids.add(id(slot))
+            uv_mats.append(slot)
+    clump.uv_anim_dict = _collect_uv_anim_dict(uv_mats)
 
     write_dff_file(filepath, clump)

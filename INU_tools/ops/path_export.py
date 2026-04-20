@@ -66,13 +66,15 @@ def export_track(filepath: str, obj=None):
     return write_track(filepath, track)
 
 
-def export_nodes(filepath: str, objects=None):
-    """Export mesh objects as nodes*.dat."""
+def export_nodes(filepath: str, objects=None, *, fla4: bool = False):
+    """Export mesh objects as nodes*.dat. Set ``fla4=True`` to emit the
+    extended Fastman Limit Adjuster 4 format."""
     if objects is None:
         objects = [o for o in bpy.context.selected_objects
                    if o.type == 'MESH' and o.get('path_type', '').startswith('nodes_')]
 
     nodes_file = NodesFile()
+    nodes_file.fla4 = fla4
 
     for obj in objects:
         path_type = obj.get('path_type', '')
@@ -89,6 +91,9 @@ def export_nodes(filepath: str, objects=None):
                 path_width=obj.get(f'node_{i}_width', 0),
                 node_type=obj.get(f'node_{i}_type', 0),
                 flags=obj.get(f'node_{i}_flags', 0),
+                spawn_probability=obj.get(f'node_{i}_spawn', 0),
+                speed_limit_kmh=obj.get(f'node_{i}_speed', 0),
+                lane_count_override=obj.get(f'node_{i}_lanes', 0),
             )
 
             if path_type == 'nodes_vehicle':

@@ -684,8 +684,72 @@ def _read_binary_ipl(data: bytes) -> IplFile:
 
 # ── Writing ─────────────────────────────────────────────────────────
 
-def write_ipl(filepath: str, ipl: IplFile) -> None:
-    """Write a text IPL file with all populated sections."""
+def _write_binary_ipl(ipl: IplFile) -> bytes:
+    """Serialise IplFile to the GTA SA binary IPL (`bnry`) layout.
+
+    Only ``inst`` and ``cars`` sections are stored in the binary body —
+    the four ``num_unknown*`` slots mirror the header shape of vanilla
+    files but carry no data. The header is exactly 76 bytes.
+    """
+    num_inst = len(ipl.instances)
+    num_cars = len(ipl.cars)
+
+    inst_size = num_inst * 40
+    cars_size = num_cars * 48
+
+    off_inst = 76
+    off_unk1 = off_inst + inst_size
+    off_unk2 = off_unk1
+    off_unk3 = off_unk2
+    off_cars = off_unk3
+    off_unk4 = off_cars + cars_size
+
+    header = b'bnry'
+    header += struct.pack('<6I', num_inst, 0, 0, 0, num_cars, 0)
+    header += struct.pack('<12I',
+                          off_inst, 0,
+                          off_unk1, 0,
+                          off_unk2, 0,
+                          off_unk3, 0,
+                          off_cars, 0,
+                          off_unk4, 0)
+    assert len(header) == 76, f"bnry header is {len(header)} bytes"
+
+    body = b''
+    for inst in ipl.instances:
+        body += struct.pack('<7f3i',
+                            inst.pos_x, inst.pos_y, inst.pos_z,
+                            inst.rot_x, inst.rot_y, inst.rot_z, inst.rot_w,
+                            inst.model_id,
+                            inst.interior,
+                            inst.lod_index)
+    for car in ipl.cars:
+        body += struct.pack('<4f8i',
+                            car.pos_x, car.pos_y, car.pos_z,
+                            car.angle,
+                            car.car_id,
+                            car.primary_color, car.secondary_color,
+                            car.force_spawn, car.alarm, car.door_lock,
+                            car.unknown1, car.unknown2)
+
+    return header + body
+
+
+def write_binary_ipl(filepath: str, ipl: IplFile) -> None:
+    """Write an IplFile as binary (`bnry`) IPL. Only inst+cars are stored."""
+    with open(filepath, 'wb') as f:
+        f.write(_write_binary_ipl(ipl))
+
+
+def write_ipl(filepath: str, ipl: IplFile, *, binary: bool = False) -> None:
+    """Write a text IPL file with all populated sections.
+
+    If ``binary=True`` the file is emitted in the binary ``bnry`` format
+    instead (only inst + cars sections are preserved).
+    """
+    if binary:
+        write_binary_ipl(filepath, ipl)
+        return
     with open(filepath, 'w', encoding='utf-8', newline='\n') as f:
         if ipl.instances:
             f.write('inst\n')

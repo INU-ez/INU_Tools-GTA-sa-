@@ -4,12 +4,13 @@ from __future__ import annotations
 from ..core.ipl import IplFile, IplInstance, write_ipl
 
 
-def export_ipl(filepath: str, objects: list) -> None:
+def export_ipl(filepath: str, objects: list, *, binary: bool = False) -> None:
     """
     Generate an IPL file from selected Blender objects.
 
     Position and rotation are taken from the object's world transform.
     Blender quaternion is (W, X, Y, Z), GTA SA IPL stores (X, Y, Z, W).
+    If ``binary=True`` the file is written in `bnry` format.
     """
     ipl = IplFile()
 
@@ -45,7 +46,7 @@ def export_ipl(filepath: str, objects: list) -> None:
             lod_index=lod_index,
         ))
 
-    write_ipl(filepath, ipl)
+    write_ipl(filepath, ipl, binary=binary)
 
 
 def _clean_model_name(name: str) -> str:

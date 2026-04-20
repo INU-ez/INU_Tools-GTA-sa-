@@ -184,3 +184,320 @@ def apply_ifp_action(action_name: str, armature, context=None):
             pass
 
     return True, f"Applied '{action_name}' ({len(anim.bones)} bones)"
+
+
+# ──────────────────────────── batch import ────────────────────────────
+
+def enumerate_animations(folder: str, name_filter: str = "") -> list[tuple[str, str]]:
+    """Walk `folder` (non-recursive) for *.ifp files and return a flat list
+    of (filepath, animation_name) tuples, optionally filtered by prefix
+    (case-insensitive, empty = no filter).
+    """
+    import os
+    from ..core.ifp import read_ifp as _read_ifp
+
+    out: list[tuple[str, str]] = []
+    if not folder or not os.path.isdir(folder):
+        return out
+    flt = (name_filter or "").strip().lower()
+    for entry in sorted(os.listdir(folder)):
+        if not entry.lower().endswith('.ifp'):
+            continue
+        path = os.path.join(folder, entry)
+        try:
+            ifp = _read_ifp(path)
+        except Exception as e:
+            print(f"[IFP Batch] failed to read {entry}: {e}")
+            continue
+        for anim in ifp.animations:
+            if flt and not anim.name.lower().startswith(flt):
+                continue
+            out.append((path, anim.name))
+    return out
+
+
+def _action_frame_range(action) -> tuple[float, float]:
+    """Return (start, end) in frames for an action regardless of Blender 4/5."""
+    try:
+        rng = action.frame_range
+        return (float(rng[0]), float(rng[1]))
+    except Exception:
+        pass
+    # Layered actions (Blender 5) — scan fcurves inside channelbags
+    start, end = 0.0, 0.0
+    if hasattr(action, 'layers'):
+        for layer in action.layers:
+            for strip in layer.strips:
+                for cb in getattr(strip, 'channelbags', []):
+                    for fc in cb.fcurves:
+                        for kp in fc.keyframe_points:
+                            start = min(start, kp.co.x)
+                            end = max(end, kp.co.x)
+    return start, end
+
+
+def batch_apply_sequential(armature, anims: list[tuple[str, str]],
+                           *, mode: str = 'NLA',
+                           offset_frames: float = 10.0) -> tuple[int, str]:
+    """Apply a list of (file, anim_name) pairs to `armature`.
+
+    mode:
+      'ACTIONS' — just create Actions, no NLA arrangement
+      'NLA'     — stack sequentially on one NLA track with `offset_frames`
+                  between clips (lets you scrub through the whole batch)
+
+    Returns (applied_count, message).
+    """
+    import bpy
+
+    if not armature or armature.type != 'ARMATURE':
+        return 0, "Select an armature"
+
+    applied = 0
+    nla_track = None
+    cursor = float(bpy.context.scene.frame_start or 0)
+
+    if mode == 'NLA':
+        if not armature.animation_data:
+            armature.animation_data_create()
+        nla_track = armature.animation_data.nla_tracks.new()
+        nla_track.name = "IFP Batch"
+
+    for path, anim_name in anims:
+        # Ensure the action exists (import_ifp creates empty stubs per anim)
+        action = bpy.data.actions.get(anim_name)
+        if not action:
+            created = import_ifp(path)
+            action = bpy.data.actions.get(anim_name)
+            if not action:
+                continue
+
+        ok, _msg = apply_ifp_action(anim_name, armature)
+        if not ok:
+            continue
+        applied += 1
+
+        if mode == 'NLA' and nla_track is not None:
+            start_f, end_f = _action_frame_range(action)
+            length = max(1.0, end_f - start_f)
+            try:
+                strip = nla_track.strips.new(anim_name, int(cursor), action)
+                strip.frame_end = cursor + length
+            except Exception as e:
+                print(f"[IFP Batch] NLA strip failed for {anim_name}: {e}")
+            cursor += length + offset_frames
+
+    if mode == 'NLA' and applied > 0:
+        # Clear the direct action so the NLA takes over
+        armature.animation_data.action = None
+        bpy.context.scene.frame_end = int(cursor)
+
+    return applied, f"Applied {applied} animation(s)"
+
+
+class GTATOOLS_OT_ifp_batch_import(bpy.types.Operator):
+    bl_idname = "gtatools.ifp_batch_import"
+    bl_label = "Batch Import IFP Folder"
+    bl_description = "Import every *.ifp in a folder and stack animations on an NLA track of the active armature"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    directory: bpy.props.StringProperty(subtype='DIR_PATH')
+    name_filter: bpy.props.StringProperty(
+        name="Name Prefix",
+        description="Only apply animations whose name starts with this prefix (case-insensitive)",
+        default="",
+    )
+    mode: bpy.props.EnumProperty(
+        name="Mode",
+        items=[
+            ('NLA', "NLA Sequential", "Stack clips on one NLA track with a gap"),
+            ('ACTIONS', "Actions Only", "Create Actions, no NLA arrangement"),
+        ],
+        default='NLA',
+    )
+    offset_frames: bpy.props.FloatProperty(
+        name="Gap Between Clips",
+        default=10.0, min=0.0, soft_max=100.0,
+    )
+
+    def invoke(self, context, event):
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        armature = context.active_object
+        if not armature or armature.type != 'ARMATURE':
+            self.report({'ERROR'}, "Select an armature as the active object")
+            return {'CANCELLED'}
+
+        anims = enumerate_animations(self.directory, self.name_filter)
+        if not anims:
+            self.report({'WARNING'}, "No animations matched in folder")
+            return {'CANCELLED'}
+
+        applied, msg = batch_apply_sequential(
+            armature, anims, mode=self.mode, offset_frames=self.offset_frames)
+        if applied == 0:
+            self.report({'WARNING'}, "No animations applied")
+            return {'CANCELLED'}
+        self.report({'INFO'}, f"{msg} from {len(anims)} candidate(s)")
+        return {'FINISHED'}
+
+
+classes = (
+    GTATOOLS_OT_ifp_batch_import,
+)
+
+
+# ──────────────────────────── train station markers ───────────────────
+# (Lives in this module only for lack of a dedicated path_ui module.)
+
+def _refresh_station_markers(track_obj):
+    """Rebuild visible Empty markers for every station point on a track
+    curve. The markers are parented to the curve so they follow any
+    object-space moves.
+    """
+    import bpy as _bpy
+    from mathutils import Vector
+    if track_obj is None or track_obj.type != 'CURVE':
+        return 0
+    if track_obj.get('path_type') != 'track':
+        return 0
+
+    # Wipe old markers under this track
+    for child in list(track_obj.children):
+        if child.get('station_marker_of') == track_obj.name:
+            try:
+                _bpy.data.objects.remove(child, do_unlink=True)
+            except Exception:
+                pass
+
+    try:
+        stations = set(eval(track_obj.get('station_indices', '[]')))
+    except Exception:
+        return 0
+
+    target_collection = (track_obj.users_collection[0]
+                         if track_obj.users_collection
+                         else _bpy.context.scene.collection)
+
+    idx = 0
+    placed = 0
+    for spline in track_obj.data.splines:
+        for pt in spline.points:
+            if idx in stations:
+                empty = _bpy.data.objects.new(
+                    f"{track_obj.name}_station_{idx}", None)
+                empty.empty_display_type = 'SPHERE'
+                empty.empty_display_size = 3.0
+                empty['station_marker_of'] = track_obj.name
+                empty['station_index'] = idx
+                target_collection.objects.link(empty)
+                # Parent first, clear parent-inverse, THEN write position.
+                # pt.co is in the curve's local space, which is exactly what
+                # `location` on a child (with identity parent-inverse) wants.
+                empty.parent = track_obj
+                empty.matrix_parent_inverse.identity()
+                empty.location = Vector((pt.co.x, pt.co.y, pt.co.z))
+                placed += 1
+            idx += 1
+    return placed
+
+
+class GTATOOLS_OT_refresh_station_markers(bpy.types.Operator):
+    bl_idname = "gtatools.refresh_station_markers"
+    bl_label = "Refresh Station Markers"
+    bl_description = "Recreate visible Empty markers for every station on the active train track"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj and obj.type == 'CURVE' and obj.get('path_type') == 'track'
+
+    def execute(self, context):
+        placed = _refresh_station_markers(context.active_object)
+        self.report({'INFO'}, f"{placed} station marker(s)")
+        return {'FINISHED'}
+
+
+classes = classes + (GTATOOLS_OT_refresh_station_markers,)
+
+
+# ──────────────────────────── path-node flags ─────────────────────────
+
+class GTATOOLS_OT_path_node_flag(bpy.types.Operator):
+    bl_idname = "gtatools.path_node_flag"
+    bl_label = "Set Path Node Flag"
+    bl_description = (
+        "Toggle roadblock / set traffic light on selected spline points "
+        "of the active path curve"
+    )
+    bl_options = {'REGISTER', 'UNDO'}
+
+    action: bpy.props.EnumProperty(
+        items=[
+            ('TOGGLE_ROADBLOCK', "Toggle Roadblock",
+             "Flip bit 12 (cops barrier) on every selected point"),
+            ('TRAFFIC_NONE',   "Clear Traffic Light",
+             "Write traffic_light=0 on every selected point"),
+            ('TRAFFIC_NORMAL', "Normal Traffic Light",
+             "Write traffic_light=1 on every selected point"),
+            ('TRAFFIC_RAIL',   "Rail Traffic Light",
+             "Write traffic_light=2 on every selected point"),
+            ('TRAFFIC_BUS',    "Bus Traffic Light",
+             "Write traffic_light=3 on every selected point"),
+        ],
+        default='TOGGLE_ROADBLOCK',
+    )
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj and obj.type == 'CURVE'
+                and obj.get('path_type') == 'path_ipl'
+                and context.mode == 'EDIT_CURVE')
+
+    def execute(self, context):
+        from ..core.paths import (
+            PATH_FLAG_ROADBLOCK, PATH_FLAG_TRAFFIC_MASK,
+            PATH_FLAG_TRAFFIC_SHIFT,
+        )
+        obj = context.active_object
+        # The spline contains only nodes with node_type > 0, but IDProps
+        # `pn_{j}_*` are stored for every node including empty padding.
+        # Build a mapping from spline-point index → full IDProp index so
+        # we write flags into the right slot.
+        pn_count = int(obj.get('pn_count', 0) or 0)
+        real_to_full: list[int] = []
+        for j in range(pn_count):
+            if int(obj.get(f'pn_{j}_type', 0) or 0) > 0:
+                real_to_full.append(j)
+
+        touched = 0
+        spline_idx = 0
+        for spline in obj.data.splines:
+            for pt in spline.points:
+                if pt.select:
+                    if spline_idx >= len(real_to_full):
+                        spline_idx += 1
+                        continue
+                    full_idx = real_to_full[spline_idx]
+                    key = f'pn_{full_idx}_flags'
+                    cur = int(obj.get(key, 0) or 0)
+                    if self.action == 'TOGGLE_ROADBLOCK':
+                        cur ^= PATH_FLAG_ROADBLOCK
+                    else:
+                        tl_map = {'TRAFFIC_NONE': 0, 'TRAFFIC_NORMAL': 1,
+                                  'TRAFFIC_RAIL': 2, 'TRAFFIC_BUS': 3}
+                        tl = tl_map[self.action]
+                        cur = (cur & ~PATH_FLAG_TRAFFIC_MASK) | \
+                              ((tl << PATH_FLAG_TRAFFIC_SHIFT) & PATH_FLAG_TRAFFIC_MASK)
+                    obj[key] = cur
+                    touched += 1
+                spline_idx += 1
+        self.report({'INFO'}, f"{touched} point(s) updated — {self.action}")
+        return {'FINISHED'}
+
+
+classes = classes + (GTATOOLS_OT_path_node_flag,)
