@@ -279,6 +279,7 @@ class GTATOOLS_PT_map_export_panel(bpy.types.Panel):
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = 'GTA Tools'
+    bl_parent_id = "GTATOOLS_PT_main_panel"
     bl_options = {'DEFAULT_CLOSED'}
 
     def draw(self, context):

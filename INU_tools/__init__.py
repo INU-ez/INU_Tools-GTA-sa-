@@ -7618,61 +7618,6 @@ class GTATOOLS_OT_toggle_lightmap_uv2(bpy.types.Operator):
 # PANELS
 # =============================================================================
 
-# Subpanels that get a "detach" button in their header (popover with keep_open)
-_DETACHABLE_PANEL_IDS = (
-    "GTATOOLS_PT_ide_ipl_panel",
-    "GTATOOLS_PT_export_panel",
-    "GTATOOLS_PT_check_panel",
-    "GTATOOLS_PT_2dfx_panel",
-    "GTATOOLS_PT_prelight_panel",
-    "GTATOOLS_PT_itera_panel",
-    "GTATOOLS_PT_prelight_col_panel",
-    "GTATOOLS_PT_vertex_paint_panel",
-    "GTATOOLS_PT_lightmap_panel",
-    "GTATOOLS_PT_water_panel",
-    "GTATOOLS_PT_anim_panel",
-    "GTATOOLS_PT_radar_panel",
-    "GTATOOLS_PT_paths_panel",
-)
-
-
-class GTATOOLS_OT_detach_panel(bpy.types.Operator):
-    """Открыть подпанель как всплывающее окно (popover)"""
-    bl_idname = "gtatools.detach_panel"
-    bl_label = "Detach Panel"
-    bl_options = {'INTERNAL'}
-
-    panel_id : StringProperty(default="")
-
-    def execute(self, context):
-        if not self.panel_id:
-            return {'CANCELLED'}
-        try:
-            bpy.ops.wm.call_panel(name=self.panel_id, keep_open=True)
-        except Exception as e:
-            self.report({'ERROR'}, "Cannot detach panel: %s" % e)
-            return {'CANCELLED'}
-        return {'FINISHED'}
-
-
-def _gtatools_detach_icon(layout, panel_id):
-    op = layout.operator(
-        "gtatools.detach_panel",
-        text="",
-        icon='WINDOW',
-        emboss=False,
-    )
-    op.panel_id = panel_id
-
-
-def _gtatools_make_detach_header(original_draw_header):
-    def draw_header(self, context):
-        _gtatools_detach_icon(self.layout, self.bl_idname)
-        if original_draw_header is not None:
-            original_draw_header(self, context)
-    return draw_header
-
-
 class GTATOOLS_PT_main_panel(bpy.types.Panel):
     """Главная панель GTA Tools"""
     bl_label = "GTA Tools"
@@ -12854,7 +12799,6 @@ classes = (
     GTATOOLS_OT_export_col,
     GTATOOLS_OT_export_all,
     GTATOOLS_OT_inu_export,
-    GTATOOLS_OT_detach_panel,
     GTATOOLS_OT_info_tooltip,
     GTATOOLS_OT_detect_models,
     GTATOOLS_OT_prelight,
@@ -13376,15 +13320,6 @@ def _upd_prefix_col(self, ctx):
 
 
 def register():
-    # Inject "detach" header BEFORE registering classes — Blender checks
-    # for draw_header presence at register time for subpanel layout.
-    # Wrap any existing draw_header so we don't clobber (e.g. 2DFX panel).
-    for _pid in _DETACHABLE_PANEL_IDS:
-        _cls = globals().get(_pid)
-        if _cls is not None:
-            _orig = _cls.__dict__.get('draw_header', None)
-            _cls.draw_header = _gtatools_make_detach_header(_orig)
-
     # Auto-translate tooltips: docstrings are in Russian,
     # bl_description is set via T() so locale/eng.py handles English
     for cls in classes:
