@@ -47,14 +47,27 @@
 
 ## 🔮 Coming Soon
 
-Planned for upcoming releases:
+Planned for upcoming releases, grouped by priority:
 
-- 🚗 **Vehicles** — full import/export of cars (hierarchy: wheels, doors, damage dummies, color slots)
-- 🎨 **Custom GTA Material** — dedicated material plugin with vehicle colors and blend modes
-- 💥 **Breakable Objects** — breakable mesh extension (0x253F2FD in DFF)
-- 📦 **COL inside DFF** — pack collision directly inside DFF (for vehicles and world objects)
-- 🎬 **IFP ANPK** — support for older animation format (GTA3 / Vice City)
-- 🖼️ **Bitmaps Manager** — missing texture report, batch copy, duplicate search
+**High priority**
+- 🗺️ **Map Export** — unified one-click scene → IPL + IDE + COL + TXD export with auto-LOD pairing and ID pool management
+
+**Medium priority**
+- 💾 **Binary IPL Write** — save IPL as `bnry` binary format (read already supported)
+- 🎞️ **UV Animation in DFF** — write UV-animated materials directly into the DFF binary (chunks `0x2B` / `0x135`)
+- 🎬 **IFP Batch Import** — range-apply a folder of animations to an armature via NLA tracks
+- 🖼️ **Bitmaps Manager** — missing texture report, batch copy to folder, duplicate search
+
+**Low priority**
+- 🚗 **Vehicles (Phase 2+)** — color slots (Primary / Secondary / Headlight), damage dummies, vehicle env-map presets
+- 🎨 **Custom GTA Material** — dedicated material panel with vehicle colors, blend modes, one-click presets
+- 💥 **Breakable Objects** — breakable mesh extension (chunk `0x253F2FD` in DFF)
+- 🛡️ **DFF Lock** — ZModeler-style DFF locking for protected releases
+- 🪨 **CST IO** — import/export Steve's COL Editor format
+- 🚂 **Train Path Splines** — edit `tracks.dat` as Blender curves with station markers
+- 📏 **Vehicle Scale Helper** — uniform rescale of vehicle hierarchy preserving structure
+- 🚧 **Roadblocks & Traffic Lights** — extended path node flags
+- 🛣️ **FLA4 Path Format** — extended node format for Fastman Limit Adjuster 4
 
 > [!NOTE]
 > The addon is under active development. Bug reports are welcome in [Issues](../../issues).
