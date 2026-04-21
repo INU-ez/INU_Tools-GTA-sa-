@@ -952,4 +952,116 @@ LANG = {
     "Day → Night": "Day → Night",
     "Night → Day": "Night → Day",
     "объектов": "objects",
+
+    # v1.6.4 — Experimental features
+    # Operator docstrings
+    "Проверить все материалы и показать текстуры, файлы которых не найдены":
+        "Scan all materials and report textures whose files cannot be found",
+    "Рекурсивно искать в выбранной папке и подставлять image.filepath для найденных по имени недостающих текстур":
+        "Search a folder recursively and patch image.filepath for any missing texture found by name",
+    "Скопировать все используемые материалами текстуры сцены в выбранную папку":
+        "Copy every texture used by scene materials into the chosen folder",
+    "Хэшировать все файлы текстур и показать группы одинаковых файлов":
+        "Hash every texture file and report groups of identical files",
+    "Пропорционально масштабировать всю иерархию машины (Empty-корень + меши + дамми), сохраняя структуру. Применяет масштаб к данным меша чтобы DFF-экспорт остался чистым":
+        "Rescale the active vehicle hierarchy (Empty root + meshes + dummies) preserving structure. Applies scale to mesh data so DFF export stays clean",
+    "Экспортировать выделение как готовый район GTA SA (DFF + COL + TXD + IDE + IPL в одну папку)":
+        "Export the current selection as a ready-to-ship GTA SA map (DFF + COL + TXD + IDE + IPL in one folder)",
+    "Импортировать все *.ifp из папки и уложить анимации на NLA-трек активного armature":
+        "Import every *.ifp in a folder and stack animations on an NLA track of the active armature",
+    "Пересоздать видимые Empty-маркеры для каждой станции на активном ж/д пути":
+        "Recreate visible Empty markers for every station on the active train track",
+    "Переключить roadblock или задать тип светофора на выделенных точках кривой пути":
+        "Toggle roadblock or set traffic-light kind on selected spline points of the active path curve",
+    "Импорт текстового файла Steve's COL Editor (.cst)":
+        "Import a Steve's COL Editor text file (.cst)",
+    "Экспорт выделения в текстовый файл Steve's COL Editor (.cst)":
+        "Export selection as Steve's COL Editor text file (.cst)",
+    "Записать выбранный GTA Material пресет в свойства mat.inu.*":
+        "Write the selected GTA Material preset into mat.inu.* properties",
+
+    # Property descriptions
+    "Создать подпапку на каждый txd_name (читается с mesh-объектов)":
+        "Create a subfolder per txd_name (read from mesh objects)",
+    "Множитель равномерного масштаба — применяется к позициям и вершинам":
+        "Uniform scale factor applied to positions and vertices",
+    "Двигать только дамми-Empty, меши не трогать":
+        "Move only the dummy empties, leave meshes untouched",
+    "Первый ID для DFF у которых inu.model_id == 0":
+        "First ID assigned to DFFs that have inu.model_id == 0",
+    "Применять только анимации, имя которых начинается с этого префикса (регистронезависимо)":
+        "Only apply animations whose name starts with this prefix (case-insensitive)",
+    "Уложить клипы на один NLA-трек с зазором":
+        "Stack clips on one NLA track with a gap",
+    "Создать Actions, без NLA":
+        "Create Actions, no NLA arrangement",
+    "Переключить бит 12 (барьер копов) на каждой выделенной точке":
+        "Flip bit 12 (cops barrier) on every selected point",
+    "Поставить traffic_light=0 на каждой выделенной точке":
+        "Write traffic_light=0 on every selected point",
+    "Поставить traffic_light=1 на каждой выделенной точке":
+        "Write traffic_light=1 on every selected point",
+    "Поставить traffic_light=2 на каждой выделенной точке":
+        "Write traffic_light=2 on every selected point",
+    "Поставить traffic_light=3 на каждой выделенной точке":
+        "Write traffic_light=3 on every selected point",
+
+    # UI buttons / labels
+    "Импорт CST": "Import CST",
+    "Экспорт CST": "Export CST",
+    "Масштаб машины…": "Vehicle Scale…",
+    "Batch папка…": "Batch Folder…",
+    "Обновить маркеры станций": "Refresh Station Markers",
+    "Флаги выделенных точек:": "Flags on selected points:",
+    "Переключить Roadblock": "Toggle Roadblock",
+    "Светофор —": "Light —",
+    "Обычн.": "Normal",
+    "Ж/д": "Rail",
+    "Авт.": "Bus",
+    "Разрушаемый (Breakable)": "Breakable",
+    "Писать UV Anim в DFF": "Write UV Anim to DFF",
+    "UV Анимация": "UV Animation",
+    "Имя анимации": "Animation name",
+    "Длительность": "Duration",
+    "Break Force": "Break Force",
+
+    # Binary IPL selector
+    "Сканировать IMG архивы и собрать список бинарных IPL для выбранного района. После скана можно галочками включать/выключать конкретные файлы":
+        "Scan IMG archives and collect the list of binary IPLs for the selected region. After the scan you can enable/disable individual files via checkboxes",
+    "Включить этот бинарный IPL в сборку карты":
+        "Include this binary IPL when building the map",
+    "Включить или выключить все бинарные IPL в списке одной кнопкой":
+        "Enable or disable every binary IPL in the list at once",
+    "Развернуть список бинарных IPL для галочек":
+        "Expand the list of binary IPLs to see individual checkboxes",
+    "Бинарные IPL": "Binary IPLs",
+    "Район изменился — пересканируйте": "Region changed — rescan",
+    "Список пуст — нажмите Scan": "List is empty — click Scan",
+    "Все": "All",
+    "Никакие": "None",
+    "Без 2DFX": "No 2DFX",
+    "Не импортировать 2DFX-эффекты (лампы, частицы, ped attractors, sun glare) при импорте карты и DFF":
+        "Skip 2DFX effects (lights, particles, ped attractors, sun glare) when importing the map or a DFF",
+
+    # Pipeline enum tooltips
+    "Без указания pipeline — использовать стандартный рендер RenderWare. Подходит для простых объектов, которым не нужны специальные эффекты движка":
+        "No pipeline — use the plain RenderWare renderer. Suitable for simple objects that need no engine-specific effects",
+    "Pipeline кузова машины (RSPIPE_PC_CustomCarEnvMap). Добавляет env-map отражения неба/облаков/улицы. Используется совместно с текстурами vehicleenv128 + vehiclespecdot64 на материале":
+        "Car body pipeline (RSPIPE_PC_CustomCarEnvMap). Adds env-map reflections of sky/clouds/street. Pair with vehicleenv128 + vehiclespecdot64 textures on the material",
+    "Pipeline здания с day/night vertex colors (RSPIPE_PC_CustomBuildingDN). Движок плавно смешивает дневной и ночной слои vertex colors по игровому времени. Требует ДВА Color Attribute слоя (Day + Night) на меше":
+        "Building pipeline with day/night vertex colors (RSPIPE_PC_CustomBuildingDN). The engine blends day and night color layers based on in-game time. Requires TWO Color Attribute layers (Day + Night) on the mesh",
+    "Простой pipeline здания (RSPIPE_PC_CustomBuilding). Статическое освещение через один слой vertex colors. Работает быстрее чем Day/Night, но нет смены по времени суток":
+        "Plain building pipeline (RSPIPE_PC_CustomBuilding). Static lighting via one vertex color layer. Faster than Day/Night but no time-of-day transition",
+    "Указать произвольное значение pipeline ID через поле Custom Pipeline":
+        "Enter an arbitrary pipeline ID via the Custom Pipeline field",
+
+    # UV Animation property descriptions
+    "Вписать простую UV-прокрутку в экспортируемый DFF":
+        "Embed a simple UV-scroll animation into the exported DFF",
+    "Скорость прокрутки UV по U в секунду":
+        "UV scroll speed along U per second",
+    "Скорость прокрутки UV по V в секунду":
+        "UV scroll speed along V per second",
+    "Длительность цикла UV-анимации":
+        "Duration of the UV animation cycle",
 }

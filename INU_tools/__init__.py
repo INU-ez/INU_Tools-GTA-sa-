@@ -281,6 +281,7 @@ from .tools.gta_material_panel import (
     GTATOOLS_OT_material_preset,
     GTATOOLS_PT_gta_material_panel,
 )
+from .tools import icons as _icons
 
 addon_keymaps = []
 
@@ -1048,11 +1049,16 @@ class INUObjectProps(bpy.types.PropertyGroup):
 
     pipeline : EnumProperty(
         items=[
-            ('NONE', 'None', 'Export without setting a pipeline'),
-            ('0x53F2009A', 'Vehicle', 'Vehicle env-map pipeline (makes car body reflect/shine). RSPIPE_PC_CustomCarEnvMap_PipeID'),
-            ('0x53F20098', 'Building Day/Night', 'Building with day/night vertex colors. RSPIPE_PC_CustomBuildingDN_PipeID'),
-            ('0x53F2009C', 'Building', 'Plain custom building pipeline. RSPIPE_PC_CustomBuilding_PipeID'),
-            ('CUSTOM', 'Custom Pipeline', 'Set a custom pipeline value'),
+            ('NONE', 'None',
+             T("Без указания pipeline — использовать стандартный рендер RenderWare. Подходит для простых объектов, которым не нужны специальные эффекты движка")),
+            ('0x53F2009A', 'Vehicle',
+             T("Pipeline кузова машины (RSPIPE_PC_CustomCarEnvMap). Добавляет env-map отражения неба/облаков/улицы. Используется совместно с текстурами vehicleenv128 + vehiclespecdot64 на материале")),
+            ('0x53F20098', 'Day/Night',
+             T("Pipeline здания с day/night vertex colors (RSPIPE_PC_CustomBuildingDN). Движок плавно смешивает дневной и ночной слои vertex colors по игровому времени. Требует ДВА Color Attribute слоя (Day + Night) на меше")),
+            ('0x53F2009C', 'Building',
+             T("Простой pipeline здания (RSPIPE_PC_CustomBuilding). Статическое освещение через один слой vertex colors. Работает быстрее чем Day/Night, но нет смены по времени суток")),
+            ('CUSTOM', 'Custom Pipeline',
+             T("Указать произвольное значение pipeline ID через поле Custom Pipeline")),
         ],
         name="Pipeline",
         description=T("Рендер-пайплайн движка"),
@@ -1313,22 +1319,22 @@ class INUMaterialProps(bpy.types.PropertyGroup):
     # UV Animation written into DFF binary (chunks 0x2B / 0x135)
     uv_anim_write : BoolProperty(
         name="Write UV Anim to DFF",
-        description="Embed a simple UV-scroll animation into the exported DFF",
+        description=T("Вписать простую UV-прокрутку в экспортируемый DFF"),
         default=False,
     )
     uv_anim_speed_u : FloatProperty(
         name="Scroll U",
-        description="UV scroll speed along U per second",
+        description=T("Скорость прокрутки UV по U в секунду"),
         default=0.0, precision=4,
     )
     uv_anim_speed_v : FloatProperty(
         name="Scroll V",
-        description="UV scroll speed along V per second",
+        description=T("Скорость прокрутки UV по V в секунду"),
         default=0.0, precision=4,
     )
     uv_anim_duration : FloatProperty(
         name="Duration (s)",
-        description="Length of the UV animation cycle",
+        description=T("Длительность цикла UV-анимации"),
         default=1.0, min=0.01, soft_max=60.0, precision=3,
     )
 
@@ -1336,6 +1342,18 @@ class INUMaterialProps(bpy.types.PropertyGroup):
 class GTATOOLS_ImgFileEntry(bpy.types.PropertyGroup):
     """One file entry in IMG archive list."""
     name: StringProperty()
+
+
+class GTATOOLS_BinaryIplEntry(bpy.types.PropertyGroup):
+    """One binary IPL file found inside an IMG archive — user-selectable
+    for inclusion in Build Map / Import Map."""
+    name: StringProperty()
+    enabled: BoolProperty(
+        name="",
+        default=True,
+        description=T("Включить этот бинарный IPL в сборку карты"),
+    )
+    img_source: StringProperty()
 
 
 class GTATOOLS_UL_img_files(bpy.types.UIList):
@@ -2074,6 +2092,86 @@ class GTATOOLS_OT_discover_game(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class GTATOOLS_OT_binary_ipl_toggle_all(bpy.types.Operator):
+    """Включить или выключить все бинарные IPL в списке одной кнопкой"""
+    bl_idname = "gtatools.binary_ipl_toggle_all"
+    bl_label = "Toggle All Binary IPLs"
+    bl_options = {'REGISTER'}
+
+    enable: BoolProperty(default=True)
+
+    def execute(self, context):
+        for item in context.scene.gtatools_binary_ipls:
+            item.enabled = self.enable
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_scan_binary_ipls(bpy.types.Operator):
+    """Сканировать IMG архивы и собрать список бинарных IPL для выбранного района. После скана можно галочками включать/выключать конкретные файлы"""
+    bl_idname = "gtatools.scan_binary_ipls"
+    bl_label = "Scan Binary IPLs"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        from .core.gta_dat import find_all_resources
+        from .core.img import read_directory
+        scene = context.scene
+
+        game_root = bpy.path.abspath(getattr(scene, 'gtatools_game_root', ''))
+        if not game_root or not os.path.isdir(game_root):
+            self.report({'ERROR'}, T("Укажите корневую папку GTA SA"))
+            return {'CANCELLED'}
+
+        region = getattr(scene, 'gtatools_map_region', 'ALL')
+        region_u = region.upper() if region != 'ALL' else 'ALL'
+
+        info = find_all_resources(game_root)
+        img_paths = []
+        std = os.path.join(game_root, 'models', 'gta3.img')
+        if os.path.isfile(std):
+            img_paths.append(std)
+        for p in info.img_paths:
+            if os.path.isfile(p) and p not in img_paths:
+                img_paths.append(p)
+
+        # Remember previously enabled entries so rescans don't lose user picks
+        prev_state = {i.name.lower(): i.enabled
+                      for i in scene.gtatools_binary_ipls}
+
+        scene.gtatools_binary_ipls.clear()
+        total_checked = 0
+        for ip in img_paths:
+            try:
+                for e in read_directory(ip):
+                    nm = e.name.lower()
+                    if not nm.endswith('.ipl'):
+                        continue
+                    total_checked += 1
+                    # Peek at the first 4 bytes to confirm it's binary — skip text .ipl
+                    try:
+                        from .core.img import extract_file
+                        head = extract_file(ip, e.name)
+                        if not head or head[:4] != b'bnry':
+                            continue
+                    except Exception:
+                        continue
+                    # Region match
+                    if region_u != 'ALL' and not e.name.upper().startswith(region_u):
+                        continue
+                    item = scene.gtatools_binary_ipls.add()
+                    item.name = e.name
+                    item.img_source = ip
+                    item.enabled = prev_state.get(nm, True)
+            except Exception as ex:
+                self.report({'WARNING'}, f"{os.path.basename(ip)}: {ex}")
+
+        scene['gtatools_binary_ipls_region'] = region
+        self.report({'INFO'},
+                    f"{len(scene.gtatools_binary_ipls)} binary IPL(s) for region '{region}' "
+                    f"(scanned {total_checked} .ipl entries)")
+        return {'FINISHED'}
+
+
 class GTATOOLS_OT_extract_resources(bpy.types.Operator):
     """Извлечь все DFF, COL и текстуры из IMG в .inu_cache/"""
     bl_idname = "gtatools.extract_textures"
@@ -2724,14 +2822,28 @@ class GTATOOLS_OT_build_map_glb(bpy.types.Operator):
             if os.path.isfile(p) and p not in img_paths:
                 img_paths.append(p)
 
+        # Binary IPL selection — if the scene collection has entries, honour
+        # the user's explicit enabled/disabled picks; otherwise fall back to
+        # the region-based auto-match.
+        bi_entries = scene.gtatools_binary_ipls
+        bi_enabled = {i.name.lower() for i in bi_entries if i.enabled}
+        bi_use_selection = len(bi_entries) > 0
+
         for ip in img_paths:
             try:
                 for e in read_directory(ip):
-                    if e.name.lower().endswith('.ipl') and _match(e.name.lower()):
-                        ipl_data = extract_file(ip, e.name)
-                        if ipl_data and ipl_data[:4] == b'bnry':
-                            ipl_parsed = _read_binary_ipl(ipl_data)
-                            instances.extend(ipl_parsed.instances)
+                    key = e.name.lower()
+                    if not key.endswith('.ipl'):
+                        continue
+                    if bi_use_selection:
+                        if key not in bi_enabled:
+                            continue
+                    elif not _match(key):
+                        continue
+                    ipl_data = extract_file(ip, e.name)
+                    if ipl_data and ipl_data[:4] == b'bnry':
+                        ipl_parsed = _read_binary_ipl(ipl_data)
+                        instances.extend(ipl_parsed.instances)
             except Exception:
                 pass
 
@@ -2934,6 +3046,11 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
                 except Exception:
                     pass
 
+        # Binary IPL selection (see build_map_glb for details)
+        bi_entries = scene.gtatools_binary_ipls
+        bi_enabled = {i.name.lower() for i in bi_entries if i.enabled}
+        bi_use_selection = len(bi_entries) > 0
+
         # Build unified file index
         img_files = {}
         for ip in img_paths:
@@ -2942,14 +3059,20 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
                     key = e.name.lower()
                     if key not in img_files:
                         img_files[key] = (e.name, ip)
-                    if key.endswith('.ipl') and _ipl_matches_region(key):
-                        try:
-                            ipl_data = extract_file(ip, e.name)
-                            if ipl_data and ipl_data[:4] == b'bnry':
-                                ipl_parsed = _read_binary_ipl(ipl_data)
-                                instances.extend(ipl_parsed.instances)
-                        except Exception:
-                            pass
+                    if not key.endswith('.ipl'):
+                        continue
+                    if bi_use_selection:
+                        if key not in bi_enabled:
+                            continue
+                    elif not _ipl_matches_region(key):
+                        continue
+                    try:
+                        ipl_data = extract_file(ip, e.name)
+                        if ipl_data and ipl_data[:4] == b'bnry':
+                            ipl_parsed = _read_binary_ipl(ipl_data)
+                            instances.extend(ipl_parsed.instances)
+                    except Exception:
+                        pass
             except Exception:
                 pass
 
@@ -4109,6 +4232,15 @@ class GTATOOLS_OT_export_ipl(bpy.types.Operator):
             self.filepath = "model.ipl"
         context.window_manager.fileselect_add(self)
         return {'RUNNING_MODAL'}
+
+    def draw(self, context):
+        layout = self.layout
+        row = layout.row(align=True)
+        icon_id = _icons.get_icon("disk")
+        if icon_id:
+            row.prop(self, "binary", icon_value=icon_id)
+        else:
+            row.prop(self, "binary")
 
     def execute(self, context):
         from .ops.ipl_export import export_ipl as inu_export_ipl
@@ -7618,6 +7750,40 @@ class GTATOOLS_OT_toggle_lightmap_uv2(bpy.types.Operator):
 # PANELS
 # =============================================================================
 
+# Twemoji icons applied to subpanel headers at register() time. Edit the
+# value to change the emoji, or comment out a line to fall back to the
+# plain panel title.
+_PANEL_ICON_KEYS = {
+    "GTATOOLS_PT_ide_ipl_panel":       "disk",       # 💾
+    "GTATOOLS_PT_export_panel":        "disk",       # 💾
+    "GTATOOLS_PT_check_panel":         "testtube",   # 🧪
+    "GTATOOLS_PT_itera_panel":         "palette",    # 🎨
+    "GTATOOLS_PT_prelight_panel":      "light",      # 💡
+    "GTATOOLS_PT_prelight_col_panel":  "rock",       # 🪨
+    "GTATOOLS_PT_2dfx_panel":          "firework",   # 🎆
+    "GTATOOLS_PT_lightmap_panel":      "light",      # 💡
+    "GTATOOLS_PT_water_panel":         "water",      # 🌊
+    "GTATOOLS_PT_anim_panel":          "clapper",    # 🎬
+    "GTATOOLS_PT_radar_panel":         "map",        # 🗺️
+    "GTATOOLS_PT_paths_panel":         "road",       # 🛣️
+    "GTATOOLS_PT_bitmaps_panel":       "picture",    # 🖼️
+    "GTATOOLS_PT_map_export_panel":    "map",        # 🗺️
+    "GTATOOLS_PT_gta_material_panel":  "palette",    # 🎨
+}
+
+
+def _make_twemoji_header(original_draw_header, icon_key: str):
+    """Return a draw_header that prepends a Twemoji PNG before the title.
+    Wraps any existing draw_header so we don't clobber panels that use it."""
+    def draw_header(self, context):
+        icon_id = _icons.get_icon(icon_key)
+        if icon_id:
+            self.layout.label(text="", icon_value=icon_id)
+        if original_draw_header is not None:
+            original_draw_header(self, context)
+    return draw_header
+
+
 class GTATOOLS_PT_main_panel(bpy.types.Panel):
     """Главная панель GTA Tools"""
     bl_label = "GTA Tools"
@@ -7628,7 +7794,8 @@ class GTATOOLS_PT_main_panel(bpy.types.Panel):
 
     def draw(self, context):
         layout = self.layout
-        layout.label(text="GTA SA Modding Tools", icon='TOOL_SETTINGS')
+        layout.label(text="GTA SA Modding Tools",
+                     icon_value=_icons.get_icon("palette"))
 
 
 class GTATOOLS_PT_ide_ipl_panel(bpy.types.Panel):
@@ -7958,6 +8125,15 @@ class GTATOOLS_OT_export_nodes(bpy.types.Operator):
     def invoke(self, context, event):
         context.window_manager.fileselect_add(self)
         return {'RUNNING_MODAL'}
+
+    def draw(self, context):
+        layout = self.layout
+        row = layout.row(align=True)
+        icon_id = _icons.get_icon("road")
+        if icon_id:
+            row.prop(self, "fla4", icon_value=icon_id)
+        else:
+            row.prop(self, "fla4")
 
     def execute(self, context):
         from .ops.path_export import export_nodes
@@ -8485,6 +8661,18 @@ class GTATOOLS_PT_export_panel(bpy.types.Panel):
         row.operator("gtatools.import_col", text=T("Импорт COL"), icon='IMPORT')
         row.operator("gtatools.export_col", text=T("Экспорт COL"), icon='EXPORT')
 
+        # CST (Steve's COL Editor text format)
+        row = layout.row(align=True)
+        _rock_id = _icons.get_icon("rock")
+        if _rock_id:
+            row.operator("gtatools.import_cst", text=T("Импорт CST"),
+                         icon_value=_rock_id)
+            row.operator("gtatools.export_cst", text=T("Экспорт CST"),
+                         icon_value=_rock_id)
+        else:
+            row.operator("gtatools.import_cst", text=T("Импорт CST"), icon='IMPORT')
+            row.operator("gtatools.export_cst", text=T("Экспорт CST"), icon='EXPORT')
+
         # TXD
         row = layout.row(align=True)
         row.operator("gtatools.import_txd", text=T("Импорт TXD"), icon='IMPORT')
@@ -8504,6 +8692,19 @@ class GTATOOLS_PT_export_panel(bpy.types.Panel):
             row.label(text="GPU (NVTT)", icon='CHECKMARK')
         else:
             row.label(text="CPU", icon='INFO')
+
+        layout.separator()
+
+        # Vehicle tools
+        _ruler_id = _icons.get_icon("ruler")
+        if _ruler_id:
+            layout.operator("gtatools.vehicle_scale",
+                            text=T("Масштаб машины…"),
+                            icon_value=_ruler_id)
+        else:
+            layout.operator("gtatools.vehicle_scale",
+                            text=T("Масштаб машины…"),
+                            icon='FULLSCREEN_ENTER')
 
         layout.separator()
 
@@ -10779,7 +10980,11 @@ class GTATOOLS_PT_material_effects_panel(bpy.types.Panel):
 
         # ── UV Animation write into DFF ──
         box = layout.box()
-        box.prop(inu, "uv_anim_write", text=T("Писать UV Anim в DFF"))
+        row = box.row(align=True)
+        _fid = _icons.get_icon("film")
+        if _fid:
+            row.label(text="", icon_value=_fid)
+        row.prop(inu, "uv_anim_write", text=T("Писать UV Anim в DFF"))
         if inu.uv_anim_write:
             row = box.row(align=True)
             row.prop(inu, "uv_anim_speed_u", text="Speed U")
@@ -10850,7 +11055,11 @@ class GTATOOLS_PT_object_ide_ipl_panel(bpy.types.Panel):
 
         # Breakable object (DFF chunk 0x253F2FD)
         box = layout.box()
-        box.prop(inu, "breakable", text=T("Разрушаемый (Breakable)"))
+        row = box.row(align=True)
+        _eid = _icons.get_icon("explosion")
+        if _eid:
+            row.label(text="", icon_value=_eid)
+        row.prop(inu, "breakable", text=T("Разрушаемый (Breakable)"))
         if inu.breakable:
             box.prop(inu, "breakable_force", text=T("Break Force"))
 
@@ -10884,8 +11093,51 @@ class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
         if scene.gtatools_show_paths_settings:
             box.label(text="Game Root", icon='FILE_FOLDER')
             box.prop(scene, "gtatools_game_root", text="")
-            box.prop(scene, "gtatools_img_skip_lod", text="Skip LOD", toggle=True)
+            row = box.row(align=True)
+            row.prop(scene, "gtatools_img_skip_lod", text="Skip LOD", toggle=True)
+            row.prop(scene, "gtatools_map_skip_2dfx", text=T("Без 2DFX"), toggle=True)
             box.prop(scene, "gtatools_map_region", text="")
+
+            # Binary IPL selector (collapsible)
+            bi_box = box.box()
+            bi_row = bi_box.row(align=True)
+            bi_row.prop(
+                scene, "gtatools_show_binary_ipls",
+                icon='TRIA_DOWN' if scene.gtatools_show_binary_ipls else 'TRIA_RIGHT',
+                emboss=False,
+                text=T("Бинарные IPL") + f": {len(scene.gtatools_binary_ipls)}",
+            )
+            bi_row.operator(
+                "gtatools.scan_binary_ipls", text="", icon='FILE_REFRESH',
+            )
+            if scene.gtatools_show_binary_ipls:
+                cached_region = scene.get('gtatools_binary_ipls_region', '')
+                if cached_region and cached_region != scene.gtatools_map_region:
+                    bi_box.label(
+                        text=T("Район изменился — пересканируйте"),
+                        icon='ERROR',
+                    )
+                if not scene.gtatools_binary_ipls:
+                    bi_box.label(
+                        text=T("Список пуст — нажмите Scan"),
+                        icon='INFO',
+                    )
+                else:
+                    bi_row2 = bi_box.row(align=True)
+                    op_all = bi_row2.operator(
+                        "gtatools.binary_ipl_toggle_all",
+                        text=T("Все"), icon='CHECKBOX_HLT',
+                    )
+                    op_all.enable = True
+                    op_none = bi_row2.operator(
+                        "gtatools.binary_ipl_toggle_all",
+                        text=T("Никакие"), icon='CHECKBOX_DEHLT',
+                    )
+                    op_none.enable = False
+                    bi_col = bi_box.column(align=True)
+                    for item in scene.gtatools_binary_ipls:
+                        bi_col.prop(item, "enabled", text=item.name)
+
             box.operator("gtatools.extract_textures", text=T("Извлечь ресурсы"), icon='PACKAGE')
             box.operator("gtatools.build_map_glb", text=T("Собрать карту в .glb"), icon='WORLD')
             box.operator("gtatools.load_map_glb", text=T("Импорт карты .glb"), icon='IMPORT')
@@ -12371,12 +12623,21 @@ class GTATOOLS_PT_anim_panel(bpy.types.Panel):
         layout = self.layout
 
         box = layout.box()
-        box.label(text=T("Анимации IFP (GTA SA):"), icon='ACTION')
+        _bone_id = _icons.get_icon("bone")
+        if _bone_id:
+            box.label(text=T("Анимации IFP (GTA SA):"), icon_value=_bone_id)
+        else:
+            box.label(text=T("Анимации IFP (GTA SA):"), icon='ACTION')
         row = box.row(align=True)
         row.operator("gtatools.import_ifp", text=T("Импорт"), icon='IMPORT')
         row.operator("gtatools.export_ifp", text=T("Экспорт"), icon='EXPORT')
-        box.operator("gtatools.ifp_batch_import",
-                     text=T("Batch папка…"), icon='FILE_FOLDER')
+        _clap_id = _icons.get_icon("clapper")
+        if _clap_id:
+            box.operator("gtatools.ifp_batch_import",
+                         text=T("Batch папка…"), icon_value=_clap_id)
+        else:
+            box.operator("gtatools.ifp_batch_import",
+                         text=T("Batch папка…"), icon='FILE_FOLDER')
 
         # IFP actions list
         ifp_actions = [a for a in bpy.data.actions if a.get('ifp_source')]
@@ -12717,6 +12978,28 @@ class GTATOOLS_PT_paths_panel(bpy.types.Panel):
         row.operator("gtatools.import_paths_ipl", text=T("Импорт"), icon='IMPORT')
         row.operator("gtatools.export_paths_ipl", text=T("Экспорт"), icon='EXPORT')
         box.operator("gtatools.add_path_ipl", text=T("Создать путь"), icon='ADD')
+        # Roadblocks / Traffic Lights — visible only in Edit Curve on path_ipl
+        if (obj and obj.type == 'CURVE' and obj.get('path_type') == 'path_ipl'
+                and context.mode == 'EDIT_CURVE'):
+            _rb_id = _icons.get_icon("roadblock")
+            sub = box.column(align=True)
+            if _rb_id:
+                sub.label(text=T("Флаги выделенных точек:"),
+                          icon_value=_rb_id)
+            else:
+                sub.label(text=T("Флаги выделенных точек:"), icon='CONSTRAINT')
+            op = sub.operator("gtatools.path_node_flag",
+                              text=T("Переключить Roadblock"))
+            op.action = 'TOGGLE_ROADBLOCK'
+            row = sub.row(align=True)
+            op = row.operator("gtatools.path_node_flag", text=T("Светофор —"))
+            op.action = 'TRAFFIC_NONE'
+            op = row.operator("gtatools.path_node_flag", text=T("Обычн."))
+            op.action = 'TRAFFIC_NORMAL'
+            op = row.operator("gtatools.path_node_flag", text=T("Ж/д"))
+            op.action = 'TRAFFIC_RAIL'
+            op = row.operator("gtatools.path_node_flag", text=T("Авт."))
+            op.action = 'TRAFFIC_BUS'
 
         layout.separator()
 
@@ -12731,6 +13014,17 @@ class GTATOOLS_PT_paths_panel(bpy.types.Panel):
         if (obj and obj.type == 'CURVE' and obj.get('path_type') == 'track'
                 and context.mode == 'EDIT_CURVE'):
             box.operator("gtatools.mark_station", text=T("Станция (вкл/выкл)"), icon='DECORATE_KEYFRAME')
+        # Station markers refresh — works in object mode too
+        if obj and obj.type == 'CURVE' and obj.get('path_type') == 'track':
+            _train_id = _icons.get_icon("train")
+            if _train_id:
+                box.operator("gtatools.refresh_station_markers",
+                             text=T("Обновить маркеры станций"),
+                             icon_value=_train_id)
+            else:
+                box.operator("gtatools.refresh_station_markers",
+                             text=T("Обновить маркеры станций"),
+                             icon='EMPTY_SINGLE_ARROW')
 
         layout.separator()
 
@@ -12782,8 +13076,11 @@ classes = (
     INUObjectProps,
     INUMaterialProps,
     GTATOOLS_ImgFileEntry,
+    GTATOOLS_BinaryIplEntry,
     GTATOOLS_UL_img_files,
     GTATOOLS_OT_refresh_img_list,
+    GTATOOLS_OT_scan_binary_ipls,
+    GTATOOLS_OT_binary_ipl_toggle_all,
     GTATOOLS_FillColorItem,
     GTATOOLS_OT_toggle_visibility,
     GTATOOLS_OT_snap_to_dff,
@@ -13320,6 +13617,17 @@ def _upd_prefix_col(self, ctx):
 
 
 def register():
+    # Custom Twemoji icons — load BEFORE panel classes draw
+    _icons.register()
+
+    # Inject Twemoji icon into each subpanel header (wraps any existing
+    # draw_header so we don't clobber panels that already define one).
+    for _pid, _ikey in _PANEL_ICON_KEYS.items():
+        _cls = globals().get(_pid)
+        if _cls is not None:
+            _orig = _cls.__dict__.get('draw_header', None)
+            _cls.draw_header = _make_twemoji_header(_orig, _ikey)
+
     # Auto-translate tooltips: docstrings are in Russian,
     # bl_description is set via T() so locale/eng.py handles English
     for cls in classes:
@@ -13491,6 +13799,19 @@ def register():
         name="Region",
         description=T("Район карты для импорта"),
         items=_get_map_region_items,
+    )
+    bpy.types.Scene.gtatools_binary_ipls = CollectionProperty(
+        type=GTATOOLS_BinaryIplEntry,
+    )
+    bpy.types.Scene.gtatools_show_binary_ipls = BoolProperty(
+        name="Show binary IPLs",
+        description=T("Развернуть список бинарных IPL для галочек"),
+        default=False,
+    )
+    bpy.types.Scene.gtatools_map_skip_2dfx = BoolProperty(
+        name="Skip 2DFX",
+        description=T("Не импортировать 2DFX-эффекты (лампы, частицы, ped attractors, sun glare) при импорте карты и DFF"),
+        default=False,
     )
     bpy.types.Scene.gtatools_img_use_gta_dat = BoolProperty(
         name="Use gta.dat",
@@ -13854,10 +14175,14 @@ def register():
     # Pipeline selector for export
     bpy.types.Scene.gtatools_export_pipeline = EnumProperty(
         items=[
-            ('NONE', 'None', 'No pipeline'),
-            ('0x53F2009A', 'Vehicle', 'Vehicle env-map pipeline (car reflections). RSPIPE_PC_CustomCarEnvMap_PipeID'),
-            ('0x53F20098', 'Building Day/Night', 'Day/Night vertex colors for buildings. RSPIPE_PC_CustomBuildingDN_PipeID'),
-            ('0x53F2009C', 'Building', 'Plain custom building. RSPIPE_PC_CustomBuilding_PipeID'),
+            ('NONE', 'None',
+             T("Без указания pipeline — использовать стандартный рендер RenderWare. Подходит для простых объектов, которым не нужны специальные эффекты движка")),
+            ('0x53F2009A', 'Vehicle',
+             T("Pipeline кузова машины (RSPIPE_PC_CustomCarEnvMap). Добавляет env-map отражения неба/облаков/улицы. Используется совместно с текстурами vehicleenv128 + vehiclespecdot64 на материале")),
+            ('0x53F20098', 'Day/Night',
+             T("Pipeline здания с day/night vertex colors (RSPIPE_PC_CustomBuildingDN). Движок плавно смешивает дневной и ночной слои vertex colors по игровому времени. Требует ДВА Color Attribute слоя (Day + Night) на меше")),
+            ('0x53F2009C', 'Building',
+             T("Простой pipeline здания (RSPIPE_PC_CustomBuilding). Статическое освещение через один слой vertex colors. Работает быстрее чем Day/Night, но нет смены по времени суток")),
         ],
         name="Pipeline",
         description=T("Рендер-пайплайн для экспорта DFF"),
@@ -14056,6 +14381,9 @@ def unregister():
     del bpy.types.Scene.gtatools_game_root
     del bpy.types.Scene.gtatools_map_fake_mode
     del bpy.types.Scene.gtatools_map_region
+    del bpy.types.Scene.gtatools_binary_ipls
+    del bpy.types.Scene.gtatools_show_binary_ipls
+    del bpy.types.Scene.gtatools_map_skip_2dfx
     del bpy.types.Scene.gtatools_img_use_gta_dat
     del bpy.types.Scene.gtatools_img_skip_lod
     del bpy.types.Scene.gtatools_img_load_txd
@@ -14150,6 +14478,8 @@ def unregister():
 
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
+
+    _icons.unregister()
 
     print("[GTA Tools Panel] Addon unregistered!")
 

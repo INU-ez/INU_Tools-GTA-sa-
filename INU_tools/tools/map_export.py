@@ -220,10 +220,9 @@ def export_map(target_dir: str, *, objects=None,
 # ──────────────────────────── operator + panel ───────────────────────
 
 class GTATOOLS_OT_map_export(bpy.types.Operator):
+    """Экспортировать выделение как готовый район GTA SA (DFF + COL + TXD + IDE + IPL в одну папку)"""
     bl_idname = "gtatools.map_export"
     bl_label = "Export Map…"
-    bl_description = ("Export the current selection as a ready-to-ship GTA SA "
-                      "map (DFF + COL + TXD + IDE + IPL in one folder)")
     bl_options = {'REGISTER'}
 
     directory: bpy.props.StringProperty(subtype='DIR_PATH')
@@ -236,7 +235,7 @@ class GTATOOLS_OT_map_export(bpy.types.Operator):
     binary_ipl: bpy.props.BoolProperty(name="Binary IPL", default=False)
     id_pool_start: bpy.props.IntProperty(
         name="ID Pool Start", default=20000, min=1, max=32000,
-        description="First ID assigned to DFFs that have inu.model_id == 0",
+        description="Первый ID для DFF у которых inu.model_id == 0",
     )
 
     def invoke(self, context, event):
@@ -283,7 +282,12 @@ class GTATOOLS_PT_map_export_panel(bpy.types.Panel):
     bl_options = {'DEFAULT_CLOSED'}
 
     def draw(self, context):
-        self.layout.operator("gtatools.map_export", icon='WORLD')
+        from . import icons as _icons
+        icon_id = _icons.get_icon("map")
+        if icon_id:
+            self.layout.operator("gtatools.map_export", icon_value=icon_id)
+        else:
+            self.layout.operator("gtatools.map_export", icon='WORLD')
 
 
 classes = (

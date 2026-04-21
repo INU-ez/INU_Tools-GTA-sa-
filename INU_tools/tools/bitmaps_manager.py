@@ -214,9 +214,9 @@ def _report(op, level: str, msg: str):
 
 
 class GTATOOLS_OT_bitmaps_scan(bpy.types.Operator):
+    """Проверить все материалы и показать текстуры, файлы которых не найдены"""
     bl_idname = "gtatools.bitmaps_scan"
     bl_label = "Scan Missing Textures"
-    bl_description = "Scan all materials and report textures whose files cannot be found"
     bl_options = {'REGISTER'}
 
     def execute(self, context):
@@ -236,9 +236,9 @@ class GTATOOLS_OT_bitmaps_scan(bpy.types.Operator):
 
 
 class GTATOOLS_OT_bitmaps_resolve(bpy.types.Operator):
+    """Рекурсивно искать в выбранной папке и подставлять image.filepath для найденных по имени недостающих текстур"""
     bl_idname = "gtatools.bitmaps_resolve"
     bl_label = "Resolve From Folder…"
-    bl_description = "Search a folder recursively and patch image.filepath for any missing texture found by name"
     bl_options = {'REGISTER'}
 
     directory: bpy.props.StringProperty(subtype='DIR_PATH')
@@ -261,15 +261,15 @@ class GTATOOLS_OT_bitmaps_resolve(bpy.types.Operator):
 
 
 class GTATOOLS_OT_bitmaps_copy(bpy.types.Operator):
+    """Скопировать все используемые материалами текстуры сцены в выбранную папку"""
     bl_idname = "gtatools.bitmaps_copy"
     bl_label = "Copy Used To Folder…"
-    bl_description = "Copy every texture used by scene materials into the chosen folder"
     bl_options = {'REGISTER'}
 
     directory: bpy.props.StringProperty(subtype='DIR_PATH')
     group_by_txd: bpy.props.BoolProperty(
         name="Subfolder per TXD",
-        description="Create a subfolder per txd_name custom property",
+        description="Создать подпапку на каждый txd_name (читается с mesh-объектов)",
         default=False,
     )
 
@@ -291,9 +291,9 @@ class GTATOOLS_OT_bitmaps_copy(bpy.types.Operator):
 
 
 class GTATOOLS_OT_bitmaps_find_dupes(bpy.types.Operator):
+    """Хэшировать все файлы текстур и показать группы одинаковых файлов"""
     bl_idname = "gtatools.bitmaps_find_dupes"
     bl_label = "Find Duplicates"
-    bl_description = "Hash every texture file on disk and report groups of identical files"
     bl_options = {'REGISTER'}
 
     def execute(self, context):
@@ -322,11 +322,18 @@ class GTATOOLS_PT_bitmaps_panel(bpy.types.Panel):
     bl_options = {'DEFAULT_CLOSED'}
 
     def draw(self, context):
+        from . import icons as _icons
         layout = self.layout
         scene = context.scene
 
+        picture_id = _icons.get_icon("picture")
+
         row = layout.row(align=True)
-        row.operator("gtatools.bitmaps_scan", icon='VIEWZOOM')
+        if picture_id:
+            row.operator("gtatools.bitmaps_scan",
+                         icon_value=picture_id)
+        else:
+            row.operator("gtatools.bitmaps_scan", icon='VIEWZOOM')
         miss = scene.get('bitmaps_missing_count', None)
         if miss is not None:
             row.label(text=f"Missing: {miss}",

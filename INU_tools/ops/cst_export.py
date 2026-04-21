@@ -32,9 +32,9 @@ def export_cst(filepath: str, objects, version: int = 3,
 
 
 class GTATOOLS_OT_export_cst(bpy.types.Operator):
+    """Экспорт выделения в текстовый файл Steve's COL Editor (.cst)"""
     bl_idname = "gtatools.export_cst"
     bl_label = "Export CST (.cst)"
-    bl_description = "Export selection as Steve's COL Editor text file"
     bl_options = {'REGISTER'}
 
     filepath: bpy.props.StringProperty(subtype='FILE_PATH')

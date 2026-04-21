@@ -73,21 +73,18 @@ def _rescale_hierarchy(root, factor: float, *, dummies_only: bool):
 
 
 class GTATOOLS_OT_vehicle_scale(bpy.types.Operator):
+    """Пропорционально масштабировать всю иерархию машины (Empty-корень + меши + дамми), сохраняя структуру. Применяет масштаб к данным меша чтобы DFF-экспорт остался чистым"""
     bl_idname = "gtatools.vehicle_scale"
     bl_label = "Vehicle Scale"
-    bl_description = (
-        "Rescale the active vehicle hierarchy (Empty root + meshes + dummies) "
-        "preserving structure. Applies scale to mesh data so DFF export stays clean"
-    )
     bl_options = {'REGISTER', 'UNDO'}
 
     factor: bpy.props.FloatProperty(
         name="Factor", default=1.0, min=0.01, max=100.0,
-        description="Uniform scale factor applied to positions and vertices",
+        description="Множитель равномерного масштаба — применяется к позициям и вершинам",
     )
     dummies_only: bpy.props.BoolProperty(
         name="Dummies Only",
-        description="Move only the dummy empties, leave meshes untouched",
+        description="Двигать только дамми-Empty, меши не трогать",
         default=False,
     )
 

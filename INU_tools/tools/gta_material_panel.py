@@ -99,9 +99,9 @@ def apply_preset(mat, preset: str):
 # ──────────────────────────── operator ───────────────────────────────
 
 class GTATOOLS_OT_material_preset(bpy.types.Operator):
+    """Записать выбранный GTA Material пресет в свойства mat.inu.*"""
     bl_idname = "gtatools.material_preset"
     bl_label = "Apply Material Preset"
-    bl_description = "Write the selected GTA Material preset into mat.inu.* properties"
     bl_options = {'REGISTER', 'UNDO'}
 
     preset: bpy.props.EnumProperty(items=PRESETS, default='VEHICLE')

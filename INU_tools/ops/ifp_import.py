@@ -296,22 +296,22 @@ def batch_apply_sequential(armature, anims: list[tuple[str, str]],
 
 
 class GTATOOLS_OT_ifp_batch_import(bpy.types.Operator):
+    """Импортировать все *.ifp из папки и уложить анимации на NLA-трек активного armature"""
     bl_idname = "gtatools.ifp_batch_import"
     bl_label = "Batch Import IFP Folder"
-    bl_description = "Import every *.ifp in a folder and stack animations on an NLA track of the active armature"
     bl_options = {'REGISTER', 'UNDO'}
 
     directory: bpy.props.StringProperty(subtype='DIR_PATH')
     name_filter: bpy.props.StringProperty(
         name="Name Prefix",
-        description="Only apply animations whose name starts with this prefix (case-insensitive)",
+        description="Применять только анимации, имя которых начинается с этого префикса (регистронезависимо)",
         default="",
     )
     mode: bpy.props.EnumProperty(
         name="Mode",
         items=[
-            ('NLA', "NLA Sequential", "Stack clips on one NLA track with a gap"),
-            ('ACTIONS', "Actions Only", "Create Actions, no NLA arrangement"),
+            ('NLA', "NLA Sequential", "Уложить клипы на один NLA-трек с зазором"),
+            ('ACTIONS', "Actions Only", "Создать Actions, без NLA"),
         ],
         default='NLA',
     )
@@ -405,9 +405,9 @@ def _refresh_station_markers(track_obj):
 
 
 class GTATOOLS_OT_refresh_station_markers(bpy.types.Operator):
+    """Пересоздать видимые Empty-маркеры для каждой станции на активном ж/д пути"""
     bl_idname = "gtatools.refresh_station_markers"
     bl_label = "Refresh Station Markers"
-    bl_description = "Recreate visible Empty markers for every station on the active train track"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -427,26 +427,23 @@ classes = classes + (GTATOOLS_OT_refresh_station_markers,)
 # ──────────────────────────── path-node flags ─────────────────────────
 
 class GTATOOLS_OT_path_node_flag(bpy.types.Operator):
+    """Переключить roadblock или задать тип светофора на выделенных точках кривой пути"""
     bl_idname = "gtatools.path_node_flag"
     bl_label = "Set Path Node Flag"
-    bl_description = (
-        "Toggle roadblock / set traffic light on selected spline points "
-        "of the active path curve"
-    )
     bl_options = {'REGISTER', 'UNDO'}
 
     action: bpy.props.EnumProperty(
         items=[
             ('TOGGLE_ROADBLOCK', "Toggle Roadblock",
-             "Flip bit 12 (cops barrier) on every selected point"),
+             "Переключить бит 12 (барьер копов) на каждой выделенной точке"),
             ('TRAFFIC_NONE',   "Clear Traffic Light",
-             "Write traffic_light=0 on every selected point"),
+             "Поставить traffic_light=0 на каждой выделенной точке"),
             ('TRAFFIC_NORMAL', "Normal Traffic Light",
-             "Write traffic_light=1 on every selected point"),
+             "Поставить traffic_light=1 на каждой выделенной точке"),
             ('TRAFFIC_RAIL',   "Rail Traffic Light",
-             "Write traffic_light=2 on every selected point"),
+             "Поставить traffic_light=2 на каждой выделенной точке"),
             ('TRAFFIC_BUS',    "Bus Traffic Light",
-             "Write traffic_light=3 on every selected point"),
+             "Поставить traffic_light=3 на каждой выделенной точке"),
         ],
         default='TOGGLE_ROADBLOCK',
     )

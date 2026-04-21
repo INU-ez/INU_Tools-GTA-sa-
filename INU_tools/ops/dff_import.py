@@ -579,16 +579,26 @@ def _apply_skin_weights(obj, geom, arm_obj, bone_names):
     print(f"[INU] Skin weights applied, {len(obj.vertex_groups)} vertex groups")
 
 
-def import_dff(filepath: str, context=None):
+def import_dff(filepath: str, context=None, *, skip_2dfx=None):
     """
     Импорт DFF файла в Blender.
 
     Args:
         filepath: Путь к .dff файлу.
         context: Blender context (опционально).
+        skip_2dfx: пропустить импорт 2DFX-эффектов (лампы, частицы, ped attractors).
+                   None → читать scene.gtatools_map_skip_2dfx.
     """
     clump = read_dff_file(filepath)
     base_name = os.path.splitext(os.path.basename(filepath))[0]
+
+    # Resolve 2DFX skip flag from scene when not passed explicitly.
+    if skip_2dfx is None:
+        try:
+            skip_2dfx = bool(getattr(
+                bpy.context.scene, 'gtatools_map_skip_2dfx', False))
+        except Exception:
+            skip_2dfx = False
 
     collection = bpy.context.collection
     imported_objects = []
@@ -733,18 +743,19 @@ def import_dff(filepath: str, context=None):
             traceback.print_exc()
 
     # Импорт 2DFX эффектов (собираем из всех геометрий) → коллекция "2DFX"
-    fx_col = None
-    for geom in clump.geometries:
-        if geom.ext_2dfx and geom.ext_2dfx.entries:
-            if fx_col is None:
-                col_name = "2DFX"
-                if col_name in bpy.data.collections:
-                    fx_col = bpy.data.collections[col_name]
-                else:
-                    fx_col = bpy.data.collections.new(col_name)
-                    bpy.context.scene.collection.children.link(fx_col)
-            fx_objects = _import_2dfx(geom.ext_2dfx, fx_col, base_name)
-            imported_objects.extend(fx_objects)
+    if not skip_2dfx:
+        fx_col = None
+        for geom in clump.geometries:
+            if geom.ext_2dfx and geom.ext_2dfx.entries:
+                if fx_col is None:
+                    col_name = "2DFX"
+                    if col_name in bpy.data.collections:
+                        fx_col = bpy.data.collections[col_name]
+                    else:
+                        fx_col = bpy.data.collections.new(col_name)
+                        bpy.context.scene.collection.children.link(fx_col)
+                fx_objects = _import_2dfx(geom.ext_2dfx, fx_col, base_name)
+                imported_objects.extend(fx_objects)
 
     # Выделяем импортированные объекты
     bpy.ops.object.select_all(action='DESELECT')

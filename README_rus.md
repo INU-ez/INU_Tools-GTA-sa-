@@ -432,6 +432,7 @@ Building01_COL   ← коллизия
 ### Автор
 
 **INU** — автор аддона (Discord: `1.n.u`)
+https://discord.gg/sqtGAVTGdy
 
 ### Лицензия
 

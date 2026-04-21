@@ -24,9 +24,9 @@ def import_cst(filepath: str):
 
 
 class GTATOOLS_OT_import_cst(bpy.types.Operator):
+    """Импорт текстового файла Steve's COL Editor (.cst)"""
     bl_idname = "gtatools.import_cst"
     bl_label = "Import CST (.cst)"
-    bl_description = "Import a Steve's COL Editor text file"
     bl_options = {'REGISTER', 'UNDO'}
 
     filepath: bpy.props.StringProperty(subtype='FILE_PATH')

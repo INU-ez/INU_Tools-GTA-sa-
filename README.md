@@ -432,6 +432,7 @@ Inspired by and partially compatible with:
 ### Author
 
 **INU** — addon author (Discord: `1.n.u`)
+https://discord.gg/sqtGAVTGdy
 
 ### License
 
