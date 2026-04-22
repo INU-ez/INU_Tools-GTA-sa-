@@ -548,6 +548,114 @@ def _format_zone_line(z: IplZone) -> str:
             f'{z.level}')
 
 
+# ── LOD detection ────────────────────────────────────────────────────
+
+def is_lod_name(model_name: str) -> bool:
+    """Heuristic LOD detection from a model name.
+
+    Vanilla GTA SA uses ``LOD<name>`` almost everywhere, but Rockstar's
+    own tools and community mods ship assets with the ``LOD`` marker in
+    less obvious places:
+
+    - ``LOD<name>`` / ``lod<name>`` — prefix (most common)
+    - ``<name>_LOD`` / ``<name>_lod`` — suffix with separator
+    - ``<name>LOD`` — suffix without separator next to a digit/separator,
+      e.g. ``tatar_str_2817_1LOD``
+    - ``<prefix>LOD<suffix>`` — uppercase ``LOD`` spliced into the middle
+      of an otherwise lowercase name (legacy Rockstar pattern, e.g.
+      ``modeLODlaett`` paired with base ``modelaett``)
+
+    For unreliable content prefer :func:`lod_instance_indices`, which
+    reads the IPL ``lod_index`` cross-reference — that is authoritative
+    no matter how the DFF happens to be named.
+    """
+    if not model_name:
+        return False
+    n = model_name.lower()
+    if n.startswith('lod'):
+        return True
+    if n.endswith('_lod'):
+        return True
+    # Bare 'LOD' suffix — require a digit or separator just before it so
+    # we don't classify words like 'clod', 'explod*', 'aerodrom' as LODs.
+    if len(n) > 3 and n.endswith('lod'):
+        prev = n[-4]
+        if prev.isdigit() or prev in '_-':
+            return True
+    # Embedded uppercase ``LOD`` in an otherwise lowercase name. Matches
+    # Rockstar's legacy pattern ``modeLODlaett`` but avoids all-caps
+    # tokens like ``CLOD`` / ``FLOODGATE`` — we only flag if at least one
+    # lowercase letter is directly adjacent to the uppercase marker.
+    if 'LOD' in model_name:
+        pos = model_name.find('LOD')
+        before = model_name[:pos]
+        after = model_name[pos + 3:]
+        has_lower_before = bool(before) and before[-1].islower()
+        has_lower_after = bool(after) and after[0].islower()
+        if has_lower_before or has_lower_after:
+            return True
+    return False
+
+
+def strip_lod_marker(name: str) -> str:
+    """Strip the ``LOD`` marker from a model name, honouring the same
+    naming conventions recognised by :func:`is_lod_name`.
+
+    ::
+
+        LODbush2b       -> bush2b
+        lod_tree        -> tree
+        tatar_str_1LOD  -> tatar_str_1
+        bush1b_LOD      -> bush1b
+        modeLODlaett    -> modelaett
+        barrier1        -> barrier1   (unchanged — not a LOD)
+    """
+    if not name or not is_lod_name(name):
+        return name
+    n = name.lower()
+    if n.startswith('lod'):
+        stripped = name[3:]
+        if stripped and stripped[0] in '_-':
+            stripped = stripped[1:]
+        return stripped
+    if n.endswith('_lod'):
+        return name[:-4]
+    if len(n) > 3 and n.endswith('lod'):
+        prev = n[-4]
+        if prev.isdigit() or prev in '_-':
+            clean = name[:-3]
+            # Trim trailing separator left behind by e.g. 'foo_LOD' after
+            # the earlier branch already matched — here only 'foo_1LOD'
+            # and similar reach this point, so keep the digit/char intact.
+            return clean.rstrip('_-') if clean.endswith(('_', '-')) else clean
+    # Embedded uppercase LOD — drop the 3-char marker from its position.
+    if 'LOD' in name:
+        pos = name.find('LOD')
+        before = name[:pos]
+        after = name[pos + 3:]
+        if (before and before[-1].islower()) or (after and after[0].islower()):
+            return before + after
+    return name
+
+
+def lod_instance_indices(instances) -> set:
+    """Return the set of IplInstance indices that another instance points to
+    via its ``lod_index`` field — these are the authoritative LOD models.
+
+    Usage:
+        refs = lod_instance_indices(instances)
+        for idx, inst in enumerate(instances):
+            is_lod = idx in refs or is_lod_name(inst.model_name)
+    """
+    refs = set()
+    n = len(instances)
+    for inst in instances:
+        li = getattr(inst, 'lod_index', -1)
+        if 0 <= li < n:
+            refs.add(li)
+    return refs
+
+
 # ── Reading ─────────────────────────────────────────────────────────
 
 def read_ipl(filepath: str) -> IplFile:
@@ -751,66 +859,69 @@ def write_ipl(filepath: str, ipl: IplFile, *, binary: bool = False) -> None:
         write_binary_ipl(filepath, ipl)
         return
     with open(filepath, 'w', encoding='utf-8', newline='\n') as f:
-        if ipl.instances:
-            f.write('inst\n')
-            for i in ipl.instances:
-                f.write(_format_inst_line(i) + '\n')
-            f.write('end\n')
+        # Standard GTA SA IPL layout — all 12 sections are emitted, even
+        # when empty, to match the vanilla file structure expected by
+        # most tools (MEd, IPL Editor, etc.).
 
-        if ipl.culls:
-            f.write('cull\n')
-            for c in ipl.culls:
-                f.write(_format_cull_line(c) + '\n')
-            f.write('end\n')
+        f.write('inst\n')
+        for i in ipl.instances:
+            f.write(_format_inst_line(i) + '\n')
+        f.write('end\n')
 
-        if ipl.garages:
-            f.write('grge\n')
-            for g in ipl.garages:
-                f.write(_format_grge_line(g) + '\n')
-            f.write('end\n')
+        f.write('cull\n')
+        for c in ipl.culls:
+            f.write(_format_cull_line(c) + '\n')
+        f.write('end\n')
 
-        if ipl.enexs:
-            f.write('enex\n')
-            for e in ipl.enexs:
-                f.write(_format_enex_line(e) + '\n')
-            f.write('end\n')
+        # path section — SA reads nodes from nodes*.dat, IPL path block stays empty
+        f.write('path\n')
+        f.write('end\n')
 
-        if ipl.pickups:
-            f.write('pick\n')
-            for p in ipl.pickups:
-                f.write(_format_pick_line(p) + '\n')
-            f.write('end\n')
+        f.write('grge\n')
+        for g in ipl.garages:
+            f.write(_format_grge_line(g) + '\n')
+        f.write('end\n')
 
-        if ipl.cars:
-            f.write('cars\n')
-            for c in ipl.cars:
-                f.write(_format_cars_line(c) + '\n')
-            f.write('end\n')
+        f.write('enex\n')
+        for e in ipl.enexs:
+            f.write(_format_enex_line(e) + '\n')
+        f.write('end\n')
 
-        if ipl.jumps:
-            f.write('jump\n')
-            for j in ipl.jumps:
-                f.write(_format_jump_line(j) + '\n')
-            f.write('end\n')
+        f.write('pick\n')
+        for p in ipl.pickups:
+            f.write(_format_pick_line(p) + '\n')
+        f.write('end\n')
 
-        if ipl.auzos:
-            f.write('auzo\n')
-            for a in ipl.auzos:
-                f.write(_format_auzo_line(a) + '\n')
-            f.write('end\n')
+        f.write('cars\n')
+        for c in ipl.cars:
+            f.write(_format_cars_line(c) + '\n')
+        f.write('end\n')
 
-        if ipl.occls:
-            f.write('occl\n')
-            for o in ipl.occls:
-                f.write(_format_occl_line(o) + '\n')
-            f.write('end\n')
+        f.write('jump\n')
+        for j in ipl.jumps:
+            f.write(_format_jump_line(j) + '\n')
+        f.write('end\n')
 
-        if ipl.tcycs:
-            f.write('tcyc\n')
-            for t in ipl.tcycs:
-                f.write(_format_tcyc_line(t) + '\n')
-            f.write('end\n')
+        f.write('tcyc\n')
+        for t in ipl.tcycs:
+            f.write(_format_tcyc_line(t) + '\n')
+        f.write('end\n')
 
+        f.write('auzo\n')
+        for a in ipl.auzos:
+            f.write(_format_auzo_line(a) + '\n')
+        f.write('end\n')
+
+        # mult section — not currently parsed/generated, always empty
+        f.write('mult\n')
+        f.write('end\n')
+
+        f.write('occl\n')
+        for o in ipl.occls:
+            f.write(_format_occl_line(o) + '\n')
+        f.write('end\n')
+
+        # zone — only when populated (most IPLs don't carry zone data)
         if ipl.zones:
             f.write('zone\n')
             for z in ipl.zones:

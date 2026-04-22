@@ -41,9 +41,12 @@ def import_ipl(filepath: str, context=None) -> list:
         if suffix_type not in clean_lookup[clean_low]:
             clean_lookup[clean_low][suffix_type] = obj
 
-    for inst in ipl.instances:
+    from ..core.ipl import is_lod_name, strip_lod_marker, lod_instance_indices
+    lod_refs = lod_instance_indices(ipl.instances)
+
+    for idx, inst in enumerate(ipl.instances):
         key = inst.model_name.lower()
-        is_lod = key.startswith('lod')
+        is_lod = idx in lod_refs or is_lod_name(inst.model_name)
 
         # GTA SA quat (X,Y,Z,W) → Blender quat (W,X,Y,Z), conjugate back
         quat = Quaternion((inst.rot_w, inst.rot_x, inst.rot_y, inst.rot_z)).conjugated()
@@ -57,9 +60,8 @@ def import_ipl(filepath: str, context=None) -> list:
 
         # 2. Match by clean name + appropriate suffix
         if not obj:
-            # For LOD entries (name starts with "lod"), strip prefix and look for _LOD suffix
             if is_lod:
-                base = key[3:]  # remove "lod" prefix
+                base = strip_lod_marker(inst.model_name).lower()
                 variants = clean_lookup.get(base, {})
                 obj = variants.get('LOD') or variants.get('DFF')
             else:
@@ -71,10 +73,9 @@ def import_ipl(filepath: str, context=None) -> list:
             obj.rotation_mode = 'QUATERNION'
             obj.rotation_quaternion = quat
 
-            # Rename LODmodel → model_LOD
-            if is_lod and obj.name.lower().startswith('lod'):
-                base = obj.name[3:]  # remove "LOD" prefix
-                obj.name = base + '_LOD'
+            # Rename <LOD marker somewhere>model → model_LOD
+            if is_lod and is_lod_name(obj.name):
+                obj.name = strip_lod_marker(obj.name) + '_LOD'
 
             inu = obj.inu
             inu.model_id = inst.model_id

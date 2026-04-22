@@ -407,66 +407,72 @@ def read_ide(filepath: str) -> IdeFile:
 # ── Writing ─────────────────────────────────────────────────────────
 
 def write_ide(filepath: str, ide: IdeFile) -> None:
-    """Write a full IDE file with all populated sections."""
+    """Write a full IDE file.
+
+    Standard map sections (objs, tobj, anim, txdp, 2dfx) are ALWAYS
+    emitted with a terminating ``end`` — even when empty — to match the
+    vanilla GTA SA file layout that most tools expect. Specialised
+    sections (cars, peds, weap, hier) are only written when populated.
+    """
     objs = [o for o in ide.objects if not o.is_timed]
     tobjs = [o for o in ide.objects if o.is_timed]
 
     with open(filepath, 'w', encoding='utf-8', newline='\n') as f:
-        # objs
-        if objs:
-            f.write('objs\n')
-            for o in objs:
-                f.write(_format_obj_line(o) + '\n')
-            f.write('end\n')
+        # objs — always emitted
+        f.write('objs\n')
+        for o in objs:
+            f.write(_format_obj_line(o) + '\n')
+        f.write('end\n')
 
-        # tobj
-        if tobjs:
-            f.write('tobj\n')
-            for o in tobjs:
-                f.write(_format_tobj_line(o) + '\n')
-            f.write('end\n')
+        # tobj — always emitted
+        f.write('tobj\n')
+        for o in tobjs:
+            f.write(_format_tobj_line(o) + '\n')
+        f.write('end\n')
 
-        # anim
-        if ide.anims:
-            f.write('anim\n')
-            for a in ide.anims:
-                f.write(_format_anim_line(a) + '\n')
-            f.write('end\n')
+        # anim — always emitted
+        f.write('anim\n')
+        for a in ide.anims:
+            f.write(_format_anim_line(a) + '\n')
+        f.write('end\n')
 
-        # cars
+        # cars — only when populated (veh.ide style)
         if ide.cars:
             f.write('cars\n')
             for c in ide.cars:
                 f.write(_format_car_line(c) + '\n')
             f.write('end\n')
 
-        # peds
+        # peds — only when populated (peds.ide style)
         if ide.peds:
             f.write('peds\n')
             for p in ide.peds:
                 f.write(_format_ped_line(p) + '\n')
             f.write('end\n')
 
-        # weap
+        # weap — only when populated
         if ide.weaps:
             f.write('weap\n')
             for w in ide.weaps:
                 f.write(_format_weap_line(w) + '\n')
             f.write('end\n')
 
-        # hier
+        # hier — only when populated
         if ide.hiers:
             f.write('hier\n')
             for h in ide.hiers:
                 f.write(_format_hier_line(h) + '\n')
             f.write('end\n')
 
-        # txdp
-        if ide.txdps:
-            f.write('txdp\n')
-            for t in ide.txdps:
-                f.write(_format_txdp_line(t) + '\n')
-            f.write('end\n')
+        # txdp — always emitted
+        f.write('txdp\n')
+        for t in ide.txdps:
+            f.write(_format_txdp_line(t) + '\n')
+        f.write('end\n')
+
+        # 2dfx — always emitted (SA stores effects in DFF, IDE section stays empty)
+        f.write('2dfx\n')
+        f.write('end\n')
 
 
 def upsert_ide(filepath: str, entries: list[IdeObject]) -> tuple[int, int]:

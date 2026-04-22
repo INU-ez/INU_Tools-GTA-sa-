@@ -1,26 +1,153 @@
 # INU_tools.data.id_manager — Model ID allocation and tracking
 #
-# File format (model_ids.txt):
-#   One ID per line. Free IDs are just numbers, used IDs have -modelname suffix.
-#   Example:
+# Presets: IDs are stored as individual .txt files under `data/id_presets/`.
+# The caller picks the active preset via `set_active_preset(name)`; all
+# subsequent allocate/release/load/save operations run against that file.
+# A legacy `data/model_ids.txt` (single-file layout from earlier versions)
+# is auto-migrated into `id_presets/default.txt` on first access.
+#
+# File format (one ID per line):
+#   Free IDs are plain numbers; used IDs carry a `-modelname` suffix.
 #     3500
 #     3501-tatar_str_2817_1
 #     3502-LODtatar_str_2817_1
 #     3503
-#     3600
 
 import os
+import re
+import shutil
 
-_ID_FILE = os.path.join(os.path.dirname(__file__), 'model_ids.txt')
+_DATA_DIR = os.path.dirname(__file__)
+_PRESETS_DIR = os.path.join(_DATA_DIR, 'id_presets')
+_LEGACY_FILE = os.path.join(_DATA_DIR, 'model_ids.txt')
 
+_DEFAULT_PRESET = 'default'
+_active_preset = _DEFAULT_PRESET
+
+
+# ── Presets ──────────────────────────────────────────────────────────
+
+def _sanitize(name: str) -> str:
+    """Return a filename-safe preset name (letters/digits/dash/underscore/dot/space)."""
+    name = (name or '').strip()
+    name = re.sub(r'[^\w.\- ]+', '_', name)
+    return name or _DEFAULT_PRESET
+
+
+def _ensure_presets_dir():
+    """Create the presets directory and migrate the legacy single-file store."""
+    if not os.path.isdir(_PRESETS_DIR):
+        try:
+            os.makedirs(_PRESETS_DIR, exist_ok=True)
+        except Exception:
+            return
+    default_path = os.path.join(_PRESETS_DIR, _DEFAULT_PRESET + '.txt')
+    if os.path.isfile(_LEGACY_FILE) and not os.path.isfile(default_path):
+        try:
+            shutil.copy2(_LEGACY_FILE, default_path)
+        except Exception:
+            pass
+
+
+def set_active_preset(name: str) -> None:
+    """Select the preset used by subsequent load/save calls."""
+    global _active_preset
+    _active_preset = _sanitize(name) if name else _DEFAULT_PRESET
+
+
+def get_active_preset() -> str:
+    return _active_preset
+
+
+def list_presets() -> list:
+    """Return the sorted list of preset names (without .txt extension)."""
+    _ensure_presets_dir()
+    try:
+        files = os.listdir(_PRESETS_DIR)
+    except Exception:
+        return []
+    names = []
+    for fn in files:
+        low = fn.lower()
+        if not low.endswith('.txt') or fn.startswith('_'):
+            continue
+        names.append(os.path.splitext(fn)[0])
+    names.sort(key=lambda s: s.lower())
+    if _DEFAULT_PRESET not in names:
+        # Ensure a default preset always shows up so the dropdown isn't empty.
+        names.insert(0, _DEFAULT_PRESET)
+    return names
+
+
+def _preset_path(name: str = None) -> str:
+    _ensure_presets_dir()
+    safe = _sanitize(name if name is not None else _active_preset)
+    return os.path.join(_PRESETS_DIR, safe + '.txt')
+
+
+def create_preset(name: str, copy_from: str = None) -> bool:
+    """Create a new empty preset, optionally duplicating another preset's IDs."""
+    _ensure_presets_dir()
+    safe = _sanitize(name)
+    if not safe:
+        return False
+    dst = os.path.join(_PRESETS_DIR, safe + '.txt')
+    if os.path.isfile(dst):
+        return False
+    try:
+        if copy_from:
+            src = os.path.join(_PRESETS_DIR, _sanitize(copy_from) + '.txt')
+            if os.path.isfile(src):
+                shutil.copy2(src, dst)
+                return True
+        with open(dst, 'w', encoding='utf-8') as f:
+            f.write(f'# GTA SA model ID preset: {safe}\n')
+        return True
+    except Exception:
+        return False
+
+
+def delete_preset(name: str) -> bool:
+    """Delete a preset file. The `default` preset cannot be removed."""
+    safe = _sanitize(name)
+    if safe == _DEFAULT_PRESET:
+        return False
+    path = os.path.join(_PRESETS_DIR, safe + '.txt')
+    if not os.path.isfile(path):
+        return False
+    try:
+        os.remove(path)
+        return True
+    except Exception:
+        return False
+
+
+def rename_preset(old: str, new: str) -> bool:
+    old_safe = _sanitize(old)
+    new_safe = _sanitize(new)
+    if old_safe == new_safe:
+        return False
+    src = os.path.join(_PRESETS_DIR, old_safe + '.txt')
+    dst = os.path.join(_PRESETS_DIR, new_safe + '.txt')
+    if not os.path.isfile(src) or os.path.isfile(dst):
+        return False
+    try:
+        os.rename(src, dst)
+        return True
+    except Exception:
+        return False
+
+
+# ── Storage (current active preset) ──────────────────────────────────
 
 def _load():
-    """Load ID list from text file. Returns list of (id, model_name_or_None)."""
+    """Load ID list from the active preset. Returns list of (id, model_name_or_None)."""
     entries = []
-    if not os.path.isfile(_ID_FILE):
+    path = _preset_path()
+    if not os.path.isfile(path):
         return entries
     try:
-        with open(_ID_FILE, 'r', encoding='utf-8') as f:
+        with open(path, 'r', encoding='utf-8') as f:
             for line in f:
                 line = line.strip()
                 if not line or line.startswith('#'):
@@ -39,27 +166,26 @@ def _load():
                         entries.append((id_num, None))
                     except ValueError:
                         continue
-    except:
+    except Exception:
         pass
     return entries
 
 
 def _save(entries):
-    """Save ID list to text file, preserving header lines."""
-    # Read existing non-ID lines (header)
+    """Save ID list to the active preset, preserving any header comment lines."""
+    path = _preset_path()
     header_lines = []
-    if os.path.isfile(_ID_FILE):
-        with open(_ID_FILE, 'r', encoding='utf-8') as f:
+    if os.path.isfile(path):
+        with open(path, 'r', encoding='utf-8') as f:
             for line in f:
                 stripped = line.strip()
                 if not stripped:
                     continue
-                # Check if line starts with a digit — it's an ID line, stop
                 if stripped[0].isdigit():
                     break
                 header_lines.append(line.rstrip('\n'))
 
-    with open(_ID_FILE, 'w', encoding='utf-8') as f:
+    with open(path, 'w', encoding='utf-8') as f:
         for h in header_lines:
             f.write(h + '\n')
         for id_num, name in sorted(entries, key=lambda x: x[0]):
@@ -107,19 +233,19 @@ def release_id(model_id):
 
 
 def clear_all():
-    """Clear all assignments (all IDs become free)."""
+    """Clear all assignments in the active preset (all IDs become free)."""
     entries = _load()
     entries = [(id_num, None) for id_num, _ in entries]
     _save(entries)
 
 
 def get_file_path():
-    """Return path to the ID file."""
-    return _ID_FILE
+    """Return path to the current active preset file."""
+    return _preset_path()
 
 
 def create_id_file(max_id=19999):
-    """Create model_ids.txt with all IDs 321-max_id as free."""
+    """Fill the active preset with free IDs 321..max_id."""
     entries = [(i, None) for i in range(321, max_id + 1)]
     _save(entries)
     return len(entries)
@@ -141,7 +267,7 @@ def extend_ids(count=1000):
 
 
 def populate_from_game(game_root):
-    """Read all IDE files from gta.dat and mark those IDs as occupied."""
+    """Read all IDE files from gta.dat and mark those IDs as occupied in the active preset."""
     from ..core.gta_dat import find_all_resources
     from ..core.ide import read_ide
     import os
@@ -168,12 +294,11 @@ def populate_from_game(game_root):
             except Exception:
                 pass
 
-    # Update existing entries: mark game IDs as occupied
     entries = _load()
     entry_map = {id_num: name for id_num, name in entries}
 
     for gid, gname in game_ids.items():
-        entry_map[gid] = gname  # mark as occupied with model name
+        entry_map[gid] = gname
 
     entries = [(k, v) for k, v in entry_map.items()]
     _save(entries)

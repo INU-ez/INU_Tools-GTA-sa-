@@ -3,6 +3,7 @@
 import bpy
 import mathutils
 from ..core.ifp import read_ifp, HAS_ROT, HAS_TRANS
+from .. import T
 
 # Blender 5.x uses layered actions; 4.x uses action.fcurves directly
 _USE_LAYERED = hasattr(bpy.types, 'ActionSlot')
@@ -304,14 +305,14 @@ class GTATOOLS_OT_ifp_batch_import(bpy.types.Operator):
     directory: bpy.props.StringProperty(subtype='DIR_PATH')
     name_filter: bpy.props.StringProperty(
         name="Name Prefix",
-        description="Применять только анимации, имя которых начинается с этого префикса (регистронезависимо)",
+        description=T("Применять только анимации, имя которых начинается с этого префикса (регистронезависимо)"),
         default="",
     )
     mode: bpy.props.EnumProperty(
         name="Mode",
         items=[
-            ('NLA', "NLA Sequential", "Уложить клипы на один NLA-трек с зазором"),
-            ('ACTIONS', "Actions Only", "Создать Actions, без NLA"),
+            ('NLA', "NLA Sequential", T("Уложить клипы на один NLA-трек с зазором")),
+            ('ACTIONS', "Actions Only", T("Создать Actions, без NLA")),
         ],
         default='NLA',
     )

@@ -434,6 +434,7 @@ def build_map_glb(cache_dir: str, instances: list, ide_models: dict,
     """
     import math
     from INU_tools.core.dff import read_dff
+    from INU_tools.core.ipl import is_lod_name, lod_instance_indices
 
     gltf = _GltfBuilder()
     mesh_cache = {}  # model_name → mesh_idx (for instancing)
@@ -441,9 +442,12 @@ def build_map_glb(cache_dir: str, instances: list, ide_models: dict,
     placed = 0
     skipped = 0
     total = len(instances)
+    # Authoritative LOD detection via IPL cross-references, with a name
+    # heuristic as fallback for broken or third-party map files.
+    lod_refs = lod_instance_indices(instances)
 
     for idx, inst in enumerate(instances):
-        if callback and idx % 100 == 0:
+        if callback and idx % 10 == 0:
             callback(idx, total, inst.model_name if hasattr(inst, 'model_name') else '')
 
         model_name = inst.model_name
@@ -451,7 +455,7 @@ def build_map_glb(cache_dir: str, instances: list, ide_models: dict,
             skipped += 1
             continue
 
-        is_lod = model_name.upper().startswith('LOD') or '_LOD' in model_name.upper()
+        is_lod = idx in lod_refs or is_lod_name(model_name)
         if skip_lod and is_lod:
             skipped += 1
             continue
@@ -573,6 +577,9 @@ def build_map_glb(cache_dir: str, instances: list, ide_models: dict,
             rotation=(qx, qy, qz, qw),
         )
         placed += 1
+
+    if callback:
+        callback(total, total, 'writing .glb')
 
     if placed == 0:
         return {'placed': 0, 'skipped': skipped, 'meshes': 0}

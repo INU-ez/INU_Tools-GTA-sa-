@@ -601,6 +601,7 @@ LANG = {
     "Все ID очищены": "All IDs cleared",
     "освобождён": "released",
     "Нет свободных ID в model_ids.txt": "No free IDs in model_ids.txt",
+    "Нет свободных ID в активном пресете": "No free IDs in the active preset",
     "Показать пути IDE/IPL/IMG": "Show IDE/IPL/IMG paths",
     "Показать настройки текстур": "Show texture settings",
     "Показать настройки суффиксов": "Show suffix settings",
@@ -850,6 +851,41 @@ LANG = {
     "Расширить ID (FLA)": "Extend IDs (FLA)",
     "Количество ID для добавления": "Number of IDs to add",
 
+    # ID Presets (v1.6.4+)
+    "Пресет ID": "ID Preset",
+    "Пресет": "Preset",
+    "Активный файл со списком ID. Каждый пресет — отдельный .txt в папке data/id_presets/":
+        "Active file with the ID list. Each preset is a separate .txt in data/id_presets/",
+    "Название пресета": "Preset name",
+    "Имя нового пресета": "Name of the new preset",
+    "Название": "Name",
+    "Имя нового пресета. Будет сохранён как data/id_presets/<имя>.txt":
+        "Name of the new preset. Will be stored as data/id_presets/<name>.txt",
+    "Скопировать с активного": "Copy from active",
+    "Создать пресет как копию текущего активного":
+        "Create the preset as a copy of the current active one",
+    "Введите название пресета": "Enter a preset name",
+    "Пресет уже существует или не удалось создать":
+        "Preset already exists or could not be created",
+    "Создан пресет:": "Preset created:",
+    "Пресет 'default' удалить нельзя": "The 'default' preset cannot be deleted",
+    "Не удалось удалить пресет": "Failed to delete the preset",
+    "Удалён пресет:": "Preset deleted:",
+    "Новое название": "New name",
+    "Введите новое название": "Enter a new name",
+    "Не удалось переименовать (имя занято или ошибка)":
+        "Failed to rename (name taken or error)",
+    "Переименован:": "Renamed:",
+    "Заполнить активный пресет ID (321-19999, все свободные)":
+        "Fill the active ID preset (321-19999, all free)",
+    "Открыть файл активного ID пресета в текстовом редакторе":
+        "Open the active ID preset file in a text editor",
+    "Создать новый пресет ID.\n\n    Пустой пресет создаётся готовым к `Создать файл ID` (Заполнить 321-19999).\n    Опция «Скопировать с активного» дублирует текущий файл ID, чтобы не\n    начинать с нуля, если часть ID уже назначена.":
+        "Create a new ID preset.\n\nAn empty preset is ready for 'Create ID File' (fill 321-19999).\nThe 'Copy from active' option duplicates the current ID file so you\ndon't have to start from scratch when some IDs are already assigned.",
+    "Удалить активный пресет ID. Пресет «default» удалить нельзя":
+        "Delete the active ID preset. The 'default' preset cannot be removed",
+    "Переименовать активный пресет ID": "Rename the active ID preset",
+
     # Batch operations
     "Назначить с ID...": "Assign from ID...",
     "Начальный ID для назначения": "Starting ID for assignment",
@@ -1064,4 +1100,353 @@ LANG = {
         "UV scroll speed along V per second",
     "Длительность цикла UV-анимации":
         "Duration of the UV animation cycle",
+
+    # ── Operator/Panel docstrings (auto-translated via register loop) ───
+    "IDE/IPL свойства в Object Properties": "IDE / IPL properties in Object Properties",
+    "X Radar Maker — генерация тайлов мини-карты GTA SA":
+        "X Radar Maker — generate GTA SA radar tiles",
+    "Включить/выключить отображение LightMap UV2":
+        "Toggle LightMap UV2 display",
+    "Выбрать активный ключ для удаления":
+        "Select the active keyframe for removal",
+    "Выбрать имя эффекта из effects.fxp":
+        "Pick an effect name from effects.fxp",
+    "Выбрать кривую для редактирования":
+        "Pick a curve to edit",
+    "Выбрать позицию привязки UV в ячейке":
+        "Pick the UV snap anchor inside the cell",
+    "Выставить Vehicle pipeline (0x53F2009A) на выделенных MESH-объектах.\n    Нужен чтобы кузов получил env-map отражения в игре.":
+        "Set the Vehicle pipeline (0x53F2009A) on selected MESH objects.\nRequired so the body gets env-map reflections in game.",
+    "Генерировать тайлы радара GTA SA":
+        "Generate GTA SA radar tiles",
+    "Добавить / обновить запись в существующем IDE файле (авто-LOD)":
+        "Insert / update an entry in an existing IDE file (auto-LOD)",
+    "Добавить / обновить запись в существующем IPL файле (авто-LOD привязка)":
+        "Insert / update an entry in an existing IPL file (auto-LOD linkage)",
+    "Добавить ID (Fastman Limit Adjuster)":
+        "Add IDs (Fastman Limit Adjuster)",
+    "Добавить ID из объектов сцены в менеджер":
+        "Add IDs from scene objects into the manager",
+    "Добавить ключевой кадр в конец кривой":
+        "Append a keyframe to the end of the curve",
+    "Единый экспорт INU — DFF, COL, TXD, IDE, IPL в одну папку":
+        "Unified INU export — DFF, COL, TXD, IDE, IPL into one folder",
+    "Загрузить выбранный пресет":
+        "Load the selected preset",
+    "Загрузить занятые ID из IDE файлов GTA SA":
+        "Load occupied IDs from GTA SA IDE files",
+    "Задать параметры воды для выделенных объектов":
+        "Set water parameters on selected objects",
+    "Заменить IPL Empty-плейсхолдеры на модели из сцены":
+        "Replace IPL empty placeholders with scene models",
+    "Заменить выделенные fake-объекты на DFF модели из IMG":
+        "Replace selected fake objects with real DFF models from IMG",
+    "Записать буфер ключей обратно в effects.fxp для выбранной кривой":
+        "Write the keyframe buffer back to effects.fxp for the selected curve",
+    "Извлечь все DFF, COL и текстуры из IMG в .inu_cache/":
+        "Extract all DFF, COL and textures from IMG into .inu_cache/",
+    "Импорт GTA SA файлов (.dff/.col/.txd/.ide/.ipl) с авто-определением формата":
+        "Import GTA SA files (.dff/.col/.txd/.ide/.ipl) with auto format detection",
+    "Импорт IFP — анимации GTA SA":
+        "Import IFP — GTA SA animations",
+    "Импорт TXD при перетаскивании во viewport":
+        "Import TXD on drag-and-drop into the viewport",
+    "Импорт flight.dat — маршруты полётов":
+        "Import flight.dat — flight paths",
+    "Импорт nodes.dat — пешеходные/авто пути (мультивыбор)":
+        "Import nodes.dat — pedestrian / vehicle paths (multi-select)",
+    "Импорт paths.ipl — пути для gta.dat":
+        "Import paths.ipl — paths listed in gta.dat",
+    "Импорт tracks.dat — железнодорожные пути":
+        "Import tracks.dat — railway paths",
+    "Импорт water.dat": "Import water.dat",
+    "Импорт карты GTA SA: автопоиск IDE/IPL/IMG по папке игры":
+        "Import GTA SA map: auto-discover IDE/IPL/IMG from the game folder",
+    "Импорт секций IPL (cull, grge, enex, pick, cars, auzo, jump, occl)":
+        "Import IPL sections (cull, grge, enex, pick, cars, auzo, jump, occl)",
+    "Импортировать .glb карты с сортировкой по коллекциям":
+        "Import map .glb with per-collection sorting",
+    "Импортировать модели из IMG архива (по списку из IDE/IPL)":
+        "Import models from an IMG archive (driven by IDE/IPL)",
+    "Интеграция с Itera Tools 3 — материалы освещения":
+        "Itera Tools 3 integration — lighting materials",
+    "Конвертировать кривую или рёбра меша в путь paths.ipl":
+        "Convert a curve or mesh edges into a paths.ipl path",
+    "Копировать vertex colors из одного атрибута в другой (Day ↔ Night)":
+        "Copy vertex colors between attributes (Day ↔ Night)",
+    "Массовое переключение типа объектов (OBJ/COL/SHA/2DFX/NON)":
+        "Batch switch object type (OBJ/COL/SHA/2DFX/NON)",
+    "Назначить ID всем выделенным объектам с Model ID = 0":
+        "Assign IDs to every selected object with Model ID = 0",
+    "Назначить последовательные ID выделенным объектам начиная с указанного":
+        "Assign sequential IDs to selected objects starting from a given value",
+    "Найти все IDE/IPL/IMG по gta.dat из корневой папки игры":
+        "Find every IDE/IPL/IMG referenced by gta.dat from the game root",
+    "Обновить список файлов IMG архива":
+        "Refresh the IMG archive file list",
+    "Объединить дубликаты материалов и текстур (.001, .002, и т.д.) с оригиналами":
+        "Merge duplicate materials and textures (.001, .002, etc.) with their originals",
+    "Освободить ID": "Release ID",
+    "Отвязать все 2DFX/частицы от выделенного меша":
+        "Detach every 2DFX / particle from the selected mesh",
+    "Отметить/снять выбранные точки кривой как станции (flag=1)":
+        "Toggle the station flag (flag=1) on the selected curve points",
+    "Очистить Model ID у выделенных объектов":
+        "Clear Model ID on selected objects",
+    "Очистить все занятые ID": "Clear all occupied IDs",
+    "Очистить сохранённые raw DFF данные для экспорта отредактированной геометрии":
+        "Clear the cached raw DFF data so edited geometry is exported",
+    "Панель IDE / IPL / IMG для работы с существующими файлами GTA SA":
+        "IDE / IPL / IMG panel for working with existing GTA SA files",
+    "Панель Path IO": "Path IO panel",
+    "Панель Water IO": "Water IO panel",
+    "Панель анимаций IFP": "IFP animations panel",
+    "Панель проверки геометрии и материалов":
+        "Geometry and materials check panel",
+    "Панель экспорта/импорта GTA моделей":
+        "GTA model export / import panel",
+    "Переключить все Map_ объекты между Bounding Box и Textured":
+        "Toggle every Map_ object between Bounding Box and Textured",
+    "Переключить редактируемый эмиттер в системе с несколькими":
+        "Switch the editable emitter in a multi-emitter system",
+    "Перечитать effects.fxp с диска (сбросить кэш)":
+        "Reload effects.fxp from disk (flush cache)",
+    "Подтянуть LOD и COL к позиции DFF модели":
+        "Snap LOD and COL to the DFF model's position",
+    "Показать/скрыть линии связей DFF↔LOD↔COL":
+        "Show / hide DFF ↔ LOD ↔ COL link lines",
+    "Превью COL Night Light — зелёная визуализация и числа на полигонах":
+        "Preview COL Night Light — green overlay and per-face numbers",
+    "Привязать вершины воды к кратным 4 координатам (требование GTA SA)":
+        "Snap water vertices to multiples of 4 (GTA SA requirement)",
+    "Применить IFP анимацию к выделенному скелету":
+        "Apply an IFP animation to the selected armature",
+    "Применить Itera материал из библиотеки к выделенным объектам":
+        "Apply an Itera material from the library to selected objects",
+    "Применить Quickstart Vertex Lightable Surface — модификатор + коллекция со светом":
+        "Apply Quickstart Vertex Lightable Surface — modifier + light collection",
+    "Применить стандартные SA-настройки для материала кузова машины:\n    env map = xvehicleenv128, specular = vehiclespecdot64, blend = 0.05, + Vehicle pipeline.\n    Эквивалент кнопки \"SA Vehicle default\" из Kam's GTA_Material.ms.":
+        "Apply standard SA vehicle body settings:\nenv map = xvehicleenv128, specular = vehiclespecdot64, blend = 0.05, + Vehicle pipeline.\nEquivalent to Kam's GTA_Material.ms 'SA Vehicle default' button.",
+    "Применить текстуру LightMap на UV2 (Multiply) для выделенных объектов":
+        "Apply a LightMap texture on UV2 (Multiply) for selected objects",
+    "Сброс Location и Rotation в (0,0,0) для выделенных мешей":
+        "Reset Location and Rotation to (0, 0, 0) on selected meshes",
+    "Сгладить vertex colors на стыках между выделенными объектами":
+        "Smooth vertex colors across seams between selected objects",
+    "Скрыть/показать DFF, LOD или COL объекты во всей сцене":
+        "Hide / show DFF, LOD or COL objects across the whole scene",
+    "Собрать один .glb файл карты (все модели с позициями из IPL)":
+        "Build a single map .glb (all models with IPL positions)",
+    "Создать водный полигон с параметрами GTA SA":
+        "Create a water polygon with GTA SA parameters",
+    "Создать новый автомобильный путь (меш с вершинами)":
+        "Create a new vehicle path (vertex mesh)",
+    "Создать новый ж/д путь (кривая)":
+        "Create a new railway path (curve)",
+    "Создать новый пешеходный путь (меш с вершинами)":
+        "Create a new pedestrian path (vertex mesh)",
+    "Создать новый пустой эффект в effects.fxp":
+        "Create a new empty effect in effects.fxp",
+    "Создать новый путь для paths.ipl":
+        "Create a new path for paths.ipl",
+    "Сохранить правки эффекта обратно в effects.fxp (с автобэкапом)":
+        "Save effect edits back to effects.fxp (with auto-backup)",
+    "Сохранить текущие настройки как пресет":
+        "Save current settings as a preset",
+    "Сшить края двух водных плоскостей (выровнять ближайшие вершины)":
+        "Stitch the edges of two water planes (align nearest vertices)",
+    "Убрать Itera материал и восстановить оригинальные":
+        "Remove the Itera material and restore the originals",
+    "Убрать LightMap UV2 из материалов выделенных объектов":
+        "Remove LightMap UV2 from selected objects' materials",
+    "Удалить DFF/TXD/COL выделенных моделей из IMG архива":
+        "Remove selected models' DFF / TXD / COL from the IMG archive",
+    "Удалить color attribute по имени на всех выделенных объектах":
+        "Delete a color attribute by name across all selected objects",
+    "Удалить активный ключевой кадр": "Delete the active keyframe",
+    "Удалить выбранный пресет": "Delete the selected preset",
+    "Удалить текущий эффект из effects.fxp (с автобэкапом)":
+        "Delete the current effect from effects.fxp (with auto-backup)",
+    "Упаковать тайлы радара в TXD архивы (1 тайл = 1 TXD)":
+        "Pack radar tiles into TXD archives (1 tile = 1 TXD)",
+    "Экспорт IFP — анимации GTA SA": "Export IFP — GTA SA animations",
+    "Экспорт flight.dat — маршруты полётов": "Export flight.dat — flight paths",
+    "Экспорт nodes.dat — группировка по имени файла или авто-разбиение по зонам":
+        "Export nodes.dat — group by filename or auto-split by zones",
+    "Экспорт paths.ipl — пути для gta.dat":
+        "Export paths.ipl — paths listed in gta.dat",
+    "Экспорт tracks.dat — железнодорожные пути":
+        "Export tracks.dat — railway paths",
+    "Экспорт water.dat": "Export water.dat",
+    "Экспорт секций IPL из коллекций IPL_* в файл":
+        "Export IPL sections from IPL_* collections into a file",
+    "Экспортировать один общий TXD для нескольких DFF моделей":
+        "Export a single shared TXD for multiple DFF models",
+
+    # ── Particle property descriptions (effects.fxp) ────────────────────
+    "CULLDIST — расстояние отсечения эффекта в игре":
+        "CULLDIST — effect cull distance in game",
+    "EMANGLE MAX — максимальный угол конуса эмиссии":
+        "EMANGLE MAX — maximum emission cone angle",
+    "EMANGLE MIN — минимальный угол конуса эмиссии":
+        "EMANGLE MIN — minimum emission cone angle",
+    "EMLIFE BIAS — случайный разброс длительности жизни":
+        "EMLIFE BIAS — random lifetime scatter",
+    "EMPOS X/Y/Z — смещение точки спавна":
+        "EMPOS X/Y/Z — spawn point offset",
+    "EMROTATION ANGLEMAX — макс начальный поворот спрайта":
+        "EMROTATION ANGLEMAX — max initial sprite rotation",
+    "EMROTATION ANGLEMIN — мин начальный поворот спрайта":
+        "EMROTATION ANGLEMIN — min initial sprite rotation",
+    "EMSIZE половина размера бокса эмиссии (centered)":
+        "EMSIZE — half-extent of the emission box (centered)",
+    "EMSPEED BIAS — случайный разброс начальной скорости":
+        "EMSPEED BIAS — random initial-speed scatter",
+    "FORCE X/Y/Z — постоянное ускорение (например -9.8 по Z = гравитация)":
+        "FORCE X/Y/Z — constant acceleration (e.g. -9.8 on Z = gravity)",
+    "FRICTION — сопротивление воздуха": "FRICTION — air resistance",
+    "GROUNDCOLLIDE BOUNCE — сила отскока при ударе о землю":
+        "GROUNDCOLLIDE BOUNCE — bounce factor on ground hit",
+    "GROUNDCOLLIDE SPEEDMULT — потеря скорости при ударе":
+        "GROUNDCOLLIDE SPEEDMULT — speed loss on impact",
+    "JITTER JITTERFACTOR — резкий случайный дёрг":
+        "JITTER JITTERFACTOR — sharp random jitter",
+    "LENGTH — длительность цикла системы в секундах":
+        "LENGTH — system cycle duration in seconds",
+    "NOISE — сглаженное случайное движение":
+        "NOISE — smoothed random motion",
+    "PLAYMODE — режим проигрывания (0-3)": "PLAYMODE — play mode (0-3)",
+    "ROTSPEED MAXCW — макс скорость вращения спрайта":
+        "ROTSPEED MAXCW — max sprite rotation speed",
+    "ROTSPEED MINCW — мин скорость вращения спрайта":
+        "ROTSPEED MINCW — min sprite rotation speed",
+    "WIND WINDFACTOR — восприимчивость к ветру игры":
+        "WIND WINDFACTOR — game wind responsiveness",
+
+    # ── Status / report / label strings ─────────────────────────────────
+    "Автоматически ставить material alpha = 254 при наличии vertex alpha < 255.\nНужно для стандартных прозрачных мешей (стёкла, дым). Выключи если материал должен остаться opaque":
+        "Automatically set material alpha = 254 when any vertex alpha < 255.\nNeeded for standard transparent meshes (glass, smoke). Disable if the material must stay opaque",
+    "Восстановлено:": "Restored:",
+    "Выберите папку для экспорта": "Pick an output folder",
+    "Выделите объекты с нодами": "Select objects that carry nodes",
+    "Извлечение ресурсов...": "Extracting resources...",
+    "Импорт .glb...": "Importing .glb...",
+    "Импорт .glb:": "Import .glb:",
+    "Импорт карты...": "Importing map...",
+    "Импорт карты:": "Import map:",
+    "Источник:": "Source:",
+    "Материалов:": "Materials:",
+    "Не найден 3D Viewport": "No 3D Viewport found",
+    "Не найдено моделей для экспорта": "No models to export",
+    "Нет меш объектов для экспорта": "No mesh objects to export",
+    "Нет файлов для импорта": "No files to import",
+    "Нечего экспортировать": "Nothing to export",
+    "Node group не найден:": "Node group not found:",
+    "Открыть/Закрыть UV Editor": "Open / Close UV Editor",
+    "Отменено": "Cancelled",
+    "Ошибка загрузки node group:": "Failed to load node group:",
+    "Писать IPL в бинарном формате (только inst+cars)":
+        "Write IPL in binary format (inst + cars only)",
+    "Писать nodes*.dat в расширенном FLA4 формате (spawn/speed/lanes per-node)":
+        "Write nodes*.dat in extended FLA4 format (per-node spawn / speed / lanes)",
+    "Пометить геометрию как разрушаемую (пишет чанк 0x253F2FD в DFF)":
+        "Mark geometry as breakable (writes chunk 0x253F2FD into the DFF)",
+    "Помечает меш как объёмный луч света для плагина SA_Light.asi.\nУстанавливает material color = (254,254,254,254) — этот маркер плагин ищет во время рендера.\n\nТРЕБУЕТ SA_Light.asi в корне GTA SA. Без плагина меш будет рендериться как обычный полупрозрачный объект с жёстким срезом alpha.\n\nДля использования:\n1. Собери меш-конус/куб формой луча\n2. Покрась vertex colors как хочешь (любые значения alpha)\n3. Включи этот флаг + Set Material Alpha выключи\n4. Экспорт → плагин автоматически включит плавный alpha blend на этом меше":
+        "Mark the mesh as a volumetric light beam for the SA_Light.asi plugin.\nSets material color = (254, 254, 254, 254) — the plugin looks for this marker at render time.\n\nREQUIRES SA_Light.asi in the GTA SA root. Without the plugin the mesh renders as an ordinary semi-transparent object with hard alpha cutoff.\n\nHow to use:\n1. Build a cone / box mesh shaped like the beam\n2. Paint vertex colors however you want (any alpha values)\n3. Enable this flag + disable Set Material Alpha\n4. Export — the plugin switches this mesh to smooth alpha blending automatically",
+    "Превью COL Light включено": "COL Light preview enabled",
+    "Превью COL Light выключено": "COL Light preview disabled",
+    "Привязано вершин:": "Snapped vertices:",
+    "Применить SA Vehicle defaults": "Apply SA Vehicle defaults",
+    "Пропущено (разные пути):": "Skipped (different paths):",
+    "Сборка карты...": "Building map...",
+    "Сборка карты:": "Building map:",
+    "Сила, нужная чтобы сломать объект (умолчание 1.0)":
+        "Force required to break the object (default 1.0)",
+    "Слот цвета машины:": "Vehicle color slot:",
+    "Слот цвета машины: движок SA подставит цвет из carcols.dat. Меняет базовый RGB материала на магическую метку.":
+        "Vehicle color slot: the SA engine substitutes the color from carcols.dat. Replaces the material's base RGB with the magic marker.",
+    "Сшито вершин:": "Stitched vertices:",
+    "Текстур:": "Textures:",
+    "Формат:": "Format:",
+    "пропущено": "skipped",
+
+    # ── IDE flag descriptions (wrapped with T() after fix) ──────────────
+    "Дорога (1)": "Road (1)",
+    "Прозрачный, рисовать последним (4)": "Transparent, draw last (4)",
+    "Аддитивный блендинг (8)": "Additive blending (8)",
+    "Не писать в Z-буфер (64)": "Don't write Z-buffer (64)",
+    "Не получать тени (128)": "Don't receive shadows (128)",
+    "Стекло разбиваемое (512)": "Breakable glass (512)",
+    "Стекло с трещинами (1024)": "Cracked glass (1024)",
+    "Дверь гаража (2048)": "Garage door (2048)",
+    "Разрушаемый (4096)": "Breakable (4096)",
+    "Дерево, качается на ветру (8192)": "Tree, sways in wind (8192)",
+    "Пальма, качается на ветру (16384)": "Palm, sways in wind (16384)",
+    "Нет коллизии с летающим (32768)": "No collision with flying (32768)",
+    "Граффити тег (1048576)": "Graffiti tag (1048576)",
+    "Рисовать обе стороны (2097152)": "Draw both sides (2097152)",
+    "Разрушаемая статуя (4194304)": "Breakable statue (4194304)",
+
+    # ── Vehicle color slot labels / enums ───────────────────────────────
+    "Обычный материал, не связан с carcols": "Plain material, unrelated to carcols",
+    "Основной цвет (первый в carcols.dat)": "Primary color (first in carcols.dat)",
+    "Второй цвет": "Secondary color",
+    "Третий цвет (некоторые машины)": "Third color (some vehicles)",
+    "Четвёртый цвет": "Fourth color",
+    "Левая фара": "Left headlight",
+    "Правая фара": "Right headlight",
+    "Левый задний фонарь": "Left tail light",
+    "Правый задний фонарь": "Right tail light",
+
+    # ── Misc property descriptions & confirmations ──────────────────────
+    "Я понимаю что это перезапишет effects.fxp":
+        "I understand this will overwrite effects.fxp",
+    "<Game Root не задан>": "<Game Root not set>",
+    "<effects.fxp не найден>": "<effects.fxp not found>",
+    "<нет эффектов>": "<no effects>",
+    "nvcompress.exe не найден в указанной папке":
+        "nvcompress.exe not found in the given folder",
+
+    # ── Report messages (FXP editor, misc) ──────────────────────────────
+    "Имя пустое": "Name is empty",
+    "Подтверждение не получено": "Confirmation not given",
+    "Имя эффекта пустое": "Effect name is empty",
+    "Эффект не выбран": "No effect selected",
+    "У эффекта один эмиттер": "Effect has a single emitter",
+    "Нет изменений — файл не тронут": "No changes — file left untouched",
+
+    # ── IFP batch / Bitmaps / Map Export / Vehicle Scale tooltips ───────
+    "Применять только анимации, имя которых начинается с этого префикса (регистронезависимо)":
+        "Only apply animations whose name starts with this prefix (case-insensitive)",
+    "Уложить клипы на один NLA-трек с зазором":
+        "Lay clips onto one NLA track with a gap between them",
+    "Создать Actions, без NLA": "Create Actions only, no NLA",
+    "Создать подпапку на каждый txd_name (читается с mesh-объектов)":
+        "Create a subfolder per txd_name (read from mesh objects)",
+    "Первый ID для DFF у которых inu.model_id == 0":
+        "Starting ID for DFFs whose inu.model_id == 0",
+    "Множитель равномерного масштаба — применяется к позициям и вершинам":
+        "Uniform scale factor — applied to positions and vertices",
+    "Двигать только дамми-Empty, меши не трогать":
+        "Move dummy Empties only, leave meshes untouched",
+
+    # ── Imported-class docstrings (tools/* and ops/*) ───────────────────
+    "Конвертировать vertex colors в COL Day/Night Light (разбиение материалов по яркости)":
+        "Convert vertex colors to COL Day / Night Light (split materials by brightness)",
+    "Удалить COL light материалы, созданные Bake COL Light":
+        "Delete COL light materials created by Bake COL Light",
+    "Проверить все материалы и показать текстуры, файлы которых не найдены":
+        "Scan every material and list textures whose files are missing",
+    "Рекурсивно искать в выбранной папке и подставлять image.filepath для найденных по имени недостающих текстур":
+        "Recursively scan the chosen folder and reassign image.filepath for missing textures found by name",
+    "Скопировать все используемые материалами текстуры сцены в выбранную папку":
+        "Copy every texture used by scene materials into the chosen folder",
+    "Хэшировать все файлы текстур и показать группы одинаковых файлов":
+        "Hash every texture file and group identical files together",
+    "Импорт текстового файла Steve's COL Editor (.cst)":
+        "Import a Steve's COL Editor text file (.cst)",
+    "Экспорт выделения в текстовый файл Steve's COL Editor (.cst)":
+        "Export the selection to a Steve's COL Editor text file (.cst)",
+    "Пропорционально масштабировать всю иерархию машины (Empty-корень + меши + дамми), сохраняя структуру. Применяет масштаб к данным меша чтобы DFF-экспорт остался чистым":
+        "Uniformly scale the whole vehicle hierarchy (Empty root + meshes + dummies) while preserving structure. Applies the scale to mesh data so DFF export stays clean",
 }

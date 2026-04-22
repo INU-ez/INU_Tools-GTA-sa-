@@ -21,6 +21,8 @@
   - [IPL Sections](#ipl-sections)
   - [IMG Archive](#img-archive)
   - [BBox Mode](#bbox-mode)
+  - [Suffixes / Prefixes](#suffixes--prefixes)
+  - [LOD Detection](#lod-detection)
   - [Model ID Manager](#model-id-manager)
 - [Materials](#materials)
   - [GTA SA Material Effects](#gta-sa-material-effects)
@@ -317,6 +319,32 @@ Determine how the addon recognizes model type by object name in Blender.
 You can use **either suffix or prefix** for each type — not both. When entering one, the other is automatically cleared. If neither is set — the model is treated as DFF.
 
 When exporting IDE/IPL, LOD models are always written with `LOD` prefix (GTA SA format).
+
+### LOD Detection
+
+Vanilla GTA SA and Rockstar's own tools ship LOD models with several naming conventions — not only the standard `LOD<name>` prefix. When importing maps, INU Tools detects LODs with a two-layer strategy:
+
+**Layer 1 (authoritative) — IPL cross-reference.** Every IPL `inst` line has a `lod_index` field pointing to the LOD companion's line number in the same file. Any instance another line references is marked as LOD regardless of its filename. This is 100% reliable for properly authored maps.
+
+**Layer 2 (fallback) — name heuristic.** For loose imports, broken IPLs, or scene operations where no IPL context is available, the addon recognises these patterns:
+
+| Name | Treated as LOD? | Stripped to | Why |
+|---|---|---|---|
+| `LOD_foo` | ✅ | `foo` | prefix + trailing `_` consumed |
+| `LODfoo`, `lodfoo` | ✅ | `foo` | prefix without separator |
+| `foo_LOD`, `foo_lod` | ✅ | `foo` | suffix `_LOD` consumed whole |
+| `tatar_str_1LOD` | ✅ | `tatar_str_1` | bare suffix adjacent to digit |
+| **`modeLODlaett`** | ✅ | `modelaett` | embedded uppercase `LOD` with lowercase neighbor (legacy Rockstar splice) |
+| **`foo_LOD_bar`** | ❌ | — | `LOD` surrounded by `_` on both sides → treated as a literal token in the middle |
+| **`bar_LOD_baz_LOD_qux`** | ❌ | — | same — every occurrence is between separators |
+| `CLOD`, `FLOOD` | ❌ | — | all-uppercase, no lowercase neighbour |
+| `explode`, `clodmock` | ❌ | — | no uppercase `LOD` (case-sensitive check) |
+
+**Embedded rule in detail.** The detector looks for a case-sensitive uppercase `LOD` substring. It only flags a match if at least one directly-adjacent character is lowercase — so `modeLODlaett` (neighbours `e`/`l` are lowercase) is recognised as LOD, but `foo_LOD_bar` (both neighbours are `_`) is not. This matches Rockstar's legacy pattern where `LOD` was spliced into the middle of a base name (e.g. base `modelaett` → LOD `modeLODlaett`) while avoiding false positives on names that use `_LOD_` as a literal token.
+
+**When it matters.** The strip logic is used during map import renaming, `Replace IPL Placeholders`, collection sorting, and COL/DFF pair matching. Getting the base name right is what lets the importer send the model to `Map_LOD` instead of `Map_DFF_*` collections and lets the paired-object utilities find the HD twin.
+
+> Implementation: `is_lod_name()` and `strip_lod_marker()` in [core/ipl.py](INU_tools/core/ipl.py).
 
 ### Model ID Manager
 

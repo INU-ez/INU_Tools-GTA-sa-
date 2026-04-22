@@ -318,13 +318,13 @@ def _particle_effect_enum_items(self, context):
             getattr(context.scene, 'gtatools_game_root', '') or ''
         )
         if not game_root or not os.path.isdir(game_root):
-            _particle_enum_items_cache = [('', '<Game Root не задан>', '')]
+            _particle_enum_items_cache = [('', T('<Game Root не задан>'), '')]
             _particle_enum_cache_key = None
             return _particle_enum_items_cache
 
         path = os.path.join(game_root, 'models', 'effects.fxp')
         if not os.path.isfile(path):
-            _particle_enum_items_cache = [('', '<effects.fxp не найден>', '')]
+            _particle_enum_items_cache = [('', T('<effects.fxp не найден>'), '')]
             _particle_enum_cache_key = None
             return _particle_enum_items_cache
 
@@ -337,7 +337,7 @@ def _particle_effect_enum_items(self, context):
         fxf = _fxp.load_cached(path)
         items = [(s.name, s.name, "") for s in fxf.systems]
         if not items:
-            items = [('', '<нет эффектов>', '')]
+            items = [('', T('<нет эффектов>'), '')]
         _particle_enum_items_cache = items
         _particle_enum_cache_key = key
         return _particle_enum_items_cache
@@ -1146,21 +1146,21 @@ class INUObjectProps(bpy.types.PropertyGroup):
                 val |= bit
         self['ide_flags'] = val
 
-    flag_is_road : BoolProperty(name="IS_ROAD", description="Дорога (1)", default=False, update=_update_ide_flag)
-    flag_draw_last : BoolProperty(name="DRAW_LAST", description="Прозрачный, рисовать последним (4)", default=False, update=_update_ide_flag)
-    flag_additive : BoolProperty(name="ADDITIVE", description="Аддитивный блендинг (8)", default=False, update=_update_ide_flag)
-    flag_no_zbuffer : BoolProperty(name="NO_ZBUFFER_WRITE", description="Не писать в Z-буфер (64)", default=False, update=_update_ide_flag)
-    flag_no_shadows : BoolProperty(name="NO_SHADOWS", description="Не получать тени (128)", default=False, update=_update_ide_flag)
-    flag_glass_1 : BoolProperty(name="GLASS_TYPE_1", description="Стекло разбиваемое (512)", default=False, update=_update_ide_flag)
-    flag_glass_2 : BoolProperty(name="GLASS_TYPE_2", description="Стекло с трещинами (1024)", default=False, update=_update_ide_flag)
-    flag_garage_door : BoolProperty(name="GARAGE_DOOR", description="Дверь гаража (2048)", default=False, update=_update_ide_flag)
-    flag_damagable : BoolProperty(name="DAMAGABLE", description="Разрушаемый (4096)", default=False, update=_update_ide_flag)
-    flag_is_tree : BoolProperty(name="IS_TREE", description="Дерево, качается на ветру (8192)", default=False, update=_update_ide_flag)
-    flag_is_palm : BoolProperty(name="IS_PALM", description="Пальма, качается на ветру (16384)", default=False, update=_update_ide_flag)
-    flag_no_flyer_col : BoolProperty(name="NO_FLYER_COL", description="Нет коллизии с летающим (32768)", default=False, update=_update_ide_flag)
-    flag_is_tag : BoolProperty(name="IS_TAG", description="Граффити тег (1048576)", default=False, update=_update_ide_flag)
-    flag_no_backface : BoolProperty(name="NO_BACKFACE_CULL", description="Рисовать обе стороны (2097152)", default=False, update=_update_ide_flag)
-    flag_breakable : BoolProperty(name="BREAKABLE_STATUE", description="Разрушаемая статуя (4194304)", default=False, update=_update_ide_flag)
+    flag_is_road : BoolProperty(name="IS_ROAD", description=T("Дорога (1)"), default=False, update=_update_ide_flag)
+    flag_draw_last : BoolProperty(name="DRAW_LAST", description=T("Прозрачный, рисовать последним (4)"), default=False, update=_update_ide_flag)
+    flag_additive : BoolProperty(name="ADDITIVE", description=T("Аддитивный блендинг (8)"), default=False, update=_update_ide_flag)
+    flag_no_zbuffer : BoolProperty(name="NO_ZBUFFER_WRITE", description=T("Не писать в Z-буфер (64)"), default=False, update=_update_ide_flag)
+    flag_no_shadows : BoolProperty(name="NO_SHADOWS", description=T("Не получать тени (128)"), default=False, update=_update_ide_flag)
+    flag_glass_1 : BoolProperty(name="GLASS_TYPE_1", description=T("Стекло разбиваемое (512)"), default=False, update=_update_ide_flag)
+    flag_glass_2 : BoolProperty(name="GLASS_TYPE_2", description=T("Стекло с трещинами (1024)"), default=False, update=_update_ide_flag)
+    flag_garage_door : BoolProperty(name="GARAGE_DOOR", description=T("Дверь гаража (2048)"), default=False, update=_update_ide_flag)
+    flag_damagable : BoolProperty(name="DAMAGABLE", description=T("Разрушаемый (4096)"), default=False, update=_update_ide_flag)
+    flag_is_tree : BoolProperty(name="IS_TREE", description=T("Дерево, качается на ветру (8192)"), default=False, update=_update_ide_flag)
+    flag_is_palm : BoolProperty(name="IS_PALM", description=T("Пальма, качается на ветру (16384)"), default=False, update=_update_ide_flag)
+    flag_no_flyer_col : BoolProperty(name="NO_FLYER_COL", description=T("Нет коллизии с летающим (32768)"), default=False, update=_update_ide_flag)
+    flag_is_tag : BoolProperty(name="IS_TAG", description=T("Граффити тег (1048576)"), default=False, update=_update_ide_flag)
+    flag_no_backface : BoolProperty(name="NO_BACKFACE_CULL", description=T("Рисовать обе стороны (2097152)"), default=False, update=_update_ide_flag)
+    flag_breakable : BoolProperty(name="BREAKABLE_STATUE", description=T("Разрушаемая статуя (4194304)"), default=False, update=_update_ide_flag)
     interior_id : IntProperty(
         name="Interior ID",
         default=0,
@@ -1230,15 +1230,15 @@ class INUMaterialProps(bpy.types.PropertyGroup):
         name="Vehicle Color Slot",
         description=T("Слот цвета машины: движок SA подставит цвет из carcols.dat. Меняет базовый RGB материала на магическую метку."),
         items=[
-            ('NONE',      "None",           "Обычный материал, не связан с carcols"),
-            ('PRIMARY',   "Primary",        "Основной цвет (первый в carcols.dat)"),
-            ('SECONDARY', "Secondary",      "Второй цвет"),
-            ('THIRD',     "Third color",    "Третий цвет (некоторые машины)"),
-            ('FOURTH',    "Fourth color",   "Четвёртый цвет"),
-            ('HL_LEFT',   "Left Headlight", "Левая фара"),
-            ('HL_RIGHT',  "Right Headlight","Правая фара"),
-            ('TL_LEFT',   "Left Taillight", "Левый задний фонарь"),
-            ('TL_RIGHT',  "Right Taillight","Правый задний фонарь"),
+            ('NONE',      "None",           T("Обычный материал, не связан с carcols")),
+            ('PRIMARY',   "Primary",        T("Основной цвет (первый в carcols.dat)")),
+            ('SECONDARY', "Secondary",      T("Второй цвет")),
+            ('THIRD',     "Third color",    T("Третий цвет (некоторые машины)")),
+            ('FOURTH',    "Fourth color",   T("Четвёртый цвет")),
+            ('HL_LEFT',   "Left Headlight", T("Левая фара")),
+            ('HL_RIGHT',  "Right Headlight",T("Правая фара")),
+            ('TL_LEFT',   "Left Taillight", T("Левый задний фонарь")),
+            ('TL_RIGHT',  "Right Taillight",T("Правый задний фонарь")),
         ],
         default='NONE',
         update=_on_vehicle_color_slot_update,
@@ -3141,6 +3141,7 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
 
     def _work(self, context):
         from .core.img import extract_file
+        from .core.ipl import is_lod_name, lod_instance_indices
         from mathutils import Quaternion
         import bmesh
 
@@ -3150,6 +3151,9 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
         skip_lod = self._skip_lod
         scene = self._scene
         lod_col = self._lod_col
+        # Authoritative LOD detection: any instance referenced by
+        # another via its lod_index IS a LOD, regardless of name.
+        lod_refs = lod_instance_indices(instances)
 
         if self._fake_mode:
             # ── FAKE MODE ──
@@ -3164,16 +3168,20 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
             bm.free()
 
             for idx, inst in enumerate(instances):
-                self._progress = idx
+                self._progress = idx + 1
 
                 model_name = inst.model_name
                 if not model_name:
                     self._skipped += 1
+                    if idx % 32 == 0:
+                        yield
                     continue
 
-                is_lod = model_name.upper().startswith('LOD') or '_LOD' in model_name.upper()
+                is_lod = idx in lod_refs or is_lod_name(model_name)
                 if skip_lod and is_lod:
                     self._skipped += 1
+                    if idx % 32 == 0:
+                        yield
                     continue
 
                 target = lod_col if is_lod else self._pick_dff_col(inst.model_id)
@@ -3207,15 +3215,19 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
             tmpdir = _get_cache_dir()
 
             for idx, inst in enumerate(instances):
-                self._progress = idx
+                self._progress = idx + 1
                 model_name = inst.model_name
                 if not model_name:
                     self._skipped += 1
+                    if idx % 32 == 0:
+                        yield
                     continue
 
-                is_lod = model_name.upper().startswith('LOD') or '_LOD' in model_name.upper()
+                is_lod = idx in lod_refs or is_lod_name(model_name)
                 if skip_lod and is_lod:
                     self._skipped += 1
+                    if idx % 32 == 0:
+                        yield
                     continue
 
                 target = lod_col if is_lod else self._pick_dff_col(inst.model_id)
@@ -3223,6 +3235,8 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
 
                 if dff_fn.lower() not in img_files:
                     self._skipped += 1
+                    if idx % 32 == 0:
+                        yield
                     continue
 
                 if model_name in imported_models:
@@ -3324,6 +3338,8 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
             try:
                 next(self._gen)
             except StopIteration:
+                self._progress = self._total
+                wm.progress_update(self._total)
                 self._finish(context)
                 msg = f"{T('Импортировано:')} {self._imported}"
                 if self._skipped:
@@ -3605,6 +3621,9 @@ class GTATOOLS_OT_import_from_img(bpy.types.Operator):
         skipped_count = 0
         errors = []
 
+        from .core.ipl import is_lod_name, lod_instance_indices
+        lod_refs = lod_instance_indices(instances)
+
         with tempfile.TemporaryDirectory() as tmpdir:
             # Cache: already imported models (name -> list of created objects)
             imported_models = {}
@@ -3612,7 +3631,7 @@ class GTATOOLS_OT_import_from_img(bpy.types.Operator):
             for idx, inst in enumerate(instances):
                 wm.progress_update(idx)
                 model_name = inst.model_name
-                is_lod = model_name.upper().startswith('LOD') or '_LOD' in model_name.upper()
+                is_lod = idx in lod_refs or is_lod_name(model_name)
 
                 # Skip LOD models if option enabled
                 if skip_lod and is_lod:
@@ -3708,9 +3727,8 @@ class GTATOOLS_OT_import_from_img(bpy.types.Operator):
                                         co.rotation_mode = 'QUATERNION'
                                         co.rotation_quaternion = col_rot
                                         # Rename COL
-                                        base_col = model_name
-                                        if base_col.upper().startswith('LOD'):
-                                            base_col = base_col[3:]
+                                        from .core.ipl import strip_lod_marker
+                                        base_col = strip_lod_marker(model_name)
                                         if _sfx_col:
                                             co.name = base_col + _sfx_col
                                         elif _pfx_col:
@@ -3746,9 +3764,11 @@ class GTATOOLS_OT_import_from_img(bpy.types.Operator):
                                 base = b
 
                         if is_lod:
-                            # LODmodel → model + LOD suffix/prefix
-                            if base.upper().startswith('LOD'):
-                                base = base[3:]
+                            # Strip any LOD marker (prefix/suffix/no-sep) and
+                            # rebuild the name using the user-configured
+                            # LOD suffix or prefix.
+                            from .core.ipl import strip_lod_marker
+                            base = strip_lod_marker(base)
                             if _sfx_lod:
                                 obj.name = base + _sfx_lod
                             elif _pfx_lod:
@@ -4395,12 +4415,13 @@ class GTATOOLS_OT_replace_ipl_placeholders(bpy.types.Operator):
 
             model_name = obj.get('ipl_model_name', obj.name.replace('_empty', ''))
             key = model_name.lower()
-            is_lod = key.startswith('lod')
+            from .core.ipl import is_lod_name, strip_lod_marker
+            is_lod = is_lod_name(model_name)
 
             # Find matching mesh
             mesh_obj = None
             if is_lod:
-                base = key[3:]
+                base = strip_lod_marker(model_name).lower()
                 variants = mesh_lookup.get(base, {})
                 mesh_obj = variants.get('LOD') or variants.get('DFF')
             else:
@@ -9119,10 +9140,10 @@ def _particle_effect_items(self, context):
     from .core import fxp as _fxp
     game_root = bpy.path.abspath(getattr(context.scene, 'gtatools_game_root', '') or '')
     if not game_root or not os.path.isdir(game_root):
-        return [('', "<Game Root не задан>", "")]
+        return [('', T("<Game Root не задан>"), "")]
     path = os.path.join(game_root, 'models', 'effects.fxp')
     if not os.path.isfile(path):
-        return [('', "<effects.fxp не найден>", "")]
+        return [('', T("<effects.fxp не найден>"), "")]
     try:
         fxf = _fxp.load_cached(path)
     except Exception as ex:
@@ -9368,7 +9389,7 @@ class GTATOOLS_OT_particle_effect_new(bpy.types.Operator):
         obj = context.active_object
         name = self.effect_name.strip()
         if not name:
-            self.report({'ERROR'}, "Имя пустое")
+            self.report({'ERROR'}, T("Имя пустое"))
             return {'CANCELLED'}
 
         game_root = bpy.path.abspath(context.scene.gtatools_game_root or '')
@@ -9440,7 +9461,7 @@ class GTATOOLS_OT_particle_effect_delete(bpy.types.Operator):
     bl_options = {'REGISTER'}
 
     confirm: BoolProperty(
-        name="Я понимаю что это перезапишет effects.fxp",
+        name=T("Я понимаю что это перезапишет effects.fxp"),
         default=False,
     )
 
@@ -9484,13 +9505,13 @@ class GTATOOLS_OT_particle_effect_delete(bpy.types.Operator):
 
     def execute(self, context):
         if not self.confirm:
-            self.report({'WARNING'}, "Подтверждение не получено")
+            self.report({'WARNING'}, T("Подтверждение не получено"))
             return {'CANCELLED'}
 
         obj = context.active_object
         name = (obj.get('2dfx_effect_name', '') or '').strip()
         if not name:
-            self.report({'ERROR'}, "Имя эффекта пустое")
+            self.report({'ERROR'}, T("Имя эффекта пустое"))
             return {'CANCELLED'}
 
         game_root = bpy.path.abspath(context.scene.gtatools_game_root or '')
@@ -9680,7 +9701,7 @@ class GTATOOLS_OT_particle_curve_write(bpy.types.Operator):
 
         effect_name = obj.get('2dfx_effect_name', '') or ''
         if not effect_name:
-            self.report({'ERROR'}, "Эффект не выбран")
+            self.report({'ERROR'}, T("Эффект не выбран"))
             return {'CANCELLED'}
 
         # Auto-backup on first write
@@ -9768,11 +9789,11 @@ class GTATOOLS_OT_particle_emitter_switch(bpy.types.Operator):
         obj = context.active_object
         name = obj.get('2dfx_effect_name', '') or ''
         if not name:
-            self.report({'WARNING'}, "Эффект не выбран")
+            self.report({'WARNING'}, T("Эффект не выбран"))
             return {'CANCELLED'}
         total = _get_effect_emitter_count(name)
         if total <= 1:
-            self.report({'INFO'}, "У эффекта один эмиттер")
+            self.report({'INFO'}, T("У эффекта один эмиттер"))
             return {'CANCELLED'}
 
         cur = int(obj.inu.particle_emitter_index)
@@ -10199,7 +10220,7 @@ class GTATOOLS_OT_save_particle_effect(bpy.types.Operator):
 
         target_name = self.effect_name.strip()
         if not target_name:
-            self.report({'ERROR'}, "Имя эффекта пустое")
+            self.report({'ERROR'}, T("Имя эффекта пустое"))
             return {'CANCELLED'}
 
         # Read fresh (don't mutate cached object)
@@ -10284,7 +10305,7 @@ class GTATOOLS_OT_save_particle_effect(bpy.types.Operator):
         # changed, don't touch the file (and don't create a pointless backup).
         is_clone = existing is None
         if not is_clone and applied == 0:
-            self.report({'INFO'}, "Нет изменений — файл не тронут")
+            self.report({'INFO'}, T("Нет изменений — файл не тронут"))
             return {'FINISHED'}
 
         # Auto-backup on first actual write
@@ -11220,7 +11241,15 @@ class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
                  icon='TRIA_DOWN' if scene.gtatools_show_id_manager else 'TRIA_RIGHT',
                  text=T("Менеджер ID"), emboss=False)
         if scene.gtatools_show_id_manager:
+            _id_preset_sync(context)
             from .data.id_manager import get_free_ids, get_used_ids, get_file_path
+
+            # Preset selector
+            preset_row = box.row(align=True)
+            preset_row.prop(scene, "gtatools_id_preset", text=T("Пресет"))
+            preset_row.operator("gtatools.id_preset_new", text="", icon='ADD')
+            preset_row.operator("gtatools.id_preset_rename", text="", icon='GREASEPENCIL')
+            preset_row.operator("gtatools.id_preset_delete", text="", icon='REMOVE')
 
             free = get_free_ids()
             used = get_used_ids()
@@ -11311,12 +11340,13 @@ class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
 
 
 class GTATOOLS_OT_id_manager_open_file(bpy.types.Operator):
-    """Открыть файл model_ids.txt в текстовом редакторе"""
+    """Открыть файл активного ID пресета в текстовом редакторе"""
     bl_idname = "gtatools.id_manager_open_file"
     bl_label = "Open ID File"
     bl_options = {'REGISTER'}
 
     def execute(self, context):
+        _id_preset_sync(context)
         from .data.id_manager import get_file_path
         import subprocess, sys
         filepath = get_file_path()
@@ -11340,6 +11370,7 @@ class GTATOOLS_OT_id_manager_release(bpy.types.Operator):
     model_id: IntProperty()
 
     def execute(self, context):
+        _id_preset_sync(context)
         from .data.id_manager import release_id
         # Reset model_id on scene objects that use this ID
         for obj in bpy.data.objects:
@@ -11358,6 +11389,7 @@ class GTATOOLS_OT_id_manager_auto_assign(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
+        _id_preset_sync(context)
         from .data.id_manager import allocate_id
 
         objs = [o for o in context.selected_objects if o.type == 'MESH']
@@ -11399,7 +11431,7 @@ class GTATOOLS_OT_id_manager_auto_assign(bpy.types.Operator):
 
             new_id = allocate_id(display_name)
             if new_id is None:
-                self.report({'ERROR'}, T("Нет свободных ID в model_ids.txt"))
+                self.report({'ERROR'}, T("Нет свободных ID в активном пресете"))
                 return {'CANCELLED'}
             obj.inu.model_id = new_id
             assigned += 1
@@ -11425,6 +11457,7 @@ class GTATOOLS_OT_id_manager_assign_from(bpy.types.Operator):
         return context.window_manager.invoke_props_dialog(self)
 
     def execute(self, context):
+        _id_preset_sync(context)
         from .data.id_manager import get_used_ids
 
         objs = [o for o in context.selected_objects if o.type == 'MESH']
@@ -11511,6 +11544,7 @@ class GTATOOLS_OT_id_manager_clear_selected(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
+        _id_preset_sync(context)
         from .data.id_manager import release_id
         count = 0
         for obj in context.selected_objects:
@@ -11534,6 +11568,7 @@ class GTATOOLS_OT_id_manager_clear(bpy.types.Operator):
         return context.window_manager.invoke_confirm(self, event)
 
     def execute(self, context):
+        _id_preset_sync(context)
         from .data.id_manager import clear_all
         clear_all()
         self.report({'INFO'}, T("Все ID очищены"))
@@ -11542,12 +11577,13 @@ class GTATOOLS_OT_id_manager_clear(bpy.types.Operator):
 
 
 class GTATOOLS_OT_id_manager_create(bpy.types.Operator):
-    """Создать файл ID (321-19999, все свободные)"""
+    """Заполнить активный пресет ID (321-19999, все свободные)"""
     bl_idname = "gtatools.id_manager_create"
     bl_label = "Create ID File"
     bl_options = {'REGISTER'}
 
     def execute(self, context):
+        _id_preset_sync(context)
         from .data.id_manager import create_id_file
         count = create_id_file()
         self.report({'INFO'}, f"ID: 321-19999 ({count})")
@@ -11571,6 +11607,7 @@ class GTATOOLS_OT_id_manager_extend(bpy.types.Operator):
         return context.window_manager.invoke_props_dialog(self)
 
     def execute(self, context):
+        _id_preset_sync(context)
         from .data.id_manager import extend_ids
         new_start, new_end = extend_ids(self.count)
         self.report({'INFO'}, f"ID: +{self.count} ({new_start}-{new_end})")
@@ -11584,6 +11621,7 @@ class GTATOOLS_OT_id_manager_from_game(bpy.types.Operator):
     bl_options = {'REGISTER'}
 
     def execute(self, context):
+        _id_preset_sync(context)
         from .data.id_manager import populate_from_game
         game_root = bpy.path.abspath(context.scene.gtatools_game_root)
         if not game_root or not os.path.isdir(game_root):
@@ -11601,6 +11639,7 @@ class GTATOOLS_OT_id_manager_sync_scene(bpy.types.Operator):
     bl_options = {'REGISTER'}
 
     def execute(self, context):
+        _id_preset_sync(context)
         from .data.id_manager import _load, _save
         from .tools.model_utils import get_model_type
 
@@ -11629,6 +11668,120 @@ class GTATOOLS_OT_id_manager_sync_scene(bpy.types.Operator):
         if added > 0:
             _save(entries)
         self.report({'INFO'}, f"{T('Добавлено ID:')} {added}")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_id_preset_new(bpy.types.Operator):
+    """Создать новый пресет ID.
+
+    Пустой пресет создаётся готовым к `Создать файл ID` (Заполнить 321-19999).
+    Опция «Скопировать с активного» дублирует текущий файл ID, чтобы не
+    начинать с нуля, если часть ID уже назначена.
+    """
+    bl_idname = "gtatools.id_preset_new"
+    bl_label = "New ID Preset"
+    bl_options = {'REGISTER'}
+
+    name: StringProperty(
+        name=T("Название"),
+        description=T("Имя нового пресета. Будет сохранён как data/id_presets/<имя>.txt"),
+        default="",
+    )
+    copy_from_active: BoolProperty(
+        name=T("Скопировать с активного"),
+        description=T("Создать пресет как копию текущего активного"),
+        default=False,
+    )
+
+    def invoke(self, context, event):
+        self.name = ""
+        return context.window_manager.invoke_props_dialog(self, width=320)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, 'name')
+        layout.prop(self, 'copy_from_active')
+
+    def execute(self, context):
+        from .data.id_manager import create_preset, get_active_preset
+        name = (self.name or '').strip()
+        if not name:
+            self.report({'ERROR'}, T("Введите название пресета"))
+            return {'CANCELLED'}
+        src = get_active_preset() if self.copy_from_active else None
+        if not create_preset(name, copy_from=src):
+            self.report({'ERROR'}, T("Пресет уже существует или не удалось создать"))
+            return {'CANCELLED'}
+        # Switch to the newly created preset
+        try:
+            context.scene.gtatools_id_preset = name
+        except Exception:
+            pass
+        self.report({'INFO'}, f"{T('Создан пресет:')} {name}")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_id_preset_delete(bpy.types.Operator):
+    """Удалить активный пресет ID. Пресет «default» удалить нельзя"""
+    bl_idname = "gtatools.id_preset_delete"
+    bl_label = "Delete ID Preset"
+    bl_options = {'REGISTER'}
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_confirm(self, event)
+
+    def execute(self, context):
+        from .data.id_manager import delete_preset, list_presets
+        current = getattr(context.scene, 'gtatools_id_preset', 'default')
+        if current == 'default':
+            self.report({'ERROR'}, T("Пресет 'default' удалить нельзя"))
+            return {'CANCELLED'}
+        if not delete_preset(current):
+            self.report({'ERROR'}, T("Не удалось удалить пресет"))
+            return {'CANCELLED'}
+        # Fall back to the first remaining preset
+        remaining = list_presets()
+        try:
+            context.scene.gtatools_id_preset = remaining[0] if remaining else 'default'
+        except Exception:
+            pass
+        self.report({'INFO'}, f"{T('Удалён пресет:')} {current}")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_id_preset_rename(bpy.types.Operator):
+    """Переименовать активный пресет ID"""
+    bl_idname = "gtatools.id_preset_rename"
+    bl_label = "Rename ID Preset"
+    bl_options = {'REGISTER'}
+
+    new_name: StringProperty(
+        name=T("Новое название"),
+        default="",
+    )
+
+    def invoke(self, context, event):
+        self.new_name = getattr(context.scene, 'gtatools_id_preset', '') or ''
+        return context.window_manager.invoke_props_dialog(self, width=320)
+
+    def draw(self, context):
+        self.layout.prop(self, 'new_name')
+
+    def execute(self, context):
+        from .data.id_manager import rename_preset
+        current = getattr(context.scene, 'gtatools_id_preset', 'default')
+        new = (self.new_name or '').strip()
+        if not new or new == current:
+            self.report({'ERROR'}, T("Введите новое название"))
+            return {'CANCELLED'}
+        if not rename_preset(current, new):
+            self.report({'ERROR'}, T("Не удалось переименовать (имя занято или ошибка)"))
+            return {'CANCELLED'}
+        try:
+            context.scene.gtatools_id_preset = new
+        except Exception:
+            pass
+        self.report({'INFO'}, f"{T('Переименован:')} {current} → {new}")
         return {'FINISHED'}
 
 
@@ -13169,6 +13322,9 @@ classes = (
     GTATOOLS_OT_id_manager_extend,
     GTATOOLS_OT_id_manager_sync_scene,
     GTATOOLS_OT_id_manager_from_game,
+    GTATOOLS_OT_id_preset_new,
+    GTATOOLS_OT_id_preset_delete,
+    GTATOOLS_OT_id_preset_rename,
     GTATOOLS_OT_toggle_uv_editor,
     GTATOOLS_OT_toggle_uv_grid,
     GTATOOLS_OT_randomize_uv_grid,
@@ -13413,7 +13569,8 @@ def _sort_map_objects(context, objects: list, ide_models: dict):
         txd = ide_obj.txd_name if ide_obj else ""
 
         # Check LOD
-        if low.startswith('lod') or '_lod' in low:
+        from .core.ipl import is_lod_name
+        if is_lod_name(model_name):
             target = col_lod
         elif _is_vegetation(model_name, txd):
             target = col_vegetation
@@ -13525,6 +13682,38 @@ def _get_map_region_items(self, context):
     _map_region_cache = items
     _map_region_cache_root = game_root
     return items
+
+
+# ID preset selector ─ dynamic EnumProperty
+_id_preset_cache = []
+
+
+def _get_id_preset_items(self, context):
+    """Dynamic enum items for the Model ID preset selector."""
+    global _id_preset_cache
+    from .data.id_manager import list_presets
+    names = list_presets()
+    items = [(n, n, "") for n in names]
+    if not items:
+        items = [('default', 'default', '')]
+    _id_preset_cache = items
+    return _id_preset_cache
+
+
+def _id_preset_update(self, context):
+    """Sync id_manager's active preset whenever the selector changes."""
+    from .data.id_manager import set_active_preset
+    set_active_preset(self.gtatools_id_preset)
+
+
+def _id_preset_sync(context):
+    """Push the scene's current preset name into id_manager's module state."""
+    try:
+        from .data.id_manager import set_active_preset
+        name = getattr(context.scene, 'gtatools_id_preset', 'default') or 'default'
+        set_active_preset(name)
+    except Exception:
+        pass
 
 
 def _get_cache_dir():
@@ -14007,6 +14196,12 @@ def register():
         min=0,
         soft_max=1000,
     )
+    bpy.types.Scene.gtatools_id_preset = EnumProperty(
+        name=T("Пресет ID"),
+        description=T("Активный файл со списком ID. Каждый пресет — отдельный .txt в папке data/id_presets/"),
+        items=_get_id_preset_items,
+        update=_id_preset_update,
+    )
     # Texture loader paths
     bpy.types.Scene.gtatools_texture_path1 = StringProperty(
         name="System Textures Path",
@@ -14421,6 +14616,7 @@ def unregister():
     del bpy.types.Scene.gtatools_show_id_manager
     del bpy.types.Scene.gtatools_id_search
     del bpy.types.Scene.gtatools_id_page
+    del bpy.types.Scene.gtatools_id_preset
     del bpy.types.Scene.gtatools_texture_path2
     del bpy.types.Scene.gtatools_texture_path1
     del bpy.types.Scene.gtatools_export_pipeline

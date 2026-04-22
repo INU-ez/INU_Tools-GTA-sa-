@@ -14,6 +14,8 @@ from collections import defaultdict
 
 import bpy
 
+from .. import T
+
 
 # ──────────────────────────── scanning ────────────────────────────────
 
@@ -269,7 +271,7 @@ class GTATOOLS_OT_bitmaps_copy(bpy.types.Operator):
     directory: bpy.props.StringProperty(subtype='DIR_PATH')
     group_by_txd: bpy.props.BoolProperty(
         name="Subfolder per TXD",
-        description="Создать подпапку на каждый txd_name (читается с mesh-объектов)",
+        description=T("Создать подпапку на каждый txd_name (читается с mesh-объектов)"),
         default=False,
     )
 

@@ -19,6 +19,8 @@ from __future__ import annotations
 import bpy
 from mathutils import Matrix, Vector
 
+from .. import T
+
 
 def _walk(obj, out: list):
     out.append(obj)
@@ -80,11 +82,11 @@ class GTATOOLS_OT_vehicle_scale(bpy.types.Operator):
 
     factor: bpy.props.FloatProperty(
         name="Factor", default=1.0, min=0.01, max=100.0,
-        description="Множитель равномерного масштаба — применяется к позициям и вершинам",
+        description=T("Множитель равномерного масштаба — применяется к позициям и вершинам"),
     )
     dummies_only: bpy.props.BoolProperty(
         name="Dummies Only",
-        description="Двигать только дамми-Empty, меши не трогать",
+        description=T("Двигать только дамми-Empty, меши не трогать"),
         default=False,
     )
 

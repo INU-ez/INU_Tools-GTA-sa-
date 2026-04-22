@@ -34,10 +34,10 @@ def make_filter_flags():
 def check_nvtt_available(nvtt_path):
     """Проверить доступность NVIDIA Texture Tools"""
     if not nvtt_path or not os.path.isdir(nvtt_path):
-        return False, "Папка NVTT не найдена"
+        return False, T("Папка NVTT не найдена")
     nvcompress = os.path.join(nvtt_path, "nvcompress.exe")
     if not os.path.isfile(nvcompress):
-        return False, "nvcompress.exe не найден в указанной папке"
+        return False, T("nvcompress.exe не найден в указанной папке")
     return True, nvcompress
 
 

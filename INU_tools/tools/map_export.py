@@ -13,6 +13,7 @@ from dataclasses import dataclass
 import bpy
 
 from ..tools.model_utils import get_model_type
+from .. import T
 
 
 # ──────────────────────────── grouping ────────────────────────────────
@@ -235,7 +236,7 @@ class GTATOOLS_OT_map_export(bpy.types.Operator):
     binary_ipl: bpy.props.BoolProperty(name="Binary IPL", default=False)
     id_pool_start: bpy.props.IntProperty(
         name="ID Pool Start", default=20000, min=1, max=32000,
-        description="Первый ID для DFF у которых inu.model_id == 0",
+        description=T("Первый ID для DFF у которых inu.model_id == 0"),
     )
 
     def invoke(self, context, event):
