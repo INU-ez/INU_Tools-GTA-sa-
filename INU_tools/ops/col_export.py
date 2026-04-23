@@ -249,3 +249,84 @@ def export_col_bytes(objects, version: int = 3, model_name: str = "") -> bytes:
 
     model.bounds = _compute_bounds(model)
     return write_col([model])
+
+
+def _group_objects_by_base(objects) -> dict:
+    """Group collidable objects by their model base name for library export.
+
+    Grouping rules:
+      - MESH objects use :func:`get_model_type` to extract ``base_name``
+        (honours suffix/prefix settings — ``_COL``, ``_SHA``, etc.).
+      - EMPTY objects (collision spheres/boxes) inherit the base name from
+        their parent mesh when possible, otherwise use their own name with
+        any Blender ``.001`` duplicate suffix stripped.
+      - If an object exposes a non-empty ``inu.model_name``, that wins over
+        the derived base so re-exported COLs keep their original library
+        key even if the Blender object was renamed.
+
+    Returns ``{base_name: [obj, ...]}`` preserving insertion order.
+    """
+    from ..tools.model_utils import get_model_type
+
+    groups: dict = {}
+
+    def _clean(name: str) -> str:
+        if '.' in name:
+            head, tail = name.rsplit('.', 1)
+            if tail.isdigit():
+                return head
+        return name
+
+    def _base_for(obj) -> str:
+        inu = getattr(obj, 'inu', None)
+        if inu is not None:
+            mn = getattr(inu, 'model_name', '') or ''
+            if mn:
+                return mn
+        if obj.type == 'MESH':
+            _, base = get_model_type(obj)
+            return base or _clean(obj.name)
+        if obj.type == 'EMPTY' and obj.parent is not None:
+            return _base_for(obj.parent)
+        return _clean(obj.name)
+
+    for obj in objects:
+        if obj.type not in ('MESH', 'EMPTY'):
+            continue
+        base = _base_for(obj)
+        if not base:
+            continue
+        groups.setdefault(base, []).append(obj)
+
+    return groups
+
+
+def export_col_library(filepath: str, objects, version: int = 3) -> int:
+    """Export a multi-entry COL "library" file.
+
+    Selected objects are grouped by base name (via :func:`_group_objects_by_base`)
+    and each group becomes its own COL record inside the single ``filepath``.
+    This is how vanilla GTA SA ships ``<district>.col``, ``vehicles.col``,
+    etc. — one ``.col`` file with many entries concatenated back-to-back.
+
+    Returns the number of records written.
+    """
+    groups = _group_objects_by_base(objects)
+    models = []
+    for base_name, objs in groups.items():
+        model = ColModel(version=version, model_name=base_name)
+        for obj in objs:
+            if obj.type == 'MESH':
+                if _is_shadow_mesh(obj):
+                    _collect_shadow_mesh(obj, model)
+                else:
+                    _collect_mesh(obj, model)
+            elif obj.type == 'EMPTY':
+                _collect_sphere(obj, model)
+        model.bounds = _compute_bounds(model)
+        models.append(model)
+
+    if models:
+        from ..core.col import write_col_file
+        write_col_file(filepath, models)
+    return len(models)

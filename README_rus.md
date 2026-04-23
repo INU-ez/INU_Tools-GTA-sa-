@@ -393,12 +393,11 @@ Building01_COL   ← коллизия
 
 | Расположение | Панель | Что там |
 |---|---|---|
-| `Properties > Scene` | **INU Tools** | IDE/IPL/IMG пути, текстуры, NVTT, суффиксы, менеджер ID, пресеты |
-| `Properties > Object` | **GTA SA Object** | тип объекта (OBJ/COL/SHA/2DFX), DFF Flags, Pipeline, UV Maps |
-| `Properties > Object` | **GTA SA: IDE / IPL** 🆕 | Model ID, Draw Dist, LOD Dist, IDE Flags, Interior, конфликты |
+| `Properties > Scene` | **INU Tools** | IDE/IPL/IMG пути, текстуры, NVTT, файлы IMG |
+| `Properties > Object` | **INU Tools: Model** 🆕 | Тип (auto+manual), Model ID, TXD, Draw Dist, IDE Flags, DFF Flags, Pipeline, Breakable, 2DFX |
 | `Properties > Material` | **GTA SA Material Effects** | Environment Map, Bump Map, Reflection, Specular, UV Animation |
 | `Properties > Material` | **COL Surface Type** | выбор типа поверхности коллизии |
-| `View3D > Sidebar (N)` | **GTA Tools** | экспорт/импорт, prelight, 2DFX, частицы, vertex paint |
+| `View3D > Sidebar (N)` | **GTA Tools** | пайплайн SETUP → MODEL → DATA → EXPORT (Export сверху, ID Manager, Object IDE/IPL, все остальные подпанели) |
 | `UV Editor > Sidebar (N)` | **GTA Tools** | UV-инструменты |
 
 </details>

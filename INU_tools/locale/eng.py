@@ -1449,4 +1449,76 @@ LANG = {
         "Export the selection to a Steve's COL Editor text file (.cst)",
     "Пропорционально масштабировать всю иерархию машины (Empty-корень + меши + дамми), сохраняя структуру. Применяет масштаб к данным меша чтобы DFF-экспорт остался чистым":
         "Uniformly scale the whole vehicle hierarchy (Empty root + meshes + dummies) while preserving structure. Applies the scale to mesh data so DFF export stays clean",
+
+    # ── COL library mode ────────────────────────────────────────────────
+    "Library (несколько коллизий)": "Library (multiple collisions)",
+    "Сгруппировать выделение по базовому имени (house1_COL + house1_SHA → одна запись 'house1') и записать все группы в один .col файл подряд. Так vanilla SA хранит <district>.col и vehicles.col":
+        "Group the selection by base name (house1_COL + house1_SHA → one record 'house1') and write every group into a single .col file back-to-back. This is how vanilla SA stores <district>.col and vehicles.col",
+    "COL Library": "COL Library",
+    "Писать все коллизии в один .col файл (multi-entry library). Каждая запись в файле — отдельная коллизия со своим model_id, сопоставляется с DFF по ID":
+        "Write every collision into a single .col file (multi-entry library). Each record has its own model_id and links to a DFF by matching ID",
+    "Имя library .col": "Library .col name",
+    "Имя общего .col файла без расширения (например 'district' → district.col)":
+        "Name of the combined .col file without extension (e.g. 'district' → district.col)",
+    "Писать все коллизии в один <district>.col файл (multi-entry library). Каждая запись в файле — отдельная коллизия со своим model_id, сопоставляется с DFF по ID":
+        "Write every collision into a single <district>.col file (multi-entry library). Each record has its own model_id and links to a DFF by matching ID",
+
+    # ── Batch set distance ──────────────────────────────────────────────
+    "Задать Draw Distance и/или LOD Distance всем выделенным MESH-объектам.\n\n    По умолчанию поля заполняются значениями активного объекта — можно\n    изменить и применить к выделению одним действием. Галочки слева\n    выбирают какие именно поля переписывать (удобно менять только одно)":
+        "Set Draw Distance and/or LOD Distance on every selected MESH object.\n\nFields are prefilled from the active object — tweak and apply to the entire selection in one action. The left-hand checkboxes pick which fields to overwrite (handy for changing only one)",
+    "Применить Draw Dist": "Apply Draw Dist",
+    "Применить LOD Dist": "Apply LOD Dist",
+    "объектов будет изменено": "objects will be modified",
+    "Включите хотя бы одну галочку": "Enable at least one checkbox",
+    "Изменено:": "Modified:",
+    "Применить к выделенным": "Apply to selected",
+
+    # ── Export-to-IMG TXD plan dialog ───────────────────────────────────
+    "Экспортировать DFF + TXD + COL прямо в .img архив.\n\n    Перед записью открывается диалог со списком моделей и их TXD именами —\n    можно переключить режим на один общий TXD, отключить отдельные модели,\n    или отредактировать имя архива для каждой (модели с одинаковым TXD\n    именем попадут в один .txd с объединёнными текстурами)":
+        "Export DFF + TXD + COL directly into an .img archive.\n\nBefore writing a dialog opens with the list of models and their TXD names — switch to a single shared TXD, disable individual models, or edit the archive name per model (models with the same TXD name merge into one .txd)",
+    "Общий TXD": "Shared TXD",
+    "Пакует все текстуры в один .txd. Выключено — один .txd на каждую уникальную строку txd_name из списка ниже":
+        "Pack every texture into a single .txd. When off, each unique txd_name from the list below gets its own .txd",
+    "Имя общего TXD": "Shared TXD name",
+    "Имя .txd файла без расширения": "Name of the .txd file without extension",
+    "Имя TXD архива для этой модели. Модели с одинаковым именем попадут в один .txd (textures merged)":
+        "TXD archive name for this model. Models sharing a name merge into one .txd (textures combined)",
+    "Включить модель в экспорт": "Include this model in the export",
+    "IMG:": "IMG:",
+    "Моделей:": "Models:",
+    "TXD имя на модель:": "TXD name per model:",
+    "Общий TXD включён — список игнорируется":
+        "Shared TXD enabled — the list is ignored",
+
+    # Bitmaps Manager panel
+    "Менеджер текстур": "Bitmaps Manager",
+    "Сканировать": "Scan",
+    "Пропущено": "Missing",
+    "Найти в папке…": "Resolve From Folder…",
+    "Скопировать в папку…": "Copy Used To Folder…",
+    "Найти дубликаты": "Find Duplicates",
+
+    # Unified Export (Stage 3)
+    "Экспорт:": "Export:",
+    "В папку": "To Folder",
+    "В IMG": "To IMG",
+
+    # ID Manager buttons (Stage 4 / 2-column layout)
+    "Назначить": "Assign",
+    "Создать": "Create",
+    "Sync": "Sync",
+    "С ID...": "From ID...",
+    "Очистить выд.": "Clear Selected",
+    "Расширить FLA": "Extend FLA",
+    "Из игры": "From Game",
+    "Открыть файл": "Open File",
+
+    # Import Map (Build/Load .glb pair)
+    "Собрать .glb": "Build .glb",
+    "Импорт .glb": "Import .glb",
+    "Auto-discover": "Auto-discover",
+
+    # Object INU Tools panel (Stage 6)
+    "По имени:": "By name:",
+    "Экспортировать как": "Export as",
 }

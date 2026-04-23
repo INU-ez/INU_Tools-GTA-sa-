@@ -93,6 +93,7 @@ def _get_or_assign_id(obj, id_pool_start: int, used_ids: set[int]) -> int:
 def export_map(target_dir: str, *, objects=None,
                export_dff: bool = True,
                export_col: bool = True,
+               col_library: bool = False,
                export_txd: bool = True,
                export_ipl: bool = True,
                export_ide: bool = True,
@@ -136,16 +137,29 @@ def export_map(target_dir: str, *, objects=None,
                 print(f"[map_export] DFF {g.base} failed: {e}")
 
     if export_col and any(g.col_objects for g in groups):
-        from ..ops.col_export import export_col
-        for g in groups:
-            if not g.col_objects:
-                continue
-            col_path = os.path.join(target_dir, f"{g.base}.col")
+        if col_library:
+            # One multi-entry .col named after the district (base_name).
+            from ..ops.col_export import export_col_library
+            lib_path = os.path.join(target_dir, f"{base_name}.col")
+            all_col_objs = []
+            for g in groups:
+                all_col_objs.extend(g.col_objects)
             try:
-                export_col(col_path, g.col_objects)
-                stats['col'] += 1
+                count = export_col_library(lib_path, all_col_objs)
+                stats['col'] = count
             except Exception as e:
-                print(f"[map_export] COL {g.base} failed: {e}")
+                print(f"[map_export] COL library failed: {e}")
+        else:
+            from ..ops.col_export import export_col
+            for g in groups:
+                if not g.col_objects:
+                    continue
+                col_path = os.path.join(target_dir, f"{g.base}.col")
+                try:
+                    export_col(col_path, g.col_objects)
+                    stats['col'] += 1
+                except Exception as e:
+                    print(f"[map_export] COL {g.base} failed: {e}")
 
     # Shared TXD per district (all textures from all DFFs merged)
     if export_txd:
@@ -230,6 +244,11 @@ class GTATOOLS_OT_map_export(bpy.types.Operator):
     base_name: bpy.props.StringProperty(name="Base Name", default="district")
     include_dff: bpy.props.BoolProperty(name="DFF", default=True)
     include_col: bpy.props.BoolProperty(name="COL", default=True)
+    col_library: bpy.props.BoolProperty(
+        name=T("COL Library"),
+        description=T("Писать все коллизии в один <district>.col файл (multi-entry library). Каждая запись в файле — отдельная коллизия со своим model_id, сопоставляется с DFF по ID"),
+        default=True,
+    )
     include_txd: bpy.props.BoolProperty(name="TXD", default=True)
     include_ide: bpy.props.BoolProperty(name="IDE", default=True)
     include_ipl: bpy.props.BoolProperty(name="IPL", default=True)
@@ -257,6 +276,7 @@ class GTATOOLS_OT_map_export(bpy.types.Operator):
             objects=selected,
             export_dff=self.include_dff,
             export_col=self.include_col,
+            col_library=self.col_library,
             export_txd=self.include_txd,
             export_ide=self.include_ide,
             export_ipl=self.include_ipl,
@@ -280,15 +300,11 @@ class GTATOOLS_PT_map_export_panel(bpy.types.Panel):
     bl_region_type = 'UI'
     bl_category = 'GTA Tools'
     bl_parent_id = "GTATOOLS_PT_main_panel"
+    bl_order = 1
     bl_options = {'DEFAULT_CLOSED'}
 
     def draw(self, context):
-        from . import icons as _icons
-        icon_id = _icons.get_icon("map")
-        if icon_id:
-            self.layout.operator("gtatools.map_export", icon_value=icon_id)
-        else:
-            self.layout.operator("gtatools.map_export", icon='WORLD')
+        self.layout.operator("gtatools.map_export", icon='WORLD')
 
 
 classes = (

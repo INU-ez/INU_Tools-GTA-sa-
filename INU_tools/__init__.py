@@ -230,7 +230,7 @@ from .data.surface_materials import (
     get_base_name_from_selection,
 )
 from .tools.prelight import (
-    GTASAPrelight, average_colors_on_coplanar_faces,
+    average_colors_on_coplanar_faces,
     encode_uv2_to_color_16bit, create_prelight_scene_lights,
     remove_prelight_scene_lights, bake_vertex_colors_from_lights,
     bake_vertex_colors_simple, apply_brightness_offset,
@@ -281,7 +281,6 @@ from .tools.gta_material_panel import (
     GTATOOLS_OT_material_preset,
     GTATOOLS_PT_gta_material_panel,
 )
-from .tools import icons as _icons
 
 addon_keymaps = []
 
@@ -1356,6 +1355,38 @@ class GTATOOLS_BinaryIplEntry(bpy.types.PropertyGroup):
     img_source: StringProperty()
 
 
+class GTATOOLS_TxdExportEntry(bpy.types.PropertyGroup):
+    """One row in the Export-to-IMG TXD plan popup.
+
+    ``model_name`` is the DFF base name and acts as a lookup key back into
+    the scene's model groups; ``txd_name`` is the destination archive name
+    (editable per row); ``include`` lets the user drop a row out of the
+    batch without affecting the rest of the selection.
+    """
+    model_name: StringProperty()
+    txd_name: StringProperty(
+        description=T("Имя TXD архива для этой модели. Модели с одинаковым именем попадут в один .txd (textures merged)"),
+    )
+    include: BoolProperty(
+        name="",
+        default=True,
+        description=T("Включить модель в экспорт"),
+    )
+
+
+class GTATOOLS_UL_txd_export_plan(bpy.types.UIList):
+    """Per-model TXD name editor shown in the Export-to-IMG dialog."""
+    bl_idname = "GTATOOLS_UL_txd_export_plan"
+
+    def draw_item(self, context, layout, data, item, icon, active_data, active_property, index):
+        row = layout.row(align=True)
+        row.prop(item, "include", text="")
+        sub = row.row(align=True)
+        sub.active = item.include
+        sub.label(text=item.model_name, icon='MESH_DATA')
+        sub.prop(item, "txd_name", text="", icon='TEXTURE')
+
+
 class GTATOOLS_UL_img_files(bpy.types.UIList):
     """Scrollable list of files in IMG archive."""
     bl_idname = "GTATOOLS_UL_img_files"
@@ -1831,8 +1862,14 @@ class GTATOOLS_OT_export_col(bpy.types.Operator, ExportHelper):
     filename_ext = ".col"
     filter_glob: StringProperty(default="*.col", options={'HIDDEN'})
 
+    library_mode: BoolProperty(
+        name=T("Library (несколько коллизий)"),
+        description=T("Сгруппировать выделение по базовому имени (house1_COL + house1_SHA → одна запись 'house1') и записать все группы в один .col файл подряд. Так vanilla SA хранит <district>.col и vehicles.col"),
+        default=False,
+    )
+
     def execute(self, context):
-        from .ops.col_export import export_col as inu_export_col
+        from .ops.col_export import export_col as inu_export_col, export_col_library
         prelight_was_on = []
         try:
             # Запоминаем и отключаем prelight только где он был
@@ -1860,11 +1897,20 @@ class GTATOOLS_OT_export_col(bpy.types.Operator, ExportHelper):
                            if o.type in ('MESH', 'EMPTY')]
 
             # Экспорт через INU_tools COL exporter
-            inu_export_col(
-                filepath=self.filepath,
-                objects=col_objects,
-                version=3,
-            )
+            if self.library_mode:
+                count = export_col_library(
+                    filepath=self.filepath,
+                    objects=col_objects,
+                    version=3,
+                )
+                msg = f"Exported COL library: {self.filepath} ({count} records)"
+            else:
+                inu_export_col(
+                    filepath=self.filepath,
+                    objects=col_objects,
+                    version=3,
+                )
+                msg = f"Exported COL: {self.filepath}"
 
             # Возвращаем оригинальные позиции
             for obj in context.selected_objects:
@@ -1875,7 +1921,7 @@ class GTATOOLS_OT_export_col(bpy.types.Operator, ExportHelper):
             for obj in prelight_was_on:
                 setup_prelight_preview(obj, enable=True)
 
-            self.report({'INFO'}, f"Exported COL: {self.filepath}")
+            self.report({'INFO'}, msg)
             return {'FINISHED'}
         except Exception as e:
             for obj in prelight_was_on:
@@ -3862,16 +3908,92 @@ class GTATOOLS_OT_remove_from_img(bpy.types.Operator):
 
 
 class GTATOOLS_OT_export_to_img(bpy.types.Operator):
-    """Экспортировать DFF + TXD + COL прямо в .img архив"""
+    """Экспортировать DFF + TXD + COL прямо в .img архив.
+
+    Перед записью открывается диалог со списком моделей и их TXD именами —
+    можно переключить режим на один общий TXD, отключить отдельные модели,
+    или отредактировать имя архива для каждой (модели с одинаковым TXD
+    именем попадут в один .txd с объединёнными текстурами)"""
     bl_idname = "gtatools.export_to_img"
     bl_label = "Export to IMG"
     bl_options = {'REGISTER'}
 
+    shared_txd: BoolProperty(
+        name=T("Общий TXD"),
+        description=T("Пакует все текстуры в один .txd. Выключено — один .txd на каждую уникальную строку txd_name из списка ниже"),
+        default=False,
+    )
+    shared_txd_name: StringProperty(
+        name=T("Имя общего TXD"),
+        description=T("Имя .txd файла без расширения"),
+        default="textures",
+    )
+
+    def invoke(self, context, event):
+        img_path = bpy.path.abspath(context.scene.gtatools_img_path)
+        if not img_path or not os.path.isfile(img_path):
+            self.report({'ERROR'}, T("Укажите путь к .img архиву"))
+            return {'CANCELLED'}
+        groups = find_all_selected_model_groups()
+        if not groups:
+            self.report({'ERROR'}, T("Выделите меш объекты"))
+            return {'CANCELLED'}
+
+        # Populate the WindowManager TXD plan collection. Pre-fill each row
+        # with obj.inu.txd_name if set, otherwise fall back to base_name —
+        # that matches the game's default "model and its TXD share a name".
+        wm = context.window_manager
+        wm.gtatools_txd_export_plan.clear()
+        for base_name, models in groups.items():
+            entry = wm.gtatools_txd_export_plan.add()
+            entry.model_name = base_name
+            entry.include = True
+            src = models['DFF'] or models['LOD']
+            prefilled = ''
+            if src is not None and hasattr(src, 'inu'):
+                prefilled = getattr(src.inu, 'txd_name', '') or ''
+            entry.txd_name = prefilled or base_name
+        wm.gtatools_txd_export_plan_index = 0
+
+        # Width scales with number of rows but stays usable on smaller screens.
+        return wm.invoke_props_dialog(self, width=460)
+
+    def draw(self, context):
+        layout = self.layout
+        wm = context.window_manager
+        scn = context.scene
+
+        info = layout.box()
+        info.label(text=f"{T('IMG:')} {os.path.basename(bpy.path.abspath(scn.gtatools_img_path))}",
+                   icon='PACKAGE')
+        info.label(text=f"{T('Моделей:')} {len(wm.gtatools_txd_export_plan)}", icon='INFO')
+
+        # Shared-TXD toggle + name field
+        row = layout.row(align=True)
+        row.prop(self, "shared_txd")
+        sub = row.row(align=True)
+        sub.active = self.shared_txd
+        sub.prop(self, "shared_txd_name", text="")
+
+        # Per-model list (disabled while shared mode is on)
+        box = layout.box()
+        box.active = not self.shared_txd
+        box.label(text=T("TXD имя на модель:") if not self.shared_txd
+                       else T("Общий TXD включён — список игнорируется"),
+                  icon='TEXTURE')
+        box.template_list(
+            "GTATOOLS_UL_txd_export_plan", "",
+            wm, "gtatools_txd_export_plan",
+            wm, "gtatools_txd_export_plan_index",
+            rows=min(10, max(4, len(wm.gtatools_txd_export_plan))),
+        )
+
     def execute(self, context):
         import tempfile
+        from collections import defaultdict
         from .core.img import replace_or_add
         from .ops.dff_export import export_dff as inu_export_dff
-        from .ops.col_export import export_col as inu_export_col
+        from .ops.col_export import export_col as inu_export_col, export_col_library
 
         img_path = bpy.path.abspath(context.scene.gtatools_img_path)
         if not img_path or not os.path.isfile(img_path):
@@ -3887,12 +4009,66 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
         export_dff_flag = getattr(context.scene, 'gtatools_img_export_dff', True)
         export_col_flag = getattr(context.scene, 'gtatools_img_export_col', True)
         export_txd_flag = getattr(context.scene, 'gtatools_img_export_txd', True)
+        col_library = bool(getattr(context.scene, 'gtatools_img_col_library', False))
+        col_library_name = getattr(context.scene, 'gtatools_img_col_library_name', '') or 'collision'
         use_gpu = check_nvtt_available(getattr(context.scene, 'gtatools_nvtt_path', ''))[0]
+
+        # ── TXD plan: which groups are included + their archive names ──
+        wm = context.window_manager
+        plan_by_name = {}
+        for entry in wm.gtatools_txd_export_plan:
+            plan_by_name[entry.model_name] = entry
+        # Groups not covered by the plan (unusual) default to include=True
+        # with the base_name used as their txd_name — keeps behaviour
+        # deterministic if the dialog state is somehow out of sync.
+
+        def _plan_entry(base):
+            return plan_by_name.get(base)
+
+        def _is_included(base):
+            e = _plan_entry(base)
+            return e.include if e is not None else True
+
+        def _txd_for(base):
+            e = _plan_entry(base)
+            if self.shared_txd:
+                return (self.shared_txd_name or 'textures').strip() or 'textures'
+            if e is not None and e.txd_name.strip():
+                return e.txd_name.strip()
+            return base
+
+        # Propagate the edited TXD name back to obj.inu.txd_name so later
+        # IDE/IPL writes pick up the same value.
+        for base_name, models in model_groups.items():
+            if not _is_included(base_name):
+                continue
+            new_txd = _txd_for(base_name)
+            for mt in ('DFF', 'LOD'):
+                obj = models[mt]
+                if obj is not None and hasattr(obj, 'inu'):
+                    obj.inu.txd_name = new_txd
 
         results = []
 
+        # Library COL bypasses the per-group COL loop: one multi-entry .col
+        # is written once and stuffed into the archive under a shared name.
+        library_col_objects = []
+        write_col_per_group = export_col_flag
+        if export_col_flag and col_library:
+            write_col_per_group = False
+            for _base, _models in model_groups.items():
+                if _models['COL']:
+                    library_col_objects.append(_models['COL'])
+
         with tempfile.TemporaryDirectory() as tmpdir:
+            # Bucket DFF/LOD objects by their resolved TXD name so every
+            # bucket produces exactly one .txd containing merged textures.
+            txd_buckets = defaultdict(list)
+
             for base_name, models in model_groups.items():
+                if not _is_included(base_name):
+                    continue
+
                 # Export LOD first
                 if export_dff_flag and models['LOD']:
                     lod_name = 'LOD' + base_name
@@ -3920,8 +4096,8 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
                     except Exception as e:
                         results.append(f"{base_name}.dff error: {e}")
 
-                # Export COL
-                if export_col_flag and models['COL']:
+                # Export COL (per-group, skipped when library mode is on)
+                if write_col_per_group and models['COL']:
                     col_path = os.path.join(tmpdir, base_name + '.col')
                     try:
                         inu_export_col(filepath=col_path, objects=[models['COL']], version=3)
@@ -3931,26 +4107,53 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
                     except Exception as e:
                         results.append(f"{base_name}.col error: {e}")
 
-                # Export TXD (textures from DFF + LOD)
+                # Collect DFF/LOD into the TXD bucket keyed by resolved name
                 if export_txd_flag and (models['DFF'] or models['LOD']):
-                    txd_path = os.path.join(tmpdir, base_name + '.txd')
+                    bucket_name = _txd_for(base_name)
+                    for mt in ('DFF', 'LOD'):
+                        if models[mt] is not None:
+                            txd_buckets[bucket_name].append(models[mt])
+
+            # Now write one .txd per bucket by selecting all its objects
+            # in one pass and feeding them to export_txd(selected_only=True).
+            if export_txd_flag:
+                for txd_name, sources in txd_buckets.items():
+                    if not sources:
+                        continue
+                    txd_path = os.path.join(tmpdir, txd_name + '.txd')
                     try:
-                        # Select only this group's objects for texture collection
                         bpy.ops.object.select_all(action='DESELECT')
-                        if models['DFF']:
-                            models['DFF'].select_set(True)
-                            context.view_layer.objects.active = models['DFF']
-                        if models['LOD']:
-                            models['LOD'].select_set(True)
+                        for src in sources:
+                            src.select_set(True)
+                        context.view_layer.objects.active = sources[0]
                         result, msg, _ = export_txd(txd_path, context, True, use_gpu)
                         if result == {'FINISHED'}:
                             with open(txd_path, 'rb') as f:
-                                status = replace_or_add(img_path, base_name + '.txd', f.read())
-                            results.append(f"{base_name}.txd {status}")
+                                status = replace_or_add(img_path, txd_name + '.txd', f.read())
+                            results.append(f"{txd_name}.txd {status} ({len(sources)} models)")
                         else:
-                            results.append(f"{base_name}.txd: {msg}")
+                            results.append(f"{txd_name}.txd: {msg}")
                     except Exception as e:
-                        results.append(f"{base_name}.txd error: {e}")
+                        results.append(f"{txd_name}.txd error: {e}")
+
+            # Library COL — one multi-entry .col written and injected into IMG
+            if col_library and library_col_objects:
+                try:
+                    lib_filename = f"{col_library_name}.col"
+                    lib_path = os.path.join(tmpdir, lib_filename)
+                    original_locations = {}
+                    for obj in library_col_objects:
+                        original_locations[obj.name] = obj.location.copy()
+                        obj.location = (0, 0, 0)
+                    count = export_col_library(lib_path, library_col_objects, version=3)
+                    for obj in library_col_objects:
+                        if obj.name in original_locations:
+                            obj.location = original_locations[obj.name]
+                    with open(lib_path, 'rb') as f:
+                        status = replace_or_add(img_path, lib_filename, f.read())
+                    results.append(f"{lib_filename} {status} ({count} records)")
+                except Exception as e:
+                    results.append(f"{col_library_name}.col error: {e}")
 
         # Refresh IMG file list
         _refresh_img_entries(context.scene, img_path)
@@ -4256,11 +4459,7 @@ class GTATOOLS_OT_export_ipl(bpy.types.Operator):
     def draw(self, context):
         layout = self.layout
         row = layout.row(align=True)
-        icon_id = _icons.get_icon("disk")
-        if icon_id:
-            row.prop(self, "binary", icon_value=icon_id)
-        else:
-            row.prop(self, "binary")
+        row.prop(self, "binary")
 
     def execute(self, context):
         from .ops.ipl_export import export_ipl as inu_export_ipl
@@ -4677,7 +4876,19 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
         skip_col = not context.scene.gtatools_export_all_col
         skip_lod = not context.scene.gtatools_export_all_lod
         skip_txd = not context.scene.gtatools_export_all_txd
+        col_library = bool(getattr(context.scene, 'gtatools_export_all_col_library', False))
+        col_library_name = getattr(context.scene, 'gtatools_export_all_col_library_name', '') or 'collision'
         use_gpu = check_nvtt_available(getattr(context.scene, 'gtatools_nvtt_path', ''))[0]
+
+        # Library mode: skip the per-group COL write path and collect all
+        # COL objects instead. A single combined .col file is written after
+        # the group loop. DFF/LOD/TXD still go per-group.
+        library_col_objects = []
+        if col_library and not skip_col:
+            skip_col = True
+            for _base, _models in model_groups.items():
+                if _models['COL']:
+                    library_col_objects.append(_models['COL'])
 
         # Считаем общее количество шагов для прогресс-бара
         total_steps = 0
@@ -4708,6 +4919,24 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
             ])
 
         wm.progress_end()
+
+        # Library COL — one multi-entry .col file from every group's COL mesh
+        if col_library and library_col_objects:
+            try:
+                from .ops.col_export import export_col_library
+                lib_path = os.path.join(self.directory, f"{col_library_name}.col")
+                # COL exports expect objects at origin — temporarily centre them
+                original_locations = {}
+                for obj in library_col_objects:
+                    original_locations[obj.name] = obj.location.copy()
+                    obj.location = (0, 0, 0)
+                count = export_col_library(lib_path, library_col_objects, version=3)
+                for obj in library_col_objects:
+                    if obj.name in original_locations:
+                        obj.location = original_locations[obj.name]
+                all_exported.append(f"{col_library_name}.col ({count} records)")
+            except Exception as e:
+                all_errors.append(f"{col_library_name}.col: {e}")
 
         # Восстанавливаем prelight только где он был включён
         for obj in prelight_was_on:
@@ -4755,6 +4984,18 @@ class GTATOOLS_OT_inu_export(bpy.types.Operator, ExportHelper):
     dff_auto_lod: BoolProperty(name="Auto-LOD", default=True,
         description="Automatically export LOD models (LOD*.dff)")
 
+    # ── COL settings ──
+    col_library: BoolProperty(
+        name=T("COL Library"),
+        description=T("Писать все коллизии в один .col файл (multi-entry library). Каждая запись в файле — отдельная коллизия со своим model_id, сопоставляется с DFF по ID"),
+        default=False,
+    )
+    col_library_name: StringProperty(
+        name=T("Имя library .col"),
+        description=T("Имя общего .col файла без расширения (например 'district' → district.col)"),
+        default="collision",
+    )
+
     # ── TXD settings ──
     txd_selected_only: BoolProperty(name="Selected Only", default=True,
         description="Export only textures used by exported models")
@@ -4793,6 +5034,14 @@ class GTATOOLS_OT_inu_export(bpy.types.Operator, ExportHelper):
             box.prop(self, "dff_auto_lod")
             # Pipeline
             box.prop(context.scene, "gtatools_export_pipeline", text="Pipeline")
+
+        # COL settings
+        if self.export_col:
+            box = layout.box()
+            box.label(text="COL:", icon='MESH_ICOSPHERE')
+            box.prop(self, "col_library")
+            if self.col_library:
+                box.prop(self, "col_library_name")
 
         # TXD settings
         if self.export_txd:
@@ -4873,6 +5122,16 @@ class GTATOOLS_OT_inu_export(bpy.types.Operator, ExportHelper):
         all_errors = []
         use_gpu = check_nvtt_available(getattr(context.scene, 'gtatools_nvtt_path', ''))[0]
 
+        # Library COL bypasses the per-group loop — collect once and emit
+        # a single multi-entry .col after all groups finish.
+        library_col_objects = []
+        write_col_per_group = self.export_col
+        if self.export_col and self.col_library:
+            write_col_per_group = False
+            for _base, _models in groups.items():
+                if _models['COL']:
+                    library_col_objects.append(_models['COL'])
+
         wm = context.window_manager
         wm.progress_begin(0, len(groups))
 
@@ -4904,8 +5163,8 @@ class GTATOOLS_OT_inu_export(bpy.types.Operator, ExportHelper):
                 except Exception as e:
                     all_errors.append(f"LOD{base_name}.dff: {e}")
 
-            # ── COL ──
-            if self.export_col and models['COL']:
+            # ── COL ── (per-group, skipped when library mode is on)
+            if write_col_per_group and models['COL']:
                 col_path = os.path.join(directory, f"{base_name}.col")
                 try:
                     from .ops.col_export import export_col as inu_export_col
@@ -4994,6 +5253,24 @@ class GTATOOLS_OT_inu_export(bpy.types.Operator, ExportHelper):
 
         wm.progress_end()
 
+        # Library COL — one multi-entry .col after per-group loop
+        if self.col_library and library_col_objects:
+            try:
+                from .ops.col_export import export_col_library
+                lib_name = self.col_library_name or 'collision'
+                lib_path = os.path.join(directory, f"{lib_name}.col")
+                original_locations = {}
+                for obj in library_col_objects:
+                    original_locations[obj.name] = obj.location.copy()
+                    obj.location = (0, 0, 0)
+                count = export_col_library(lib_path, library_col_objects, version=3)
+                for obj in library_col_objects:
+                    if obj.name in original_locations:
+                        obj.location = original_locations[obj.name]
+                all_exported.append(f"{lib_name}.col ({count} records)")
+            except Exception as e:
+                all_errors.append(f"col library: {e}")
+
         # Restore prelight
         for obj in prelight_was_on:
             setup_prelight_preview(obj, enable=True)
@@ -5057,43 +5334,6 @@ class GTATOOLS_OT_detect_models(bpy.types.Operator):
         else:
             self.report({'WARNING'}, T("Среди выделенных не найдено DFF/LOD/COL моделей"))
 
-        return {'FINISHED'}
-
-
-class GTATOOLS_OT_prelight(bpy.types.Operator):
-    """Применить GTA SA Prelight к выделенному объекту"""
-    bl_idname = "gtatools.prelight"
-    bl_label = "Apply Prelight"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    split_angle: FloatProperty(name="Split Angle", default=90.0, min=0.0, max=180.0)
-    normal_threshold: FloatProperty(name="Normal Threshold", default=0.15, min=0.001, max=0.5)
-    top_color: FloatVectorProperty(name="Top Color", subtype='COLOR', default=(1.0, 1.0, 1.0), min=0.0, max=1.0)
-    bottom_color: FloatVectorProperty(name="Bottom Color", subtype='COLOR', default=(0.25, 0.25, 0.25), min=0.0, max=1.0)
-    ambient_color: FloatVectorProperty(name="Ambient Color", subtype='COLOR', default=(0.5, 0.5, 0.5), min=0.0, max=1.0)
-
-    def execute(self, context):
-        mesh_objects = [o for o in context.selected_objects if o.type == 'MESH']
-        if not mesh_objects:
-            mesh_objects = [context.active_object] if context.active_object and context.active_object.type == 'MESH' else []
-        if not mesh_objects:
-            self.report({'ERROR'}, "Select mesh object(s)!")
-            return {'CANCELLED'}
-
-        count = 0
-        for obj in mesh_objects:
-            prelight = GTASAPrelight(
-                obj,
-                split_angle=self.split_angle,
-                normal_threshold=self.normal_threshold,
-                top_color=tuple(self.top_color),
-                bottom_color=tuple(self.bottom_color),
-                ambient_color=tuple(self.ambient_color)
-            )
-            prelight.run()
-            count += 1
-
-        self.report({'INFO'}, f"Prelight applied: {count} objects")
         return {'FINISHED'}
 
 
@@ -7771,40 +8011,6 @@ class GTATOOLS_OT_toggle_lightmap_uv2(bpy.types.Operator):
 # PANELS
 # =============================================================================
 
-# Twemoji icons applied to subpanel headers at register() time. Edit the
-# value to change the emoji, or comment out a line to fall back to the
-# plain panel title.
-_PANEL_ICON_KEYS = {
-    "GTATOOLS_PT_ide_ipl_panel":       "disk",       # 💾
-    "GTATOOLS_PT_export_panel":        "disk",       # 💾
-    "GTATOOLS_PT_check_panel":         "testtube",   # 🧪
-    "GTATOOLS_PT_itera_panel":         "palette",    # 🎨
-    "GTATOOLS_PT_prelight_panel":      "light",      # 💡
-    "GTATOOLS_PT_prelight_col_panel":  "rock",       # 🪨
-    "GTATOOLS_PT_2dfx_panel":          "firework",   # 🎆
-    "GTATOOLS_PT_lightmap_panel":      "light",      # 💡
-    "GTATOOLS_PT_water_panel":         "water",      # 🌊
-    "GTATOOLS_PT_anim_panel":          "clapper",    # 🎬
-    "GTATOOLS_PT_radar_panel":         "map",        # 🗺️
-    "GTATOOLS_PT_paths_panel":         "road",       # 🛣️
-    "GTATOOLS_PT_bitmaps_panel":       "picture",    # 🖼️
-    "GTATOOLS_PT_map_export_panel":    "map",        # 🗺️
-    "GTATOOLS_PT_gta_material_panel":  "palette",    # 🎨
-}
-
-
-def _make_twemoji_header(original_draw_header, icon_key: str):
-    """Return a draw_header that prepends a Twemoji PNG before the title.
-    Wraps any existing draw_header so we don't clobber panels that use it."""
-    def draw_header(self, context):
-        icon_id = _icons.get_icon(icon_key)
-        if icon_id:
-            self.layout.label(text="", icon_value=icon_id)
-        if original_draw_header is not None:
-            original_draw_header(self, context)
-    return draw_header
-
-
 class GTATOOLS_PT_main_panel(bpy.types.Panel):
     """Главная панель GTA Tools"""
     bl_label = "GTA Tools"
@@ -7815,8 +8021,7 @@ class GTATOOLS_PT_main_panel(bpy.types.Panel):
 
     def draw(self, context):
         layout = self.layout
-        layout.label(text="GTA SA Modding Tools",
-                     icon_value=_icons.get_icon("palette"))
+        layout.label(text="GTA SA Modding Tools")
 
 
 class GTATOOLS_PT_ide_ipl_panel(bpy.types.Panel):
@@ -7827,6 +8032,7 @@ class GTATOOLS_PT_ide_ipl_panel(bpy.types.Panel):
     bl_region_type = 'UI'
     bl_category = 'GTA Tools'
     bl_parent_id = "GTATOOLS_PT_main_panel"
+    bl_order = 30
     bl_options = {'DEFAULT_CLOSED'}
 
     def draw(self, context):
@@ -7908,6 +8114,11 @@ class GTATOOLS_PT_ide_ipl_panel(bpy.types.Panel):
         row.prop(scn, "gtatools_img_export_dff", text="DFF", toggle=True)
         row.prop(scn, "gtatools_img_export_col", text="COL", toggle=True)
         row.prop(scn, "gtatools_img_export_txd", text="TXD", toggle=True)
+        if scn.gtatools_img_export_col:
+            row = box.row(align=True)
+            row.prop(scn, "gtatools_img_col_library", text="", icon='PACKAGE')
+            row.prop(scn, "gtatools_img_col_library_name",
+                     text="", placeholder="collision")
         row = box.row(align=True)
         row.prop(scn, "gtatools_img_skip_lod", text="Skip LOD", toggle=True)
         row.prop(scn, "gtatools_img_load_txd", text="TXD", toggle=True)
@@ -8150,11 +8361,7 @@ class GTATOOLS_OT_export_nodes(bpy.types.Operator):
     def draw(self, context):
         layout = self.layout
         row = layout.row(align=True)
-        icon_id = _icons.get_icon("road")
-        if icon_id:
-            row.prop(self, "fla4", icon_value=icon_id)
-        else:
-            row.prop(self, "fla4")
+        row.prop(self, "fla4")
 
     def execute(self, context):
         from .ops.path_export import export_nodes
@@ -8652,6 +8859,7 @@ class GTATOOLS_PT_export_panel(bpy.types.Panel):
     bl_region_type = 'UI'
     bl_category = 'GTA Tools'
     bl_parent_id = "GTATOOLS_PT_main_panel"
+    bl_order = 0
     bl_options = {'DEFAULT_CLOSED'}
 
     def draw(self, context):
@@ -8684,15 +8892,8 @@ class GTATOOLS_PT_export_panel(bpy.types.Panel):
 
         # CST (Steve's COL Editor text format)
         row = layout.row(align=True)
-        _rock_id = _icons.get_icon("rock")
-        if _rock_id:
-            row.operator("gtatools.import_cst", text=T("Импорт CST"),
-                         icon_value=_rock_id)
-            row.operator("gtatools.export_cst", text=T("Экспорт CST"),
-                         icon_value=_rock_id)
-        else:
-            row.operator("gtatools.import_cst", text=T("Импорт CST"), icon='IMPORT')
-            row.operator("gtatools.export_cst", text=T("Экспорт CST"), icon='EXPORT')
+        row.operator("gtatools.import_cst", text=T("Импорт CST"), icon='IMPORT')
+        row.operator("gtatools.export_cst", text=T("Экспорт CST"), icon='EXPORT')
 
         # TXD
         row = layout.row(align=True)
@@ -8716,26 +8917,24 @@ class GTATOOLS_PT_export_panel(bpy.types.Panel):
 
         layout.separator()
 
-        # Vehicle tools
-        _ruler_id = _icons.get_icon("ruler")
-        if _ruler_id:
-            layout.operator("gtatools.vehicle_scale",
-                            text=T("Масштаб машины…"),
-                            icon_value=_ruler_id)
-        else:
-            layout.operator("gtatools.vehicle_scale",
-                            text=T("Масштаб машины…"),
-                            icon='FULLSCREEN_ENTER')
-
-        layout.separator()
-
-        # Export All
-        layout.operator("gtatools.export_all", text=T("Экспорт всего (DFF+COL+LOD+TXD)"), icon='EXPORT')
+        # Unified Export — три цели: В папку / В IMG / INU preset
+        layout.label(text=T("Экспорт:"))
+        row = layout.row(align=True)
+        row.operator("gtatools.export_all", text=T("В папку"))
+        row.operator("gtatools.export_to_img", text=T("В IMG"))
+        row.operator("gtatools.inu_export", text="INU Export")
+        # Форматы для «В папку»
         row = layout.row(align=True)
         row.prop(context.scene, "gtatools_export_all_dff", text="DFF", toggle=True)
         row.prop(context.scene, "gtatools_export_all_col", text="COL", toggle=True)
         row.prop(context.scene, "gtatools_export_all_lod", text="LOD", toggle=True)
         row.prop(context.scene, "gtatools_export_all_txd", text="TXD", toggle=True)
+        # COL library mode
+        if context.scene.gtatools_export_all_col:
+            row = layout.row(align=True)
+            row.prop(context.scene, "gtatools_export_all_col_library", text="", icon='PACKAGE')
+            row.prop(context.scene, "gtatools_export_all_col_library_name",
+                     text="", placeholder="collision")
 
         # Pipeline + Normals
         _draw_label_with_info(layout, "Pipeline:",
@@ -8745,6 +8944,15 @@ class GTATOOLS_PT_export_panel(bpy.types.Panel):
         row.prop_enum(context.scene, "gtatools_export_pipeline", '0x53F2009A')
         row.prop_enum(context.scene, "gtatools_export_pipeline", '0x53F20098')
         row.prop_enum(context.scene, "gtatools_export_pipeline", '0x53F2009C')
+        # Suffix/Prefix (collapsible, hidden by default)
+        row = layout.row(align=True)
+        row.prop(context.scene, "gtatools_show_suffix_settings",
+                 icon='TRIA_DOWN' if context.scene.gtatools_show_suffix_settings else 'TRIA_RIGHT',
+                 text=T("Суффиксы / Префиксы"), emboss=False)
+        if context.scene.gtatools_show_suffix_settings:
+            sbox = layout.box()
+            _draw_suffix_prefix(sbox, context.scene)
+
         obj = context.active_object
         if obj and obj.type == 'MESH' and hasattr(obj, 'inu'):
             inu = obj.inu
@@ -8863,20 +9071,29 @@ class GTATOOLS_PT_check_panel(bpy.types.Panel):
     bl_region_type = 'UI'
     bl_category = 'GTA Tools'
     bl_parent_id = "GTATOOLS_PT_main_panel"
+    bl_order = 10
     bl_options = {'DEFAULT_CLOSED'}
 
     def draw(self, context):
         layout = self.layout
 
-        row = layout.row(align=True)
+        # Геометрия
+        col = layout.column(align=True)
+        row = col.row(align=True)
         row.operator("gtatools.check_geometry", text=T("Проверка вершин"), icon='VIEWZOOM')
         row.operator("gtatools.check_ngons", text=T("Проверка N-gon"), icon='MESH_DATA')
-        layout.operator("gtatools.check_materials", text=T("Проверка материалов"), icon='MATERIAL')
-        layout.operator("gtatools.cleanup_materials", text=T("Очистка материалов"), icon='BRUSH_DATA')
-        layout.operator("gtatools.sort_materials", text=T("Сортировка материалов"), icon='SORTALPHA')
-        layout.operator("gtatools.reset_transform", text=T("Сброс трансформ"), icon='EMPTY_AXIS')
-        layout.separator()
-        layout.operator("gtatools.snap_to_dff", text=T("LOD/COL → DFF"), icon='SNAP_ON')
+        col.operator("gtatools.reset_transform", text=T("Сброс трансформ"), icon='EMPTY_AXIS')
+        col.operator("gtatools.snap_to_dff", text=T("LOD/COL → DFF"), icon='SNAP_ON')
+        col.operator("gtatools.vehicle_scale", text=T("Масштаб машины…"),
+                     icon='FULLSCREEN_ENTER')
+
+        # Материалы
+        col = layout.column(align=True)
+        col.operator("gtatools.check_materials", text=T("Проверка материалов"), icon='MATERIAL')
+        col.operator("gtatools.cleanup_materials", text=T("Очистка материалов"), icon='BRUSH_DATA')
+        col.operator("gtatools.sort_materials", text=T("Сортировка материалов"), icon='SORTALPHA')
+
+        # Видимость
         row = layout.row(align=True)
         op = row.operator("gtatools.toggle_visibility", text="DFF",
                           icon='HIDE_ON' if _hide_dff else 'HIDE_OFF', depress=_hide_dff)
@@ -8887,6 +9104,7 @@ class GTATOOLS_PT_check_panel(bpy.types.Panel):
         op = row.operator("gtatools.toggle_visibility", text="COL",
                           icon='HIDE_ON' if _hide_col else 'HIDE_OFF', depress=_hide_col)
         op.model_type = 'COL'
+
         # Batch set type
         row = layout.row(align=True)
         row.label(text=T("Тип:"))
@@ -10436,6 +10654,7 @@ class GTATOOLS_PT_2dfx_panel(bpy.types.Panel):
     bl_region_type = 'UI'
     bl_category = 'GTA Tools'
     bl_parent_id = "GTATOOLS_PT_main_panel"
+    bl_order = 22
     bl_options = {'DEFAULT_CLOSED'}
 
     def _is_2dfx(self, context):
@@ -11002,9 +11221,6 @@ class GTATOOLS_PT_material_effects_panel(bpy.types.Panel):
         # ── UV Animation write into DFF ──
         box = layout.box()
         row = box.row(align=True)
-        _fid = _icons.get_icon("film")
-        if _fid:
-            row.label(text="", icon_value=_fid)
         row.prop(inu, "uv_anim_write", text=T("Писать UV Anim в DFF"))
         if inu.uv_anim_write:
             row = box.row(align=True)
@@ -11021,13 +11237,89 @@ def _draw_sort_materials_menu(self, context):
     self.layout.operator("gtatools.sort_materials", text=T("Сортировка материалов"), icon='SORTALPHA')
 
 
+class GTATOOLS_OT_batch_set_distance(bpy.types.Operator):
+    """Задать Draw Distance и/или LOD Distance всем выделенным MESH-объектам.
+
+    По умолчанию поля заполняются значениями активного объекта — можно
+    изменить и применить к выделению одним действием. Галочки слева
+    выбирают какие именно поля переписывать (удобно менять только одно)"""
+    bl_idname = "gtatools.batch_set_distance"
+    bl_label = "Apply distances to Selected"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    apply_draw: BoolProperty(
+        name=T("Применить Draw Dist"),
+        default=True,
+    )
+    draw_distance: FloatProperty(
+        name="Draw Dist",
+        default=299.0, min=0.0, max=10000.0,
+    )
+    apply_lod: BoolProperty(
+        name=T("Применить LOD Dist"),
+        default=False,
+    )
+    lod_draw_distance: FloatProperty(
+        name="LOD Dist",
+        default=999.0, min=0.0, max=10000.0,
+    )
+
+    @classmethod
+    def poll(cls, context):
+        return any(o.type == 'MESH' for o in context.selected_objects)
+
+    def invoke(self, context, event):
+        # Prefill from the active object so user can tweak from a known state.
+        obj = context.active_object
+        if obj and obj.type == 'MESH' and hasattr(obj, 'inu'):
+            self.draw_distance = obj.inu.draw_distance
+            self.lod_draw_distance = obj.inu.lod_draw_distance
+        return context.window_manager.invoke_props_dialog(self, width=280)
+
+    def draw(self, context):
+        layout = self.layout
+        row = layout.row(align=True)
+        row.prop(self, "apply_draw", text="")
+        sub = row.row(align=True)
+        sub.active = self.apply_draw
+        sub.prop(self, "draw_distance")
+
+        row = layout.row(align=True)
+        row.prop(self, "apply_lod", text="")
+        sub = row.row(align=True)
+        sub.active = self.apply_lod
+        sub.prop(self, "lod_draw_distance")
+
+        n = sum(1 for o in context.selected_objects if o.type == 'MESH')
+        layout.label(text=f"{n} {T('объектов будет изменено')}", icon='INFO')
+
+    def execute(self, context):
+        if not self.apply_draw and not self.apply_lod:
+            self.report({'WARNING'}, T("Включите хотя бы одну галочку"))
+            return {'CANCELLED'}
+        count = 0
+        for obj in context.selected_objects:
+            if obj.type != 'MESH' or not hasattr(obj, 'inu'):
+                continue
+            if self.apply_draw:
+                obj.inu.draw_distance = self.draw_distance
+            if self.apply_lod:
+                obj.inu.lod_draw_distance = self.lod_draw_distance
+            count += 1
+        self.report({'INFO'}, f"{T('Изменено:')} {count}")
+        return {'FINISHED'}
+
+
 class GTATOOLS_PT_object_ide_ipl_panel(bpy.types.Panel):
-    """IDE/IPL свойства в Object Properties"""
-    bl_label = "GTA SA: IDE / IPL"
+    """Per-object IDE/IPL properties (N-sidebar, DATA zone)"""
+    bl_label = "Object IDE / IPL"
     bl_idname = "GTATOOLS_PT_object_ide_ipl_panel"
-    bl_space_type = 'PROPERTIES'
-    bl_region_type = 'WINDOW'
-    bl_context = 'object'
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'GTA Tools'
+    bl_parent_id = "GTATOOLS_PT_main_panel"
+    bl_order = 29
+    bl_options = {'DEFAULT_CLOSED'}
 
     @classmethod
     def poll(cls, context):
@@ -11044,6 +11336,15 @@ class GTATOOLS_PT_object_ide_ipl_panel(bpy.types.Panel):
         col.prop(inu, "model_id", text="Model ID")
         col.prop(inu, "draw_distance", text="Draw Dist")
         col.prop(inu, "lod_draw_distance", text="LOD Dist")
+
+        # Batch: apply distances to all selected MESH objects
+        n_sel = sum(1 for o in context.selected_objects if o.type == 'MESH')
+        if n_sel > 1:
+            layout.operator(
+                "gtatools.batch_set_distance",
+                text=f"{T('Применить к выделенным')} ({n_sel})",
+                icon='STICKY_UVS_LOC',
+            )
 
         # Flags with expandable checkboxes
         row = layout.row(align=True)
@@ -11077,20 +11378,152 @@ class GTATOOLS_PT_object_ide_ipl_panel(bpy.types.Panel):
         # Breakable object (DFF chunk 0x253F2FD)
         box = layout.box()
         row = box.row(align=True)
-        _eid = _icons.get_icon("explosion")
-        if _eid:
-            row.label(text="", icon_value=_eid)
         row.prop(inu, "breakable", text=T("Разрушаемый (Breakable)"))
         if inu.breakable:
             box.prop(inu, "breakable_force", text=T("Break Force"))
 
-        # Check for ID conflicts
+        # Check for ID conflicts — ignore Blender duplicate suffixes (.001,
+        # .002, ...). Multiple placements of the same model legitimately
+        # share a model_id; only a different base name counts as a real
+        # conflict (two distinct meshes claiming the same IDE entry).
         if inu.model_id > 0:
+            def _dup_base(n: str) -> str:
+                if '.' in n:
+                    head, tail = n.rsplit('.', 1)
+                    if tail.isdigit():
+                        return head
+                return n
+
+            self_base = _dup_base(obj.name)
             conflicts = [o.name for o in bpy.data.objects
                          if o.type == 'MESH' and o != obj
-                         and hasattr(o, 'inu') and o.inu.model_id == inu.model_id]
+                         and hasattr(o, 'inu') and o.inu.model_id == inu.model_id
+                         and _dup_base(o.name) != self_base]
             if conflicts:
                 layout.label(text=f"ID {inu.model_id}: {T('конфликт с')} {', '.join(conflicts[:3])}", icon='ERROR')
+
+
+class GTATOOLS_PT_object_inu_tools(bpy.types.Panel):
+    """INU Tools — full per-object model settings in Object Properties"""
+    bl_label = "INU Tools: Model"
+    bl_idname = "GTATOOLS_PT_object_inu_tools"
+    bl_space_type = 'PROPERTIES'
+    bl_region_type = 'WINDOW'
+    bl_context = 'object'
+    bl_options = {'DEFAULT_CLOSED'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and obj.type in ('MESH', 'EMPTY')
+
+    def draw(self, context):
+        from .tools.model_utils import get_model_type
+        layout = self.layout
+        scn = context.scene
+        obj = context.active_object
+        inu = obj.inu
+
+        # ── Тип (по имени + manual) ──
+        box = layout.box()
+        box.label(text=T("Тип:"), icon='OBJECT_DATA')
+        detected, _ = get_model_type(obj)
+        name_row = box.row(align=True)
+        name_row.enabled = False
+        name_row.label(text=f"{T('По имени:')} {detected or '—'}")
+        box.prop(inu, "type", text=T("Экспортировать как"))
+
+        # ── IDE / Placement ──
+        box = layout.box()
+        box.label(text="IDE / Placement", icon='COPY_ID')
+        col = box.column(align=True)
+        col.prop(inu, "model_id", text="Model ID")
+        col.prop(inu, "txd_name", text="TXD")
+        col.prop(inu, "draw_distance", text="Draw Dist")
+        col.prop(inu, "lod_draw_distance", text="LOD Dist")
+        row = col.row(align=True)
+        row.prop(inu, "interior_id", text="Interior")
+        row.prop(inu, "lod_index", text="LOD")
+
+        # Batch distance button
+        n_sel = sum(1 for o in context.selected_objects if o.type == 'MESH')
+        if n_sel > 1:
+            box.operator(
+                "gtatools.batch_set_distance",
+                text=f"{T('Применить к выделенным')} ({n_sel})",
+                icon='STICKY_UVS_LOC',
+            )
+
+        # IDE Flags (collapsible)
+        row = box.row(align=True)
+        row.prop(inu, "ide_flags", text="IDE Flags")
+        row.prop(scn, "gtatools_show_ide_flags",
+                 icon='TRIA_DOWN' if scn.gtatools_show_ide_flags else 'TRIA_RIGHT',
+                 text="", emboss=False)
+        if scn.gtatools_show_ide_flags:
+            fbox = box.box()
+            fc = fbox.column(align=True)
+            fc.prop(inu, "flag_is_road")
+            fc.prop(inu, "flag_draw_last")
+            fc.prop(inu, "flag_additive")
+            fc.prop(inu, "flag_no_zbuffer")
+            fc.prop(inu, "flag_no_shadows")
+            fc.prop(inu, "flag_glass_1")
+            fc.prop(inu, "flag_glass_2")
+            fc.prop(inu, "flag_garage_door")
+            fc.prop(inu, "flag_damagable")
+            fc.prop(inu, "flag_is_tree")
+            fc.prop(inu, "flag_is_palm")
+            fc.prop(inu, "flag_no_flyer_col")
+            fc.prop(inu, "flag_is_tag")
+            fc.prop(inu, "flag_no_backface")
+            fc.prop(inu, "flag_breakable")
+
+        # ── DFF Flags (collapsible, only for mesh) ──
+        if obj.type == 'MESH':
+            box = layout.box()
+            row = box.row(align=True)
+            row.prop(scn, "gtatools_show_dff_flags",
+                     icon='TRIA_DOWN' if scn.gtatools_show_dff_flags else 'TRIA_RIGHT',
+                     text="DFF Flags", emboss=False)
+            if scn.gtatools_show_dff_flags:
+                fc = box.column(align=True)
+                fc.prop(inu, "export_normals", text="Normals")
+                fc.prop(inu, "light", text="Light")
+                fc.prop(inu, "modulate_color", text="Modulate Color")
+                fc.prop(inu, "set_material_alpha", text="Set Material Alpha")
+                fc.prop(inu, "light_beam_asi", text="Light Beam (SA_Light.asi)")
+                fc.prop(inu, "export_binsplit", text="Bin Mesh PLG")
+                fc.prop(inu, "uv_map1", text="UV1")
+                fc.prop(inu, "uv_map2", text="UV2")
+                fc.prop(inu, "day_cols", text="Day")
+                fc.prop(inu, "night_cols", text="Night")
+
+        # ── Pipeline ──
+        if obj.type == 'MESH':
+            box = layout.box()
+            box.label(text="Pipeline", icon='NODETREE')
+            box.prop(inu, "pipeline", text="")
+            if inu.pipeline == 'CUSTOM':
+                box.prop(inu, "custom_pipeline", text="")
+
+        # ── Breakable ──
+        if obj.type == 'MESH':
+            box = layout.box()
+            box.prop(inu, "breakable", text=T("Разрушаемый (Breakable)"))
+            if inu.breakable:
+                box.prop(inu, "breakable_force", text=T("Break Force"))
+
+        # ── 2DFX (only for EMPTY with type='2DFX') ──
+        if obj.type == 'EMPTY' and inu.type == '2DFX':
+            box = layout.box()
+            box.label(text="2DFX", icon='LIGHT')
+            box.prop(inu, "effect_2dfx", text=T("Тип эффекта"))
+            if inu.effect_2dfx == 'LIGHT':
+                box.prop(inu, "color_2dfx", text=T("Цвет"))
+                row = box.row(align=True)
+                row.prop(inu, "preset_2dfx", text=T("Пресет"))
+                row.operator("gtatools.apply_2dfx_preset", text="", icon='CHECKMARK')
 
 
 class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
@@ -11114,6 +11547,7 @@ class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
         if scene.gtatools_show_paths_settings:
             box.label(text="Game Root", icon='FILE_FOLDER')
             box.prop(scene, "gtatools_game_root", text="")
+            box.operator("gtatools.discover_game", text=T("Auto-discover"))
             row = box.row(align=True)
             row.prop(scene, "gtatools_img_skip_lod", text="Skip LOD", toggle=True)
             row.prop(scene, "gtatools_map_skip_2dfx", text=T("Без 2DFX"), toggle=True)
@@ -11160,8 +11594,9 @@ class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
                         bi_col.prop(item, "enabled", text=item.name)
 
             box.operator("gtatools.extract_textures", text=T("Извлечь ресурсы"), icon='PACKAGE')
-            box.operator("gtatools.build_map_glb", text=T("Собрать карту в .glb"), icon='WORLD')
-            box.operator("gtatools.load_map_glb", text=T("Импорт карты .glb"), icon='IMPORT')
+            row = box.row(align=True)
+            row.operator("gtatools.build_map_glb", text=T("Собрать .glb"), icon='WORLD')
+            row.operator("gtatools.load_map_glb", text=T("Импорт .glb"), icon='IMPORT')
             row = box.row(align=True)
             row.operator("gtatools.toggle_bbox",
                          text=T("BBox: ON") if _bbox_mode_active else T("BBox: OFF"),
@@ -11209,118 +11644,6 @@ class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
             else:
                 box.label(text=T("Статус: Не найден"), icon='ERROR')
 
-        # Suffix settings (collapsible)
-        box = layout.box()
-        row = box.row()
-        row.prop(scene, "gtatools_show_suffix_settings",
-                 icon='TRIA_DOWN' if scene.gtatools_show_suffix_settings else 'TRIA_RIGHT',
-                 text=T("Суффиксы / Префиксы"), emboss=False)
-        if scene.gtatools_show_suffix_settings:
-            for _label, _pfx, _sfx in [("DFF", "gtatools_prefix_dff", "gtatools_suffix_dff"),
-                                        ("LOD", "gtatools_prefix_lod", "gtatools_suffix_lod"),
-                                        ("COL", "gtatools_prefix_col", "gtatools_suffix_col")]:
-                row = box.row(align=True)
-                pfx = row.row(align=True)
-                pfx.scale_x = 0.7
-                pfx.prop(scene, _pfx, text="")
-                sub_lbl = row.row(align=True)
-                sub_lbl.scale_x = 0.6
-                sub_lbl.label(text="Model")
-                sfx = row.row(align=True)
-                sfx.scale_x = 0.7
-                sfx.prop(scene, _sfx, text="")
-                pad = row.row(align=True)
-                pad.label(text=" ")
-                pad.label(text=" ")
-                pad.label(text=" ")
-
-        # ID Manager (collapsible)
-        box = layout.box()
-        row = box.row()
-        row.prop(scene, "gtatools_show_id_manager",
-                 icon='TRIA_DOWN' if scene.gtatools_show_id_manager else 'TRIA_RIGHT',
-                 text=T("Менеджер ID"), emboss=False)
-        if scene.gtatools_show_id_manager:
-            _id_preset_sync(context)
-            from .data.id_manager import get_free_ids, get_used_ids, get_file_path
-
-            # Preset selector
-            preset_row = box.row(align=True)
-            preset_row.prop(scene, "gtatools_id_preset", text=T("Пресет"))
-            preset_row.operator("gtatools.id_preset_new", text="", icon='ADD')
-            preset_row.operator("gtatools.id_preset_rename", text="", icon='GREASEPENCIL')
-            preset_row.operator("gtatools.id_preset_delete", text="", icon='REMOVE')
-
-            free = get_free_ids()
-            used = get_used_ids()
-
-            box.label(text=f"{T('Свободных:')} {len(free)}  |  {T('Занятых:')} {len(used)}", icon='PRESET')
-
-            if free:
-                box.label(text=f"{T('Следующий свободный:')} {free[0]}", icon='FORWARD')
-
-            # Search field
-            box.prop(scene, "gtatools_id_search", text="", icon='VIEWZOOM')
-            search = getattr(scene, 'gtatools_id_search', '').strip()
-            page = getattr(scene, 'gtatools_id_page', 0)
-            per_page = 20
-
-            # Filter IDs
-            if used:
-                filtered = []
-                for id_num in sorted(used.keys()):
-                    name = used[id_num]
-                    if search:
-                        if search.isdigit():
-                            if search not in str(id_num):
-                                continue
-                        else:
-                            if search.lower() not in name.lower():
-                                continue
-                    filtered.append((id_num, name))
-
-                total = len(filtered)
-                max_page = max(0, (total - 1) // per_page)
-                page = min(page, max_page)
-                start = page * per_page
-                page_items = filtered[start:start + per_page]
-
-                sub = box.box()
-                col = sub.column(align=True)
-                # 2 columns
-                for i in range(0, len(page_items), 2):
-                    row = col.row(align=True)
-                    for j in range(2):
-                        if i + j < len(page_items):
-                            id_num, name = page_items[i + j]
-                            row.label(text=f"{id_num}-{name}")
-                            op = row.operator("gtatools.id_manager_release", text="", icon='X')
-                            op.model_id = id_num
-
-                # Page navigation
-                if total > per_page:
-                    nav = sub.row(align=True)
-                    nav.prop(scene, "gtatools_id_page", text=f"{start+1}-{min(start+per_page, total)} / {total}")
-
-            # Show free IDs (compact)
-            if free:
-                sub = box.box()
-                text = ", ".join(str(i) for i in sorted(free)[:20])
-                if len(free) > 20:
-                    text += "..."
-                sub.label(text=f"{T('Свободные:')} {text}", icon='DOT')
-
-            row = box.row(align=True)
-            row.operator("gtatools.id_manager_auto_assign", text=T("Назначить ID выделенным"), icon='ADD')
-            box.operator("gtatools.id_manager_assign_from", text=T("Назначить с ID..."), icon='SEQUENCE')
-            row.operator("gtatools.id_manager_clear_selected", text="", icon='REMOVE')
-            row.operator("gtatools.id_manager_clear", text="", icon='TRASH')
-            box.operator("gtatools.id_manager_create", text=T("Создать файл ID"), icon='FILE_NEW')
-            box.operator("gtatools.id_manager_extend", text=T("Расширить ID (FLA)"), icon='ADD')
-            box.operator("gtatools.id_manager_sync_scene", text=T("Синхронизировать сцену"), icon='SCENE_DATA')
-            box.operator("gtatools.id_manager_from_game", text=T("Загрузить из игры"), icon='IMPORT')
-            box.operator("gtatools.id_manager_open_file", text=T("Открыть файл ID"), icon='FILE_TEXT')
-
         # IMG file list (collapsible)
         box = layout.box()
         row = box.row()
@@ -11337,6 +11660,128 @@ class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
                 txd_c = sum(1 for e in entries if e.name.lower().endswith('.txd'))
                 box.label(text=f"DFF: {dff_c}  COL: {col_c}  TXD: {txd_c}  Total: {len(entries)}", icon='INFO')
             box.operator("gtatools.refresh_img_list", text=T("Обновить список"), icon='FILE_REFRESH')
+
+
+# ============================================================================
+# Preferences & ID Manager — N-sidebar subpanels
+# ============================================================================
+
+def _draw_suffix_prefix(layout, scene):
+    for _label, _pfx, _sfx in [("DFF", "gtatools_prefix_dff", "gtatools_suffix_dff"),
+                                ("LOD", "gtatools_prefix_lod", "gtatools_suffix_lod"),
+                                ("COL", "gtatools_prefix_col", "gtatools_suffix_col")]:
+        row = layout.row(align=True)
+        pfx = row.row(align=True)
+        pfx.scale_x = 0.7
+        pfx.prop(scene, _pfx, text="")
+        sub_lbl = row.row(align=True)
+        sub_lbl.scale_x = 0.6
+        sub_lbl.label(text="Model")
+        sfx = row.row(align=True)
+        sfx.scale_x = 0.7
+        sfx.prop(scene, _sfx, text="")
+        pad = row.row(align=True)
+        pad.label(text=" ")
+        pad.label(text=" ")
+        pad.label(text=" ")
+
+
+def _draw_id_manager(layout, scene, context):
+    _id_preset_sync(context)
+    from .data.id_manager import get_free_ids, get_used_ids
+
+    preset_row = layout.row(align=True)
+    preset_row.prop(scene, "gtatools_id_preset", text=T("Пресет"))
+    preset_row.operator("gtatools.id_preset_new", text="", icon='ADD')
+    preset_row.operator("gtatools.id_preset_rename", text="", icon='GREASEPENCIL')
+    preset_row.operator("gtatools.id_preset_delete", text="", icon='REMOVE')
+
+    free = get_free_ids()
+    used = get_used_ids()
+
+    layout.label(text=f"{T('Свободных:')} {len(free)}  |  {T('Занятых:')} {len(used)}", icon='PRESET')
+
+    if free:
+        layout.label(text=f"{T('Следующий свободный:')} {free[0]}", icon='FORWARD')
+
+    layout.prop(scene, "gtatools_id_search", text="", icon='VIEWZOOM')
+    search = getattr(scene, 'gtatools_id_search', '').strip()
+    page = getattr(scene, 'gtatools_id_page', 0)
+    per_page = 20
+
+    if used:
+        filtered = []
+        for id_num in sorted(used.keys()):
+            name = used[id_num]
+            if search:
+                if search.isdigit():
+                    if search not in str(id_num):
+                        continue
+                else:
+                    if search.lower() not in name.lower():
+                        continue
+            filtered.append((id_num, name))
+
+        total = len(filtered)
+        max_page = max(0, (total - 1) // per_page)
+        page = min(page, max_page)
+        start = page * per_page
+        page_items = filtered[start:start + per_page]
+
+        sub = layout.box()
+        col = sub.column(align=True)
+        for i in range(0, len(page_items), 2):
+            row = col.row(align=True)
+            for j in range(2):
+                if i + j < len(page_items):
+                    id_num, name = page_items[i + j]
+                    row.label(text=f"{id_num}-{name}")
+                    op = row.operator("gtatools.id_manager_release", text="", icon='X')
+                    op.model_id = id_num
+
+        if total > per_page:
+            nav = sub.row(align=True)
+            nav.prop(scene, "gtatools_id_page", text=f"{start+1}-{min(start+per_page, total)} / {total}")
+
+    if free:
+        sub = layout.box()
+        text = ", ".join(str(i) for i in sorted(free)[:20])
+        if len(free) > 20:
+            text += "..."
+        sub.label(text=f"{T('Свободные:')} {text}", icon='DOT')
+
+    # 2 колонки: основной flow → очистка → сервис
+    col = layout.column(align=True)
+    row = col.row(align=True)
+    row.operator("gtatools.id_manager_auto_assign", text=T("Назначить"), icon='ADD')
+    row.operator("gtatools.id_manager_sync_scene", text=T("Sync"), icon='SCENE_DATA')
+    row = col.row(align=True)
+    row.operator("gtatools.id_manager_assign_from", text=T("С ID..."), icon='SEQUENCE')
+    row.operator("gtatools.id_manager_create", text=T("Создать"), icon='FILE_NEW')
+    row = col.row(align=True)
+    row.operator("gtatools.id_manager_clear_selected", text=T("Очистить выд."), icon='REMOVE')
+    row.operator("gtatools.id_manager_clear", text=T("Очистить всё"), icon='TRASH')
+    row = col.row(align=True)
+    row.operator("gtatools.id_manager_from_game", text=T("Из игры"), icon='IMPORT')
+    row.operator("gtatools.id_manager_extend", text=T("Расширить FLA"), icon='ADD')
+    col.operator("gtatools.id_manager_open_file", text=T("Открыть файл ID"), icon='FILE_TEXT')
+
+
+class GTATOOLS_PT_id_manager_panel(bpy.types.Panel):
+    """Менеджер ID моделей GTA SA"""
+    bl_label = "ID Manager"
+    bl_idname = "GTATOOLS_PT_id_manager_panel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'GTA Tools'
+    bl_parent_id = "GTATOOLS_PT_main_panel"
+    bl_order = 31
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw(self, context):
+        layout = self.layout
+        scene = context.scene
+        _draw_id_manager(layout, scene, context)
 
 
 class GTATOOLS_OT_id_manager_open_file(bpy.types.Operator):
@@ -11793,6 +12238,7 @@ class GTATOOLS_PT_prelight_panel(bpy.types.Panel):
     bl_region_type = 'UI'
     bl_category = 'GTA Tools'
     bl_parent_id = "GTATOOLS_PT_main_panel"
+    bl_order = 12
     bl_options = {'DEFAULT_CLOSED'}
 
     def draw(self, context):
@@ -12132,6 +12578,7 @@ class GTATOOLS_PT_itera_panel(bpy.types.Panel):
     bl_region_type = 'UI'
     bl_category = 'GTA Tools'
     bl_parent_id = "GTATOOLS_PT_main_panel"
+    bl_order = 18
     bl_options = {'DEFAULT_CLOSED'}
 
     def draw(self, context):
@@ -12172,6 +12619,7 @@ class GTATOOLS_PT_prelight_col_panel(bpy.types.Panel):
     bl_region_type = 'UI'
     bl_category = 'GTA Tools'
     bl_parent_id = "GTATOOLS_PT_main_panel"
+    bl_order = 16
     bl_options = {'DEFAULT_CLOSED'}
 
     def draw(self, context):
@@ -12245,6 +12693,7 @@ class GTATOOLS_PT_vertex_paint_panel(bpy.types.Panel):
     bl_region_type = 'UI'
     bl_category = 'GTA Tools'
     bl_parent_id = "GTATOOLS_PT_main_panel"
+    bl_order = 14
     bl_options = {'DEFAULT_CLOSED'}
 
     @classmethod
@@ -12346,7 +12795,12 @@ class GTATOOLS_PT_lightmap_panel(bpy.types.Panel):
     bl_region_type = 'UI'
     bl_category = 'GTA Tools'
     bl_parent_id = "GTATOOLS_PT_main_panel"
+    bl_order = 20
     bl_options = {'DEFAULT_CLOSED'}
+
+    @classmethod
+    def poll(cls, context):
+        return False  # Hidden — code kept for future use
 
     def draw(self, context):
         layout = self.layout
@@ -12618,6 +13072,7 @@ class GTATOOLS_PT_water_panel(bpy.types.Panel):
     bl_region_type = 'UI'
     bl_category = 'GTA Tools'
     bl_parent_id = "GTATOOLS_PT_main_panel"
+    bl_order = 34
     bl_options = {'DEFAULT_CLOSED'}
 
     def draw(self, context):
@@ -12770,27 +13225,19 @@ class GTATOOLS_PT_anim_panel(bpy.types.Panel):
     bl_region_type = 'UI'
     bl_category = 'GTA Tools'
     bl_parent_id = "GTATOOLS_PT_main_panel"
+    bl_order = 24
     bl_options = {'DEFAULT_CLOSED'}
 
     def draw(self, context):
         layout = self.layout
 
         box = layout.box()
-        _bone_id = _icons.get_icon("bone")
-        if _bone_id:
-            box.label(text=T("Анимации IFP (GTA SA):"), icon_value=_bone_id)
-        else:
-            box.label(text=T("Анимации IFP (GTA SA):"), icon='ACTION')
+        box.label(text=T("Анимации IFP (GTA SA):"), icon='ACTION')
         row = box.row(align=True)
         row.operator("gtatools.import_ifp", text=T("Импорт"), icon='IMPORT')
         row.operator("gtatools.export_ifp", text=T("Экспорт"), icon='EXPORT')
-        _clap_id = _icons.get_icon("clapper")
-        if _clap_id:
-            box.operator("gtatools.ifp_batch_import",
-                         text=T("Batch папка…"), icon_value=_clap_id)
-        else:
-            box.operator("gtatools.ifp_batch_import",
-                         text=T("Batch папка…"), icon='FILE_FOLDER')
+        box.operator("gtatools.ifp_batch_import",
+                     text=T("Batch папка…"), icon='FILE_FOLDER')
 
         # IFP actions list
         ifp_actions = [a for a in bpy.data.actions if a.get('ifp_source')]
@@ -13072,6 +13519,7 @@ class GTATOOLS_PT_radar_panel(bpy.types.Panel):
     bl_region_type = 'UI'
     bl_category = 'GTA Tools'
     bl_parent_id = "GTATOOLS_PT_main_panel"
+    bl_order = 36
     bl_options = {'DEFAULT_CLOSED'}
 
     def draw(self, context):
@@ -13113,6 +13561,7 @@ class GTATOOLS_PT_paths_panel(bpy.types.Panel):
     bl_region_type = 'UI'
     bl_category = 'GTA Tools'
     bl_parent_id = "GTATOOLS_PT_main_panel"
+    bl_order = 32
     bl_options = {'DEFAULT_CLOSED'}
 
     def draw(self, context):
@@ -13134,13 +13583,8 @@ class GTATOOLS_PT_paths_panel(bpy.types.Panel):
         # Roadblocks / Traffic Lights — visible only in Edit Curve on path_ipl
         if (obj and obj.type == 'CURVE' and obj.get('path_type') == 'path_ipl'
                 and context.mode == 'EDIT_CURVE'):
-            _rb_id = _icons.get_icon("roadblock")
             sub = box.column(align=True)
-            if _rb_id:
-                sub.label(text=T("Флаги выделенных точек:"),
-                          icon_value=_rb_id)
-            else:
-                sub.label(text=T("Флаги выделенных точек:"), icon='CONSTRAINT')
+            sub.label(text=T("Флаги выделенных точек:"), icon='CONSTRAINT')
             op = sub.operator("gtatools.path_node_flag",
                               text=T("Переключить Roadblock"))
             op.action = 'TOGGLE_ROADBLOCK'
@@ -13169,15 +13613,9 @@ class GTATOOLS_PT_paths_panel(bpy.types.Panel):
             box.operator("gtatools.mark_station", text=T("Станция (вкл/выкл)"), icon='DECORATE_KEYFRAME')
         # Station markers refresh — works in object mode too
         if obj and obj.type == 'CURVE' and obj.get('path_type') == 'track':
-            _train_id = _icons.get_icon("train")
-            if _train_id:
-                box.operator("gtatools.refresh_station_markers",
-                             text=T("Обновить маркеры станций"),
-                             icon_value=_train_id)
-            else:
-                box.operator("gtatools.refresh_station_markers",
-                             text=T("Обновить маркеры станций"),
-                             icon='EMPTY_SINGLE_ARROW')
+            box.operator("gtatools.refresh_station_markers",
+                         text=T("Обновить маркеры станций"),
+                         icon='EMPTY_SINGLE_ARROW')
 
         layout.separator()
 
@@ -13230,8 +13668,11 @@ classes = (
     INUMaterialProps,
     GTATOOLS_ImgFileEntry,
     GTATOOLS_BinaryIplEntry,
+    GTATOOLS_TxdExportEntry,
+    GTATOOLS_UL_txd_export_plan,
     GTATOOLS_UL_img_files,
     GTATOOLS_OT_refresh_img_list,
+    GTATOOLS_OT_discover_game,
     GTATOOLS_OT_scan_binary_ipls,
     GTATOOLS_OT_binary_ipl_toggle_all,
     GTATOOLS_FillColorItem,
@@ -13251,7 +13692,6 @@ classes = (
     GTATOOLS_OT_inu_export,
     GTATOOLS_OT_info_tooltip,
     GTATOOLS_OT_detect_models,
-    GTATOOLS_OT_prelight,
     GTATOOLS_OT_average_colors,
     GTATOOLS_OT_lightmap_generate,
     GTATOOLS_OT_lightmap_copy,
@@ -13316,6 +13756,7 @@ classes = (
     GTATOOLS_OT_id_manager_auto_assign,
     GTATOOLS_OT_id_manager_assign_from,
     GTATOOLS_OT_batch_set_type,
+    GTATOOLS_OT_batch_set_distance,
     GTATOOLS_OT_id_manager_clear_selected,
     GTATOOLS_OT_id_manager_clear,
     GTATOOLS_OT_id_manager_create,
@@ -13403,7 +13844,9 @@ classes = (
     GTATOOLS_PT_col_material_panel,
     GTATOOLS_PT_material_effects_panel,
     GTATOOLS_PT_object_ide_ipl_panel,
+    GTATOOLS_PT_object_inu_tools,
     GTATOOLS_PT_inu_tools_panel,
+    GTATOOLS_PT_id_manager_panel,
     GTATOOLS_PT_itera_panel,
     GTATOOLS_PT_prelight_panel,
     GTATOOLS_PT_bake_settings_subpanel,
@@ -13806,17 +14249,6 @@ def _upd_prefix_col(self, ctx):
 
 
 def register():
-    # Custom Twemoji icons — load BEFORE panel classes draw
-    _icons.register()
-
-    # Inject Twemoji icon into each subpanel header (wraps any existing
-    # draw_header so we don't clobber panels that already define one).
-    for _pid, _ikey in _PANEL_ICON_KEYS.items():
-        _cls = globals().get(_pid)
-        if _cls is not None:
-            _orig = _cls.__dict__.get('draw_header', None)
-            _cls.draw_header = _make_twemoji_header(_orig, _ikey)
-
     # Auto-translate tooltips: docstrings are in Russian,
     # bl_description is set via T() so locale/eng.py handles English
     for cls in classes:
@@ -13978,6 +14410,16 @@ def register():
         name="TXD", default=True,
         description=T("Экспорт TXD в IMG"),
     )
+    bpy.types.Scene.gtatools_img_col_library = BoolProperty(
+        name=T("COL Library"),
+        description=T("Писать все коллизии в один .col файл (multi-entry library). Каждая запись в файле — отдельная коллизия со своим model_id, сопоставляется с DFF по ID"),
+        default=False,
+    )
+    bpy.types.Scene.gtatools_img_col_library_name = StringProperty(
+        name=T("Имя library .col"),
+        description=T("Имя общего .col файла без расширения (например 'district' → district.col)"),
+        default="collision",
+    )
 
     bpy.types.Scene.gtatools_map_fake_mode = BoolProperty(
         name="Fake Mode",
@@ -13991,6 +14433,12 @@ def register():
     )
     bpy.types.Scene.gtatools_binary_ipls = CollectionProperty(
         type=GTATOOLS_BinaryIplEntry,
+    )
+    bpy.types.WindowManager.gtatools_txd_export_plan = CollectionProperty(
+        type=GTATOOLS_TxdExportEntry,
+    )
+    bpy.types.WindowManager.gtatools_txd_export_plan_index = IntProperty(
+        default=0,
     )
     bpy.types.Scene.gtatools_show_binary_ipls = BoolProperty(
         name="Show binary IPLs",
@@ -14412,6 +14860,16 @@ def register():
         description=T("Экспортировать TXD при Export All"),
         default=True
     )
+    bpy.types.Scene.gtatools_export_all_col_library = BoolProperty(
+        name=T("COL Library"),
+        description=T("Писать все коллизии в один .col файл (multi-entry library). Каждая запись в файле — отдельная коллизия со своим model_id, сопоставляется с DFF по ID"),
+        default=False,
+    )
+    bpy.types.Scene.gtatools_export_all_col_library_name = StringProperty(
+        name=T("Имя library .col"),
+        description=T("Имя общего .col файла без расширения (например 'district' → district.col)"),
+        default="collision",
+    )
 
     # Keymap: Shift+T — toggle UV Editor
     wm = bpy.context.window_manager
@@ -14577,6 +15035,11 @@ def unregister():
     del bpy.types.Scene.gtatools_map_fake_mode
     del bpy.types.Scene.gtatools_map_region
     del bpy.types.Scene.gtatools_binary_ipls
+    try:
+        del bpy.types.WindowManager.gtatools_txd_export_plan
+        del bpy.types.WindowManager.gtatools_txd_export_plan_index
+    except Exception:
+        pass
     del bpy.types.Scene.gtatools_show_binary_ipls
     del bpy.types.Scene.gtatools_map_skip_2dfx
     del bpy.types.Scene.gtatools_img_use_gta_dat
@@ -14585,6 +15048,8 @@ def unregister():
     del bpy.types.Scene.gtatools_img_export_dff
     del bpy.types.Scene.gtatools_img_export_col
     del bpy.types.Scene.gtatools_img_export_txd
+    del bpy.types.Scene.gtatools_img_col_library
+    del bpy.types.Scene.gtatools_img_col_library_name
     del bpy.types.Scene.gtatools_ide_path
     del bpy.types.Scene.gtatools_ipl_path
     del bpy.types.Scene.gtatools_txd_auto_import
@@ -14625,6 +15090,8 @@ def unregister():
     del bpy.types.Scene.gtatools_export_all_col
     del bpy.types.Scene.gtatools_export_all_lod
     del bpy.types.Scene.gtatools_export_all_txd
+    del bpy.types.Scene.gtatools_export_all_col_library
+    del bpy.types.Scene.gtatools_export_all_col_library_name
     del bpy.types.Scene.gtatools_scatter_radius
     del bpy.types.Scene.gtatools_scatter_iterations
     del bpy.types.Scene.gtatools_scatter_falloff
@@ -14674,8 +15141,6 @@ def unregister():
 
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
-
-    _icons.unregister()
 
     print("[GTA Tools Panel] Addon unregistered!")
 

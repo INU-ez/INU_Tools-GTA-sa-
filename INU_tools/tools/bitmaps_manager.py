@@ -316,35 +316,33 @@ class GTATOOLS_OT_bitmaps_find_dupes(bpy.types.Operator):
 # ──────────────────────────── panel ───────────────────────────────────
 
 class GTATOOLS_PT_bitmaps_panel(bpy.types.Panel):
-    bl_label = "Bitmaps Manager"
+    bl_label = T("Менеджер текстур")
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = 'GTA Tools'
     bl_parent_id = "GTATOOLS_PT_main_panel"
+    bl_order = 2
     bl_options = {'DEFAULT_CLOSED'}
 
     def draw(self, context):
-        from . import icons as _icons
         layout = self.layout
         scene = context.scene
 
-        picture_id = _icons.get_icon("picture")
-
         row = layout.row(align=True)
-        if picture_id:
-            row.operator("gtatools.bitmaps_scan",
-                         icon_value=picture_id)
-        else:
-            row.operator("gtatools.bitmaps_scan", icon='VIEWZOOM')
+        row.operator("gtatools.bitmaps_scan",
+                     text=T("Сканировать"), icon='VIEWZOOM')
         miss = scene.get('bitmaps_missing_count', None)
         if miss is not None:
-            row.label(text=f"Missing: {miss}",
+            row.label(text=f"{T('Пропущено')}: {miss}",
                       icon='ERROR' if miss else 'CHECKMARK')
 
         col = layout.column(align=True)
-        col.operator("gtatools.bitmaps_resolve", icon='FILE_REFRESH')
-        col.operator("gtatools.bitmaps_copy", icon='COPY_ID')
-        col.operator("gtatools.bitmaps_find_dupes", icon='DUPLICATE')
+        col.operator("gtatools.bitmaps_resolve",
+                     text=T("Найти в папке…"), icon='FILE_REFRESH')
+        col.operator("gtatools.bitmaps_copy",
+                     text=T("Скопировать в папку…"), icon='COPY_ID')
+        col.operator("gtatools.bitmaps_find_dupes",
+                     text=T("Найти дубликаты"), icon='DUPLICATE')
 
 
 classes = (

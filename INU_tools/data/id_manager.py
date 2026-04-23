@@ -17,9 +17,18 @@ import os
 import re
 import shutil
 
-_DATA_DIR = os.path.dirname(__file__)
-_PRESETS_DIR = os.path.join(_DATA_DIR, 'id_presets')
+# Presets now live alongside paths.json in the user config folder:
+#     <blender addons dir>/INU_Preset/id_presets/<name>.txt
+# The old `INU_tools/data/id_presets/` and `INU_tools/data/model_ids.txt`
+# locations are still honoured for auto-migration on first access.
+_DATA_DIR = os.path.dirname(__file__)              # .../INU_tools/data/
+_ADDON_DIR = os.path.dirname(_DATA_DIR)            # .../INU_tools/
+_ADDONS_DIR = os.path.dirname(_ADDON_DIR)          # .../addons/
+_INU_PRESET_DIR = os.path.join(_ADDONS_DIR, 'INU_Preset')
+_PRESETS_DIR = os.path.join(_INU_PRESET_DIR, 'id_presets')
+
 _LEGACY_FILE = os.path.join(_DATA_DIR, 'model_ids.txt')
+_LEGACY_PRESETS_DIR = os.path.join(_DATA_DIR, 'id_presets')
 
 _DEFAULT_PRESET = 'default'
 _active_preset = _DEFAULT_PRESET
@@ -35,12 +44,39 @@ def _sanitize(name: str) -> str:
 
 
 def _ensure_presets_dir():
-    """Create the presets directory and migrate the legacy single-file store."""
-    if not os.path.isdir(_PRESETS_DIR):
+    """Create the presets directory and migrate any legacy locations.
+
+    Legacy layouts that get auto-imported on first access:
+
+    * ``INU_tools/data/model_ids.txt`` → ``INU_Preset/id_presets/default.txt``
+      (single-file store from the very first preset release)
+    * ``INU_tools/data/id_presets/*.txt`` → ``INU_Preset/id_presets/*.txt``
+      (intermediate layout that lived inside the addon folder — moved out
+      so presets survive addon reinstalls and updates)
+    """
+    try:
+        os.makedirs(_INU_PRESET_DIR, exist_ok=True)
+        os.makedirs(_PRESETS_DIR, exist_ok=True)
+    except Exception:
+        return
+
+    # Migration 1: bring presets from the intermediate data/id_presets/
+    if os.path.isdir(_LEGACY_PRESETS_DIR):
         try:
-            os.makedirs(_PRESETS_DIR, exist_ok=True)
+            for fn in os.listdir(_LEGACY_PRESETS_DIR):
+                if not fn.lower().endswith('.txt'):
+                    continue
+                src = os.path.join(_LEGACY_PRESETS_DIR, fn)
+                dst = os.path.join(_PRESETS_DIR, fn)
+                if os.path.isfile(src) and not os.path.isfile(dst):
+                    try:
+                        shutil.copy2(src, dst)
+                    except Exception:
+                        pass
         except Exception:
-            return
+            pass
+
+    # Migration 2: original single-file model_ids.txt → default.txt
     default_path = os.path.join(_PRESETS_DIR, _DEFAULT_PRESET + '.txt')
     if os.path.isfile(_LEGACY_FILE) and not os.path.isfile(default_path):
         try:
