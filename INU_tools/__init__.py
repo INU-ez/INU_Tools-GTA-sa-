@@ -279,6 +279,8 @@ from .tools.map_export import (
 )
 from .tools.gta_material_panel import (
     GTATOOLS_OT_material_preset,
+    GTATOOLS_OT_material_preset_save,
+    GTATOOLS_OT_material_preset_delete,
     GTATOOLS_PT_gta_material_panel,
 )
 
@@ -2105,7 +2107,7 @@ class GTATOOLS_OT_discover_game(bpy.types.Operator):
     """Найти все IDE/IPL/IMG по gta.dat из корневой папки игры"""
     bl_idname = "gtatools.discover_game"
     bl_label = "Auto-discover"
-    bl_options = {'REGISTER'}
+    bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
         from .core.gta_dat import find_all_resources
@@ -2142,7 +2144,7 @@ class GTATOOLS_OT_binary_ipl_toggle_all(bpy.types.Operator):
     """Включить или выключить все бинарные IPL в списке одной кнопкой"""
     bl_idname = "gtatools.binary_ipl_toggle_all"
     bl_label = "Toggle All Binary IPLs"
-    bl_options = {'REGISTER'}
+    bl_options = {'REGISTER', 'UNDO'}
 
     enable: BoolProperty(default=True)
 
@@ -2600,7 +2602,7 @@ class GTATOOLS_OT_toggle_links(bpy.types.Operator):
     """Показать/скрыть линии связей DFF↔LOD↔COL"""
     bl_idname = "gtatools.toggle_links"
     bl_label = "Toggle Model Links"
-    bl_options = {'REGISTER'}
+    bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
         global _links_active, _links_draw_handler
@@ -2630,7 +2632,7 @@ class GTATOOLS_OT_toggle_bbox(bpy.types.Operator):
     """Переключить все Map_ объекты между Bounding Box и Textured"""
     bl_idname = "gtatools.toggle_bbox"
     bl_label = "Toggle Bounding Box"
-    bl_options = {'REGISTER'}
+    bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
         global _bbox_mode_active, _bbox_last_selection, _bbox_near_set
@@ -5316,7 +5318,7 @@ class GTATOOLS_OT_detect_models(bpy.types.Operator):
     """Определить модели DFF, LOD, COL среди выделенных"""
     bl_idname = "gtatools.detect_models"
     bl_label = "Detect Models"
-    bl_options = {'REGISTER'}
+    bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
         models = find_selected_models()
@@ -8987,7 +8989,7 @@ class GTATOOLS_OT_toggle_visibility(bpy.types.Operator):
     """Скрыть/показать DFF, LOD или COL объекты во всей сцене"""
     bl_idname = "gtatools.toggle_visibility"
     bl_label = "Toggle Visibility"
-    bl_options = {'REGISTER'}
+    bl_options = {'REGISTER', 'UNDO'}
 
     model_type: StringProperty()
 
@@ -12456,7 +12458,7 @@ class GTATOOLS_OT_prelight_preset_load(bpy.types.Operator):
     """Загрузить выбранный пресет"""
     bl_idname = "gtatools.prelight_preset_load"
     bl_label = "Load Preset"
-    bl_options = {'REGISTER'}
+    bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
         scene = context.scene
@@ -13878,6 +13880,8 @@ classes = (
     GTATOOLS_OT_map_export,
     GTATOOLS_PT_map_export_panel,
     GTATOOLS_OT_material_preset,
+    GTATOOLS_OT_material_preset_save,
+    GTATOOLS_OT_material_preset_delete,
     GTATOOLS_PT_gta_material_panel,
     GTATOOLS_OT_import_cst,
     GTATOOLS_OT_export_cst,
@@ -14832,11 +14836,10 @@ def register():
         default='NONE',
     )
 
-    from .tools.gta_material_panel import PRESETS as _MAT_PRESETS
+    from .tools.gta_material_panel import preset_items as _mat_preset_items
     bpy.types.Scene.gtatools_material_preset = EnumProperty(
-        items=_MAT_PRESETS,
+        items=_mat_preset_items,
         name="GTA Material Preset",
-        default='VEHICLE',
     )
 
     # Export settings

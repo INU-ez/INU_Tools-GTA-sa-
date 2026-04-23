@@ -2,9 +2,9 @@
 #
 # Condensed "GTA Material" panel for the material Properties tab. It
 # surfaces the most common GTA SA modding knobs in one place:
-#   • preset dropdown (Generic / Vehicle / Ped / Env / Dual / Specular)
+#   • preset dropdown (built-ins + user-saved presets from INU_Preset)
 #   • vehicle color slot (Primary/Secondary/Headlight/…)
-#   • one-click "apply preset" buttons
+#   • one-click "apply preset" + Save / Delete
 #
 # Underlying state is still stored in `mat.inu.*` custom properties so
 # it round-trips through the existing DFF writer — this file only adds
@@ -14,7 +14,10 @@ from __future__ import annotations
 
 import bpy
 
+from ..data import material_presets as _mp
 
+
+# Built-in presets — shipped with the addon, always available.
 PRESETS = (
     ('GENERIC',  "Generic",       "Plain textured material, no effects"),
     ('VEHICLE',  "Vehicle Body",  "xvehicleenv128 + vehiclespecdot64 + reflection blend"),
@@ -96,7 +99,33 @@ def apply_preset(mat, preset: str):
     return f"unknown preset {preset}"
 
 
-# ──────────────────────────── operator ───────────────────────────────
+# ── Dynamic preset dropdown ─────────────────────────────────────────
+
+# Cache invalidated by Save/Delete operators. Items must be kept alive
+# (returning a fresh list every call triggers Blender's Python GC on
+# the strings and breaks the dropdown — see bpy.props docs).
+_items_cache: list = []
+
+
+def invalidate_cache():
+    global _items_cache
+    _items_cache = []
+
+
+def preset_items(self, context):
+    """Enum items callback: built-ins + user presets from INU_Preset."""
+    items = [(p_id, p_name, p_desc) for p_id, p_name, p_desc in PRESETS]
+    user = _mp.list_presets()
+    for name in user:
+        # 'USER:<name>' encoded id, actual name shown in the label
+        items.append((f'USER:{name}', name, f'Пользовательский пресет: {name}'))
+
+    global _items_cache
+    _items_cache = items
+    return _items_cache
+
+
+# ──────────────────────────── operators ──────────────────────────────
 
 class GTATOOLS_OT_material_preset(bpy.types.Operator):
     """Записать выбранный GTA Material пресет в свойства mat.inu.*"""
@@ -104,15 +133,110 @@ class GTATOOLS_OT_material_preset(bpy.types.Operator):
     bl_label = "Apply Material Preset"
     bl_options = {'REGISTER', 'UNDO'}
 
-    preset: bpy.props.EnumProperty(items=PRESETS, default='VEHICLE')
+    preset: bpy.props.StringProperty(default='VEHICLE')
 
     @classmethod
     def poll(cls, context):
         return context.material is not None
 
     def execute(self, context):
-        msg = apply_preset(context.material, self.preset)
-        self.report({'INFO'}, msg)
+        mat = context.material
+        inu = getattr(mat, 'inu', None)
+        if not inu:
+            self.report({'ERROR'}, "no inu props")
+            return {'CANCELLED'}
+
+        if self.preset.startswith('USER:'):
+            user_name = self.preset[5:]
+            _reset_effects(inu)
+            data = _mp.load_preset(user_name)
+            if not data:
+                self.report({'ERROR'}, f"preset not found: {user_name}")
+                return {'CANCELLED'}
+            count = _mp.apply_to_inu(inu, data)
+            self.report({'INFO'}, f"{user_name}: applied {count} fields")
+        else:
+            msg = apply_preset(mat, self.preset)
+            self.report({'INFO'}, msg)
+
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_material_preset_save(bpy.types.Operator):
+    """Сохранить текущие настройки материала как новый пресет"""
+    bl_idname = "gtatools.material_preset_save"
+    bl_label = "Сохранить пресет"
+    bl_options = {'REGISTER'}
+
+    preset_name: bpy.props.StringProperty(
+        name="Имя",
+        description="Имя пресета (буквы, цифры, дефис, подчёркивание, пробел)",
+        default="",
+    )
+    description: bpy.props.StringProperty(
+        name="Описание",
+        description="Короткое описание (необязательно)",
+        default="",
+    )
+
+    @classmethod
+    def poll(cls, context):
+        return context.material is not None
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, width=380)
+
+    def draw(self, context):
+        col = self.layout.column()
+        col.prop(self, 'preset_name')
+        col.prop(self, 'description')
+
+    def execute(self, context):
+        mat = context.material
+        inu = getattr(mat, 'inu', None)
+        if not inu:
+            self.report({'ERROR'}, "no inu props")
+            return {'CANCELLED'}
+        name = (self.preset_name or '').strip()
+        if not name:
+            self.report({'ERROR'}, "имя обязательно")
+            return {'CANCELLED'}
+        data = _mp.capture_from_inu(inu)
+        if not _mp.save_preset(name, data, self.description):
+            self.report({'ERROR'}, "ошибка сохранения")
+            return {'CANCELLED'}
+        invalidate_cache()
+        # Select the newly saved preset
+        try:
+            context.scene.gtatools_material_preset = f'USER:{name}'
+        except Exception:
+            pass
+        self.report({'INFO'}, f"сохранён: {name}")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_material_preset_delete(bpy.types.Operator):
+    """Удалить пользовательский пресет (встроенные удалить нельзя)"""
+    bl_idname = "gtatools.material_preset_delete"
+    bl_label = "Удалить пресет"
+    bl_options = {'REGISTER'}
+
+    preset_name: bpy.props.StringProperty(default="")
+
+    def execute(self, context):
+        if not self.preset_name:
+            self.report({'ERROR'}, "нет выбранного пресета")
+            return {'CANCELLED'}
+        if not _mp.delete_preset(self.preset_name):
+            self.report({'ERROR'}, "не удалось удалить")
+            return {'CANCELLED'}
+        invalidate_cache()
+        # Reset dropdown to a built-in
+        try:
+            context.scene.gtatools_material_preset = 'GENERIC'
+        except Exception:
+            pass
+        self.report({'INFO'}, f"удалён: {self.preset_name}")
         return {'FINISHED'}
 
 
@@ -138,13 +262,27 @@ class GTATOOLS_PT_gta_material_panel(bpy.types.Panel):
             layout.label(text="No inu properties on material", icon='ERROR')
             return
 
-        # Preset
+        scene = context.scene
+        current = getattr(scene, 'gtatools_material_preset', 'GENERIC') or 'GENERIC'
+        is_user = current.startswith('USER:')
+
+        # Preset dropdown + Apply
         box = layout.box()
         box.label(text="Preset", icon='PRESET')
-        scene = context.scene
-        box.prop(scene, 'gtatools_material_preset', text="")
-        op = box.operator("gtatools.material_preset", icon='CHECKMARK')
-        op.preset = scene.gtatools_material_preset
+        row = box.row(align=True)
+        row.prop(scene, 'gtatools_material_preset', text="")
+        op = row.operator("gtatools.material_preset", text="", icon='CHECKMARK')
+        op.preset = current
+
+        # Save always available; Delete only when a user preset is active
+        row = box.row(align=True)
+        row.operator("gtatools.material_preset_save",
+                     text="Сохранить как…", icon='ADD')
+        del_row = row.row(align=True)
+        del_row.enabled = is_user
+        op_del = del_row.operator("gtatools.material_preset_delete",
+                                  text="Удалить", icon='REMOVE')
+        op_del.preset_name = current[5:] if is_user else ''
 
         # Vehicle color slot (carcols.dat magic)
         box = layout.box()
@@ -169,5 +307,7 @@ class GTATOOLS_PT_gta_material_panel(bpy.types.Panel):
 
 classes = (
     GTATOOLS_OT_material_preset,
+    GTATOOLS_OT_material_preset_save,
+    GTATOOLS_OT_material_preset_delete,
     GTATOOLS_PT_gta_material_panel,
 )
