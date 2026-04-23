@@ -65,6 +65,7 @@
 
 **Материалы и текстуры**
 - 🎨 **Панель GTA Material** — новая вкладка в Properties с dropdown пресетов (Generic / Vehicle Body / Vehicle Glass / Ped / Env / Dual / Specular) и слотом цвета машины
+- 💾 **Сохраняемые пресеты материалов** 🆕 — Save / Delete прямо в панели, JSON-файлы в `INU_Preset/material_presets/` (снаружи аддона, переживают апдейт). Шарятся между моддерами копированием файла. 25 полей `mat.inu.*` в пресете — env/bump/reflection/specular/dual/UV animation
 - 🖼️ **Bitmaps Manager** — сканирование недостающих текстур, resolve из папки, batch-копирование используемых текстур (с подпапкой на каждый TXD), поиск дубликатов по MD5
 
 **Пути / Трафик**

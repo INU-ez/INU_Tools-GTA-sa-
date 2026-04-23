@@ -125,6 +125,10 @@
 
 **Auto TXD:** when importing DFF, automatically imports .txd from the same directory if found.
 
+> 💡 **Example — import a single model:** File → Import → GTA SA DFF → pick `admiral.dff`. The addon parses geometry, materials, UV. If `admiral.txd` sits next to it, textures are applied automatically.
+
+> 💡 **Example — export a single mesh:** select mesh → N → Export / Import → **Export DFF** → choose path → saves with current materials and vertex colors.
+
 ### COL (Collision)
 
 | Button | Operator | Description |
@@ -133,6 +137,8 @@
 | Export COL | `gtatools.export_col` | Export as COL3 format |
 
 COL export automatically sets object type to Collision, centers at origin, and writes surface material IDs.
+
+> 💡 **Example:** create a cube, name it `mybuilding_COL`, assign a material with `col_mat_index = 0` (default asphalt) in Properties → Material → **COL Surface Type**. Select → **Export COL** → you get `mybuilding.col` with the correct surface material.
 
 ### TXD (Textures)
 
@@ -145,11 +151,13 @@ COL export automatically sets object type to Collision, centers at origin, and w
 
 **Supported formats:** DXT1 (opaque), DXT3 (sharp alpha), DXT5 (smooth alpha). Auto-detected based on alpha channel.
 
+> 💡 **Example — quick TXD build:** a mesh with 3 textures (brick, window with alpha, logo) → select → **Export TXD** → you get a `.txd` where brick is DXT1, window is DXT5, logo is DXT3 — format auto-picked based on each image's alpha channel.
+
 ### Export All (Batch)
 
 | Button | Operator | Description |
 |--------|----------|-------------|
-| Export All | `gtatools.export_all` | Batch export DFF+COL+LOD+TXD |
+| Export All (To Folder) | `gtatools.export_all` | Batch export DFF+COL+LOD+TXD |
 
 Select objects with suffixes (`_DFF`, `_LOD`, `_COL`), click Export All, choose output folder.
 
@@ -157,9 +165,13 @@ Select objects with suffixes (`_DFF`, `_LOD`, `_COL`), click Export All, choose 
 
 **Pipeline:** None / Building (Day/Night vertex colors) / Reflections (window reflections).
 
+> 💡 **Example — export a building with LOD and collision:** you have three meshes `hospital_DFF`, `hospital_LOD`, `hospital_COL`. Select all three → **To Folder** → you get 4 files at once: `hospital.dff` + `hospitalLOD.dff` + `hospital.col` + `hospital.txd`. Ready to drop into the game.
+
 ### Collection Export
 
 If **no objects are selected**, Export All takes all mesh objects from the **active collection** (including child collections). This allows exporting an entire collection without selecting everything.
+
+> 💡 **Example:** `MyCity/Buildings` collection holds 20 buildings (40 meshes — HD + LOD). Deselect everything → activate the collection → **To Folder** → 40 dff + 20 txd + ... all appear on disk at once.
 
 ### File Menu
 
@@ -226,6 +238,8 @@ IDE files define model properties: ID, texture dictionary, draw distance, flags.
 - **Draw Distance:** LOD = 999 (maximum visibility). The HD model is visible up to its draw distance (e.g. 299m), then LOD appears and stays visible up to 999m
 - **TXD:** LOD uses the same texture dictionary as DFF
 
+> 💡 **Example — add a building to mymap.ide:** select `building01_DFF` and `building01_LOD` → Object Properties → **INU Tools: Model** → set `Model ID = 3500` on DFF → N → IDE / IPL / IMG → IDE section → set path to `mymap.ide` → **Add**. Two lines get written: `3500, building01, building01, 299` and `3501, LODbuilding01, building01, 999`.
+
 **IDE Flags** (15 checkboxes in object properties):
 
 | Flag | Bit | Description |
@@ -261,6 +275,8 @@ IPL files define object positions, rotations, and LOD links on the map.
 
 **Binary IPL:** files with `bnry` header (inside IMG archives) are read automatically.
 
+> 💡 **Example — place a model on the map:** imported `building01.dff`, set Model ID 3500. Move/rotate it freely in the scene → IPL → **Export** → pick `mymap.ipl` → the line `3500, building01, 0, X, Y, Z, QX, QY, QZ, QW, lod` is written with the real world coordinates.
+
 ### IPL Sections
 
 All IPL sections are supported for import/export as Blender objects:
@@ -294,6 +310,8 @@ All IPL sections are supported for import/export as Blender objects:
 
 **Import options:** Skip LOD / Load TXD.
 
+> 💡 **Example — batch upload to gta3.img:** you have 10 buildings ready to export. Set `gta3.img` path in Import Map settings → select the buildings → **Export to IMG** → a UIList dialog opens showing all model + TXD names (editable). Click OK — all DFF+COL+TXD get written to the archive. After that make sure to **Rebuild Archive** in your IMG tool (otherwise the game keeps the old versions).
+
 ### BBox Mode
 
 | Button | Operator | Description |
@@ -302,9 +320,11 @@ All IPL sections are supported for import/export as Blender objects:
 
 When enabled, all Map_ collection objects switch to `BOUNDS` display. Objects within 300m of the selected object stay as `TEXTURED`. Updates automatically when selection changes.
 
+> 💡 **Example:** imported the LA map (5000+ objects), Blender struggles with viewport rendering. Toggle **BBox: ON** → distant buildings become wireframe boxes, objects within 300m of your selected one stay fully textured. Viewport flies.
+
 ### Suffixes / Prefixes
 
-**Panel:** Properties → Scene → INU Tools → Suffixes / Prefixes
+**Panel:** N-sidebar (`N`) → GTA Tools → **Export / Import** → ▸ Suffixes / Prefixes *(collapsible section, same style as DFF Flags)*
 
 Determine how the addon recognizes model type by object name in Blender.
 
@@ -319,6 +339,8 @@ Determine how the addon recognizes model type by object name in Blender.
 You can use **either suffix or prefix** for each type — not both. When entering one, the other is automatically cleared. If neither is set — the model is treated as DFF.
 
 When exporting IDE/IPL, LOD models are always written with `LOD` prefix (GTA SA format).
+
+> 💡 **Example — switch project convention:** your old project uses suffixes `_DFF`/`_LOD`/`_COL`, but a new teammate works with `LOD` prefix and no DFF suffix. Open Suffixes/Prefixes in the Export panel → clear `Suffix DFF` and `Suffix LOD` → type `LOD` into **Prefix LOD**. All scene objects are now recognized by the new convention without renaming (verify via Object Properties → INU Tools: Model → "By name: ...").
 
 ### LOD Detection
 
@@ -348,7 +370,7 @@ Vanilla GTA SA and Rockstar's own tools ship LOD models with several naming conv
 
 ### Model ID Manager
 
-**Panel:** Properties → Scene → INU Tools → ID Manager
+**Panel:** N-sidebar (`N`) → GTA Tools → **ID Manager** *(dedicated subpanel in DATA zone)*
 
 - Shows free/used ID count
 - **Next free ID** displayed
@@ -357,6 +379,10 @@ Vanilla GTA SA and Rockstar's own tools ship LOD models with several naming conv
 - **Release** — marks ID as free
 - **Extend IDs (FLA)** — add IDs beyond 19999 for Fastman Limit Adjuster
 - IDs stored in `model_ids.txt` in INU_Preset folder
+
+> 💡 **Example — assign IDs to a batch of buildings:** imported 50 new buildings (no IDs). Select all → **Assign** → each object gets the next free ID starting from the first available (e.g. 3500, 3501, 3502 …). Now you can batch-export them into IDE.
+
+> 💡 **Example — separate ID preset per map:** working on map `mycity`. Create preset with **+** → name `mycity`. All IDs you hand out in this scene now go into `INU_Preset/id_presets/mycity.txt` — no conflicts with your main project. Switch preset back to `default` — your previous ID database is back.
 
 ---
 
@@ -375,6 +401,87 @@ Vanilla GTA SA and Rockstar's own tools ship LOD models with several naming conv
 | Dual Texture | Second texture with blend modes (11 options for Src/Dst) |
 | UV Animation | Animated UV scrolling with animation name |
 
+> 💡 **Example — building window with reflections:** create a material `building_window` → enable ☑ Environment Map → set texture `xenvmap`, coefficient `0.6` → in-game the window will reflect the sky/clouds moving over the city. For transparent glass, additionally enable FB Alpha.
+
+### GTA Material Presets
+
+**Panel:** Properties → Material → **GTA Material** → Preset
+
+Quickly apply common material configurations with one click. Instead of hand-tuning 25+ `mat.inu.*` fields (env map, specular, reflection, dual texture, etc.) — pick from dropdown, click ✓ Apply.
+
+#### Built-in presets (shipped with the addon)
+
+| Preset | What it sets |
+|---|---|
+| **Generic** | Clears all effects — plain textured material |
+| **Vehicle Body** | Car body: env map (`xvehicleenv128`, coef 0.2) + specular (`vehiclespecdot64`) + reflection 0.05 |
+| **Vehicle Glass** | Car glass: env map with FB alpha, coef 0.4 |
+| **Ped / Skinned** | Plain skinned material (for characters) |
+| **Env Mapped** | Env map only (`xenvmap`, coef 0.5), no specular/reflection |
+| **Dual Texture** | Enables second texture with alpha blend (src/dst = SRCALPHA / INVSRCALPHA) |
+| **Specular** | Basic specular with level 1.0 |
+
+These are always in the dropdown, cannot be deleted.
+
+#### User presets
+
+Stored **outside the addon** — in `<blender addons dir>/INU_Preset/material_presets/*.json`. They survive addon updates and reinstalls. Sits next to `INU_Preset/id_presets/` (same root folder as the ID Manager presets).
+
+#### Example — modeling a car
+
+Say you're building a car with 15 materials: body, glass, chrome, headlights, tires, interior. Hand-tuning each = 7 fields × 15 = 105 clicks.
+
+**Step 1.** Select the car-body material in the object's material stack.
+
+**Step 2.** Properties → Material → **GTA Material** → Preset → pick `Vehicle Body` → click ✓ (Apply). All fields get set: env map, specular, reflection.
+
+**Step 3.** Switch to the glass material → `Vehicle Glass` → ✓. Done.
+
+**Step 4.** Suppose you've dialed in your favorite "retro San Andreas body" mix — matter specular. Select that material → Preset → **Save as…** → name: `car_retro_matte`, description: `matte body for older cars`. Save.
+
+Now `<addons>/INU_Preset/material_presets/car_retro_matte.json` appears:
+```json
+{
+  "name": "car_retro_matte",
+  "description": "matte body for older cars",
+  "mat_inu": {
+    "ambient": 1.0,
+    "export_env_map": true,
+    "env_map_tex": "xvehicleenv128",
+    "env_map_coef": 0.15,
+    "export_specular": true,
+    "specular_level": 0.4,
+    "specular_texture": "vehiclespecdot64",
+    "export_reflection": true,
+    "reflection_intensity": 0.02
+  }
+}
+```
+
+**Step 5.** No reload needed — the preset shows up in the dropdown immediately. Open another material → your `car_retro_matte` is there. Applies in one click.
+
+**Step 6 (bonus).** Copy the JSON file to a teammate → they drop it into their `<addons>/INU_Preset/material_presets/` → same preset instantly available. Easy sharing across a modding team.
+
+#### What a preset stores
+
+25 fields from `INUMaterialProps`:
+- **Ambient:** `ambient`
+- **Env Map:** `export_env_map`, `env_map_tex`, `env_map_coef`, `env_map_fb_alpha`
+- **Bump:** `export_bump_map`, `bump_map_tex`
+- **Reflection:** `export_reflection` + 5 fields (scale X/Y, offset X/Y, intensity)
+- **Specular:** `export_specular`, `specular_level`, `specular_texture`
+- **Dual Texture:** `export_dual_tex`, `dual_tex_src_blend`, `dual_tex_dst_blend`, `dual_tex_texture`
+- **UV Animation:** `export_animation`, `animation_name`
+
+**Not stored** (per-instance data, not portable):
+- `vehicle_color_slot` — per-instance carcols tag
+- `col_*` — collision surface (separate COL Surface Type panel)
+- `uv_anim_*` runtime params (speed_u/v, duration)
+
+#### Deleting a preset
+
+Select a user preset in the dropdown → the **Delete** button becomes active → Delete. File removed. Built-in presets (Generic/Vehicle/…) can't be deleted — button disables.
+
 ### COL Surface Types
 
 **Panel:** Properties → Material → COL Surface Type
@@ -384,6 +491,8 @@ Vanilla GTA SA and Rockstar's own tools ship LOD models with several naming conv
 - Flags, Brightness, Light
 - Day Light (0-15), Night Light (0-15)
 
+> 💡 **Example — wooden bar floor:** bar floor mesh → new material `bar_wood_floor` → COL Surface Type → search for `wood` → pick `WOOD_BENCH` (ID 9). Now character footsteps on this COL will play the wooden sound, and bullets will leave splinters.
+
 ### Textures
 
 **Panel:** Properties → Scene → INU Tools → Textures
@@ -392,6 +501,8 @@ Vanilla GTA SA and Rockstar's own tools ship LOD models with several naming conv
 - **.blend folder** — automatically points to the current .blend file's directory. Refresh button 🔄 updates the path
 - **Load Textures** — searches for PNG/TGA/JPG files matching material names on the object. Searches both folders: system and .blend. If a material is named `brick_wall`, the addon finds `brick_wall.png` in the specified folders and assigns it as texture
 - **Drag & Drop** — drag images from File Browser directly into the viewport to create a new material with the texture
+
+> 💡 **Example — auto-assign textures by name:** unzipped 100 PNG textures into `F:/gta_textures/`. Scene has 100 materials named like `brick01`, `brick02`, `roof_tile` (no textures yet). Set `F:/gta_textures/` as System textures → select objects → **Load Textures** → the addon finds `brick01.png`, `brick02.png` etc. and attaches them to the matching materials automatically.
 
 ---
 
@@ -415,14 +526,20 @@ Vanilla GTA SA and Rockstar's own tools ship LOD models with several naming conv
 - Gamma (0.5-3.0) — gamma correction
 - Shadows toggle
 
+> 💡 **Example — prelight a building for your map:** select the building mesh → Prelight → **Create Day/Night** → **Create 8 Lights** (8 point lights auto-placed around the object) → toggle ☑ Shadows → **Bake with Shadows**. The `Day` attribute gets filled with soft-shadowed lighting. Then same for Night (usually drop Intensity to 0.3 and switch light color to blueish) — switch to the Night attribute before Bake.
+
 ### Fill Colors
 
 Paint selected faces with a chosen color. Supports levels (layers of fill) and undo/restore.
+
+> 💡 **Example:** want to tint the roof of a building brighter than the walls. Enter Edit Mode → select the roof faces → Prelight → **Fill Color** → color = RGB(1,1,0.9) → Apply. The walls stay as they were, the roof gets a yellow tint. Not happy with it — **Undo fill** brings back the previous level.
 
 ### Scatter Light
 
 Distribute light from selected faces outward. Parameters:
 - Intensity, Falloff, Radius, Iterations
+
+> 💡 **Example — glowing neon:** select the neon sign faces → Fill Color pink → **Scatter from selected** (Intensity 0.8, Radius 2m, Iterations 3) → neighboring faces around the sign pick up a pinkish hue, mimicking the neon glow spilling onto the building wall.
 
 ### Post-Processing
 
@@ -434,6 +551,8 @@ Distribute light from selected faces outward. Parameters:
 | Brightness | Adjust brightness offset |
 | Gamma | Gamma correction |
 
+> 💡 **Example — seam between two buildings:** two adjacent buildings stand flush. You baked prelight on each separately — a visible vertex-color seam at the border. Select both → **Smooth Between Objects** (passes 2, strength 0.5) → the gradient flows smoothly across the meshes, seam gone.
+
 ### COL Light
 
 **Panel:** View3D → Sidebar (N) → GTA Tools → Prelight COL
@@ -444,9 +563,13 @@ Convert vertex colors to COL Day/Night Light values (0-15). Auto-splits material
 - **Bake** — write values to COL material properties
 - **Day/Night ranges** — adjustable thresholds
 
+> 💡 **Example — tunnel COL lighting:** COL mesh of a tunnel has vertex colors with a dark center and lighter edges. Open Prelight COL → **👁 Preview** — mesh gets painted with numbers 0-15. Adjust Day range (min=0, max=6) so center is 0 (dark) and entrance is 6 (lighter) → **Bake COL Light** → materials get the corresponding Day/Night Light values. In-game, cars entering the tunnel will auto-darken.
+
 ### Presets
 
 Save/load prelight settings (Ambient, Intensity, Gamma, Shadows) as named presets. Stored in `INU_Preset/` folder.
+
+> 💡 **Example:** found your signature mix — Ambient 0.4, Intensity 0.7, Gamma 1.8, Shadows on. **Save preset** → name `my_night_scene`. On any future object: pick the preset → Load → all settings restored.
 
 ### Vertex Color Management
 
@@ -463,6 +586,8 @@ Save/load prelight settings (Ambient, Intensity, Gamma, Shadows) as named preset
 | Reset | Reset bake settings to defaults |
 
 **Edit/Paint modes:** buttons to switch between Object, Edit, and Vertex Paint modes for quick workflow.
+
+> 💡 **Example — quick-start Night from the Day bake:** you've only baked the `Day` attribute → **Day → Night** → `Night` gets created as a copy of `Day`. Now open Post-Processing → **Brightness** = −0.3 → apply to Night → you've got a darkened version of the daytime bake. Then tweak manually (add yellow fill around lamp posts, etc.).
 
 ---
 
@@ -499,6 +624,10 @@ Create and configure 2DFX effects that export into DFF files.
 **Detach All from Mesh** *(new in 1.6.3):* batch detach all 2DFX from selected mesh. The mesh's UI shows a list of all attached 2DFX with individual detach buttons.
 
 **Preview:** real-time corona/shadow visualization in viewport. Billboard tracking implemented via **draw handler** *(1.6.3)* — works reliably across scene switches.
+
+> 💡 **Example — street lamp:** select the lamp post mesh → 2DFX → **Create Light** → an Empty with default lamp appears. Move the Empty to the top of the post → pick preset **Lamp Post** → ✓ Apply (sets yellow color, coronastar texture, 200m draw distance). Parenting to the mesh is automatic → Empty.parent = post. On DFF export, 2DFX coordinates are written relative to the mesh.
+
+> 💡 **Example — flashing red emergency:** Create Light → preset **Flashing (Maverick1)** → ✓ Apply → Show Mode `1 RANDOM_FLASHING` is set automatically. In-game this corona will flash red randomly — perfect for emergency lights or police beacons.
 
 ---
 
@@ -612,6 +741,8 @@ Example: for fire — size grows from 0.5 to 2.0, color transitions from yellow 
 
 **Grid settings:** columns × rows (default 4×4).
 
+> 💡 **Example — UV grid for a 4×4 atlas:** ground mesh with 16 grass variants in a 4×4 atlas. In Edit Mode select faces → UV Editor → **UV Grid Randomizer** → each face's UV coords land in a random cell of the 16. In the viewport the ground shows natural variety without manual texture assignment.
+
 ---
 
 ## Check
@@ -629,6 +760,8 @@ Example: for fire — size grows from 0.5 to 2.0, color transitions from yellow 
 | LOD/COL → DFF | Snap LOD and COL to their corresponding DFF position |
 | DFF / LOD / COL | Hide/show objects by type |
 | Type: OBJ/COL/SHA/NON | Batch assign type to selected objects with auto-rename |
+
+> 💡 **Example — preflight a building before export:** ready to export a house. In the Check panel, in sequence: **Check Vertex** (no loose ones) → **Check N-gon** (all faces 3–4 verts) → **Check Materials** (≤50) → **Cleanup Materials** (merge .001 duplicates) → **LOD/COL → DFF** (snap pair to HD position). Now you can safely export — no known issues.
 
 > **Duplicate cleanup:** on IDE and IPL export, Blender duplicate suffixes (.001, .002, etc.) are automatically stripped from model names.
 
@@ -671,6 +804,8 @@ Import/export GTA SA character models with skeleton and animations.
 
 **Export settings for characters:** in object properties (`obj.inu`) it's recommended to enable **Normals** and disable **Vertex Colors** — GTA SA characters use normals for dynamic engine lighting instead of baked vertex colors like buildings
 
+> 💡 **Example — import CJ and customize:** File → Import → GTA SA DFF → `cj.dff`. Imports armature + skinned mesh. Edit the mesh (add a hat, tweak proportions) → check weights → **Export DFF** → you get `cj_custom.dff` with the same armature skeleton but modified geometry. Animations from `ped.ifp` apply without any reworking — same skeleton.
+
 ### IFP Animations
 
 | Button | Operator | Description |
@@ -680,6 +815,10 @@ Import/export GTA SA character models with skeleton and animations.
 | Apply | `gtatools.apply_ifp` | Assign animation to armature |
 
 Searchable animation list in the panel.
+
+> 💡 **Example — preview a walk cycle:** imported `cj.dff` with armature → **Import IFP** → pick `ped.ifp` → the list loads 294 animations (WALK_civi, RUN_civi, IDLE_stance, etc.). Type `walk` in the search → pick `WALK_civi` → **Apply Animation** → the walk cycle is applied to CJ's armature, hit Play in Timeline — character walks.
+
+> 💡 **Example — batch import an animation folder:** 50 .ifp files in a folder → Animations panel → **Batch folder…** → pick the folder → all IFPs loaded as separate Actions. Each animation accessible via regular Action Editor.
 
 ---
 
@@ -701,6 +840,8 @@ Searchable animation list in the panel.
 - Wave Height — wave intensity
 - Texture: waterclear256 with flow animation
 
+> 💡 **Example — lake for a custom map:** View3D → Water → **Add Water** → params: Flag `0` (default visible), Wave Height 0.3m, Speed 0.02 — a 100×100m quad appears with water properties. Scale it to match the lake size → **Snap to Grid** so vertices align with GTA's regular grid → **Export Water** → you get `water.dat` ready for in-game use.
+
 ---
 
 ## Path IO
@@ -718,6 +859,8 @@ Searchable animation list in the panel.
 
 Auto-splits into groups of 12 nodes (GTA SA limit).
 
+> 💡 **Example — create a vehicle path with a roadblock:** Paths → **Create Path** → a curve appears → Edit Mode → add points along the road. In Edit Curve mode the panel reveals flag buttons: select one point in the middle of the road → **Toggle Roadblock** → that point becomes a roadblock stop. At an intersection select a point → **Traffic → Normal** → cars will wait at the traffic light there. **Export paths.ipl** → the encoded flags are written to the file.
+
 ### Train Tracks
 
 | Button | Description |
@@ -726,6 +869,8 @@ Auto-splits into groups of 12 nodes (GTA SA limit).
 | Export tracks.dat | Save track definitions |
 | Create Track | New track curve |
 | Mark Station | Toggle station point (edit mode) |
+
+> 💡 **Example — add a new station on an existing track:** imported tracks.dat (curve loaded from points), Edit Mode → select a point at the desired spot → **Mark Station** → the point is flagged as a stop (marker becomes visible via **Refresh Station Markers** — a visible Empty sphere). Export → station flag is written for that point in tracks.dat.
 
 ### Compiled Nodes
 
@@ -821,11 +966,15 @@ Render pipeline determines how the GTA SA engine processes the model:
 - **Building** (0x53F2009A) — Day/Night vertex colors. Required for buildings and map objects that have vertex colors — without this pipeline, day/night color transitions won't work in-game
 - **Reflections** (0x53F20098) — window reflections. Only for window models that should reflect the environment. Windows must be a separate model from the building
 
+> 💡 **Example:** a house `house01` needs day/night lighting → Object Properties → INU Tools: Model → Pipeline = **Day/Night**. Split the windows of this house into a separate mesh `house01_windows` → its Pipeline = **Reflections** so they reflect the street. The fence in front of the house `house01_fence` → Pipeline = **None**.
+
 ### Normals
 
 The **Normals** toggle controls vertex normal export in DFF:
 - **Enabled** — the model receives dynamic lighting from the GTA SA engine. Required for: characters, vehicles, weapons, interactive objects
 - **Disabled** — the model is lit only by baked vertex colors. Used for: buildings, roads, map objects
+
+> 💡 **Example:** CJ (character) — ☑ Normals (engine lights him based on sun and lamps). Map building with baked vertex colors — ☐ Normals (otherwise the engine overlays its own lighting and the visual breaks).
 
 ---
 
