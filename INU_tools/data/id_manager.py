@@ -257,6 +257,106 @@ def allocate_id(model_name):
     return None
 
 
+def reserve_id(model_id, model_name):
+    """Mark ``model_id`` as used (with ``model_name``) in the active preset.
+
+    If the ID isn't present in the preset, the entry is appended so the
+    preset stays in sync with the scene. If the slot is already taken by
+    a different name, the name is overwritten — the scene is the source
+    of truth for what's currently placed on the map.
+
+    Returns True if a write happened, False if the slot was already in
+    that exact state.
+    """
+    entries = _load()
+    for i, (id_num, name) in enumerate(entries):
+        if id_num == model_id:
+            if name == model_name:
+                return False
+            entries[i] = (id_num, model_name)
+            _save(entries)
+            return True
+    # ID not in preset yet — append and keep the list sorted on write.
+    entries.append((model_id, model_name))
+    _save(entries)
+    return True
+
+
+def gc_preset(objects):
+    """Release preset entries whose IDs no object in ``objects`` claims.
+
+    Handles the "I cleared everything but the gaps won't go away" case:
+    the preset is the source of truth for allocation, and when it keeps
+    a name on a slot that no scene object actually uses (e.g. the
+    corresponding mesh was deleted long ago, or the slot was leaked by
+    a Shift+D duplicate that later got its ID reassigned), that slot
+    stays "used" forever and ``allocate_id`` keeps skipping past it.
+
+    Returns the number of slots that were freed.
+    """
+    entries = _load()
+    scene_ids = set()
+    for obj in objects:
+        inu = getattr(obj, 'inu', None)
+        if inu is None:
+            continue
+        mid = getattr(inu, 'model_id', 0) or 0
+        if mid > 0:
+            scene_ids.add(mid)
+
+    released = 0
+    changed = False
+    for i, (id_num, name) in enumerate(entries):
+        if name is not None and id_num not in scene_ids:
+            entries[i] = (id_num, None)
+            released += 1
+            changed = True
+    if changed:
+        _save(entries)
+    return released
+
+
+def sync_scene_to_preset(objects):
+    """Pull every ``obj.inu.model_id > 0`` into the active preset.
+
+    Without this, objects imported from the map (or hand-edited) hold
+    IDs that the preset has never heard of. The *Assign IDs from…*
+    operator then silently skips around those IDs because it sees them
+    used in the scene, while the preset keeps showing them as free —
+    producing the mysterious gaps users see in the preset file.
+
+    Returns the number of preset slots that were updated.
+    """
+    entries = _load()
+    by_id = {id_num: i for i, (id_num, _name) in enumerate(entries)}
+
+    updated = 0
+    appended = []
+    for obj in objects:
+        inu = getattr(obj, 'inu', None)
+        if inu is None:
+            continue
+        mid = getattr(inu, 'model_id', 0) or 0
+        if mid <= 0:
+            continue
+        name = obj.name
+        idx = by_id.get(mid)
+        if idx is None:
+            appended.append((mid, name))
+            updated += 1
+            continue
+        cur_id, cur_name = entries[idx]
+        if cur_name is None:
+            entries[idx] = (cur_id, name)
+            updated += 1
+
+    if appended:
+        entries.extend(appended)
+    if updated:
+        _save(entries)
+    return updated
+
+
 def release_id(model_id):
     """Release an ID (remove model name, keep ID as free)."""
     entries = _load()

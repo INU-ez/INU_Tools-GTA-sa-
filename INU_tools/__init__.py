@@ -4048,6 +4048,15 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
             self.report({'ERROR'}, T("Выделите меш объекты"))
             return {'CANCELLED'}
 
+        # Pre-fill the dialog's shared-TXD widgets from the scene-level
+        # unified toggle. Users configure once in the Unified Export
+        # panel ("Общий TXD" + name); the dialog remembers that state
+        # without them having to tick it again here.
+        self.shared_txd = bool(getattr(
+            context.scene, 'gtatools_export_all_txd_shared', False))
+        self.shared_txd_name = getattr(
+            context.scene, 'gtatools_export_all_txd_shared_name', 'textures') or 'textures'
+
         # Populate the WindowManager TXD plan collection. Pre-fill each row
         # with obj.inu.txd_name if set, otherwise fall back to base_name —
         # that matches the game's default "model and its TXD share a name".
@@ -4115,11 +4124,18 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
             self.report({'ERROR'}, T("Выделите меш объекты"))
             return {'CANCELLED'}
 
-        export_dff_flag = getattr(context.scene, 'gtatools_img_export_dff', True)
-        export_col_flag = getattr(context.scene, 'gtatools_img_export_col', True)
-        export_txd_flag = getattr(context.scene, 'gtatools_img_export_txd', True)
-        col_library = bool(getattr(context.scene, 'gtatools_img_col_library', False))
-        col_library_name = getattr(context.scene, 'gtatools_img_col_library_name', '') or 'collision'
+        # Unified toggles — same scene props that the «To folder» button
+        # uses, so the DFF/COL/LOD/TXD row next to the export buttons
+        # applies to «To IMG» as well. Previously this operator read a
+        # separate ``gtatools_img_export_*`` set, which led to the
+        # «only COL exports» surprise when users had DFF/TXD toggled off
+        # somewhere out of sight.
+        export_dff_flag = getattr(context.scene, 'gtatools_export_all_dff', True)
+        export_col_flag = getattr(context.scene, 'gtatools_export_all_col', True)
+        export_lod_flag = getattr(context.scene, 'gtatools_export_all_lod', True)
+        export_txd_flag = getattr(context.scene, 'gtatools_export_all_txd', True)
+        col_library = bool(getattr(context.scene, 'gtatools_export_all_col_library', False))
+        col_library_name = getattr(context.scene, 'gtatools_export_all_col_library_name', '') or 'collision'
         use_gpu = check_nvtt_available(getattr(context.scene, 'gtatools_nvtt_path', ''))[0]
 
         # ── TXD plan: which groups are included + their archive names ──
@@ -4177,7 +4193,7 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
         included_groups = [(b, m) for b, m in model_groups.items() if _is_included(b)]
         total_steps = 0
         for _base, _m in included_groups:
-            if export_dff_flag and _m['LOD']: total_steps += 1
+            if export_lod_flag and _m['LOD']: total_steps += 1
             if export_dff_flag and _m['DFF']: total_steps += 1
             if write_col_per_group and _m['COL']: total_steps += 1
         # Approximate TXD buckets as # of unique txd_names among included groups
@@ -4212,7 +4228,7 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
                     continue
 
                 # Export LOD first
-                if export_dff_flag and models['LOD']:
+                if export_lod_flag and models['LOD']:
                     lod_name = 'LOD' + base_name
                     lod_path = os.path.join(tmpdir, lod_name + '.dff')
                     try:
@@ -5027,6 +5043,8 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
         skip_txd = not context.scene.gtatools_export_all_txd
         col_library = bool(getattr(context.scene, 'gtatools_export_all_col_library', False))
         col_library_name = getattr(context.scene, 'gtatools_export_all_col_library_name', '') or 'collision'
+        txd_shared = bool(getattr(context.scene, 'gtatools_export_all_txd_shared', False))
+        txd_shared_name = getattr(context.scene, 'gtatools_export_all_txd_shared_name', '') or 'textures'
         use_gpu = check_nvtt_available(getattr(context.scene, 'gtatools_nvtt_path', ''))[0]
 
         # Library mode: skip the per-group COL write path and collect all
@@ -5038,6 +5056,17 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
             for _base, _models in model_groups.items():
                 if _models['COL']:
                     library_col_objects.append(_models['COL'])
+
+        # Shared TXD mode: same pattern — skip per-group TXD, collect every
+        # DFF/LOD mesh, write one combined archive after the loop.
+        shared_txd_objects = []
+        if txd_shared and not skip_txd:
+            skip_txd = True
+            for _base, _models in model_groups.items():
+                if _models['DFF']:
+                    shared_txd_objects.append(_models['DFF'])
+                if _models['LOD']:
+                    shared_txd_objects.append(_models['LOD'])
 
         # Считаем общее количество шагов для прогресс-бара
         total_steps = 0
@@ -5086,6 +5115,33 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
                 all_exported.append(f"{col_library_name}.col ({count} records)")
             except Exception as e:
                 all_errors.append(f"{col_library_name}.col: {e}")
+
+        # Shared TXD — every texture from every exported mesh packed into
+        # one archive. Selection is hijacked because export_txd reads
+        # selection; we restore it on the way out.
+        if txd_shared and shared_txd_objects:
+            try:
+                shared_path = os.path.join(self.directory, f"{txd_shared_name}.txd")
+                prev_active = context.view_layer.objects.active
+                prev_selected = [o for o in context.selected_objects]
+                bpy.ops.object.select_all(action='DESELECT')
+                for src in shared_txd_objects:
+                    src.select_set(True)
+                context.view_layer.objects.active = shared_txd_objects[0]
+                result, message, _ = export_txd(
+                    shared_path, context, selected_only=True, use_gpu=use_gpu)
+                bpy.ops.object.select_all(action='DESELECT')
+                for o in prev_selected:
+                    o.select_set(True)
+                if prev_active is not None:
+                    context.view_layer.objects.active = prev_active
+                if result == {'FINISHED'}:
+                    all_exported.append(
+                        f"{txd_shared_name}.txd ({len(shared_txd_objects)} models)")
+                else:
+                    all_errors.append(f"{txd_shared_name}.txd: {message}")
+            except Exception as e:
+                all_errors.append(f"{txd_shared_name}.txd: {e}")
 
         # Восстанавливаем prelight только где он был включён
         for obj in prelight_was_on:
@@ -8260,14 +8316,20 @@ class GTATOOLS_PT_ide_ipl_panel(bpy.types.Panel):
         row = box.row(align=True)
         row.label(text="IMG", icon='PACKAGE')
         row = box.row(align=True)
-        row.prop(scn, "gtatools_img_export_dff", text="DFF", toggle=True)
-        row.prop(scn, "gtatools_img_export_col", text="COL", toggle=True)
-        row.prop(scn, "gtatools_img_export_txd", text="TXD", toggle=True)
-        if scn.gtatools_img_export_col:
+        row.prop(scn, "gtatools_export_all_dff", text="DFF", toggle=True)
+        row.prop(scn, "gtatools_export_all_col", text="COL", toggle=True)
+        row.prop(scn, "gtatools_export_all_lod", text="LOD", toggle=True)
+        row.prop(scn, "gtatools_export_all_txd", text="TXD", toggle=True)
+        if scn.gtatools_export_all_col:
             row = box.row(align=True)
-            row.prop(scn, "gtatools_img_col_library", text="", icon='PACKAGE')
-            row.prop(scn, "gtatools_img_col_library_name",
+            row.prop(scn, "gtatools_export_all_col_library", text="", icon='PACKAGE')
+            row.prop(scn, "gtatools_export_all_col_library_name",
                      text="", placeholder="collision")
+        if scn.gtatools_export_all_txd:
+            row = box.row(align=True)
+            row.prop(scn, "gtatools_export_all_txd_shared", text="", icon='PACKAGE')
+            row.prop(scn, "gtatools_export_all_txd_shared_name",
+                     text="", placeholder="textures")
         row = box.row(align=True)
         row.prop(scn, "gtatools_img_skip_lod", text="Skip LOD", toggle=True)
         row.prop(scn, "gtatools_img_load_txd", text="TXD", toggle=True)
@@ -9084,6 +9146,15 @@ class GTATOOLS_PT_export_panel(bpy.types.Panel):
             row.prop(context.scene, "gtatools_export_all_col_library", text="", icon='PACKAGE')
             row.prop(context.scene, "gtatools_export_all_col_library_name",
                      text="", placeholder="collision")
+        # Shared TXD mode — same pattern as COL library, one .txd per scene
+        # instead of per-model. The Shift+D / map-imported workflow tends
+        # to reuse textures across dozens of models; a shared archive
+        # cuts TXD count and keeps the IMG tidier.
+        if context.scene.gtatools_export_all_txd:
+            row = layout.row(align=True)
+            row.prop(context.scene, "gtatools_export_all_txd_shared", text="", icon='PACKAGE')
+            row.prop(context.scene, "gtatools_export_all_txd_shared_name",
+                     text="", placeholder="textures")
 
         # Pipeline + Normals
         _draw_label_with_info(layout, "Pipeline:",
@@ -11603,6 +11674,17 @@ class GTATOOLS_PT_object_inu_tools(bpy.types.Panel):
                 icon='STICKY_UVS_LOC',
             )
 
+        # Clear Model ID on selection — quick path to re-run Auto Assign
+        # on objects that already have IDs (duplicated with Shift+D,
+        # imported from map, etc. — their inu.model_id carries over).
+        clear_row = box.row(align=True)
+        clear_row.operator(
+            "gtatools.id_manager_clear_selected",
+            text=f"{T('Очистить ID выделенных')} ({n_sel})" if n_sel > 1
+                 else T("Очистить ID"),
+            icon='X',
+        )
+
         # IDE Flags (collapsible)
         row = box.row(align=True)
         row.prop(inu, "ide_flags", text="IDE Flags")
@@ -11913,6 +11995,7 @@ def _draw_id_manager(layout, scene, context):
     row = col.row(align=True)
     row.operator("gtatools.id_manager_from_game", text=T("Из игры"), icon='IMPORT')
     row.operator("gtatools.id_manager_extend", text=T("Расширить FLA"), icon='ADD')
+    col.operator("gtatools.id_manager_gc", text=T("Освободить фантомы"), icon='ORPHAN_DATA')
     col.operator("gtatools.id_manager_open_file", text=T("Открыть файл ID"), icon='FILE_TEXT')
 
 
@@ -11984,12 +12067,19 @@ class GTATOOLS_OT_id_manager_auto_assign(bpy.types.Operator):
 
     def execute(self, context):
         _id_preset_sync(context)
-        from .data.id_manager import allocate_id
+        from .data.id_manager import allocate_id, sync_scene_to_preset
 
         objs = [o for o in context.selected_objects if o.type == 'MESH']
         if not objs:
             self.report({'ERROR'}, T("Выделите меш объекты"))
             return {'CANCELLED'}
+
+        # Bring the preset in line with the scene before allocating.
+        # Map-imported objects (or anything hand-edited) may carry IDs
+        # that the preset has never heard of; without this sync those
+        # IDs stay flagged as free in the preset but get silently
+        # skipped during allocation — a classic source of gaps.
+        sync_scene_to_preset(bpy.data.objects)
 
         # Group by base_name, order: DFF then LOD per group (skip COL)
         pairs = {}  # base_name -> {'DFF': obj, 'LOD': obj}
@@ -12052,15 +12142,24 @@ class GTATOOLS_OT_id_manager_assign_from(bpy.types.Operator):
 
     def execute(self, context):
         _id_preset_sync(context)
-        from .data.id_manager import get_used_ids
+        from .data.id_manager import get_used_ids, reserve_id, sync_scene_to_preset
 
         objs = [o for o in context.selected_objects if o.type == 'MESH']
         if not objs:
             self.report({'ERROR'}, T("Выделите меш объекты"))
             return {'CANCELLED'}
 
+        # Sync first so the preset reflects every ID that's already
+        # placed in the scene. Otherwise we'd skip around those IDs
+        # (because they're taken by some scene object) while leaving
+        # them visibly "free" in the preset — that's the mysterious
+        # gap users see after running this operator.
+        sync_scene_to_preset(bpy.data.objects)
+
         used = set(get_used_ids().keys())
-        # Also collect IDs already on scene objects
+        # Also collect IDs already on scene objects (belt and braces:
+        # the sync above should have covered these, but a preset that
+        # has been cleared after the sync would miss them).
         for o in bpy.data.objects:
             if o.type == 'MESH' and hasattr(o, 'inu') and o.inu.model_id > 0:
                 used.add(o.inu.model_id)
@@ -12073,6 +12172,10 @@ class GTATOOLS_OT_id_manager_assign_from(bpy.types.Operator):
                 while current_id in used:
                     current_id += 1
                 obj.inu.model_id = current_id
+                # Reserve in preset too — otherwise the preset would
+                # keep showing these IDs as free and the next Auto
+                # Assign run would clash.
+                reserve_id(current_id, obj.name)
                 used.add(current_id)
                 current_id += 1
                 assigned += 1
@@ -12140,15 +12243,40 @@ class GTATOOLS_OT_id_manager_clear_selected(bpy.types.Operator):
     def execute(self, context):
         _id_preset_sync(context)
         from .data.id_manager import release_id
-        count = 0
+
+        # Snapshot which (obj, id) pairs we're clearing — then wipe
+        # their scene IDs and finally release from the preset only
+        # those IDs no other scene object still claims. Without this
+        # check, clearing a duplicate (Shift+D gives copies the same
+        # inu.model_id as the original) would free the preset slot
+        # while the original is still visually using it.
+        to_clear = []
         for obj in context.selected_objects:
             if obj.type == 'MESH' and hasattr(obj, 'inu'):
                 mid = obj.inu.model_id
                 if mid > 0:
-                    release_id(mid)
-                    obj.inu.model_id = 0
-                    count += 1
-        self.report({'INFO'}, f"{T('Очищено ID:')} {count}")
+                    to_clear.append((obj, mid))
+
+        for obj, _mid in to_clear:
+            obj.inu.model_id = 0
+
+        remaining = {
+            o.inu.model_id for o in bpy.data.objects
+            if o.type == 'MESH' and hasattr(o, 'inu') and o.inu.model_id > 0
+        }
+
+        released = 0
+        for _obj, mid in to_clear:
+            if mid not in remaining:
+                release_id(mid)
+                released += 1
+
+        count = len(to_clear)
+        self.report(
+            {'INFO'},
+            f"{T('Очищено ID:')} {count} "
+            f"({T('освобождено в пресете:')} {released})",
+        )
         return {'FINISHED'}
 
 
@@ -12223,6 +12351,23 @@ class GTATOOLS_OT_id_manager_from_game(bpy.types.Operator):
             return {'CANCELLED'}
         count = populate_from_game(game_root)
         self.report({'INFO'}, f"{T('Занято ID:')} {count}")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_id_manager_gc(bpy.types.Operator):
+    """Освободить записи пресета, у которых нет соответствующего объекта в сцене"""
+    bl_idname = "gtatools.id_manager_gc"
+    bl_label = "Free phantom IDs"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        _id_preset_sync(context)
+        from .data.id_manager import gc_preset
+        released = gc_preset(bpy.data.objects)
+        self.report(
+            {'INFO'},
+            f"{T('Освобождено фантомных ID:')} {released}",
+        )
         return {'FINISHED'}
 
 
@@ -13910,6 +14055,7 @@ classes = (
     GTATOOLS_OT_id_manager_clear,
     GTATOOLS_OT_id_manager_create,
     GTATOOLS_OT_id_manager_extend,
+    GTATOOLS_OT_id_manager_gc,
     GTATOOLS_OT_id_manager_sync_scene,
     GTATOOLS_OT_id_manager_from_game,
     GTATOOLS_OT_id_preset_new,
@@ -14552,29 +14698,6 @@ def register():
         subtype='FILE_PATH',
         update=_save_paths,
     )
-    bpy.types.Scene.gtatools_img_export_dff = BoolProperty(
-        name="DFF", default=True,
-        description=T("Экспорт DFF в IMG"),
-    )
-    bpy.types.Scene.gtatools_img_export_col = BoolProperty(
-        name="COL", default=True,
-        description=T("Экспорт COL в IMG"),
-    )
-    bpy.types.Scene.gtatools_img_export_txd = BoolProperty(
-        name="TXD", default=True,
-        description=T("Экспорт TXD в IMG"),
-    )
-    bpy.types.Scene.gtatools_img_col_library = BoolProperty(
-        name=T("COL Library"),
-        description=T("Писать все коллизии в один .col файл (multi-entry library). Каждая запись в файле — отдельная коллизия со своим model_id, сопоставляется с DFF по ID"),
-        default=False,
-    )
-    bpy.types.Scene.gtatools_img_col_library_name = StringProperty(
-        name=T("Имя library .col"),
-        description=T("Имя общего .col файла без расширения (например 'district' → district.col)"),
-        default="collision",
-    )
-
     bpy.types.Scene.gtatools_map_region = EnumProperty(
         name="Region",
         description=T("Район карты для импорта"),
@@ -15023,6 +15146,16 @@ def register():
         description=T("Имя общего .col файла без расширения (например 'district' → district.col)"),
         default="collision",
     )
+    bpy.types.Scene.gtatools_export_all_txd_shared = BoolProperty(
+        name=T("Shared TXD"),
+        description=T("Писать все текстуры в один общий .txd файл вместо отдельного .txd на каждую модель. Полезно для районов и сборок где множество моделей делят одни и те же текстуры"),
+        default=False,
+    )
+    bpy.types.Scene.gtatools_export_all_txd_shared_name = StringProperty(
+        name=T("Имя общего .txd"),
+        description=T("Имя общего .txd файла без расширения (например 'district' → district.txd)"),
+        default="textures",
+    )
 
     # Keymap: Shift+T — toggle UV Editor
     wm = bpy.context.window_manager
@@ -15198,11 +15331,6 @@ def unregister():
     del bpy.types.Scene.gtatools_img_use_gta_dat
     del bpy.types.Scene.gtatools_img_skip_lod
     del bpy.types.Scene.gtatools_img_load_txd
-    del bpy.types.Scene.gtatools_img_export_dff
-    del bpy.types.Scene.gtatools_img_export_col
-    del bpy.types.Scene.gtatools_img_export_txd
-    del bpy.types.Scene.gtatools_img_col_library
-    del bpy.types.Scene.gtatools_img_col_library_name
     del bpy.types.Scene.gtatools_ide_path
     del bpy.types.Scene.gtatools_ipl_path
     del bpy.types.Scene.gtatools_txd_auto_import
@@ -15245,6 +15373,8 @@ def unregister():
     del bpy.types.Scene.gtatools_export_all_txd
     del bpy.types.Scene.gtatools_export_all_col_library
     del bpy.types.Scene.gtatools_export_all_col_library_name
+    del bpy.types.Scene.gtatools_export_all_txd_shared
+    del bpy.types.Scene.gtatools_export_all_txd_shared_name
     del bpy.types.Scene.gtatools_scatter_radius
     del bpy.types.Scene.gtatools_scatter_iterations
     del bpy.types.Scene.gtatools_scatter_falloff
