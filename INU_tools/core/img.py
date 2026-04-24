@@ -130,7 +130,8 @@ class ImgReader:
 
     def extract_all_to(self, output_dir: str,
                        extensions: set[str] | None = None,
-                       skip_existing: bool = True) -> dict[str, int]:
+                       skip_existing: bool = True,
+                       name_filter=None) -> dict[str, int]:
         """Batch extract files to output_dir in one sequential pass.
 
         Args:
@@ -138,6 +139,11 @@ class ImgReader:
             extensions: set of extensions to extract (e.g. {'.dff', '.col'}),
                        None = extract all
             skip_existing: skip files that already exist on disk
+            name_filter: optional callable ``(lower_name: str) -> bool`` —
+                       only entries where the filter returns True are
+                       extracted. Lets callers narrow down by base name
+                       (e.g. region-filtered TXD subsets) while still
+                       benefiting from the sorted-by-offset pass.
 
         Returns dict with counts: {'dff': N, 'col': N, 'txd': N, 'other': N, 'skipped': N}
         """
@@ -154,6 +160,8 @@ class ImgReader:
             ext = '.' + low.rsplit('.', 1)[-1] if '.' in low else ''
 
             if extensions and ext not in extensions:
+                continue
+            if name_filter is not None and not name_filter(low):
                 continue
 
             out_path = os.path.join(output_dir, entry.name)

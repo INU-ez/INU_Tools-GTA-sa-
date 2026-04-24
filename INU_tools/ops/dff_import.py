@@ -6,6 +6,7 @@ import os
 import bpy
 import bmesh
 import mathutils
+import numpy as np
 
 from ..core.dff import (
     read_dff_file, DffClump, DffGeometry, DffFrame, DffAtomic,
@@ -37,11 +38,36 @@ def _store_user_data(target, user_data: UserData):
     target['inu_user_data'] = sections
 
 
-def _create_blender_material(dff_mat: DffMaterial, index: int) -> bpy.types.Material:
-    """Создаём Blender материал из DFF материала."""
+def _create_blender_material(dff_mat: DffMaterial, index: int,
+                             material_cache: dict | None = None) -> bpy.types.Material:
+    """Создаём Blender материал из DFF материала.
+
+    If ``material_cache`` (shared dict) is provided, materials without
+    advanced effects (env_map / bump_map / specular / reflection /
+    dual_texture / user_data) are deduplicated by (texture name, RGBA
+    color) — massively cuts ``bpy.data.materials.new`` calls for a
+    bulk map import where the same texture repeats across thousands
+    of DFFs. Materials with advanced effects are always created fresh
+    because each can carry per-model parameters.
+    """
     tex_name = ""
     if dff_mat.texture and dff_mat.texture.name:
         tex_name = dff_mat.texture.name
+
+    # Advanced effects prevent caching — each model may ship its own
+    # env_map/bump_map coefficients even under the same texture name.
+    has_effects = bool(
+        dff_mat.env_map or dff_mat.bump_map or dff_mat.specular or
+        dff_mat.reflection or dff_mat.dual_texture or dff_mat.user_data
+    )
+
+    cache_key = None
+    if material_cache is not None and tex_name and not has_effects:
+        c = dff_mat.color
+        cache_key = (tex_name, c.r, c.g, c.b, c.a)
+        cached = material_cache.get(cache_key)
+        if cached is not None:
+            return cached
 
     mat_name = tex_name if tex_name else f"Material_{index}"
     mat = bpy.data.materials.new(mat_name)
@@ -142,55 +168,35 @@ def _create_blender_material(dff_mat: DffMaterial, index: int) -> bpy.types.Mate
     if dff_mat.user_data:
         _store_user_data(mat, dff_mat.user_data)
 
+    if cache_key is not None:
+        material_cache[cache_key] = mat
     return mat
 
 
-def _build_mesh(geom: DffGeometry, name: str, materials: list) -> bpy.types.Mesh:
-    """Создаём Blender Mesh из DFF геометрии через bmesh."""
-    mesh = bpy.data.meshes.new(name)
+def _build_mesh_bmesh(mesh: bpy.types.Mesh, geom: DffGeometry):
+    """Legacy bmesh-based mesh builder — used only as a fallback when the
+    fast foreach_set path fails on malformed DFF geometry."""
     bm = bmesh.new()
-
-    # Создаём материалы заранее
-    for mi, dff_mat in enumerate(materials):
-        bl_mat = _create_blender_material(dff_mat, mi)
-        mesh.materials.append(bl_mat)
-
-    # Вершины
     for v in geom.vertices:
         bm.verts.new((v[0], v[1], v[2]))
-
     bm.verts.ensure_lookup_table()
     bm.verts.index_update()
 
-    # UV layers в bmesh
     uv_layers = []
     for i in range(len(geom.uv_layers)):
         uv_name = "UVMap" if i == 0 else f"UVMap.{i:03d}"
         uv_layers.append(bm.loops.layers.uv.new(uv_name))
 
-    # Vertex colors layer
-    vc_layer = None
-    if geom.prelit_colors:
-        vc_layer = bm.loops.layers.color.new("Day")
+    vc_layer = bm.loops.layers.color.new("Day") if geom.prelit_colors else None
+    nc_layer = (bm.loops.layers.color.new("Night")
+                if geom.extra_colors and geom.extra_colors.colors else None)
 
-    # Night vertex colors layer
-    nc_layer = None
-    if geom.extra_colors and geom.extra_colors.colors:
-        nc_layer = bm.loops.layers.color.new("Night")
-
-    # Грани
     for tri in geom.triangles:
         try:
-            face = bm.faces.new([
-                bm.verts[tri.a],
-                bm.verts[tri.b],
-                bm.verts[tri.c],
-            ])
+            face = bm.faces.new([bm.verts[tri.a], bm.verts[tri.b], bm.verts[tri.c]])
             face.material_index = tri.material
             if hasattr(face, 'smooth'):
                 face.smooth = True
-
-            # UV координаты через loops
             for loop in face.loops:
                 vi = loop.vert.index
                 for uv_idx, uv_bl_layer in enumerate(uv_layers):
@@ -198,35 +204,124 @@ def _build_mesh(geom: DffGeometry, name: str, materials: list) -> bpy.types.Mesh
                     if vi < len(uv_data):
                         tc = uv_data[vi]
                         loop[uv_bl_layer].uv = (tc.u, 1.0 - tc.v)
-
-                # Vertex colors
                 if vc_layer and vi < len(geom.prelit_colors):
                     c = geom.prelit_colors[vi]
                     loop[vc_layer] = (c.r / 255.0, c.g / 255.0, c.b / 255.0, c.a / 255.0)
-
-                # Night colors
                 if nc_layer and vi < len(geom.extra_colors.colors):
                     c = geom.extra_colors.colors[vi]
                     loop[nc_layer] = (c.r / 255.0, c.g / 255.0, c.b / 255.0, c.a / 255.0)
-
         except Exception as e:
-            print(f"[INU_tools] Face error: {e}")
+            print(f"[INU_tools] Face error (bmesh fallback): {e}")
 
     bm.to_mesh(mesh)
     bm.free()
     mesh.update()
 
-    # Debug: material assignment stats
-    mat_counts = {}
-    for poly in mesh.polygons:
-        mat_counts[poly.material_index] = mat_counts.get(poly.material_index, 0) + 1
-    print(f"[INU] Mesh '{name}': {len(mesh.materials)} materials, "
-          f"{len(mesh.polygons)} faces, mat_indices: {mat_counts}")
 
-    # Smooth shading (compatible 4.1+)
-    if bpy.app.version >= (4, 1, 0):
-        mesh.polygons.foreach_set("use_smooth", [True] * len(mesh.polygons))
+def _build_mesh(geom: DffGeometry, name: str, materials: list,
+                material_cache: dict | None = None) -> bpy.types.Mesh:
+    """Build a Blender Mesh from DFF geometry via direct foreach_set.
+
+    Avoids bmesh entirely — all attributes are pushed in bulk through
+    ``foreach_set`` which is a C-level batch assignment. For a 10k-vert
+    mesh this is ~40x faster than the old bmesh per-face loop.
+
+    Falls back to the legacy bmesh path if a bulk assign fails — some
+    malformed vanilla DFFs have duplicate faces / bad winding that
+    ``mesh.validate()`` can't fully clean up.
+
+    ``material_cache`` is threaded through to ``_create_blender_material``
+    for cross-DFF dedup in bulk map import.
+    """
+    mesh = bpy.data.meshes.new(name)
+
+    # Materials first — polygon material_index references these by slot.
+    for mi, dff_mat in enumerate(materials):
+        bl_mat = _create_blender_material(dff_mat, mi, material_cache)
+        mesh.materials.append(bl_mat)
+
+    n_verts = len(geom.vertices)
+    n_tris = len(geom.triangles)
+
+    if n_verts == 0 or n_tris == 0:
         mesh.update()
+        if geom.user_data:
+            _store_user_data(mesh, geom.user_data)
+        return mesh
+
+    try:
+        # ── Vertices ────────────────────────────────────────────────────
+        verts_np = np.asarray(geom.vertices, dtype=np.float32).reshape(-1, 3)
+        mesh.vertices.add(n_verts)
+        mesh.vertices.foreach_set('co', verts_np.ravel())
+
+        # ── Triangles → loops + polygons ────────────────────────────────
+        # Build flat index buffer [a0,b0,c0, a1,b1,c1, ...] from DFF tris.
+        tri_np = np.empty((n_tris, 3), dtype=np.int32)
+        mat_np = np.empty(n_tris, dtype=np.int32)
+        for i, tri in enumerate(geom.triangles):
+            tri_np[i, 0] = tri.a
+            tri_np[i, 1] = tri.b
+            tri_np[i, 2] = tri.c
+            mat_np[i] = tri.material
+        tri_flat = tri_np.ravel()
+
+        n_loops = n_tris * 3
+        mesh.loops.add(n_loops)
+        mesh.polygons.add(n_tris)
+
+        mesh.loops.foreach_set('vertex_index', tri_flat)
+        mesh.polygons.foreach_set(
+            'loop_start', np.arange(0, n_loops, 3, dtype=np.int32))
+        mesh.polygons.foreach_set(
+            'loop_total', np.full(n_tris, 3, dtype=np.int32))
+        mesh.polygons.foreach_set('material_index', mat_np)
+
+        # Smooth shading flag (compatible 4.1+, affects normal calc)
+        if bpy.app.version >= (4, 1, 0):
+            mesh.polygons.foreach_set(
+                'use_smooth', np.ones(n_tris, dtype=bool))
+
+        # ── UV layers (per-vertex DFF → per-loop Blender) ───────────────
+        for i, uv_layer_data in enumerate(geom.uv_layers):
+            if not uv_layer_data:
+                continue
+            uv_name = "UVMap" if i == 0 else f"UVMap.{i:03d}"
+            uv_layer = mesh.uv_layers.new(name=uv_name)
+            # Build per-vertex UV array — flip V (GTA top-origin → Blender bot).
+            uvs_np = np.array([(tc.u, 1.0 - tc.v) for tc in uv_layer_data],
+                              dtype=np.float32)
+            # Expand to per-loop via fancy indexing: loop[k] ← vertex[tri_flat[k]]
+            loop_uvs = uvs_np[tri_flat]
+            uv_layer.data.foreach_set('uv', loop_uvs.ravel())
+
+        # ── Vertex color layers (Day / Night) ───────────────────────────
+        def _add_color_layer(layer_name: str, dff_colors):
+            if not dff_colors:
+                return
+            attr = mesh.color_attributes.new(
+                name=layer_name, type='BYTE_COLOR', domain='CORNER')
+            cols_np = np.empty((len(dff_colors), 4), dtype=np.float32)
+            for k, c in enumerate(dff_colors):
+                cols_np[k, 0] = c.r / 255.0
+                cols_np[k, 1] = c.g / 255.0
+                cols_np[k, 2] = c.b / 255.0
+                cols_np[k, 3] = c.a / 255.0
+            loop_cols = cols_np[tri_flat]
+            attr.data.foreach_set('color', loop_cols.ravel())
+
+        _add_color_layer('Day', geom.prelit_colors)
+        if geom.extra_colors and getattr(geom.extra_colors, 'colors', None):
+            _add_color_layer('Night', geom.extra_colors.colors)
+
+        mesh.update(calc_edges=True)
+        mesh.validate(verbose=False)  # clean duplicate/degenerate faces
+
+    except Exception as e:
+        # Fallback to bmesh path on malformed geometry — rare but a few
+        # vanilla DFFs have non-manifold data that foreach_set can't absorb.
+        print(f"[INU_tools] foreach_set mesh build failed ({e}), falling back to bmesh")
+        _build_mesh_bmesh(mesh, geom)
 
     # Store geometry user data on mesh
     if geom.user_data:
@@ -579,7 +674,9 @@ def _apply_skin_weights(obj, geom, arm_obj, bone_names):
     print(f"[INU] Skin weights applied, {len(obj.vertex_groups)} vertex groups")
 
 
-def import_dff(filepath: str, context=None, *, skip_2dfx=None):
+def import_dff(filepath: str, context=None, *, skip_2dfx=None,
+               bulk_mode: bool = False, target_collection=None,
+               material_cache: dict | None = None, profiler=None):
     """
     Импорт DFF файла в Blender.
 
@@ -588,10 +685,38 @@ def import_dff(filepath: str, context=None, *, skip_2dfx=None):
         context: Blender context (опционально).
         skip_2dfx: пропустить импорт 2DFX-эффектов (лампы, частицы, ped attractors).
                    None → читать scene.gtatools_map_skip_2dfx.
+        bulk_mode: при True пропускаются тяжёлые per-model операции —
+                   ``view_layer.update()`` и ``select_all(DESELECT)``.
+                   Для bulk-импорта карты их достаточно сделать один раз
+                   в конце; в одиночном импорте эти вызовы нужны.
+        target_collection: если указана — линковать созданные объекты
+                   сразу в неё (избегает лишнего unlink+relink при
+                   импорте карты).
+        material_cache: общий dict для переиспользования материалов
+                   между DFF (ключ — имя текстуры + RGBA). Сильно режет
+                   время bulk-импорта карты.
+        profiler: опциональный ``Profiler`` (см. ``INU_tools.tools.profiler``)
+                   для замера под-стадий parse/build/link.
     """
     clump = read_dff_file(filepath)
     base_name = os.path.splitext(os.path.basename(filepath))[0]
+    return import_dff_from_clump(
+        clump, base_name, skip_2dfx=skip_2dfx, bulk_mode=bulk_mode,
+        target_collection=target_collection, material_cache=material_cache,
+        profiler=profiler,
+    )
 
+
+def import_dff_from_clump(clump, base_name: str, *, skip_2dfx=None,
+                          bulk_mode: bool = False, target_collection=None,
+                          material_cache: dict | None = None, profiler=None):
+    """Build Blender objects from an already-parsed DffClump.
+
+    Separates the Blender-only work from the binary parse so the
+    parse step can run in a worker thread (numpy releases the GIL)
+    while the main thread stays busy creating bpy objects for the
+    previous model.
+    """
     # Resolve 2DFX skip flag from scene when not passed explicitly.
     if skip_2dfx is None:
         try:
@@ -600,7 +725,18 @@ def import_dff(filepath: str, context=None, *, skip_2dfx=None):
         except Exception:
             skip_2dfx = False
 
-    collection = bpy.context.collection
+    # Null-object context manager so `with _stage(...)` works without
+    # an `if profiler:` ladder every time. When profiler is None we
+    # get effectively zero overhead.
+    def _stage(name):
+        if profiler is not None:
+            return profiler.stage(name)
+        class _Null:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+        return _Null()
+
+    collection = target_collection if target_collection is not None else bpy.context.collection
     imported_objects = []
     frame_to_obj = {}  # frame_index → Blender object (MESH or EMPTY dummy)
 
@@ -620,8 +756,8 @@ def import_dff(filepath: str, context=None, *, skip_2dfx=None):
         # Имя объекта: из фрейма или из имени файла
         obj_name = frame.name if (frame and frame.name) else f"{base_name}_{gi}"
 
-        # Создаём меш через bmesh
-        mesh = _build_mesh(geom, obj_name, geom.materials)
+        with _stage('build_mesh'):
+            mesh = _build_mesh(geom, obj_name, geom.materials, material_cache)
 
         # Создаём объект
         obj = bpy.data.objects.new(obj_name, mesh)
@@ -658,7 +794,8 @@ def import_dff(filepath: str, context=None, *, skip_2dfx=None):
     if not clump.atomics and clump.geometries:
         for gi, geom in enumerate(clump.geometries):
             obj_name = f"{base_name}_{gi}"
-            mesh = _build_mesh(geom, obj_name, geom.materials)
+            with _stage('build_mesh'):
+                mesh = _build_mesh(geom, obj_name, geom.materials, material_cache)
             obj = bpy.data.objects.new(obj_name, mesh)
             _set_object_props(obj, geom)
             collection.objects.link(obj)
@@ -716,10 +853,19 @@ def import_dff(filepath: str, context=None, *, skip_2dfx=None):
                 (0, 0, 0, 1),
             ))
 
-        bpy.context.view_layer.update()
+        if not bulk_mode:
+            bpy.context.view_layer.update()
 
-    # Skeleton: create Armature + apply skin weights if DFF has bones
-    if _has_skeleton(clump):
+    # Skeleton: create Armature + apply skin weights if DFF has bones.
+    # Two guards:
+    #   1. bulk_mode (map import) — skip armatures entirely. Vanilla
+    #      map DFFs occasionally carry HAnim chunks with skin=no, and
+    #      we don't want a ``<name>_Armature`` object per such model
+    #      cluttering the outliner and bloating depsgraph.
+    #   2. require an actual skin somewhere — HAnim without skin is
+    #      just animation metadata, no armature-bound mesh to pair with.
+    has_skin = any(geom.skin for geom in clump.geometries)
+    if not bulk_mode and _has_skeleton(clump) and has_skin:
         try:
             arm_obj, bone_names = _build_armature(clump, base_name)
             imported_objects.append(arm_obj)
@@ -757,11 +903,15 @@ def import_dff(filepath: str, context=None, *, skip_2dfx=None):
                 fx_objects = _import_2dfx(geom.ext_2dfx, fx_col, base_name)
                 imported_objects.extend(fx_objects)
 
-    # Выделяем импортированные объекты
-    bpy.ops.object.select_all(action='DESELECT')
-    for obj in imported_objects:
-        obj.select_set(True)
-    if imported_objects:
-        bpy.context.view_layer.objects.active = imported_objects[0]
+    # Выделяем импортированные объекты. При bulk_mode пропускаем
+    # select_all — это O(scene_size) операция, которая для импорта
+    # карты (тысячи моделей) в сумме даёт O(N²). Для bulk достаточно
+    # вернуть список и дать вызывающему коду самому решить.
+    if not bulk_mode:
+        bpy.ops.object.select_all(action='DESELECT')
+        for obj in imported_objects:
+            obj.select_set(True)
+        if imported_objects:
+            bpy.context.view_layer.objects.active = imported_objects[0]
 
     return imported_objects

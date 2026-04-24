@@ -15,6 +15,8 @@ from struct import pack, unpack_from, calcsize
 from dataclasses import dataclass, field
 from typing import Optional
 
+import numpy as np
+
 from .rwbinary import BinaryReader
 
 
@@ -1154,36 +1156,51 @@ def _read_geometry_chunk(r: BinaryReader, size: int, rw_version: int) -> DffGeom
             num_uv = 1
 
     if not is_native:
-        # Prelit colors (4 bytes per vertex: RGBA)
-        if flags & GEOM_PRELIT:
-            for _ in range(num_verts):
-                geom.prelit_colors.append(RGBA(*r.read('<4B')))
+        # Prelit colors (4 bytes per vertex: RGBA) — numpy bulk read
+        if flags & GEOM_PRELIT and num_verts > 0:
+            arr = np.frombuffer(r.data, dtype=np.uint8,
+                                count=num_verts * 4, offset=r.pos).reshape(num_verts, 4)
+            r.skip(num_verts * 4)
+            geom.prelit_colors = [RGBA(r_, g_, b_, a_) for r_, g_, b_, a_ in arr.tolist()]
 
-        # UV layers (8 bytes per vertex per layer: u, v as float)
+        # UV layers (8 bytes per vertex per layer: u, v as float32)
         for _ in range(num_uv):
-            uv_layer = []
-            for _ in range(num_verts):
-                u, v = r.read('<2f')
-                uv_layer.append(TexCoords(u, v))
-            geom.uv_layers.append(uv_layer)
+            if num_verts > 0:
+                arr = np.frombuffer(r.data, dtype='<f4',
+                                    count=num_verts * 2, offset=r.pos).reshape(num_verts, 2)
+                r.skip(num_verts * 8)
+                geom.uv_layers.append([TexCoords(u, v) for u, v in arr.tolist()])
+            else:
+                geom.uv_layers.append([])
 
         # Triangles (8 bytes each: b, a, material, c as uint16)
-        for _ in range(num_tris):
-            b_idx, a_idx, mat_idx, c_idx = r.read('<4H')
-            geom.triangles.append(Triangle(a=a_idx, b=b_idx, c=c_idx, material=mat_idx))
+        if num_tris > 0:
+            arr = np.frombuffer(r.data, dtype='<u2',
+                                count=num_tris * 4, offset=r.pos).reshape(num_tris, 4)
+            r.skip(num_tris * 8)
+            # File order is (b, a, material, c) — remap into Triangle's ABC layout.
+            geom.triangles = [Triangle(a=a, b=b, c=c, material=m)
+                              for b, a, m, c in arr.tolist()]
 
     # ── Morph targets ──
     for _morph in range(morph_count):
         geom.bounding_sphere = BoundingSphere(*r.read('<4f'))
         has_pos, has_norms = r.read('<II')
 
-        if has_pos:
-            for _ in range(num_verts):
-                geom.vertices.append(r.read('<3f'))
+        if has_pos and num_verts > 0:
+            arr = np.frombuffer(r.data, dtype='<f4',
+                                count=num_verts * 3, offset=r.pos).reshape(num_verts, 3)
+            r.skip(num_verts * 12)
+            # extend, not assign — DFFs with morph_count > 1 append per morph.
+            # .tolist() yields list of [x, y, z] lists — indexable like the
+            # old tuples so downstream `v[0], v[1], v[2]` access is unchanged.
+            geom.vertices.extend(arr.tolist())
 
-        if has_norms:
-            for _ in range(num_verts):
-                geom.normals.append(r.read('<3f'))
+        if has_norms and num_verts > 0:
+            arr = np.frombuffer(r.data, dtype='<f4',
+                                count=num_verts * 3, offset=r.pos).reshape(num_verts, 3)
+            r.skip(num_verts * 12)
+            geom.normals.extend(arr.tolist())
 
     r.seek(struct_end)
 
@@ -1217,10 +1234,24 @@ def _read_geometry_chunk(r: BinaryReader, size: int, rw_version: int) -> DffGeom
                 elif ect == CHUNK_SKIN_PLG:
                     geom.skin = _read_skin_plugin(r, ecs, len(geom.vertices))
                 elif ect == CHUNK_EXTRA_COLORS:
+                    # Night Vertex Colors PLG:
+                    #   magic u32 — 0 means "no night colors, chunk is only
+                    #     the magic word". Non-zero → nv × RGBA follow.
+                    # Some vanilla DFFs also trim the chunk short (fewer
+                    # colors than verts) or the chunk size doesn't match
+                    # `len(geom.vertices)*4` — we clamp to what's actually
+                    # in the chunk instead of reading past the buffer.
                     _magic = r.read_one('<I')
                     ec = ExtraVertColors()
-                    for _ in range(len(geom.vertices)):
-                        ec.colors.append(RGBA(*r.read('<4B')))
+                    _nv = len(geom.vertices)
+                    available = ecs - 4  # bytes left in this chunk after magic
+                    # Cap nv to what the chunk can actually carry (4 B per colour).
+                    safe_nv = min(_nv, available // 4) if _nv > 0 else 0
+                    if _magic != 0 and safe_nv > 0:
+                        _arr = np.frombuffer(r.data, dtype=np.uint8,
+                                             count=safe_nv * 4, offset=r.pos).reshape(safe_nv, 4)
+                        r.skip(safe_nv * 4)
+                        ec.colors = [RGBA(r_, g_, b_, a_) for r_, g_, b_, a_ in _arr.tolist()]
                     geom.extra_colors = ec
                 elif ect == CHUNK_PIPELINE_SET:
                     geom.pipeline = r.read_one('<I')
@@ -1288,16 +1319,25 @@ def _read_bin_mesh_plg(r: BinaryReader, size: int, geom: 'DffGeometry'):
         mat_idx = r.read_one('<I')
 
         if flags == 0:
-            # Triangle list: every 3 indices = one triangle
-            for _ in range(num_indices // 3):
-                i0, i1, i2 = r.read('<3I')
-                key = tuple(sorted((i0, i1, i2)))
-                ti = tri_lookup.get(key)
-                if ti is not None:
-                    geom.triangles[ti].material = mat_idx
+            # Triangle list: every 3 indices = one triangle — bulk read via numpy
+            n_tris = num_indices // 3
+            if n_tris > 0:
+                tri_arr = np.frombuffer(r.data, dtype='<u4',
+                                        count=n_tris * 3, offset=r.pos).reshape(n_tris, 3)
+                r.skip(n_tris * 12)
+                for i0, i1, i2 in tri_arr.tolist():
+                    key = tuple(sorted((i0, i1, i2)))
+                    ti = tri_lookup.get(key)
+                    if ti is not None:
+                        geom.triangles[ti].material = mat_idx
         else:
-            # Triangle strip: skip (read indices but don't process)
-            indices = [r.read_one('<I') for _ in range(num_indices)]
+            # Triangle strip: read all indices at once, then walk in Python.
+            if num_indices > 0:
+                indices = np.frombuffer(r.data, dtype='<u4',
+                                        count=num_indices, offset=r.pos).tolist()
+                r.skip(num_indices * 4)
+            else:
+                indices = []
             for j in range(len(indices) - 2):
                 if j % 2 == 0:
                     i0, i1, i2 = indices[j], indices[j+1], indices[j+2]
@@ -1328,13 +1368,19 @@ def _read_skin_plugin(r: BinaryReader, size: int, num_verts: int) -> SkinData:
         for _ in range(skin.num_used):
             skin.bones_used.append(r.read_one('<B'))
 
-    # Vertex bone indices (4 bytes per vertex)
-    for _ in range(num_verts):
-        skin.bone_indices.append(r.read('<4B'))
+    # Vertex bone indices (4 bytes per vertex) — bulk read via numpy
+    if num_verts > 0:
+        _bi = np.frombuffer(r.data, dtype=np.uint8,
+                            count=num_verts * 4, offset=r.pos).reshape(num_verts, 4)
+        r.skip(num_verts * 4)
+        skin.bone_indices = [tuple(row) for row in _bi.tolist()]
 
     # Vertex bone weights (4 floats per vertex)
-    for _ in range(num_verts):
-        skin.bone_weights.append(r.read('<4f'))
+    if num_verts > 0:
+        _bw = np.frombuffer(r.data, dtype='<f4',
+                            count=num_verts * 4, offset=r.pos).reshape(num_verts, 4)
+        r.skip(num_verts * 16)
+        skin.bone_weights = [tuple(row) for row in _bw.tolist()]
 
     # Bone matrices (inverse bind pose)
     for _ in range(skin.num_bones):
@@ -1499,7 +1545,6 @@ def _read_frame_list(r: BinaryReader, size: int) -> list:
                         nm_end = len(raw)
                     frames[i].name = raw[:nm_end].decode('ascii', errors='replace')
                     frames[i].write_name = True
-                    print(f"[DFF Parse] Frame[{i}] has name chunk: '{frames[i].name}' (size={ecs})")
                 elif ect == CHUNK_HANIM_PLG:
                     frames[i].hanim = _read_hanim_plugin(r, ecs)
                 elif ect == CHUNK_USERDATA_PLG:

@@ -80,6 +80,13 @@
 > [!NOTE]
 > The addon is under active development. Bug reports are welcome in [Issues](../../issues).
 
+## 🆕 What's new in 1.6.4
+
+- ⚡ **Import Map ~10× faster** — full LA-sized district now imports in ~30 s (was 5+ min). Cache-only flow (no IMG access during import), parallel DFF parsing (4-worker thread pool, numpy/zlib release the GIL), shared material cache across DFFs, direct `foreach_set` mesh building
+- 🧹 **Map import cleanliness** — `Skip 2DFX` on by default for bulk import (stops thousands of Light/Empty objects from grinding the viewport), no more bogus `<name>_Armature` for vanilla DFFs carrying HAnim without skin, `Map_LOD` collection only receives models whose name matches a LOD pattern
+- 🐛 **IPL lod_index remap fix** — when multiple IPL files are merged into one list, each file's local `lod_index` is now rebased onto the merged list. Previously indices from file A pointed into file B's region of the list and wrong models landed in `Map_LOD`
+- 🔧 **Extract Resources profiler** (opt-in) — *Scene → INU Tools → Performance → Profile Import / Extract* dumps per-stage timing to `.inu_cache/_profile.log`
+
 ## 🆕 What's new in 1.6.3
 
 - 🎆 **Particle Effects** — full `effects.fxp` editor (82 effects, 30 FPS simulation, 40+ parameters)

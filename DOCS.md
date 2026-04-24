@@ -97,9 +97,8 @@
 ### Import the entire GTA SA map
 
 1. Set **Game Root** to GTA SA folder (e.g. `D:\GTA San Andreas\`)
-2. Click **Extract Resources** — extracts DFF/COL/textures from IMG (one-time)
-3. Click **Build Map .glb** — converts to glTF (one-time per region)
-4. Click **Import Map .glb** — loads into Blender with auto-sorted collections
+2. Click **Extract Resources** — extracts DFF/COL/textures from IMG into `.inu_cache/` (one-time, ~8 s for one region)
+3. Click **Import Map** — cache-only import, ~30 s for a full LA-sized district
 
 ### Hotkeys
 
@@ -198,24 +197,27 @@ Drag PNG/JPG/TGA images from File Browser into the 3D viewport to automatically 
 **Step 1: Setup**
 - Set **Game Root** to GTA SA installation folder
 - Select **Region** (auto-detected from gta.dat: LA, SF, VEGAS, COUNTRY, etc.)
+- Make sure **Skip 2DFX** is on for map import (default) — otherwise every street light, corona, and ped-attractor in the district becomes a Blender Light/Empty object (thousands of them) and the viewport grinds to a halt. Leave it off only when importing a single model where you want the effects.
 
 **Step 2: Extract Resources**
 - Click **Extract Resources** — extracts all DFF, COL, and textures from IMG archives into `.inu_cache/` folder next to your .blend file (so save the .blend first)
-- This is slow but only needed once — already extracted files are skipped on re-run
+- Textures are decoded to PNG in parallel (4 workers, numpy DXT). Already cached files are skipped on re-run
+- Typical time: ~8 seconds for one region
 
-**Step 3: Build .glb**
-- Click **Build Map .glb** — converts DFF models with IPL positions into a single .glb file
-- One file per region, cached in `.inu_cache/`
-
-**Step 4: Import**
-- Click **Import Map .glb** — opens file browser, select one or more .glb files
+**Step 3: Import Map**
+- Click **Import Map** — cache-only, reads DFFs and PNG textures from `.inu_cache/` (no IMG access during import)
+- If cache is empty, the operator reports *"Cache is empty — run «Extract Resources» first"* and bails out
+- DFFs are parsed in parallel (4-worker thread pool, numpy releases GIL) while the main thread creates Blender objects — no wait between stages
 - Objects auto-sorted into collections:
-  - **Map_Buildings** — draw distance 300+
-  - **Map_Props** — draw distance 100-299
-  - **Map_Small** — draw distance <100
-  - **Map_Vegetation** — trees, grass, plants
-  - **Map_LOD** — LOD models
-- Duplicates (`.001`, `.002`) moved to `_Instances` sub-collections
+  - **Map_DFF_Far** — draw distance 300+
+  - **Map_DFF_Mid** — draw distance 100-299
+  - **Map_DFF_Near** — draw distance <100
+  - **Map_LOD** — LOD models (detected by name: `LODfoo`, `foo_LOD`, `foo1LOD`, `modeLODlaett`)
+- Typical time: ~30 seconds for a full LA-sized district
+
+**Performance tuning (advanced):**
+
+Enable **Profile Import / Extract** in *Scene → INU Tools → Performance* to dump a timing report into `.inu_cache/_profile.log`. Useful if you want to see where time goes (per-stage wall time, per-thread breakdown, slowest individual calls).
 
 ### IDE (Definitions)
 

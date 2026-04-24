@@ -641,6 +641,7 @@ LANG = {
     "Район карты для импорта": "Map region to import",
     "Не найден gta3.img": "gta3.img not found",
     "Не найден IMG архив": "IMG archive not found",
+    "Кеш пуст — сначала запустите «Извлечь ресурсы»": "Cache is empty — run «Extract Resources» first",
     "Секции IPL": "IPL Sections",
     "Пропустить LOD модели при импорте": "Skip LOD models during import",
     "Загружать TXD текстуры вместе с DFF": "Load TXD textures with DFF",
@@ -1521,4 +1522,21 @@ LANG = {
     # Object INU Tools panel (Stage 6)
     "По имени:": "By name:",
     "Экспортировать как": "Export as",
+
+    # IMG export progress
+    "Экспорт в IMG:": "Export to IMG:",
+    "Экспорт в IMG...": "Exporting to IMG...",
+
+    # Build Map .glb — no auto-import
+    "Собрано:": "Built:",
+    "инстансов": "instances",
+
+    # Direct map import
+    "Import Map (прямой)": "Import Map (direct)",
+
+    # Profiler
+    "Профайлер": "Profiler",
+    "Замерять время операций и записывать отчёт в .inu_cache/_profile.log. Включай только для отладки — добавляет небольшой overhead на каждый шаг":
+        "Time each stage and write a report to .inu_cache/_profile.log. Enable only for debugging — adds a small overhead per step",
+    "Профайлер (debug timings)": "Profiler (debug timings)",
 }
