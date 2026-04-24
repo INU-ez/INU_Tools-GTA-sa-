@@ -8,7 +8,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/Blender-4.2%E2%80%935.1-orange?logo=blender" alt="Blender">
-  <img src="https://img.shields.io/badge/Version-1.6.3-green" alt="Version">
+  <img src="https://img.shields.io/badge/Version-1.6.5-green" alt="Version">
   <img src="https://img.shields.io/badge/License-GPL--3.0-blue" alt="License">
 </p>
 <p>
@@ -80,7 +80,9 @@
 > [!NOTE]
 > The addon is under active development. Bug reports are welcome in [Issues](../../issues).
 
-## 🆕 What's new in 1.6.4
+## 🆕 What's new in 1.6.5
+
+Post-1.6.4-beta accumulated changes — focus on map workflow performance and round-trip.
 
 - ⚡ **Import Map ~10× faster** — full LA-sized district now imports in ~30 s (was 5+ min). Cache-only flow (no IMG access during import), parallel DFF parsing (4-worker thread pool, numpy/zlib release the GIL), shared material cache across DFFs, direct `foreach_set` mesh building
 - 🗿 **Import Map — COL loading** — new `Load COL` toggle pulls collisions alongside geometry into a `Map_COL` collection, with per-instance transforms. Enables round-trip (import part of map → edit → export to IMG in another build). Keyed by inner `model_name` so SA's district-wide lib-COLs (LAs.col, LAn.col …) get split out correctly
@@ -91,6 +93,11 @@
 - 🧹 **Map import cleanliness** — `Skip 2DFX` on by default for bulk import (stops thousands of Light/Empty objects from grinding the viewport), no more bogus `<name>_Armature` for vanilla DFFs carrying HAnim without skin, `Map_LOD` collection only receives models whose name matches a LOD pattern
 - 🐛 **IPL lod_index remap fix** — when multiple IPL files are merged into one list, each file's local `lod_index` is now rebased onto the merged list. Previously indices from file A pointed into file B's region of the list and wrong models landed in `Map_LOD`
 - 🔧 **Import Map / Extract Resources profiler** (opt-in) — *Scene → INU Tools → Performance → Profile Import / Extract* dumps per-stage timing to `.inu_cache/_profile.log`
+- 🎨 **UI pipeline reorganization** (Stages 1-6) — all N-sidebar subpanels have pipeline `bl_order` grouped by SETUP / MODEL / DATA / EXPORT. Export moved to the top, 3-button row [To folder / To IMG / INU Export]. Suffix/Prefix and ID Manager moved out of the Scene Properties mega-dump. New *INU Tools: Model* panel in Object Properties with all per-object props in one place. Panel headers get Blender built-in icons for quick scanning
+- 💾 **Material Presets** — storage moved from ad-hoc JSON to `INU_Preset/` layout. Undo support added to 7 operators (Set Preset, Fill Colors, Scatter Light, Bake, Post-Process…)
+- 📊 **Progress bars** — added to Build Map / Export to IMG / Extract Resources for long operations
+- 🆔 **ID Manager multi-preset** — multiple preset files supported in `INU_Preset/id_presets/<name>.txt`, with UI for create/rename/delete
+- 📏 **LOD Detection for vanilla** — irregular naming handled: `LODfoo`, `foo_LOD`, `foo1LOD`, `modeLODlaett` — all four patterns covered by `is_lod_name`
 
 ## 🆕 What's new in 1.6.3
 

@@ -23,7 +23,7 @@
 bl_info = {
     "name": "INU_tools(gta_sa)",
     "author": "INU",
-    "version": (1, 6, 4),
+    "version": (1, 6, 5),
     "blender": (4, 2, 0),
     "location": "View3D > Sidebar (N) > GTA Tools",
     "description": "Toolset for GTA SA models",
@@ -32,6 +32,63 @@ bl_info = {
 }
 
 # Changelog:
+# v1.6.5 - Производительность и round-trip карты — накопленные изменения после 1.6.4-beta
+#        - Import Map ~10x быстрее: полный район LA за ~30 с (было 5+ мин)
+#          - cache-only поток (никакого обращения к IMG в горячем цикле)
+#          - параллельный DFF-парсинг: 4-worker ThreadPoolExecutor, split на
+#            read_dff_file (main) + DffClump.to_bytes (worker) — numpy/zlib отпускают GIL
+#          - material-cache по (texture_name, RGBA) — одна текстура на 500 моделей = один материал
+#          - bulk_mode в import_dff: пропускает per-model view_layer.update/select_all
+#            (O(N²) → O(N)), target_collection напрямую — без unlink+relink
+#          - убран print("[DFF Parse] ...") на каждом frame (~170 с потерь на stdout)
+#          - LOD-детекция теперь только по имени (is_lod_name), lod_refs из IPL отключён
+#            из-за шумных данных ванили
+#          - bulk_mode пропускает armature для ванильных DFF с HAnim без skin
+#          - фикс IPL lod_index remap при мерже нескольких IPL в один список
+#        - Import Map — Load COL toggle: коллизии подтягиваются рядом с геометрией
+#          в Map_COL коллекцию, с transform'ом на каждый инстанс. Для round-trip
+#          (импорт части карты → редактирование → экспорт в IMG другой сборки).
+#          Парсинг .col параллелен в том же пуле, ключуется по внутреннему model_name.
+#        - Export to IMG ~5-15x быстрее:
+#          - ImgWriter context manager (core/img.py): директория читается и пишется
+#            по одному разу вместо N раз (~2.6 ГБ лишних записей на большом экспорте)
+#          - параллельное кодирование DFF/COL: build_dff_clump/build_col_model на main
+#            (bpy reads), clump.to_bytes() в 4-поточном пуле
+#        - Shared TXD toggle (симметрично с COL Library): пакует все текстуры в один
+#          общий .txd вместо одного на модель — scene props gtatools_export_all_txd_shared[_name]
+#        - Фикс «экспортируется только коллизия»: унифицированы тумблеры DFF/COL/LOD/TXD
+#          между «В папку», «В IMG», «INU Export». Все операторы теперь читают
+#          gtatools_export_all_*, устаревшие gtatools_img_export_* удалены.
+#          Добавлен отдельный export_lod_flag (раньше LOD был привязан к DFF).
+#        - ID Manager:
+#          - новая reserve_id(model_id, name) — помечает ID занятым (append если нет)
+#          - новая sync_scene_to_preset(objects) — подтягивает ID сцены в пресет,
+#            вызывается в начале Auto Assign / Assign From
+#          - новая gc_preset(objects) + кнопка «Освободить фантомы» в ID Manager панели —
+#            освобождает слоты без backing-объекта
+#          - Assign IDs from... теперь пишет в пресет через reserve_id на каждом назначении
+#          - Clear Selected IDs не освобождает слот если другой объект сцены держит тот же ID
+#            (защита от Shift+D-дубликатов с наследуемым inu.model_id)
+#          - новая кнопка «Очистить ID» в Object Properties → INU Tools: Model, под полем Model ID
+#        - UI pipeline reorganization (Этапы 1-6):
+#          - все подпанели N-sidebar получили bl_order по категориям SETUP/MODEL/DATA/EXPORT
+#          - Export панель наверху (bl_order=0), 3-кнопочный ряд: В папку / В IMG / INU Export
+#          - Суффиксы/Префиксы и ID Manager вынесены из Scene Properties в N-sidebar
+#          - новая панель «INU Tools: Model» в Object Properties — все per-object props в одном месте
+#          - Itera Tools 3 / Vertex Paint / LightMap скрыты через poll() до доработки
+#          - убраны dead code: gtatools.prelight (35 строк), custom Twemoji PNG icons
+#          - Bitmaps Manager переведён на русский (23 новых entries в locale/eng.py)
+#        - Material Presets: формат перенесён из JSON в INU_Preset, добавлено undo для
+#          7 операторов (Set Preset, Fill Colors, Scatter Light, Bake, Post-Process, ...)
+#        - Progress bars: добавлены в Build Map / Export to IMG / Extract Resources
+#        - ID Manager multi-preset: поддержка нескольких файлов пресетов
+#          в INU_Preset/id_presets/<name>.txt с UI create/rename/delete
+#        - LOD Detection: обработка нерегулярных имён ванили (LODfoo / foo_LOD /
+#          foo1LOD / modeLODlaett) — is_lod_name покрывает все 4 паттерна
+#        - Profiler: thread-safe Profiler в tools/profiler.py + Scene toggle
+#          gtatools_profile_enabled — отчёт в .inu_cache/_profile.log
+#        - Skip 2DFX по умолчанию = True для bulk-импорта карты (иначе тысячи
+#          Light/Empty объектов роняют viewport)
 # v1.6.4 - (pre-release) 11 экспериментальных фич — проверка в игре ещё не проведена
 #        - Map Export: единый экспорт сцены → DFF + COL + TXD + IDE + IPL одной кнопкой
 #          (tools/map_export.py, авто-паринг LOD/COL, пул ID из настройки для пустых model_id=0)

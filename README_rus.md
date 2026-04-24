@@ -8,7 +8,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/Blender-4.2%E2%80%935.1-orange?logo=blender" alt="Blender">
-  <img src="https://img.shields.io/badge/Version-1.6.3-green" alt="Version">
+  <img src="https://img.shields.io/badge/Version-1.6.5-green" alt="Version">
   <img src="https://img.shields.io/badge/License-GPL--3.0-blue" alt="License">
 </p>
 <p>
@@ -81,7 +81,9 @@
 > [!NOTE]
 > Аддон в активной разработке. Сообщения об ошибках приветствуются в [Issues](../../issues).
 
-## 🆕 Что нового в 1.6.4
+## 🆕 Что нового в 1.6.5
+
+Накопленные изменения после 1.6.4-beta — акцент на производительности map workflow и round-trip.
 
 - ⚡ **Импорт карты ~10× быстрее** — полный район размера LA импортится за ~30 с (было 5+ минут). Чистый cache-only поток (никакого обращения к IMG в цикле импорта), параллельный парсинг DFF (4 воркера, numpy/zlib отпускают GIL), общий кеш материалов между DFF, прямая сборка меша через `foreach_set`
 - 🗿 **Импорт карты — загрузка COL** — новый тумблер `Load COL` подтягивает коллизии рядом с геометрией в коллекцию `Map_COL`, с трансформой на каждый инстанс. Разблокирует round-trip (импорт части карты → редактирование → экспорт в IMG другой сборки). Ключуется по внутреннему `model_name`, поэтому ванильные lib-COL районов (LAs.col, LAn.col…) корректно расщепляются
@@ -92,6 +94,11 @@
 - 🧹 **Чистота сцены при импорте карты** — `Skip 2DFX` по умолчанию включён для bulk-импорта (иначе тысячи Light/Empty объектов роняют viewport), больше нет паразитных `<name>_Armature` для ванильных DFF с HAnim-чанками без skin, коллекция `Map_LOD` теперь содержит только модели с LOD-паттерном в имени
 - 🐛 **Фикс lod_index при мерже IPL** — при объединении нескольких IPL в общий список локальные `lod_index` каждого файла теперь пересчитываются на смещение в общем списке. Раньше индексы файла A указывали в область файла B и не те модели попадали в `Map_LOD`
 - 🔧 **Профайлер Extract Resources / Import Map** (опциональный) — *Scene → INU Tools → Performance → Профайлер импорта/извлечения* пишет wall-time по стадиям в `.inu_cache/_profile.log`
+- 🎨 **UI pipeline реорганизация** (Этапы 1-6) — все подпанели N-sidebar получили `bl_order` по пайплайну SETUP / MODEL / DATA / EXPORT. Export панель вверху, 3-кнопочный ряд [В папку / В IMG / INU Export]. Суффиксы/Префиксы и ID Manager вынесены из свалки Scene Properties. Новая панель *INU Tools: Model* в Object Properties — все per-object свойства в одном месте. Заголовки панелей получили встроенные Blender-иконки для быстрого сканирования
+- 💾 **Material Presets** — хранение перенесено из ad-hoc JSON в `INU_Preset/`. Добавлен undo для 7 операторов (Set Preset, Fill Colors, Scatter Light, Bake, Post-Process…)
+- 📊 **Прогресс-бары** — в Build Map / Export to IMG / Extract Resources для долгих операций
+- 🆔 **ID Manager multi-preset** — поддержка нескольких пресетов в `INU_Preset/id_presets/<name>.txt`, UI для create/rename/delete
+- 📏 **LOD Detection для ванили** — обрабатывает нерегулярные имена: `LODfoo`, `foo_LOD`, `foo1LOD`, `modeLODlaett` — все 4 паттерна покрыты `is_lod_name`
 
 ## 🆕 Что нового в 1.6.3
 
