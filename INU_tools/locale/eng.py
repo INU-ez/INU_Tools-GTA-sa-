@@ -774,6 +774,7 @@ LANG = {
     "Очистить ID": "Clear ID",
     "Очистить ID выделенных": "Clear selected IDs",
     "освобождено в пресете:": "freed in preset:",
+    "Загружать коллизии из кеша при импорте карты. Нужно для round-trip (импорт части карты → редактирование → экспорт в IMG другой сборки). При выключенном — только DFF геометрия, сцена легче": "Load collisions from cache during map import. Needed for round-trip (import part of map → edit → export to IMG in another build). When off — geometry only, scene stays lighter",
     "Освободить фантомы": "Free phantoms",
     "Освобождено фантомных ID:": "Phantom IDs freed:",
     "Освободить записи пресета, у которых нет соответствующего объекта в сцене": "Free preset entries with no matching scene object",

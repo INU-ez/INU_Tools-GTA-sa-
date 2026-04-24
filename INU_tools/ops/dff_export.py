@@ -1038,14 +1038,19 @@ def _collect_frame_objects(objects):
 
 # ── Main export function ─────────────────────────────────────────
 
-def export_dff(filepath: str, objects, version: int = GTA_SA_VERSION):
-    """
-    Export Blender objects as a DFF file.
+def build_dff_clump(objects, version: int = GTA_SA_VERSION,
+                    col_model_name: str = "") -> DffClump:
+    """Build a ``DffClump`` from Blender objects — main thread only.
 
-    Args:
-        filepath: Output .dff file path.
-        objects: Iterable of Blender objects (MESH, EMPTY, ARMATURE).
-        version: RenderWare version. Default GTA SA (0x36003).
+    All bpy access (mesh geometry, materials, UV, armature, 2DFX,
+    embedded collision) happens here. The returned clump is a plain
+    dataclass tree with no Blender references, so serialisation via
+    ``clump.to_bytes()`` can then run in a worker pool.
+
+    ``col_model_name`` is used for the name field of embedded COL
+    chunks (CHUNK_COLLISION_MODEL). Normally this is the DFF's base
+    filename without extension; the single-file ``export_dff`` wrapper
+    derives it from ``filepath``.
     """
     clump = DffClump(version=version)
 
@@ -1172,8 +1177,8 @@ def export_dff(filepath: str, objects, version: int = GTA_SA_VERSION):
                    and getattr(getattr(obj, 'inu', None), 'type', '') in ('COL', 'SHA')]
     if col_objects:
         from .col_export import export_col_bytes
-        model_name = os.path.splitext(os.path.basename(filepath))[0]
-        clump.collision_data = export_col_bytes(col_objects, version=3, model_name=model_name)
+        clump.collision_data = export_col_bytes(
+            col_objects, version=3, model_name=col_model_name)
 
     # Collect UV animations from materials used across all exported meshes
     uv_mats = []
@@ -1188,4 +1193,18 @@ def export_dff(filepath: str, objects, version: int = GTA_SA_VERSION):
             uv_mats.append(slot)
     clump.uv_anim_dict = _collect_uv_anim_dict(uv_mats)
 
+    return clump
+
+
+def export_dff(filepath: str, objects, version: int = GTA_SA_VERSION):
+    """
+    Export Blender objects as a DFF file.
+
+    Args:
+        filepath: Output .dff file path.
+        objects: Iterable of Blender objects (MESH, EMPTY, ARMATURE).
+        version: RenderWare version. Default GTA SA (0x36003).
+    """
+    model_name = os.path.splitext(os.path.basename(filepath))[0]
+    clump = build_dff_clump(objects, version=version, col_model_name=model_name)
     write_dff_file(filepath, clump)

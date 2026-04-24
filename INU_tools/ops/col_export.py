@@ -231,9 +231,12 @@ def export_col(filepath: str, objects, version: int = 3, model_name: str = ""):
     return model
 
 
-def export_col_bytes(objects, version: int = 3, model_name: str = "") -> bytes:
-    """
-    Export selected Blender objects as COL bytes (for embedding in DFF, etc.).
+def build_col_model(objects, version: int = 3, model_name: str = "") -> ColModel:
+    """Build a ``ColModel`` from Blender objects (main thread).
+
+    Split out so batch exporters can build models on the main thread
+    (bpy reads) and then hand them off to a worker pool for the CPU-
+    bound ``write_col`` serialisation.
     """
     model = ColModel(version=version, model_name=model_name)
 
@@ -248,6 +251,14 @@ def export_col_bytes(objects, version: int = 3, model_name: str = "") -> bytes:
             _collect_sphere(obj, model)
 
     model.bounds = _compute_bounds(model)
+    return model
+
+
+def export_col_bytes(objects, version: int = 3, model_name: str = "") -> bytes:
+    """
+    Export selected Blender objects as COL bytes (for embedding in DFF, etc.).
+    """
+    model = build_col_model(objects, version=version, model_name=model_name)
     return write_col([model])
 
 

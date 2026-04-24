@@ -3240,6 +3240,10 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
         dff_mid = _get_col("Map_DFF_Mid")
         dff_near = _get_col("Map_DFF_Near")
         lod_col = _get_col("Map_LOD")
+        # Map_COL is created lazily in _work only if load_col is on AND
+        # at least one match is found — keeps the outliner clean when
+        # the user doesn't need collisions.
+        map_col_collection = None
 
         # Hide collections during import
         dff_far.hide_viewport = True
@@ -3255,6 +3259,7 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
         self._dff_mid = dff_mid
         self._dff_near = dff_near
         self._lod_col = lod_col
+        self._map_col_collection = map_col_collection
         self._imported = 0
         self._skipped = 0
         self._progress = 0
@@ -3291,7 +3296,9 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
     def _work(self, context):
         from .core.ipl import is_lod_name
         from .core.dff import read_dff
+        from .core.col import read_col
         from .ops.dff_import import import_dff_from_clump
+        from .ops.col_import import import_col_from_models
         from mathutils import Quaternion
         from concurrent.futures import ThreadPoolExecutor
 
@@ -3301,6 +3308,7 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
         scene = self._scene
         lod_col = self._lod_col
         prof = self._profiler
+        load_col = bool(getattr(scene, 'gtatools_map_load_col', True))
         # LOD detection by name only. ``is_lod_name`` already handles
         # all 4 vanilla naming patterns (LODfoo / foo_LOD / foo1LOD /
         # modeLODlaett). The IPL ``lod_index`` cross-reference used to
@@ -3312,6 +3320,10 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
         # anything not in the cache is counted as skipped. No IMG
         # reads, no disk round-trips beyond the cache itself.
         imported_models = {}
+        # Per-model cache of imported COL objects, mirrors
+        # imported_models. One unique model → one COL geometry,
+        # copied per IPL instance.
+        imported_col_models: dict = {}
         tmpdir = _get_cache_dir()
         tex_cache = os.path.join(tmpdir, 'textures')
         tex_cache_exists = os.path.isdir(tex_cache)
@@ -3348,23 +3360,59 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
             max_workers=min(os.cpu_count() or 4, 4))
         parse_pool = self._parse_pool
         parse_futures: dict = {}
+        # COL map: model_name → ColModel. Populated from parallel
+        # parse of every .col file in cache. A single .col file often
+        # contains many ColModel entries (Rockstar ships district-wide
+        # lib-COLs like LAs.col with hundreds of entries), so we key
+        # by the inner model_name rather than by filename.
+        col_by_name: dict = {}
         with prof.stage('submit parse jobs'):
             # Build cache-file set in one syscall instead of 3000+
             # os.path.isfile() probes. Set membership check is then
             # a dict lookup per model.
             try:
-                cached_dffs = {
-                    n.lower() for n in os.listdir(tmpdir)
-                    if n.lower().endswith('.dff')
-                }
+                cache_listing = os.listdir(tmpdir)
             except OSError:
-                cached_dffs = set()
+                cache_listing = []
+            cached_dffs = {
+                n.lower() for n in cache_listing
+                if n.lower().endswith('.dff')
+            }
+            cached_cols = [
+                n for n in cache_listing
+                if n.lower().endswith('.col')
+            ]
             for name in unique_models:
                 dff_key = (name + '.dff').lower()
                 if dff_key in cached_dffs:
                     path = os.path.join(tmpdir, name + '.dff')
                     parse_futures[name] = parse_pool.submit(
                         _parse_dff_path, path)
+
+            # Submit COL parse jobs and collect results into
+            # col_by_name. Parsing happens in workers, aggregation on
+            # the main thread after all futures are done — .col files
+            # are fewer (~50 for SA) so we can afford to wait for
+            # all of them before entering the main loop.
+            if load_col and cached_cols:
+                def _parse_col_path(path):
+                    with open(path, 'rb') as f:
+                        return read_col(f.read())
+                col_futs = [
+                    parse_pool.submit(_parse_col_path,
+                                      os.path.join(tmpdir, n))
+                    for n in cached_cols
+                ]
+                with prof.stage('parse COL files'):
+                    for fut in col_futs:
+                        try:
+                            models = fut.result()
+                        except Exception:
+                            continue
+                        for m in models:
+                            mname = (m.model_name or '').lower()
+                            if mname and mname not in col_by_name:
+                                col_by_name[mname] = m
 
         # 'loop iter' wraps ALL code executed per instance. Compared
         # against total wall time this tells us how much time is eaten
@@ -3453,6 +3501,49 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
                                                 o.inu.draw_distance = ide_obj.draw_distance
                                                 o.inu.ide_flags = ide_obj.flags
                                                 o.inu.txd_name = ide_obj.txd_name
+
+                            # COL: build/copy + place at the same
+                            # transform as the DFF instance. Lazy-
+                            # create Map_COL collection on the first
+                            # match so the outliner stays clean when
+                            # nothing matches.
+                            if load_col:
+                                col_model = col_by_name.get(model_name.lower())
+                                if col_model is not None:
+                                    if self._map_col_collection is None:
+                                        mc = bpy.data.collections.get("Map_COL")
+                                        if mc is None:
+                                            mc = bpy.data.collections.new("Map_COL")
+                                            context.scene.collection.children.link(mc)
+                                            mc.hide_viewport = True
+                                        self._map_col_collection = mc
+                                    map_col = self._map_col_collection
+
+                                    col_src = imported_col_models.get(model_name)
+                                    if col_src is None:
+                                        with prof.stage('build COL', note=model_name):
+                                            col_src = import_col_from_models(
+                                                [col_model],
+                                                bulk_mode=True,
+                                                target_collection=map_col,
+                                            )
+                                            imported_col_models[model_name] = col_src
+                                        col_new = col_src
+                                    else:
+                                        with prof.stage('reuse COL'):
+                                            col_new = []
+                                            for src in col_src:
+                                                co = src.copy()
+                                                co.data = src.data
+                                                map_col.objects.link(co)
+                                                col_new.append(co)
+
+                                    with prof.stage('COL transform'):
+                                        for co in col_new:
+                                            if co.type == 'MESH':
+                                                co.location = pos
+                                                co.rotation_mode = 'QUATERNION'
+                                                co.rotation_quaternion = rot
                             self._imported += 1
             if _need_yield:
                 yield
@@ -3515,7 +3606,8 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
             self._parse_pool = None
 
         # Re-enable viewport
-        for col in (self._dff_far, self._dff_mid, self._dff_near, self._lod_col):
+        for col in (self._dff_far, self._dff_mid, self._dff_near,
+                    self._lod_col, self._map_col_collection):
             if col:
                 col.hide_viewport = False
 
@@ -4109,9 +4201,12 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
     def execute(self, context):
         import tempfile
         from collections import defaultdict
-        from .core.img import replace_or_add
-        from .ops.dff_export import export_dff as inu_export_dff
-        from .ops.col_export import export_col as inu_export_col, export_col_library
+        from concurrent.futures import ThreadPoolExecutor
+        from .core.img import ImgWriter
+        from .core.dff import write_dff, GTA_SA_VERSION
+        from .core.col import write_col
+        from .ops.dff_export import build_dff_clump
+        from .ops.col_export import build_col_model, export_col_library
 
         img_path = bpy.path.abspath(context.scene.gtatools_img_path)
         if not img_path or not os.path.isfile(img_path):
@@ -4218,62 +4313,108 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
 
         context.workspace.status_text_set(T("Экспорт в IMG..."))
 
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory() as tmpdir, \
+                ImgWriter(img_path) as writer:
+            # Single ImgWriter session — directory read once on __enter__,
+            # rewritten once on __exit__. writer.add() just seeks+writes
+            # payload blocks.
+            #
+            # Two-phase flow for DFF/COL:
+            #   Phase A (main thread): build DffClump / ColModel from
+            #     Blender data (bpy access, not thread-safe)
+            #   Phase B (worker pool): serialise domain objects to bytes
+            #     (pure Python, numpy releases GIL)
+            # Then main thread calls writer.add() for each encoded blob.
+            # TXD stays per-bucket on the main thread — export_txd uses
+            # bpy.ops.object.select_all and its own numpy/DXT pool.
+
             # Bucket DFF/LOD objects by their resolved TXD name so every
             # bucket produces exactly one .txd containing merged textures.
             txd_buckets = defaultdict(list)
+
+            # Phase A: collect clumps/models + progress-tracking metadata
+            # for every group. Keeping the structure below uniform so the
+            # write phase can iterate in a single pass.
+            encode_jobs: list = []  # list of (filename, callable_returning_bytes, label)
 
             for base_name, models in model_groups.items():
                 if not _is_included(base_name):
                     continue
 
-                # Export LOD first
+                # LOD DFF
                 if export_lod_flag and models['LOD']:
                     lod_name = 'LOD' + base_name
-                    lod_path = os.path.join(tmpdir, lod_name + '.dff')
                     try:
-                        inu_export_dff(filepath=lod_path, objects=[models['LOD']])
-                        with open(lod_path, 'rb') as f:
-                            status = replace_or_add(img_path, lod_name + '.dff', f.read())
-                        results.append(f"{lod_name}.dff {status}")
+                        clump = build_dff_clump(
+                            [models['LOD']], version=GTA_SA_VERSION,
+                            col_model_name=lod_name,
+                        )
+                        encode_jobs.append(
+                            (lod_name + '.dff', clump.to_bytes, f"{lod_name}.dff"))
                     except Exception as e:
                         results.append(f"{lod_name}.dff error: {e}")
-                    _tick(f"{lod_name}.dff")
+                        _tick(f"{lod_name}.dff")
 
-                # Export DFF + attached 2DFX
+                # DFF + attached 2DFX
                 if export_dff_flag and models['DFF']:
-                    dff_path = os.path.join(tmpdir, base_name + '.dff')
                     try:
                         dff_objs = [models['DFF']]
                         for child in models['DFF'].children:
                             if child.type == 'EMPTY' and getattr(child, 'inu', None) and child.inu.type == '2DFX':
                                 dff_objs.append(child)
-                        inu_export_dff(filepath=dff_path, objects=dff_objs)
-                        with open(dff_path, 'rb') as f:
-                            status = replace_or_add(img_path, base_name + '.dff', f.read())
-                        results.append(f"{base_name}.dff {status}")
+                        clump = build_dff_clump(
+                            dff_objs, version=GTA_SA_VERSION,
+                            col_model_name=base_name,
+                        )
+                        encode_jobs.append(
+                            (base_name + '.dff', clump.to_bytes, f"{base_name}.dff"))
                     except Exception as e:
                         results.append(f"{base_name}.dff error: {e}")
-                    _tick(f"{base_name}.dff")
+                        _tick(f"{base_name}.dff")
 
-                # Export COL (per-group, skipped when library mode is on)
+                # COL (per-group)
                 if write_col_per_group and models['COL']:
-                    col_path = os.path.join(tmpdir, base_name + '.col')
                     try:
-                        inu_export_col(filepath=col_path, objects=[models['COL']], version=3)
-                        with open(col_path, 'rb') as f:
-                            status = replace_or_add(img_path, base_name + '.col', f.read())
-                        results.append(f"{base_name}.col {status}")
+                        col_model = build_col_model(
+                            [models['COL']], version=3, model_name=base_name,
+                        )
+                        # write_col takes a list; bind with default arg
+                        # to avoid late-binding in the closure.
+                        encode_jobs.append((
+                            base_name + '.col',
+                            (lambda m=col_model: write_col([m])),
+                            f"{base_name}.col",
+                        ))
                     except Exception as e:
                         results.append(f"{base_name}.col error: {e}")
-                    _tick(f"{base_name}.col")
+                        _tick(f"{base_name}.col")
 
-                # Collect DFF/LOD into the TXD bucket keyed by resolved name
+                # TXD bucket collection
                 if export_txd_flag and (models['DFF'] or models['LOD']):
                     bucket_name = _txd_for(base_name)
                     for mt in ('DFF', 'LOD'):
                         if models[mt] is not None:
                             txd_buckets[bucket_name].append(models[mt])
+
+            # Phase B: serialise in parallel. to_bytes / write_col are
+            # CPU-bound Python+numpy, numpy struct packing releases the
+            # GIL on big buffers → real parallelism on 4 cores.
+            if encode_jobs:
+                enc_workers = min(os.cpu_count() or 4, 4)
+                with ThreadPoolExecutor(max_workers=enc_workers) as enc_pool:
+                    futures = [
+                        (filename, label, enc_pool.submit(encoder))
+                        for filename, encoder, label in encode_jobs
+                    ]
+                    # Drain in submit order → deterministic IMG layout.
+                    for filename, label, fut in futures:
+                        try:
+                            data = fut.result()
+                            status = writer.add(filename, data)
+                            results.append(f"{filename} {status}")
+                        except Exception as e:
+                            results.append(f"{filename} error: {e}")
+                        _tick(label)
 
             # Now write one .txd per bucket by selecting all its objects
             # in one pass and feeding them to export_txd(selected_only=True).
@@ -4290,7 +4431,7 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
                         result, msg, _ = export_txd(txd_path, context, True, use_gpu)
                         if result == {'FINISHED'}:
                             with open(txd_path, 'rb') as f:
-                                status = replace_or_add(img_path, txd_name + '.txd', f.read())
+                                status = writer.add(txd_name + '.txd', f.read())
                             results.append(f"{txd_name}.txd {status} ({len(sources)} models)")
                         else:
                             results.append(f"{txd_name}.txd: {msg}")
@@ -4312,7 +4453,7 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
                         if obj.name in original_locations:
                             obj.location = original_locations[obj.name]
                     with open(lib_path, 'rb') as f:
-                        status = replace_or_add(img_path, lib_filename, f.read())
+                        status = writer.add(lib_filename, f.read())
                     results.append(f"{lib_filename} {status} ({count} records)")
                 except Exception as e:
                     results.append(f"{col_library_name}.col error: {e}")
@@ -8333,6 +8474,7 @@ class GTATOOLS_PT_ide_ipl_panel(bpy.types.Panel):
         row = box.row(align=True)
         row.prop(scn, "gtatools_img_skip_lod", text="Skip LOD", toggle=True)
         row.prop(scn, "gtatools_img_load_txd", text="TXD", toggle=True)
+        row.prop(scn, "gtatools_map_load_col", text="COL", toggle=True)
         box.operator("gtatools.import_from_img", text=T("Импорт из IMG"), icon='IMPORT')
         box.operator("gtatools.export_to_img", text=T("Экспорт в IMG"), icon='EXPORT')
         box.operator("gtatools.remove_from_img", text=T("Удалить из IMG"), icon='REMOVE')
@@ -14742,6 +14884,11 @@ def register():
         description=T("Загружать TXD текстуры вместе с DFF"),
         default=True,
     )
+    bpy.types.Scene.gtatools_map_load_col = BoolProperty(
+        name="Load COL",
+        description=T("Загружать коллизии из кеша при импорте карты. Нужно для round-trip (импорт части карты → редактирование → экспорт в IMG другой сборки). При выключенном — только DFF геометрия, сцена легче"),
+        default=True,
+    )
 
     # Game root path (for gta.dat auto-discovery)
     bpy.types.Scene.gtatools_game_root = StringProperty(
@@ -15331,6 +15478,7 @@ def unregister():
     del bpy.types.Scene.gtatools_img_use_gta_dat
     del bpy.types.Scene.gtatools_img_skip_lod
     del bpy.types.Scene.gtatools_img_load_txd
+    del bpy.types.Scene.gtatools_map_load_col
     del bpy.types.Scene.gtatools_ide_path
     del bpy.types.Scene.gtatools_ipl_path
     del bpy.types.Scene.gtatools_txd_auto_import

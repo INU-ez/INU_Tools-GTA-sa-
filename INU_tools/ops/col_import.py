@@ -99,12 +99,35 @@ def import_col(filepath: str, context=None):
         context: Blender context (optional).
     """
     models = read_col_file(filepath)
+    return import_col_from_models(models, bulk_mode=False)
 
+
+def import_col_from_models(models, *, bulk_mode: bool = False,
+                           target_collection=None,
+                           skip_position_match: bool = False):
+    """Build Blender objects from already-parsed ColModel list.
+
+    Mirrors ``import_dff_from_clump``: the binary parse (``read_col``)
+    can run in a worker thread, then the main thread calls this to
+    materialise the objects. Used by Import Map for bulk-loading map
+    collisions without going through the one-file-at-a-time flow.
+
+    Args:
+        models: list of parsed ``ColModel`` instances.
+        bulk_mode: when True, skip ``bpy.ops.object.select_all`` and
+                   position-match to DFF — caller handles placement
+                   itself (this is the map-import case where we copy
+                   the object per IPL instance).
+        target_collection: destination collection; falls back to the
+                   active one.
+        skip_position_match: force-skip the «find DFF with same name
+                   and copy its location» pass even without bulk_mode.
+    """
     if not models:
         raise ValueError("No collision models found in file")
 
     imported_objects = []
-    collection = bpy.context.collection
+    collection = target_collection if target_collection is not None else bpy.context.collection
 
     for model in models:
         # Collision mesh
@@ -117,36 +140,44 @@ def import_col(filepath: str, context=None):
         if sha_obj:
             imported_objects.append(sha_obj)
 
-        # Spheres
-        for i, sphere in enumerate(model.spheres):
-            emp = _create_sphere(sphere, collection, model.model_name or "col", i)
-            imported_objects.append(emp)
+        # Spheres — only for single-file import; map import uses the
+        # mesh collision geometry and skipping sphere primitives keeps
+        # the outliner manageable at 3000+ models.
+        if not bulk_mode:
+            for i, sphere in enumerate(model.spheres):
+                emp = _create_sphere(sphere, collection,
+                                     model.model_name or "col", i)
+                imported_objects.append(emp)
 
-    # Match position to DFF object with same base name
-    for obj in imported_objects:
-        if obj.type != 'MESH':
-            continue
-        base = obj.name
-        for suffix in ('_col', '_sha', '_COL', '_SHA'):
-            if base.endswith(suffix):
-                base = base[:-len(suffix)]
-                break
-        # Search for matching DFF object
-        for candidate in bpy.data.objects:
-            if candidate == obj or candidate.type != 'MESH':
+    # Single-file-import UX: place COL at the matching DFF's origin
+    # so the user sees them aligned. Map import skips this — it sets
+    # position directly from the IPL instance.
+    if not bulk_mode and not skip_position_match:
+        for obj in imported_objects:
+            if obj.type != 'MESH':
                 continue
-            cname = candidate.name
-            cname_low = cname.lower()
-            base_low = base.lower()
-            if cname_low == base_low or cname_low == base_low + '_dff':
-                obj.location = candidate.location.copy()
-                break
+            base = obj.name
+            for suffix in ('_col', '_sha', '_COL', '_SHA'):
+                if base.endswith(suffix):
+                    base = base[:-len(suffix)]
+                    break
+            for candidate in bpy.data.objects:
+                if candidate == obj or candidate.type != 'MESH':
+                    continue
+                cname = candidate.name
+                cname_low = cname.lower()
+                base_low = base.lower()
+                if cname_low == base_low or cname_low == base_low + '_dff':
+                    obj.location = candidate.location.copy()
+                    break
 
-    # Select imported objects
-    bpy.ops.object.select_all(action='DESELECT')
-    for obj in imported_objects:
-        obj.select_set(True)
-    if imported_objects:
-        bpy.context.view_layer.objects.active = imported_objects[0]
+    # Select only on single-file import. Bulk map import needs no
+    # selection side-effects.
+    if not bulk_mode:
+        bpy.ops.object.select_all(action='DESELECT')
+        for obj in imported_objects:
+            obj.select_set(True)
+        if imported_objects:
+            bpy.context.view_layer.objects.active = imported_objects[0]
 
     return imported_objects

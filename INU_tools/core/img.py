@@ -284,6 +284,108 @@ def _write_directory(f, entries: list[ImgEntry]) -> None:
         f.write(name_bytes)
 
 
+class ImgWriter:
+    """Batch-mode IMG archive writer — context manager.
+
+    Opens the IMG once, loads the directory once, appends/replaces many
+    files, then rewrites the directory ONCE at close. Cuts the cost of
+    big exports from O(N × directory-size) writes to O(N + directory-size).
+
+    Typical use:
+
+        with ImgWriter("gta3.img") as w:
+            for group in groups:
+                w.add("house1.dff", dff_bytes)
+                w.add("house1.col", col_bytes)
+                w.add("house1.txd", txd_bytes)
+        # Directory was rewritten exactly once on exit.
+
+    Compatible semantics with ``replace_or_add``:
+    - If the file exists and new data fits in the old slot → overwrite
+      in place
+    - If it doesn't fit or the file is new → append at the end
+    - Directory entry is updated accordingly and flushed at close.
+    """
+
+    def __init__(self, filepath: str):
+        self.filepath = filepath
+        self._f = None
+        self._entries: list[ImgEntry] = []
+        self._lookup: dict[str, int] = {}
+        self._end_pos: int = 0
+
+    def __enter__(self):
+        self._f = open(self.filepath, 'r+b')
+        # Read and validate header
+        magic = self._f.read(4)
+        if magic != MAGIC:
+            self._f.close()
+            self._f = None
+            raise ValueError(f"Not a VER2 IMG archive (got {magic!r})")
+        num = struct.unpack('<I', self._f.read(4))[0]
+        for _ in range(num):
+            raw = self._f.read(DIR_ENTRY_SIZE)
+            if len(raw) < DIR_ENTRY_SIZE:
+                break
+            off, sz = struct.unpack_from('<II', raw, 0)
+            name_bytes = raw[8:8 + NAME_SIZE]
+            name = name_bytes.split(b'\x00', 1)[0].decode(
+                'ascii', errors='replace')
+            self._entries.append(ImgEntry(name=name, offset=off, size=sz))
+            self._lookup[name.lower()] = len(self._entries) - 1
+        # Remember current EOF so append operations don't have to
+        # seek-to-end every time (which costs a syscall).
+        self._f.seek(0, 2)
+        self._end_pos = self._f.tell()
+        return self
+
+    def add(self, filename: str, data: bytes) -> str:
+        """Add or replace one file. Returns ``'added'`` or ``'replaced'``."""
+        if self._f is None:
+            raise RuntimeError("ImgWriter used outside its 'with' block")
+
+        new_sectors = sectors_needed(len(data))
+        padded = data + b'\x00' * (new_sectors * SECTOR - len(data))
+
+        idx = self._lookup.get(filename.lower())
+        if idx is not None and new_sectors <= self._entries[idx].size:
+            # In-place — cheapest path.
+            e = self._entries[idx]
+            self._f.seek(e.offset * SECTOR)
+            self._f.write(padded)
+            e.size = new_sectors
+            return 'replaced'
+
+        # Append path — align end to sector boundary.
+        end_sector = sectors_needed(self._end_pos)
+        aligned = end_sector * SECTOR
+        if self._end_pos < aligned:
+            self._f.seek(self._end_pos)
+            self._f.write(b'\x00' * (aligned - self._end_pos))
+            self._end_pos = aligned
+        self._f.seek(self._end_pos)
+        self._f.write(padded)
+        new_offset = self._end_pos // SECTOR
+        self._end_pos += new_sectors * SECTOR
+
+        if idx is not None:
+            self._entries[idx].offset = new_offset
+            self._entries[idx].size = new_sectors
+            return 'replaced'
+        self._entries.append(ImgEntry(
+            name=filename, offset=new_offset, size=new_sectors))
+        self._lookup[filename.lower()] = len(self._entries) - 1
+        return 'added'
+
+    def __exit__(self, *args):
+        if self._f is not None:
+            try:
+                _write_directory(self._f, self._entries)
+            finally:
+                self._f.close()
+                self._f = None
+
+
 def create_img(filepath: str) -> None:
     """Create an empty VER2 IMG archive."""
     with open(filepath, 'wb') as f:
