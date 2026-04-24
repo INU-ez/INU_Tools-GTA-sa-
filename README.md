@@ -83,9 +83,14 @@
 ## 🆕 What's new in 1.6.4
 
 - ⚡ **Import Map ~10× faster** — full LA-sized district now imports in ~30 s (was 5+ min). Cache-only flow (no IMG access during import), parallel DFF parsing (4-worker thread pool, numpy/zlib release the GIL), shared material cache across DFFs, direct `foreach_set` mesh building
+- 🗿 **Import Map — COL loading** — new `Load COL` toggle pulls collisions alongside geometry into a `Map_COL` collection, with per-instance transforms. Enables round-trip (import part of map → edit → export to IMG in another build). Keyed by inner `model_name` so SA's district-wide lib-COLs (LAs.col, LAn.col …) get split out correctly
+- 🚀 **Export to IMG ~5–15× faster** — new batch `ImgWriter` opens the archive once and rewrites the directory exactly once at the end (was rewriting it per file). DFF/COL serialisation runs in a 4-worker thread pool — `build_dff_clump` / `build_col_model` on the main thread (bpy reads), `to_bytes()` in workers (GIL-releasing numpy)
+- 📦 **Shared TXD toggle** — symmetric with COL Library, packs all textures into one shared `.txd` instead of one per model
+- 🐛 **«Only COL exports» fix** — unified the DFF/COL/LOD/TXD toggles across «To folder», «To IMG» and «INU Export». Previously the visible tumblers wrote one set of scene props but `Export to IMG` read a different set — flipping off DFF/TXD somewhere out of sight silently broke IMG exports
+- 🆔 **ID Manager — gaps and phantoms** — `sync_scene_to_preset` pulls every scene ID into the preset at the start of Auto Assign / Assign From so `allocate_id` can't skip around them. `reserve_id` makes Assign From write to the preset on each assignment. New **«Free phantoms»** button (ID Manager panel) releases preset slots that no scene object claims anymore — handles the hidden-collection / deleted-object case. New **«Clear ID»** button in Object Properties → INU Tools: Model, right under the Model ID field
 - 🧹 **Map import cleanliness** — `Skip 2DFX` on by default for bulk import (stops thousands of Light/Empty objects from grinding the viewport), no more bogus `<name>_Armature` for vanilla DFFs carrying HAnim without skin, `Map_LOD` collection only receives models whose name matches a LOD pattern
 - 🐛 **IPL lod_index remap fix** — when multiple IPL files are merged into one list, each file's local `lod_index` is now rebased onto the merged list. Previously indices from file A pointed into file B's region of the list and wrong models landed in `Map_LOD`
-- 🔧 **Extract Resources profiler** (opt-in) — *Scene → INU Tools → Performance → Profile Import / Extract* dumps per-stage timing to `.inu_cache/_profile.log`
+- 🔧 **Import Map / Extract Resources profiler** (opt-in) — *Scene → INU Tools → Performance → Profile Import / Extract* dumps per-stage timing to `.inu_cache/_profile.log`
 
 ## 🆕 What's new in 1.6.3
 

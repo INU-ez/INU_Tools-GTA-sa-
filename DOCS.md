@@ -198,6 +198,7 @@ Drag PNG/JPG/TGA images from File Browser into the 3D viewport to automatically 
 - Set **Game Root** to GTA SA installation folder
 - Select **Region** (auto-detected from gta.dat: LA, SF, VEGAS, COUNTRY, etc.)
 - Make sure **Skip 2DFX** is on for map import (default) — otherwise every street light, corona, and ped-attractor in the district becomes a Blender Light/Empty object (thousands of them) and the viewport grinds to a halt. Leave it off only when importing a single model where you want the effects.
+- **Load COL** toggle (default on) — pulls collisions from the cache alongside DFF geometry. Needed for the round-trip workflow (import part of the map → edit → export to IMG in another build). Turn it off if you only care about geometry and want a lighter scene.
 
 **Step 2: Extract Resources**
 - Click **Extract Resources** — extracts all DFF, COL, and textures from IMG archives into `.inu_cache/` folder next to your .blend file (so save the .blend first)
@@ -205,19 +206,32 @@ Drag PNG/JPG/TGA images from File Browser into the 3D viewport to automatically 
 - Typical time: ~8 seconds for one region
 
 **Step 3: Import Map**
-- Click **Import Map** — cache-only, reads DFFs and PNG textures from `.inu_cache/` (no IMG access during import)
+- Click **Import Map** — cache-only, reads DFFs, PNG textures and (optionally) COLs from `.inu_cache/` — no IMG access during import
 - If cache is empty, the operator reports *"Cache is empty — run «Extract Resources» first"* and bails out
 - DFFs are parsed in parallel (4-worker thread pool, numpy releases GIL) while the main thread creates Blender objects — no wait between stages
+- COLs are parsed in the same pool. SA ships district-wide lib-COL files (LAs.col, LAn.col …) each containing hundreds of ColModel entries, so the map is keyed by model name (not filename); a DFF named `building01` automatically gets its `building01` ColModel if one exists anywhere in the cached COL libs
 - Objects auto-sorted into collections:
   - **Map_DFF_Far** — draw distance 300+
   - **Map_DFF_Mid** — draw distance 100-299
   - **Map_DFF_Near** — draw distance <100
   - **Map_LOD** — LOD models (detected by name: `LODfoo`, `foo_LOD`, `foo1LOD`, `modeLODlaett`)
-- Typical time: ~30 seconds for a full LA-sized district
+  - **Map_COL** — collision meshes (created lazily, only if `Load COL` is on AND at least one match is found). Each COL object shares the transform of its DFF instance
+- Typical time: ~30 seconds for a full LA-sized district with COL enabled
 
 **Performance tuning (advanced):**
 
 Enable **Profile Import / Extract** in *Scene → INU Tools → Performance* to dump a timing report into `.inu_cache/_profile.log`. Useful if you want to see where time goes (per-stage wall time, per-thread breakdown, slowest individual calls).
+
+Stage names worth knowing in the report:
+- `submit parse jobs` — one-shot; should be sub-second
+- `parse wait` — how long the main thread blocked on a DFF worker; near zero means workers keep ahead
+- `parse COL files` — upfront aggregation of all .col entries into `model_name → ColModel`
+- `loop iter` — total time spent inside the generator body (compare against `Total wall time`; the delta is Blender UI overhead)
+- `build objects` / `build_mesh` — bpy work per DFF
+- `build COL` / `reuse COL` / `COL transform` — per-model and per-instance COL steps
+- `reuse (copy)` — `src.copy()` for repeat instances
+- `TXD cache load` — PNG assignment to material nodes
+- `transform apply` — DFF location/rotation + inu props
 
 ### IDE (Definitions)
 
@@ -306,13 +320,19 @@ All IPL sections are supported for import/export as Blender objects:
 | Button | Operator | Description |
 |--------|----------|-------------|
 | Import from IMG | `gtatools.import_from_img` | Extract and import models by IDE/IPL listing |
-| Export to IMG | `gtatools.export_to_img` | Pack DFF+COL+TXD directly into .img archive |
+| Export to IMG | `gtatools.export_to_img` | Pack DFF+COL+LOD+TXD directly into .img archive |
 
-**Export toggles:** DFF / COL / TXD — choose what to pack.
+**Export toggles (unified with «To folder»):** DFF / COL / LOD / TXD — choose what to pack. Both the Unified Export panel (N-sidebar) and the IDE/IPL/IMG panel write to the same scene properties, so the toggles you see always apply to the operator you click.
 
-**Import options:** Skip LOD / Load TXD.
+**Import options:** Skip LOD / Load TXD / Load COL.
 
-> 💡 **Example — batch upload to gta3.img:** you have 10 buildings ready to export. Set `gta3.img` path in Import Map settings → select the buildings → **Export to IMG** → a UIList dialog opens showing all model + TXD names (editable). Click OK — all DFF+COL+TXD get written to the archive. After that make sure to **Rebuild Archive** in your IMG tool (otherwise the game keeps the old versions).
+**COL Library mode** (shown when **COL** is on) — toggle + name field. All collisions get bundled into one multi-entry `.col` file (e.g. `collision.col`) instead of one `.col` per model. Each entry keeps its own `model_id`; the game matches COL to DFF by ID. Mirrors how vanilla ships `LAs.col` / `LAn.col` etc.
+
+**Shared TXD mode** (shown when **TXD** is on) — toggle + name field, same pattern as COL Library. Packs **all** textures of every exported DFF/LOD into one shared `.txd` (default name `textures.txd`). Handy for districts and bundles where many models reuse the same textures — cuts the TXD count and keeps the IMG tidier.
+
+**Batch writer + parallel encode (big exports):** `Export to IMG` opens the archive once, appends every new payload sequentially, and rewrites the directory exactly once at the end — not per-file. Plus DFF and COL serialisation (`to_bytes()` / `write_col()`) runs in a 4-worker `ThreadPoolExecutor` (numpy/zlib release the GIL). For a full-district export this replaces ~3000 directory rewrites (~2.6 GB of redundant writes) with one, plus ~4× speedup on the CPU-bound encode — typically **5–15× end-to-end**.
+
+> 💡 **Example — batch upload to gta3.img:** you have 50 buildings ready to export. Set `gta3.img` path in Import Map settings → select the buildings → **Export to IMG** → a UIList dialog opens showing all model + TXD names (editable). Optionally toggle Shared TXD if they share textures. Click OK — all DFF+COL+LOD+TXD get encoded in parallel and written to the archive. After that make sure to **Rebuild Archive** in your IMG tool (otherwise the game keeps the old versions).
 
 ### BBox Mode
 
