@@ -29,12 +29,12 @@
 <tr>
 <td width="50%" valign="top">
 
-- 🎨 **Нативные DFF / COL / TXD** — собственный парсер и экспортер RenderWare, без внешних зависимостей
-- 🗺️ **Полный пайплайн карты** — IMG → Blender → IPL / IDE в обе стороны
-- 💡 **Prelight и 2DFX** — vertex colors, corona-лампы, день/ночь
-- 🎆 **Редактор `effects.fxp`** — живая симуляция частиц во viewport
-- 🦴 **Skinned DFF + IFP** — импорт педов с анимациями
-- 🌊 **Вода и пути** — water.dat, tracks.dat, NODES.dat
+- ⚡ **Производительность** — Import Map ~10×, Export to IMG ~5–15× (параллельный парсинг DFF + batch IMG writer)
+- 🎨 **Нативные парсеры** — DFF / COL / TXD / IDE / IPL / IMG / IFP / FXP, без внешних зависимостей
+- 🗺️ **Полный round-trip карты** — IMG → Blender → правка DFF + COL + TXD → IMG другой сборки
+- 🎆 **Редактор `effects.fxp`** — 82 системы, живая симуляция частиц во viewport
+- 🦴 **Skinned DFF + IFP** — импорт педов с 294+ ванильными анимациями
+- 🆔 **ID Manager** — multi-preset, sync со сценой, FLA-расширение, детекция конфликтов
 
 </td>
 <td width="50%" valign="top">
@@ -45,37 +45,27 @@
 </tr>
 </table>
 
-## 🧪 Экспериментальное (v1.6.4)
-
-> [!WARNING]
-> Функции ниже только что добавлены и **не тестировались в полной мере в игре**.
-> Возможны баги, частичное поведение или редкие падения. Пожалуйста, сообщайте о проблемах в [Issues](../../issues).
-
-**Экспорт / Импорт**
-- 🗺️ **Map Export** — сцена → DFF + COL + TXD + IDE + IPL одной кнопкой (авто-паринг LOD/COL по именам, заполнение пустых Model ID из пула)
-- 💾 **Binary IPL Write** — запись IPL в бинарном формате `bnry` (только секции `inst` + `cars`, как у Rockstar)
-- 🪨 **CST IO** — текстовая сериализация COL-моделей (формат Steve's COL Editor, с shadow mesh)
-
-**DFF**
-- 🎞️ **UV-анимация в DFF** — запись простой U/V-прокрутки в чанки `0x2B` + `0x135` (панель материала → *Писать UV Anim в DFF* + Speed U/V + Длительность). Обратное чтение пока не реализовано
-- 💥 **Breakable Objects** — чанк `0x253F2FD` на геометрии + сила разрушения per-object в панели IDE/IPL
-
-**Анимации**
-- 🎬 **IFP Batch Import** — выбор папки с `.ifp` и укладка всех анимаций на один NLA-трек активного armature (с опциональным зазором между клипами)
-
-**Материалы и текстуры**
-- 🎨 **Панель GTA Material** — новая вкладка в Properties с dropdown пресетов (Generic / Vehicle Body / Vehicle Glass / Ped / Env / Dual / Specular) и слотом цвета машины
-- 💾 **Сохраняемые пресеты материалов** 🆕 — Save / Delete прямо в панели, JSON-файлы в `INU_Preset/material_presets/` (снаружи аддона, переживают апдейт). Шарятся между моддерами копированием файла. 25 полей `mat.inu.*` в пресете — env/bump/reflection/specular/dual/UV animation
-- 🖼️ **Bitmaps Manager** — сканирование недостающих текстур, resolve из папки, batch-копирование используемых текстур (с подпапкой на каждый TXD), поиск дубликатов по MD5
-
-**Пути / Трафик**
-- 🚂 **Station Markers** — обновление видимых Empty-сфер на кривых train-треков в каждой точке-станции
-- 🚧 **Roadblocks & Traffic Lights** — переключение флага roadblock или типа светофора на выделенных точках path-IPL в Edit Curve mode
-- 🛣️ **FLA4 Path Format** — чтение/запись расширенного `nodes*.dat` с полями spawn probability, speed limit, lane override (магия `FLA4`)
-- 📏 **Vehicle Scale Helper** — пропорциональное масштабирование всей иерархии машины (меши + дамми) с сохранением структуры
-
 ## 🔮 Скоро
 
+**Анимации**
+- 🎞️ **Merge IFP** — открыть `ped.ifp`, заменить или добавить одну анимацию, сохранить обратно — без внешнего IFP Editor
+- ✅ **Валидатор имён костей при экспорте IFP** — предупреждение если имена fcurves в Action не совпадают с костями целевого скелета (предотвращает silent fail в игре)
+- 🔁 **IFP round-trip тест** — байт-в-байт сравнение import → export, гарантия корректности квартернионной конвертации XYZW↔WXYZ
+- ▶️ **IFP Preview без Apply** — скраб Timeline до коммита анимации в Action арматуры
+
+**DFF**
+- 🎞️ **UV-анимация round-trip** — сейчас только write; импорт DFF с UV-анимацией теряет её. Парсинг чанков `0x2B` + `0x135` на импорте
+- 🔩 **Vehicle Pipeline chunk** — перенос Pipeline chunk (0x253F2F3) из geometry extension в atomic extension, чтобы соответствовать Seggaeman/ванили
+
+**Map workflow**
+- 🗺️ **Map Export auto-split** — grid-based разбиение на районы для очень больших сцен (50k+ моделей)
+- 🚂 **Train Paths как сплайны** — spline-с-станциями представление `tracks.dat` для удобного редактирования
+
+**Материалы / Текстуры**
+- 🧹 **Bitmaps Manager — очистка неиспользуемых** — отчёт по текстурам в TXD, которые ни один материал не использует; аудит размеров (флаг 1024² где достаточно 256²)
+- 🎨 **VC Layer System** — per-layer opacity / brightness / contrast для vertex colors, с multi-select
+
+**Машины**
 - 🚗 **Машины (Phase 2+)** — color slots (Primary / Secondary / Headlight), damage-дамми, vehicle env-map пресеты
 
 > [!NOTE]
@@ -85,7 +75,7 @@
 
 Накопленные изменения после 1.6.4-beta — акцент на производительности map workflow и round-trip.
 
-- ⚡ **Импорт карты ~10× быстрее** — полный район размера LA импортится за ~30 с (было 5+ минут). Чистый cache-only поток (никакого обращения к IMG в цикле импорта), параллельный парсинг DFF (4 воркера, numpy/zlib отпускают GIL), общий кеш материалов между DFF, прямая сборка меша через `foreach_set`
+- ⚡ **Импорт карты ~10× быстрее** — полный район размера LA импортируется за ~30 с (было 5+ минут). Чистый cache-only поток (никакого обращения к IMG в цикле импорта), параллельный парсинг DFF (4 воркера, numpy/zlib отпускают GIL), общий кеш материалов между DFF, прямая сборка меша через `foreach_set`
 - 🗿 **Импорт карты — загрузка COL** — новый тумблер `Load COL` подтягивает коллизии рядом с геометрией в коллекцию `Map_COL`, с трансформой на каждый инстанс. Разблокирует round-trip (импорт части карты → редактирование → экспорт в IMG другой сборки). Ключуется по внутреннему `model_name`, поэтому ванильные lib-COL районов (LAs.col, LAn.col…) корректно расщепляются
 - 🚀 **Экспорт в IMG ~5–15× быстрее** — новый batch `ImgWriter` открывает архив один раз и переписывает директорию ровно один раз в конце (раньше переписывалась на каждый файл). Сериализация DFF/COL идёт в 4-поточном пуле — `build_dff_clump` / `build_col_model` на main thread (bpy reads), `to_bytes()` в воркерах (numpy отпускает GIL)
 - 📦 **Shared TXD тумблер** — симметрично с COL Library, пакует все текстуры в один общий `.txd` вместо одного на модель
@@ -100,18 +90,11 @@
 - 🆔 **ID Manager multi-preset** — поддержка нескольких пресетов в `INU_Preset/id_presets/<name>.txt`, UI для create/rename/delete
 - 📏 **LOD Detection для ванили** — обрабатывает нерегулярные имена: `LODfoo`, `foo_LOD`, `foo1LOD`, `modeLODlaett` — все 4 паттерна покрыты `is_lod_name`
 
-## 🆕 Что нового в 1.6.3
-
-- 🎆 **Particle Effects** — полный редактор `effects.fxp` (82 эффекта, симуляция 30 FPS, 40+ параметров)
-- 🧩 **Object Properties** — новая панель *GTA SA: IDE / IPL* (Model ID, Draw Dist, Флаги, Интерьер)
-- 💡 **LightMap UV2** — кнопки Add / Toggle / Remove (Multiply blend на втором UV-канале)
-- 🎯 **2DFX UI** — Detach All from Mesh, список прикреплённых эффектов в UI меша
-- 🆔 **ID Manager** — Assign from ID…, Extend IDs (FLA)
-- 🛣️ **Nodes** — multi-file импорт, экспорт с разбивкой по 8×8 зонам карты
-
 <details>
 <summary>Более старые релизы</summary>
 
+- **v1.6.4** — Experimental: Map Export (сцена→IPL+IDE+COL+TXD одной кнопкой), Binary IPL Write, CST IO, UV-анимация в DFF, Breakable Objects, IFP Batch Import, GTA Material Panel, Bitmaps Manager, Station Markers, Roadblocks & Traffic Lights, FLA4 Path Format, Vehicle Scale Helper
+- **v1.6.3** — Particle Effects (редактор effects.fxp), Object Properties *GTA SA: IDE / IPL* панель, LightMap UV2, 2DFX UI (Detach All, список эффектов), ID Manager (Assign from ID…, Extend IDs FLA), Nodes multi-file I/O с разбивкой на 8×8 зон
 - **v1.6.1** — IPL Import: COL движется с DFF, Empty-плейсхолдеры; Model Links пунктирные линии; LOD/COL → DFF snap; Drag & Drop TXD
 - **v1.6.0** — Import Map полный workflow, BBox Mode, секция IPL ZONE, GPU NVTT авто-определение, Blender 4.2+
 - **v1.5.3** — Skinned DFF + IFP анимации, Water IO, Path IO, совместимость с Blender 5.1

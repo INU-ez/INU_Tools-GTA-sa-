@@ -29,12 +29,12 @@
 <tr>
 <td width="50%" valign="top">
 
-- 🎨 **Native DFF / COL / TXD** — built-in RenderWare parser and writer, zero external dependencies
-- 🗺️ **Full map pipeline** — IMG → Blender → IPL / IDE round-trip
-- 💡 **Prelight & 2DFX** — vertex colors, corona lights, day/night
-- 🎆 **effects.fxp editor** — live particle simulation in viewport
-- 🦴 **Skinned DFF + IFP** — import peds with animations
-- 🌊 **Water & Paths** — water.dat, tracks.dat, NODES.dat
+- ⚡ **Performance** — Import Map ~10×, Export to IMG ~5–15× (parallel DFF parsing + batch IMG writer)
+- 🎨 **Native parsers** — DFF / COL / TXD / IDE / IPL / IMG / IFP / FXP, zero external dependencies
+- 🗺️ **Full map round-trip** — IMG → Blender → edit DFF + COL + TXD → IMG in another build
+- 🎆 **effects.fxp editor** — 82 systems, live particle simulation in viewport
+- 🦴 **Skinned DFF + IFP** — import peds with 294+ vanilla animations
+- 🆔 **ID Manager** — multi-preset, scene sync, FLA range extension, conflict detection
 
 </td>
 <td width="50%" valign="top">
@@ -45,36 +45,27 @@
 </tr>
 </table>
 
-## 🧪 Experimental (v1.6.4)
-
-> [!WARNING]
-> The features below were freshly implemented and have **not been extensively tested in-game**.
-> Expect rough edges, partial behaviour, or the occasional crash. Please report issues in [Issues](../../issues).
-
-**Export / Import**
-- 🗺️ **Map Export** — scene → DFF + COL + TXD + IDE + IPL in one click (auto-pairs LOD/COL by name, fills empty Model IDs from a pool)
-- 💾 **Binary IPL Write** — emit IPL as `bnry` binary (only `inst` + `cars` sections, as Rockstar does)
-- 🪨 **CST IO** — text serialisation of COL models (Steve's COL Editor format, shadow meshes supported)
-
-**DFF**
-- 🎞️ **UV Animation in DFF** — write a simple U/V scroll animation into chunks `0x2B` + `0x135` (material panel → *Write UV Anim to DFF* + Speed U/V + Duration). Read-back is not implemented yet
-- 💥 **Breakable Objects** — chunk `0x253F2FD` on geometry with per-object *Break Force* in the IDE/IPL panel
-
-**Animations**
-- 🎬 **IFP Batch Import** — pick a folder of `.ifp` files and stack them on one NLA track of the active armature (optional gap between clips)
-
-**Materials & Textures**
-- 🎨 **GTA Material Panel** — new Properties tab with a preset dropdown (Generic / Vehicle Body / Vehicle Glass / Ped / Env / Dual / Specular) and the vehicle color slot
-- 🖼️ **Bitmaps Manager** — scan missing textures, resolve from a search folder, batch-copy used textures (with optional subfolder per TXD), find duplicates by MD5
-
-**Paths / Traffic**
-- 🚂 **Station Markers** — refresh visible Empty spheres on train-track curves at every station point
-- 🚧 **Roadblocks & Traffic Lights** — flip the roadblock bit or set traffic-light kind on selected path-IPL points in Edit Curve mode
-- 🛣️ **FLA4 Path Format** — read/write extended `nodes*.dat` with per-node spawn probability, speed limit, lane override (magic `FLA4`)
-- 📏 **Vehicle Scale Helper** — uniform rescale of a whole vehicle hierarchy (meshes + dummies), preserving structure
-
 ## 🔮 Coming Soon
 
+**Animations**
+- 🎞️ **Merge IFP** — open `ped.ifp`, replace or add a single animation, save back — without external IFP Editor
+- ✅ **Bone-name validator on IFP export** — warn when Action fcurve names don't match the target skeleton's bones (prevents silent in-game fails)
+- 🔁 **IFP round-trip test** — byte-exact import → export comparison to guarantee XYZW↔WXYZ quaternion conversion is correct
+- ▶️ **IFP Preview without Apply** — scrub the Timeline before committing an animation to the armature's Action
+
+**DFF**
+- 🎞️ **UV Animation read-back** — currently write-only; importing a UV-animated DFF loses the animation. Parse `0x2B` + `0x135` on import
+- 🔩 **Vehicle Pipeline chunk** — migrate Pipeline chunk (0x253F2F3) from geometry extension to atomic extension to match Seggaeman/vanilla behaviour
+
+**Map workflow**
+- 🗺️ **Map Export auto-split** — grid-based district chunking for very large scenes (50k+ models)
+- 🚂 **Train Paths as splines** — spline-with-stations representation of `tracks.dat` for easier editing
+
+**Materials / Textures**
+- 🧹 **Bitmaps Manager — unused cleanup** — report textures in TXDs that no material references; texture size audit (flag 1024² where 256² suffices)
+- 🎨 **VC Layer System** — per-layer opacity / brightness / contrast for vertex colors, with multi-select
+
+**Vehicles**
 - 🚗 **Vehicles (Phase 2+)** — color slots (Primary / Secondary / Headlight), damage dummies, vehicle env-map presets
 
 > [!NOTE]
@@ -99,18 +90,11 @@ Post-1.6.4-beta accumulated changes — focus on map workflow performance and ro
 - 🆔 **ID Manager multi-preset** — multiple preset files supported in `INU_Preset/id_presets/<name>.txt`, with UI for create/rename/delete
 - 📏 **LOD Detection for vanilla** — irregular naming handled: `LODfoo`, `foo_LOD`, `foo1LOD`, `modeLODlaett` — all four patterns covered by `is_lod_name`
 
-## 🆕 What's new in 1.6.3
-
-- 🎆 **Particle Effects** — full `effects.fxp` editor (82 effects, 30 FPS simulation, 40+ parameters)
-- 🧩 **Object Properties** — new *GTA SA: IDE / IPL* panel (Model ID, Draw Dist, Flags, Interior)
-- 💡 **LightMap UV2** — Add / Toggle / Remove buttons (Multiply blend on second UV channel)
-- 🎯 **2DFX UI** — Detach All from Mesh, attached effects list in mesh UI
-- 🆔 **ID Manager** — Assign from ID…, Extend IDs (FLA)
-- 🛣️ **Nodes** — multi-file import, export with 8×8 zone splitting
-
 <details>
 <summary>Older releases</summary>
 
+- **v1.6.4** — Experimental: Map Export (scene→IPL+IDE+COL+TXD one-op), Binary IPL Write, CST IO, UV Animation in DFF, Breakable Objects, IFP Batch Import, GTA Material Panel, Bitmaps Manager, Station Markers, Roadblocks & Traffic Lights, FLA4 Path Format, Vehicle Scale Helper
+- **v1.6.3** — Particle Effects (effects.fxp editor), Object Properties *GTA SA: IDE / IPL* panel, LightMap UV2, 2DFX UI (Detach All, attached effects list), ID Manager (Assign from ID…, Extend IDs FLA), Nodes multi-file I/O with 8×8 zone splitting
 - **v1.6.1** — IPL Import: COL moves with DFF, Empty placeholders; Model Links dashed lines; LOD/COL → DFF snap; Drag & Drop TXD
 - **v1.6.0** — Import Map full workflow, BBox Mode, IPL ZONE section, GPU NVTT auto-detect, Blender 4.2+
 - **v1.5.3** — Skinned DFF + IFP animations, Water IO, Path IO, Blender 5.1 compatibility
