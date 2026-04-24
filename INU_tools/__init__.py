@@ -8381,6 +8381,9 @@ class GTATOOLS_PT_ide_ipl_panel(bpy.types.Panel):
     bl_order = 30
     bl_options = {'DEFAULT_CLOSED'}
 
+    def draw_header(self, context):
+        self.layout.label(text="", icon='PACKAGE')
+
     def draw(self, context):
         layout = self.layout
         scn = context.scene
@@ -8476,7 +8479,9 @@ class GTATOOLS_PT_ide_ipl_panel(bpy.types.Panel):
         row.prop(scn, "gtatools_img_load_txd", text="TXD", toggle=True)
         row.prop(scn, "gtatools_map_load_col", text="COL", toggle=True)
         box.operator("gtatools.import_from_img", text=T("Импорт из IMG"), icon='IMPORT')
-        box.operator("gtatools.export_to_img", text=T("Экспорт в IMG"), icon='EXPORT')
+        box.operator("gtatools.export_to_img",
+                     text=T("Экспорт в IMG"),
+                     icon='EXPORT')
         box.operator("gtatools.remove_from_img", text=T("Удалить из IMG"), icon='REMOVE')
 
         # Shared TXD — one TXD for multiple DFFs
@@ -9215,6 +9220,9 @@ class GTATOOLS_PT_export_panel(bpy.types.Panel):
     bl_order = 0
     bl_options = {'DEFAULT_CLOSED'}
 
+    def draw_header(self, context):
+        self.layout.label(text="", icon='EXPORT')
+
     def draw(self, context):
         layout = self.layout
 
@@ -9273,9 +9281,12 @@ class GTATOOLS_PT_export_panel(bpy.types.Panel):
         # Unified Export — три цели: В папку / В IMG / INU preset
         layout.label(text=T("Экспорт:"))
         row = layout.row(align=True)
-        row.operator("gtatools.export_all", text=T("В папку"))
-        row.operator("gtatools.export_to_img", text=T("В IMG"))
-        row.operator("gtatools.inu_export", text="INU Export")
+        row.operator("gtatools.export_all",
+                     text=T("В папку"), icon='FILE_FOLDER')
+        row.operator("gtatools.export_to_img",
+                     text=T("В IMG"), icon='PACKAGE')
+        row.operator("gtatools.inu_export",
+                     text="INU Export", icon='GREASEPENCIL')
         # Форматы для «В папку»
         row = layout.row(align=True)
         row.prop(context.scene, "gtatools_export_all_dff", text="DFF", toggle=True)
@@ -9435,6 +9446,9 @@ class GTATOOLS_PT_check_panel(bpy.types.Panel):
     bl_parent_id = "GTATOOLS_PT_main_panel"
     bl_order = 10
     bl_options = {'DEFAULT_CLOSED'}
+
+    def draw_header(self, context):
+        self.layout.label(text="", icon='CHECKMARK')
 
     def draw(self, context):
         layout = self.layout
@@ -11026,6 +11040,10 @@ class GTATOOLS_PT_2dfx_panel(bpy.types.Panel):
                 and obj.inu.type == '2DFX')
 
     def draw_header(self, context):
+        # Always show the panel icon; append a checkmark when the
+        # active object is actually a 2DFX empty, so the header hints
+        # whether the panel's content applies to the current selection.
+        self.layout.label(text="", icon='LIGHT')
         if self._is_2dfx(context):
             self.layout.label(text="", icon='CHECKMARK')
 
@@ -11683,6 +11701,9 @@ class GTATOOLS_PT_object_ide_ipl_panel(bpy.types.Panel):
     bl_order = 29
     bl_options = {'DEFAULT_CLOSED'}
 
+    def draw_header(self, context):
+        self.layout.label(text="", icon='COPY_ID')
+
     @classmethod
     def poll(cls, context):
         obj = context.active_object
@@ -11773,6 +11794,9 @@ class GTATOOLS_PT_object_inu_tools(bpy.types.Panel):
     bl_region_type = 'WINDOW'
     bl_context = 'object'
     bl_options = {'DEFAULT_CLOSED'}
+
+    def draw_header(self, context):
+        self.layout.label(text="", icon='COPY_ID')
 
     @classmethod
     def poll(cls, context):
@@ -11966,8 +11990,12 @@ class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
                     for item in scene.gtatools_binary_ipls:
                         bi_col.prop(item, "enabled", text=item.name)
 
-            box.operator("gtatools.extract_textures", text=T("Извлечь ресурсы"), icon='PACKAGE')
-            box.operator("gtatools.import_map", text=T("Import Map"), icon='IMPORT')
+            box.operator("gtatools.extract_textures",
+                         text=T("Извлечь ресурсы"),
+                         icon='PACKAGE')
+            box.operator("gtatools.import_map",
+                         text=T("Import Map"),
+                         icon='IMPORT')
             box.prop(scene, "gtatools_profile_enabled",
                      text=T("Профайлер (debug timings)"), toggle=False)
             row = box.row(align=True)
@@ -12137,7 +12165,9 @@ def _draw_id_manager(layout, scene, context):
     row = col.row(align=True)
     row.operator("gtatools.id_manager_from_game", text=T("Из игры"), icon='IMPORT')
     row.operator("gtatools.id_manager_extend", text=T("Расширить FLA"), icon='ADD')
-    col.operator("gtatools.id_manager_gc", text=T("Освободить фантомы"), icon='ORPHAN_DATA')
+    col.operator("gtatools.id_manager_gc",
+                 text=T("Освободить фантомы"),
+                 icon='ORPHAN_DATA')
     col.operator("gtatools.id_manager_open_file", text=T("Открыть файл ID"), icon='FILE_TEXT')
 
 
@@ -12151,6 +12181,9 @@ class GTATOOLS_PT_id_manager_panel(bpy.types.Panel):
     bl_parent_id = "GTATOOLS_PT_main_panel"
     bl_order = 31
     bl_options = {'DEFAULT_CLOSED'}
+
+    def draw_header(self, context):
+        self.layout.label(text="", icon='COPY_ID')
 
     def draw(self, context):
         layout = self.layout
@@ -12677,6 +12710,9 @@ class GTATOOLS_PT_prelight_panel(bpy.types.Panel):
     bl_order = 12
     bl_options = {'DEFAULT_CLOSED'}
 
+    def draw_header(self, context):
+        self.layout.label(text="", icon='COLOR')
+
     def draw(self, context):
         layout = self.layout
         obj = context.active_object
@@ -13017,6 +13053,9 @@ class GTATOOLS_PT_itera_panel(bpy.types.Panel):
     bl_order = 18
     bl_options = {'DEFAULT_CLOSED'}
 
+    def draw_header(self, context):
+        self.layout.label(text="", icon='LIGHT_SUN')
+
     def draw(self, context):
         layout = self.layout
         obj = context.active_object
@@ -13057,6 +13096,9 @@ class GTATOOLS_PT_prelight_col_panel(bpy.types.Panel):
     bl_parent_id = "GTATOOLS_PT_main_panel"
     bl_order = 16
     bl_options = {'DEFAULT_CLOSED'}
+
+    def draw_header(self, context):
+        self.layout.label(text="", icon='COLOR')
 
     def draw(self, context):
         layout = self.layout
@@ -13511,6 +13553,9 @@ class GTATOOLS_PT_water_panel(bpy.types.Panel):
     bl_order = 34
     bl_options = {'DEFAULT_CLOSED'}
 
+    def draw_header(self, context):
+        self.layout.label(text="", icon='MOD_FLUIDSIM')
+
     def draw(self, context):
         layout = self.layout
         scene = context.scene
@@ -13663,6 +13708,9 @@ class GTATOOLS_PT_anim_panel(bpy.types.Panel):
     bl_parent_id = "GTATOOLS_PT_main_panel"
     bl_order = 24
     bl_options = {'DEFAULT_CLOSED'}
+
+    def draw_header(self, context):
+        self.layout.label(text="", icon='ARMATURE_DATA')
 
     def draw(self, context):
         layout = self.layout
@@ -13958,6 +14006,9 @@ class GTATOOLS_PT_radar_panel(bpy.types.Panel):
     bl_order = 36
     bl_options = {'DEFAULT_CLOSED'}
 
+    def draw_header(self, context):
+        self.layout.label(text="", icon='TRACKER')
+
     def draw(self, context):
         layout = self.layout
         scn = context.scene
@@ -13999,6 +14050,9 @@ class GTATOOLS_PT_paths_panel(bpy.types.Panel):
     bl_parent_id = "GTATOOLS_PT_main_panel"
     bl_order = 32
     bl_options = {'DEFAULT_CLOSED'}
+
+    def draw_header(self, context):
+        self.layout.label(text="", icon='TRACKING')
 
     def draw(self, context):
         layout = self.layout

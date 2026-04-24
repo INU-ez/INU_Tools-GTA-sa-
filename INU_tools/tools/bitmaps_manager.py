@@ -324,6 +324,9 @@ class GTATOOLS_PT_bitmaps_panel(bpy.types.Panel):
     bl_order = 2
     bl_options = {'DEFAULT_CLOSED'}
 
+    def draw_header(self, context):
+        self.layout.label(text="", icon='IMAGE_DATA')
+
     def draw(self, context):
         layout = self.layout
         scene = context.scene

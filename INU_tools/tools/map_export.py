@@ -303,6 +303,9 @@ class GTATOOLS_PT_map_export_panel(bpy.types.Panel):
     bl_order = 1
     bl_options = {'DEFAULT_CLOSED'}
 
+    def draw_header(self, context):
+        self.layout.label(text="", icon='WORLD')
+
     def draw(self, context):
         self.layout.operator("gtatools.map_export", icon='WORLD')
 
