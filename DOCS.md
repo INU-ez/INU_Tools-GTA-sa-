@@ -217,23 +217,24 @@ Drag PNG/JPG/TGA images from File Browser into the 3D viewport to automatically 
   - **Map_DFF_Near** — draw distance <100
   - **Map_LOD** — LOD models (detected by name: `LODfoo`, `foo_LOD`, `foo1LOD`, `modeLODlaett`)
   - **Map_COL** — collision meshes (created lazily, only if `Load COL` is on AND at least one match is found). Each COL object shares the transform of its DFF instance
-- **Group by IPL** toggle (default off) — when ON, the four `Map_DFF_*` / `Map_LOD` buckets and the global `Map_COL` are replaced by per-IPL collection trees:
+- **Group by IPL** toggle (default off) — when ON, the four `Map_DFF_*` / `Map_LOD` buckets and the global `Map_COL` are replaced by per-IPL collection trees, named after the source IPL filenames (no `Map_` prefix — keeps the round-trip readable, the parent's name matches the original IPL exactly):
   ```
-  Map_LAn/
-    Map_LAn_DFF
-    Map_LAn_LOD
-    Map_LAn_COL
-  Map_LAs/
-    Map_LAs_DFF
-    Map_LAs_LOD
-    Map_LAs_COL
-  Map_SF/
+  vegasN/
+    vegasN_DFF
+    vegasN_LOD
+    vegasN_COL
+  vegasS/
+    vegasS_DFF
+    vegasS_LOD
+    vegasS_COL
+  vegasn_stream0/
     …
   ```
-  Each parent collection (`Map_<ipl>`) is hidden during import and re-shown afterwards; sub-collections are created lazily, so an IPL with no LODs gets no `_LOD` sub. Useful when you want to:
+  Each parent collection is hidden during import and re-shown afterwards; sub-collections are created lazily, so an IPL with no LODs gets no `_LOD` sub. Useful when you want to:
   - Hide an entire district at once (toggle the parent's eye icon — DFFs, LODs and collisions go dark together)
-  - Co-author a map — author A edits `Map_LAn`, author B edits `Map_SF`, no overlap
+  - Co-author a map — author A edits `vegasN`, author B edits `vegasS`, no overlap
   - Keep IPL provenance visible in the outliner so you know where each model came from
+  - Round-trip: import → edit → re-export with **Map Export → Split: By collection** rebuilds the original district structure; the collection's name is reused as the district's basename
   - Source IPL is taken from each instance's parent file basename (text IPLs by file path, binary IPLs by their entry name in the IMG archive)
 - Typical time: ~30 seconds for a full LA-sized district with COL enabled
 
@@ -1108,29 +1109,35 @@ Unified one-click export of a scene district: DFF + COL + TXD + IDE + IPL into a
 - Groups objects by base name via `get_model_type()` — one DFF + optional LOD + zero-or-more COL meshes per group
 - Auto-assigns Model IDs from `[id_pool_start, 19999]` to any DFF with `inu.model_id == 0`, writing them back into the object
 - Exports per-group `*.dff` and `*.col` with existing exporters
-- Builds one shared `{base_name}.txd` from all DFF textures
+- **TXD: one `.txd` per unique `inu.txd_name`** — DFFs with the same `txd_name` (e.g. `vegas01.txd` shared by 50 buildings) get bucketed into one shared TXD; DFFs with their own dedicated TXD (`cj.txd`) get their own file. Empty `txd_name` falls back to the model's own base name. Preserves the vanilla SA layout exactly when the scene was imported with IDE-populated `txd_name`s
 - Writes one `{base_name}.ide` (objs section) and one `{base_name}.ipl` (inst section) covering the entire selection
+- The operator runs as a **modal generator** with a window-manager timer: status bar shows current group / TXD bucket / IPL stage (`vegasN: TXD vegas02 (12 models)`), the viewport stays responsive, **ESC** cancels the export.
 
 Source: [`tools/map_export.py`](INU_tools/tools/map_export.py).
 
-#### Auto-split into districts
+#### Split modes (auto-split into districts)
 
-For very large scenes (50k+ DFFs) one monolithic district produces an unwieldy IPL and a TXD that strains streaming. The **Auto-split into districts** toggle (in the Map Export dialog sidebar) bins DFFs into a regular XY grid and emits one full district per non-empty cell.
+The **Split** dropdown in the Map Export dialog sidebar controls how the selection is broken into separate districts at export time. Three modes:
 
-**How it works:**
-- Each DFF's world-origin `(x, y)` is divided by `cell_size` and floored to give a cell index `(cx, cy)`. LOD/COL siblings travel with their DFF; cell membership is decided by the DFF only.
-- Each non-empty cell becomes a subdirectory named `<base>_x<cx>_y<cy>` under the chosen target folder (negative indices use `m` prefix, e.g. `district_xm3_y1`, so directory names never start with a dash).
-- For each cell the function recursively calls itself with `auto_split=False` and the cell's subset, producing the cell's own `*.dff`, `*.col`, `*.txd`, `*.ide`, `*.ipl` exactly the way a single-district export would.
-- If splitting yields exactly one cell (everything fits in one square), the function silently falls back to non-split mode — leaving the toggle on for small scenes is harmless.
+| Mode | District naming | Use case |
+|---|---|---|
+| **No split** (default) | Single district named `base_name` | Hand-crafted small maps, explicit naming |
+| **XY grid** | `<base>_x<cx>_y<cy>` per non-empty cell | Very large scenes (50 k+ DFFs), streaming-bound mods, co-op authoring by spatial region |
+| **By collection** | Top-level collection name per bucket | Round-trip with Group-by-IPL import — `vegasn_stream0` in Blender → `vegasn_stream0.ipl` on output |
 
-**When to use:**
-- Custom maps spanning multiple SA districts (50k+ models).
-- Streaming-budget-bound mods where a single 200 MB TXD spikes load times.
-- Co-op map editing — splitting by cell lets two authors work on `district_x0_y0` and `district_x1_y0` without IPL/TXD merge conflicts.
+##### XY grid
+
+Each DFF's world-origin `(x, y)` is divided by `cell_size` and floored to give a cell index `(cx, cy)`. LOD/COL siblings travel with their DFF; cell membership is decided by the DFF only. Each non-empty cell becomes a subdirectory named `<base>_x<cx>_y<cy>` under the chosen target folder (negative indices use `m` prefix, e.g. `district_xm3_y1`, so directory names never start with a dash). If splitting yields exactly one cell, the operator silently falls back to *No split* — leaving the toggle on for small scenes is harmless.
 
 **Cell size guidance:** 256 m matches SA's vanilla streaming radius (a model in cell N becomes visible to the player roughly when they enter cell N±1). 128 m for very dense interiors; 512 m or 1024 m when most models are large terrain meshes (highways, rivers).
 
-Source: [`tools/map_export.py`](INU_tools/tools/map_export.py) → `compute_grid_cells`, `format_cell_name`, `export_map(..., auto_split=True, cell_size=...)`.
+##### By collection
+
+Bins DFFs by the name of their topmost user collection (the one directly under the scene root). The collection's name becomes the district name — so a `vegasn_stream0` collection in the outliner produces `vegasn_stream0.ipl`, `vegasn_stream0.ide`, `vegasn_stream0.col`, `vegasn_stream0.txd` inside `target_dir/vegasn_stream0/`. This is the natural round-trip for *Map Import → Group by IPL → edit → re-export*: the Map Import operator names the parent collections after the source IPL filenames, and re-exporting with the *By collection* split mode rebuilds the original district structure.
+
+DFFs that live only in the scene root collection (or in no collection at all) land under a `unsorted/` bucket. If only one bucket has any DFFs the operator falls back to *No split* — so this mode is also safe to leave on for hand-curated small scenes.
+
+Source: [`tools/map_export.py`](INU_tools/tools/map_export.py) → `compute_grid_cells`, `compute_collection_cells`, `format_cell_name`, `_build_top_collection_lookup`, `export_map(..., split_mode='GRID' | 'COLLECTION', cell_size=...)`.
 
 ### Binary IPL Write
 
@@ -1284,7 +1291,7 @@ Source: [`core/cst.py`](INU_tools/core/cst.py), [`ops/cst_import.py`](INU_tools/
 
 Uniformly rescale a whole vehicle hierarchy (Empty root + mesh + dummy children) preserving the structure for DFF export.
 
-**Location:** Operator `gtatools.vehicle_scale` (dialog).
+**Location:** View3D → Sidebar (N) → GTA Tools → *Vehicles* panel → button **Масштаб машины…** (also exposed as the operator `gtatools.vehicle_scale` for scripting).
 
 **Options:**
 - **Factor** — uniform scale multiplier
@@ -1298,7 +1305,7 @@ Source: [`tools/vehicle_scale.py`](INU_tools/tools/vehicle_scale.py).
 
 Manage paired `_ok` / `_dam` body atomics for vehicle DFFs. The GTA SA engine swaps the visible mesh between the two variants when a panel takes damage — naming convention is the only contract: an atomic ending in `_ok` and one ending in `_dam` (with the same prefix) form a damage pair, e.g. `bonnet_ok` ↔ `bonnet_dam`, `door_lf_ok` ↔ `door_lf_dam`.
 
-**Location:** View3D → Sidebar (N) → GTA Tools → *Check* panel → block **Damage variants**.
+**Location:** View3D → Sidebar (N) → GTA Tools → *Vehicles* panel → block **Damage variants**.
 
 **Operators:**
 

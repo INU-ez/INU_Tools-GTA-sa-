@@ -41,67 +41,96 @@ def check_nvtt_available(nvtt_path):
     return True, nvcompress
 
 
-def compress_with_nvtt(name, image, use_alpha, nvcompress_path):
-    """Сжать текстуру через NVIDIA Texture Tools (GPU)"""
+def _nvtt_prepare_png(name, image):
+    """Save *image* as a PNG to the system temp dir for NVTT to read.
+
+    Must run on the main thread — uses ``image.save()`` which is a
+    Blender API call. Returns ``(name, input_png, output_dds, w, h)``
+    so the parallel-safe second half can pick up without touching bpy.
+    """
     temp_dir = tempfile.gettempdir()
-    # Используем безопасное имя файла
     safe_name = "".join(c if c.isalnum() or c in "._-" else "_" for c in name)
     input_file = os.path.join(temp_dir, f"_nvtt_{safe_name}.png")
     output_file = os.path.join(temp_dir, f"_nvtt_{safe_name}.dds")
 
+    old_path = image.filepath_raw
+    old_format = image.file_format
     try:
-        # Сохраняем изображение через Blender (правильная ориентация)
-        old_path = image.filepath_raw
-        old_format = image.file_format
         image.filepath_raw = input_file
         image.file_format = 'PNG'
         image.save()
+    finally:
         image.filepath_raw = old_path
         image.file_format = old_format
 
-        width, height = image.size[0], image.size[1]
+    width, height = image.size[0], image.size[1]
+    return name, input_file, output_file, width, height
 
-        # Вызвать nvcompress
-        # -alpha говорит nvcompress что PNG имеет alpha канал
-        fmt = "-bc2" if use_alpha else "-bc1"  # bc1=DXT1, bc2=DXT3
-        alpha_flag = ["-alpha"] if use_alpha else []
-        cmd = [nvcompress_path, "-nocuda", fmt, "-mipmap"] + alpha_flag + [input_file, output_file]
 
-        # Попробовать с CUDA, если не получится - без
-        cmd_cuda = [nvcompress_path, fmt, "-mipmap"] + alpha_flag + [input_file, output_file]
+def _nvtt_compress_and_parse(prepared, use_alpha, nvcompress_path):
+    """Run ``nvcompress.exe`` on the pre-saved PNG and assemble a
+    Native Texture chunk from the resulting DDS. Pure-Python — no
+    bpy access — so it's safe to run in a ``ThreadPoolExecutor``
+    worker. Returns the texture-native bytes or ``None`` on failure.
+    """
+    name, input_file, output_file, width, height = prepared
 
-        result = subprocess.run(cmd_cuda, capture_output=True, timeout=60)
-        if result.returncode != 0:
-            result = subprocess.run(cmd, capture_output=True, timeout=60)
+    # ``-bc1`` = DXT1, ``-bc2`` = DXT3. Alpha-flag tells nvcompress
+    # that the source PNG has a meaningful alpha channel.
+    fmt = "-bc2" if use_alpha else "-bc1"
+    alpha_flag = ["-alpha"] if use_alpha else []
+    cmd_nocuda = [nvcompress_path, "-nocuda", fmt, "-mipmap"] + alpha_flag + [input_file, output_file]
+    cmd_cuda = [nvcompress_path, fmt, "-mipmap"] + alpha_flag + [input_file, output_file]
 
-        if not os.path.exists(output_file):
-            return None
+    result = subprocess.run(cmd_cuda, capture_output=True, timeout=60)
+    if result.returncode != 0:
+        result = subprocess.run(cmd_nocuda, capture_output=True, timeout=60)
 
-        # Прочитать DDS и извлечь данные
+    if not os.path.exists(output_file):
+        return None
+    return _build_tex_native_from_dds(name, output_file, use_alpha)
+
+
+def compress_with_nvtt(name, image, use_alpha, nvcompress_path):
+    """Сжать текстуру через NVIDIA Texture Tools (GPU)
+
+    Backward-compatible serial entry point — saves the PNG and runs
+    the compressor + DDS parse in one call. Newer code paths (Map
+    Export, batch IMG export) split these stages so the subprocess
+    spawn can fan out across worker threads.
+    """
+    try:
+        prepared = _nvtt_prepare_png(name, image)
+        return _nvtt_compress_and_parse(prepared, use_alpha, nvcompress_path)
+    except Exception as e:
+        print(f"NVTT ERROR: {name}: {e}")
+        return None
+
+
+def _build_tex_native_from_dds(name, output_file, use_alpha):
+    """Read a DDS file and turn it into the RW Texture-Native chunk
+    bytes (PLATFORM_D3D9, single TextureNative record). Pure I/O +
+    binary fiddling — no bpy access. Cleans up the temp files
+    (both the DDS output and the matching ``_nvtt_<name>.png``)
+    before returning."""
+    input_file = output_file.replace('.dds', '.png')
+    try:
         with open(output_file, 'rb') as f:
             dds_data = f.read()
-
-        # Парсим DDS
         if dds_data[:4] != b'DDS ':
             return None
 
-        # DDS Header (124 байта после "DDS ")
         dds_height = struct.unpack('<I', dds_data[12:16])[0]
         dds_width = struct.unpack('<I', dds_data[16:20])[0]
         mip_count = struct.unpack('<I', dds_data[28:32])[0]
         if mip_count == 0:
             mip_count = 1
 
-        # Проверяем на DX10 extended header
+        # DX10 extended header pushes the pixel block 20 bytes further.
         pf_fourcc = dds_data[84:88]
-        header_size = 128
-        if pf_fourcc == b'DX10':
-            header_size = 148  # 128 + 20 bytes DX10 header
-
-        # Данные начинаются после заголовка
+        header_size = 148 if pf_fourcc == b'DX10' else 128
         pixel_data = dds_data[header_size:]
 
-        # Создаём TXD структуру
         if use_alpha:
             dxt_type = 3
             raster_format = RASTER_8888 | RASTER_MIPMAP
@@ -116,7 +145,6 @@ def compress_with_nvtt(name, image, use_alpha, nvcompress_path):
         tex_name = name[:31].encode('ascii', errors='replace').ljust(32, b'\x00')
         fourcc = b'DXT1' if dxt_type == 1 else b'DXT3'
 
-        # Собираем мипмапы
         struct_data = bytearray()
         struct_data.extend(struct.pack('<II', PLATFORM_D3D9, make_filter_flags()))
         struct_data.extend(tex_name)
@@ -126,10 +154,9 @@ def compress_with_nvtt(name, image, use_alpha, nvcompress_path):
         struct_data.extend(struct.pack('<HH', dds_width, dds_height))
         struct_data.extend(struct.pack('<B', depth))
         struct_data.extend(struct.pack('<B', mip_count))
-        struct_data.extend(struct.pack('<B', 4))  # raster type
+        struct_data.extend(struct.pack('<B', 4))   # raster type
         struct_data.extend(struct.pack('<B', 0x08))  # D3D format flag
 
-        # Извлекаем каждый мип-уровень
         offset = 0
         mip_w, mip_h = dds_width, dds_height
         for _ in range(mip_count):
@@ -158,11 +185,12 @@ def compress_with_nvtt(name, image, use_alpha, nvcompress_path):
         return None
 
     finally:
-        # Очистка временных файлов
-        if os.path.exists(input_file):
-            os.remove(input_file)
-        if os.path.exists(output_file):
-            os.remove(output_file)
+        for tmp in (input_file, output_file):
+            try:
+                if os.path.exists(tmp):
+                    os.remove(tmp)
+            except Exception:
+                pass
 
 
 def write_rw_section_header(data, section_type, size):
@@ -561,29 +589,88 @@ def export_txd(filepath, context, selected_only=False, use_gpu=False):
     tex_natives = []
 
     if use_gpu and nvcompress_path:
-        # GPU режим - NVTT для DXT1, CPU для DXT3 (NVTT DXT3 некорректно работает)
+        # GPU режим — NVTT для DXT1, CPU для DXT3 (NVTT DXT3 неточный).
+        #
+        # Two-stage pipeline:
+        #   Stage 1 (serial, main thread): image.save() PNG to temp dir.
+        #     Must stay on main thread because Blender's image API is
+        #     not thread-safe.
+        #   Stage 2 (parallel, worker pool): spawn nvcompress.exe per
+        #     PNG and parse the resulting DDS. Pure subprocess + I/O,
+        #     so 4 workers happily overlap GPU encode + disk + parse.
+        # CPU fallback (process_texture_parallel) also gets bucketed
+        # into the same DXT1 future list when image.save fails.
+        prepared_dxt1 = []
+        cpu_fallback_dxt1 = []
         for i, (name, image, _) in enumerate(dxt1_images):
             wm.progress_update(total + i)
             try:
-                result = compress_with_nvtt(name, image, False, nvcompress_path)
-                if result:
-                    tex_natives.append(result)
-                else:
-                    data = prepare_texture_data(name, image, False)
-                    result = process_texture_parallel(data)
-                    tex_natives.append(result)
+                prepared_dxt1.append(_nvtt_prepare_png(name, image))
             except Exception as e:
-                print(f"TXD GPU ERROR: {name}: {e}")
+                print(f"NVTT PNG save error {name}: {e} — fallback to CPU DXT")
+                try:
+                    cpu_fallback_dxt1.append(prepare_texture_data(name, image, False))
+                except Exception as e2:
+                    print(f"NVTT CPU fallback prepare error {name}: {e2}")
 
-        # DXT3 через CPU
-        for i, (name, image, _) in enumerate(dxt3_images):
-            wm.progress_update(total + dxt1_count + i)
-            try:
-                data = prepare_texture_data(name, image, True)
-                result = process_texture_parallel(data)
-                tex_natives.append(result)
-            except Exception as e:
-                print(f"TXD CPU (DXT3) ERROR: {name}: {e}")
+        nvtt_workers = min(4, os.cpu_count() or 4)
+        with ThreadPoolExecutor(max_workers=nvtt_workers) as executor:
+            futures = [
+                executor.submit(_nvtt_compress_and_parse, prep, False, nvcompress_path)
+                for prep in prepared_dxt1
+            ]
+            for prep, future in zip(prepared_dxt1, futures):
+                try:
+                    result = future.result()
+                    if result:
+                        tex_natives.append(result)
+                    else:
+                        # NVTT silently failed (no DDS produced) — re-prepare
+                        # the texture from bpy on main thread for CPU fallback.
+                        # Rare; happens with non-power-of-two oddities.
+                        name_failed = prep[0]
+                        # find the matching image
+                        img = next((img for n, img, _ in dxt1_images if n == name_failed), None)
+                        if img is not None:
+                            try:
+                                cpu_fallback_dxt1.append(
+                                    prepare_texture_data(name_failed, img, False))
+                            except Exception:
+                                pass
+                except Exception as e:
+                    print(f"TXD GPU ERROR: {e}")
+
+        # CPU fallback for any DXT1 textures NVTT couldn't handle
+        if cpu_fallback_dxt1:
+            with ThreadPoolExecutor(max_workers=min(8, os.cpu_count() or 4)) as executor:
+                fallback_futs = [executor.submit(process_texture_parallel, d) for d in cpu_fallback_dxt1]
+                for fut in fallback_futs:
+                    try:
+                        result = fut.result()
+                        if result:
+                            tex_natives.append(result)
+                    except Exception as e:
+                        print(f"TXD CPU fallback ERROR: {e}")
+
+        # DXT3 (alpha) — keep on CPU because nvcompress's BC2 output
+        # doesn't round-trip cleanly through SA's TXD reader.
+        if dxt3_images:
+            dxt3_data_local = []
+            for i, (name, image, _) in enumerate(dxt3_images):
+                wm.progress_update(total + dxt1_count + i)
+                try:
+                    dxt3_data_local.append(prepare_texture_data(name, image, True))
+                except Exception as e:
+                    print(f"TXD CPU (DXT3) prepare ERROR: {name}: {e}")
+            with ThreadPoolExecutor(max_workers=min(8, os.cpu_count() or 4)) as executor:
+                futs = [executor.submit(process_texture_parallel, d) for d in dxt3_data_local]
+                for fut in futs:
+                    try:
+                        result = fut.result()
+                        if result:
+                            tex_natives.append(result)
+                    except Exception as e:
+                        print(f"TXD CPU (DXT3) ERROR: {e}")
     else:
         # CPU режим - обрабатываем в правильном порядке (DXT1 первыми)
         num_workers = min(8, os.cpu_count() or 4)

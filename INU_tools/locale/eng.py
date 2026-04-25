@@ -1674,13 +1674,22 @@ LANG = {
         "Time each stage and write a report to .inu_cache/_profile.log. Enable only for debugging — adds a small overhead per step",
     "Профайлер (debug timings)": "Profiler (debug timings)",
 
-    # ── 1.6.6 — Map Export auto-split ───────────────────────────────────
-    "Auto-split на районы": "Auto-split into districts",
-    "Автоматически разбить выделение на сетку XY-ячеек по cell_size метров. Каждая непустая ячейка получит свою подпапку с отдельными IDE/IPL/COL/TXD. Полезно для очень больших сцен (50k+ моделей) где одиночный district неподъёмен":
-        "Bin the selection into a grid of XY cells (cell_size meters). Each non-empty cell becomes its own subdirectory with its own IDE/IPL/COL/TXD. Useful for very large scenes (50k+ models) where a single district is impractical",
+    # ── 1.6.6 — Map Export split modes ──────────────────────────────────
+    "Разбиение": "Split",
+    "Как разбить выделение на отдельные district'ы при экспорте":
+        "How to split the selection into separate districts during export",
+    "Без разбиения": "No split",
+    "Один общий district, все DFF в корне target_dir. base_name используется для имён IDE/IPL/COL/TXD":
+        "One shared district, all DFFs in the target directory root. base_name is used for IDE/IPL/COL/TXD filenames",
+    "XY-сетка": "XY grid",
+    "Биннить DFF по XY-координате origin'а на ячейки cell_size метров. Каждая непустая ячейка получает подпапку <base>_x<cx>_y<cy> со своими IDE/IPL/COL/TXD":
+        "Bin DFFs by their XY origin into cell_size-meter cells. Each non-empty cell gets a <base>_x<cx>_y<cy> subdirectory with its own IDE/IPL/COL/TXD",
+    "По коллекциям": "By collection",
+    "Биннить DFF по имени верхней (top-level) коллекции, в которой объект лежит. Имя коллекции становится именем district'а — идеально для round-trip с Group-by-IPL импортом (vegasn_stream0 в Blender → vegasn_stream0.ipl на выходе)":
+        "Bin DFFs by the name of the top-level collection they live in. The collection name becomes the district name — ideal for round-trip with Group-by-IPL import (vegasn_stream0 in Blender → vegasn_stream0.ipl on output)",
     "Размер ячейки (м)": "Cell size (m)",
-    "Сторона квадратной ячейки в метрах для auto-split. 256 м соответствует ванильному радиусу стриминга. Уменьшай для более мелких чанков, увеличивай если районов получается слишком много":
-        "Side of the square cell in meters for auto-split. 256 m matches the vanilla streaming radius. Decrease for finer chunks, increase if you end up with too many districts",
+    "Сторона квадратной ячейки в метрах для разбиения по XY-сетке. 256 м соответствует ванильному радиусу стриминга. Уменьшай для более мелких чанков, увеличивай если районов получается слишком много":
+        "Side of the square cell in meters for XY-grid splitting. 256 m matches the vanilla streaming radius. Decrease for finer chunks, increase if you end up with too many districts",
 
     # ── 1.6.6 — Vehicle damage variants ─────────────────────────────────
     "Damage variants": "Damage variants",
@@ -1707,4 +1716,18 @@ LANG = {
     "Группировать по IPL": "Group by IPL",
     "Создавать отдельную коллекцию на каждый IPL-файл (Map_LAn, Map_LAs, Map_SF…) вместо одиночных Map_DFF_Far/Mid/Near. Удобно для скрытия районов целиком и для совместного редактирования карты. LOD-меши идут в коллекцию своего IPL вместе с обычными мешами":
         "Create a separate collection per IPL file (Map_LAn, Map_LAs, Map_SF…) instead of the unified Map_DFF_Far/Mid/Near buckets. Handy for hiding whole districts and for co-op map editing. LOD meshes go into their IPL's collection alongside regular meshes",
+
+    # ── 1.6.6 — Map Export modal progress ───────────────────────────────
+    "Map Export: подготовка...": "Map Export: preparing...",
+    "Ошибка экспорта": "Export error",
+
+    # ── 1.6.6 — Vehicle panel ───────────────────────────────────────────
+    "Машины": "Vehicles",
+    "Целевые коллекции": "Target collections",
+    "Целевые коллекции:": "Target collections:",
+    "Какие top-level коллекции экспортировать. Авто-инициализация по выделению в outliner; если не угадало — отметь галочками вручную. Имеет смысл вместе с режимом «По коллекциям»":
+        "Which top-level collections to export. Auto-initialised from the outliner selection; if it didn't catch them, tick the boxes manually. Most useful with «By collection» split mode",
+    "(пусто = выделение из outliner на момент нажатия)":
+        "(empty = outliner selection captured when button was pressed)",
+    "Export Map": "Export Map",
 }

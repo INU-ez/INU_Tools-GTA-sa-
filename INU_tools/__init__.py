@@ -3382,13 +3382,17 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
         return {'RUNNING_MODAL'}
 
     def _get_ipl_subcol(self, ipl_basename: str, kind: str):
-        """Lazily fetch / create a sub-collection inside Map_<ipl>.
+        """Lazily fetch / create a sub-collection inside <ipl>.
 
-        Layout:
-            Map_<ipl>/                 (parent, hidden during import)
-              Map_<ipl>_DFF
-              Map_<ipl>_LOD
-              Map_<ipl>_COL
+        Layout (no ``Map_`` prefix — keeps round-trip readable, the
+        parent collection name matches the original IPL filename so
+        re-export with «split by collection» writes back to the same
+        district name):
+
+            <ipl>/                  (parent, hidden during import)
+              <ipl>_DFF
+              <ipl>_LOD
+              <ipl>_COL
 
         ``kind`` is 'dff' / 'lod' / 'col'. The parent + the requested
         sub-collection are created on demand — IPLs without LOD or COL
@@ -3397,10 +3401,9 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
         cache = self._ipl_collections
         entry = cache.get(ipl_basename)
         if entry is None:
-            parent_name = f"Map_{ipl_basename}"
-            parent = bpy.data.collections.get(parent_name)
+            parent = bpy.data.collections.get(ipl_basename)
             if parent is None:
-                parent = bpy.data.collections.new(parent_name)
+                parent = bpy.data.collections.new(ipl_basename)
                 self._scene.collection.children.link(parent)
                 parent.hide_viewport = True
             entry = {'parent': parent}
@@ -3408,7 +3411,7 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
 
         sub = entry.get(kind)
         if sub is None:
-            sub_name = f"Map_{ipl_basename}_{kind.upper()}"
+            sub_name = f"{ipl_basename}_{kind.upper()}"
             sub = bpy.data.collections.get(sub_name)
             if sub is None:
                 sub = bpy.data.collections.new(sub_name)
@@ -9718,24 +9721,6 @@ class GTATOOLS_PT_check_panel(bpy.types.Panel):
         row.operator("gtatools.check_ngons", text=T("Проверка N-gon"), icon='MESH_DATA')
         col.operator("gtatools.reset_transform", text=T("Сброс трансформ"), icon='EMPTY_AXIS')
         col.operator("gtatools.snap_to_dff", text=T("LOD/COL → DFF"), icon='SNAP_ON')
-        col.operator("gtatools.vehicle_scale", text=T("Масштаб машины…"),
-                     icon='FULLSCREEN_ENTER')
-
-        # Damage variants — _ok / _dam pair management for vehicles
-        box = layout.box()
-        box.label(text=T("Damage variants"), icon='AUTO')
-        box.operator("gtatools.vehicle_add_damage_variant",
-                     text=T("Создать _dam"), icon='DUPLICATE')
-        row = box.row(align=True)
-        row.label(text=T("Показать:"))
-        op = row.operator("gtatools.vehicle_show_damage", text=T("OK"))
-        op.state = 'OK'
-        op = row.operator("gtatools.vehicle_show_damage", text=T("Dam"))
-        op.state = 'DAM'
-        op = row.operator("gtatools.vehicle_show_damage", text=T("Оба"))
-        op.state = 'BOTH'
-        box.operator("gtatools.vehicle_pair_report",
-                     text=T("Проверить пары"), icon='CHECKMARK')
 
         # Материалы
         col = layout.column(align=True)
@@ -9761,6 +9746,49 @@ class GTATOOLS_PT_check_panel(bpy.types.Panel):
         for _t in ('OBJ', 'COL', 'SHA', 'NON'):
             op = row.operator("gtatools.batch_set_type", text=_t)
             op.obj_type = _t
+
+
+class GTATOOLS_PT_vehicle_panel(bpy.types.Panel):
+    """Dedicated panel for vehicle-specific operators — body scale,
+    damage variants (_ok / _dam pairs). Moved out of Check so the
+    vehicle workflow has a stable home, and so non-vehicle modders
+    don't see it during regular map work."""
+    bl_label = T("Машины")
+    bl_idname = "GTATOOLS_PT_vehicle_panel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'GTA Tools'
+    bl_parent_id = "GTATOOLS_PT_main_panel"
+    bl_order = 11
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw_header(self, context):
+        self.layout.label(text="", icon='AUTO')
+
+    def draw(self, context):
+        layout = self.layout
+
+        # Hierarchy scale
+        layout.operator("gtatools.vehicle_scale",
+                        text=T("Масштаб машины…"),
+                        icon='FULLSCREEN_ENTER')
+
+        # Damage variants — _ok / _dam pair management
+        layout.separator()
+        box = layout.box()
+        box.label(text=T("Damage variants"), icon='AUTO')
+        box.operator("gtatools.vehicle_add_damage_variant",
+                     text=T("Создать _dam"), icon='DUPLICATE')
+        row = box.row(align=True)
+        row.label(text=T("Показать:"))
+        op = row.operator("gtatools.vehicle_show_damage", text=T("OK"))
+        op.state = 'OK'
+        op = row.operator("gtatools.vehicle_show_damage", text=T("Dam"))
+        op.state = 'DAM'
+        op = row.operator("gtatools.vehicle_show_damage", text=T("Оба"))
+        op.state = 'BOTH'
+        box.operator("gtatools.vehicle_pair_report",
+                     text=T("Проверить пары"), icon='CHECKMARK')
 
 
 # ── 2DFX Light Presets ──
@@ -12280,9 +12308,13 @@ class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
             box.prop(scene, "gtatools_map_group_by_ipl",
                      text=T("Группировать по IPL"), toggle=True,
                      icon='OUTLINER_COLLECTION')
-            box.operator("gtatools.import_map",
+            row = box.row(align=True)
+            row.operator("gtatools.import_map",
                          text=T("Import Map"),
                          icon='IMPORT')
+            row.operator("gtatools.map_export",
+                         text=T("Export Map"),
+                         icon='EXPORT')
             box.prop(scene, "gtatools_profile_enabled",
                      text=T("Профайлер (debug timings)"), toggle=False)
             row = box.row(align=True)
@@ -14948,6 +14980,7 @@ classes = (
     GTATOOLS_PT_ide_ipl_panel,
     GTATOOLS_PT_export_panel,
     GTATOOLS_PT_check_panel,
+    GTATOOLS_PT_vehicle_panel,
     GTATOOLS_OT_apply_2dfx_preset,
     GTATOOLS_OT_create_2dfx,
     GTATOOLS_OT_attach_2dfx,
