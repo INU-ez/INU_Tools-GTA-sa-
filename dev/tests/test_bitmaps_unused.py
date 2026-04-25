@@ -22,34 +22,45 @@ from core.bitmap_diff import (  # noqa: E402
 )
 
 
+class _NS(types.SimpleNamespace):
+    """SimpleNamespace + identity hash.
+
+    Plain ``types.SimpleNamespace`` defines ``__eq__`` without explicit
+    ``__hash__`` — on Python 3.13+ that makes instances unhashable, so
+    they can't go into ``set()`` (which is exactly what ``collect_used``
+    uses to dedupe used materials/images). Real Blender datablocks
+    have identity hash; mirror that in the mocks via this subclass.
+    """
+    __hash__ = object.__hash__
+
+
 # ─────────────────────── mock builders (duck typing) ───────────────────
 
 def _img(name="img", *, source="FILE", use_fake_user=False):
-    return types.SimpleNamespace(
-        name=name, source=source, use_fake_user=use_fake_user)
+    return _NS(name=name, source=source, use_fake_user=use_fake_user)
 
 
 def _node(image, kind='TEX_IMAGE'):
-    return types.SimpleNamespace(type=kind, image=image)
+    return _NS(type=kind, image=image)
 
 
 def _material(name="mat", *, image_nodes=None, use_nodes=True,
               use_fake_user=False):
     nodes = [_node(img) for img in (image_nodes or [])]
-    node_tree = types.SimpleNamespace(nodes=nodes) if use_nodes else None
-    return types.SimpleNamespace(
+    node_tree = _NS(nodes=nodes) if use_nodes else None
+    return _NS(
         name=name, use_nodes=use_nodes, node_tree=node_tree,
         use_fake_user=use_fake_user)
 
 
 def _mesh_obj(name, materials):
-    return types.SimpleNamespace(
+    return _NS(
         name=name, type='MESH',
-        data=types.SimpleNamespace(materials=list(materials)))
+        data=_NS(materials=list(materials)))
 
 
 def _empty_obj(name="E"):
-    return types.SimpleNamespace(name=name, type='EMPTY', data=None)
+    return _NS(name=name, type='EMPTY', data=None)
 
 
 # ─────────────────────────── is_internal_image ───────────────────────────
@@ -95,9 +106,9 @@ def test_collect_used_picks_up_images_only_via_used_materials():
 def test_collect_used_skips_non_mesh_objects():
     img = _img("x.dds")
     mat = _material("M", image_nodes=[img])
-    armature = types.SimpleNamespace(
+    armature = _NS(
         type='ARMATURE',
-        data=types.SimpleNamespace(materials=[mat]))
+        data=_NS(materials=[mat]))
 
     used_images, used_materials = collect_used([armature])
 
@@ -138,9 +149,9 @@ def test_collect_used_skips_material_without_nodes():
 
 def test_collect_used_ignores_non_tex_image_nodes():
     img = _img("x.dds")
-    mat = types.SimpleNamespace(
+    mat = _NS(
         name="m", use_nodes=True, use_fake_user=False,
-        node_tree=types.SimpleNamespace(nodes=[
+        node_tree=_NS(nodes=[
             _node(img, kind='OUTPUT_MATERIAL'),
             _node(None, kind='TEX_IMAGE'),  # node exists but no image
         ]),
