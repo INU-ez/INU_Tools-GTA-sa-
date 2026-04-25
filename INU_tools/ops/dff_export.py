@@ -1051,7 +1051,30 @@ def build_dff_clump(objects, version: int = GTA_SA_VERSION,
     chunks (CHUNK_COLLISION_MODEL). Normally this is the DFF's base
     filename without extension; the single-file ``export_dff`` wrapper
     derives it from ``filepath``.
+
+    VCL Layer System (Phase 3): when any mesh in *objects* has VCL
+    layers, the layer stacks are composited into Day/Night BEFORE the
+    exporter reads them, and restored AFTER. So exporting a model
+    with edit layers produces a DFF whose vertex colors are the
+    flattened end result, while the user's working .blend keeps its
+    layers intact for further editing.
     """
+    # Pre-collect mesh objects so we can wrap the entire build pass
+    # inside the VCL flatten context. The list is rebuilt below from
+    # ``objects`` again — duplicating it here is the price of not
+    # re-architecting the function for a one-line change.
+    _vcl_target_meshes = list({
+        obj.data for obj in objects
+        if obj.type == 'MESH' and obj.data is not None
+    })
+
+    from ..tools.vc_layers import flatten_for_export
+
+    with flatten_for_export(_vcl_target_meshes):
+        return _build_dff_clump_inner(objects, version, col_model_name)
+
+
+def _build_dff_clump_inner(objects, version: int, col_model_name: str) -> DffClump:
     clump = DffClump(version=version)
 
     # Separate objects by type

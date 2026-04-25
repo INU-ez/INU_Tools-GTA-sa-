@@ -4,9 +4,17 @@
 # whole city district with one click. Per-object IDs, draw distance and
 # TXD names are taken from `obj.inu` custom properties (same props that
 # back the separate IDE/IPL exports).
+#
+# Auto-split: for very large scenes (50k+ DFF objects) a single district
+# is impractical (long IPL files, monolithic TXD). Auto-split mode bins
+# DFFs by their XY origin into a grid of `cell_size`-meter cells; each
+# non-empty cell becomes its own subdirectory with its own IDE/IPL/COL/TXD.
+# Game-side this just means loading several IPLs instead of one — engine
+# behavior is identical.
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass
 
@@ -65,6 +73,38 @@ def collect_map_groups(objects) -> list[MapGroup]:
     return groups
 
 
+# ──────────────────────────── auto-split grid ─────────────────────────
+
+def compute_grid_cells(groups: list[MapGroup], cell_size: float
+                       ) -> dict[tuple[int, int], list[MapGroup]]:
+    """Bin map groups by XY cell index (grid origin = world (0,0)).
+
+    Cell index for a group is taken from the DFF object's world origin.
+    LOD/COL members travel with their DFF — they are not assigned
+    independently. Returns a dict keyed by (cx, cy).
+    """
+    if cell_size <= 0:
+        return {(0, 0): list(groups)}
+    cells: dict[tuple[int, int], list[MapGroup]] = {}
+    for g in groups:
+        loc = g.dff.matrix_world.translation
+        cx = int(math.floor(loc.x / cell_size))
+        cy = int(math.floor(loc.y / cell_size))
+        cells.setdefault((cx, cy), []).append(g)
+    return cells
+
+
+def format_cell_name(base_name: str, cx: int, cy: int) -> str:
+    """Return a filesystem-safe sub-district name for a grid cell.
+
+    Negative indices use 'm' (minus) prefix so the name does not start
+    with a dash, which some tools/IPL parsers dislike.
+    """
+    def _fmt(n: int) -> str:
+        return f"m{abs(n)}" if n < 0 else f"{n}"
+    return f"{base_name}_x{_fmt(cx)}_y{_fmt(cy)}"
+
+
 # ──────────────────────────── ID helpers ──────────────────────────────
 
 def _get_or_assign_id(obj, id_pool_start: int, used_ids: set[int]) -> int:
@@ -99,10 +139,20 @@ def export_map(target_dir: str, *, objects=None,
                export_ide: bool = True,
                binary_ipl: bool = False,
                id_pool_start: int = 20000,
-               base_name: str = "district") -> dict:
+               base_name: str = "district",
+               auto_split: bool = False,
+               cell_size: float = 256.0) -> dict:
     """Emit every format for the given scene objects into `target_dir`.
 
-    Returns a dict with per-format counts: {'dff', 'col', 'txd', 'ide', 'ipl'}.
+    When ``auto_split`` is set, DFF groups are binned into ``cell_size``-meter
+    XY cells (origin = world (0,0)); each non-empty cell becomes its own
+    subdirectory with its own IDE/IPL/COL/TXD bundle. Useful for very large
+    scenes where a single district would balloon IPL/TXD beyond practical
+    streaming limits. If splitting yields a single cell the function falls
+    back to non-split mode automatically.
+
+    Returns a dict with per-format counts: {'dff', 'col', 'txd', 'ide', 'ipl', 'groups'}
+    plus 'cells' when auto-split was used.
     """
     os.makedirs(target_dir, exist_ok=True)
 
@@ -118,6 +168,41 @@ def export_map(target_dir: str, *, objects=None,
     used_ids: set[int] = set()
     for g in groups:
         _get_or_assign_id(g.dff, id_pool_start, used_ids)
+
+    # ── Auto-split path ─────────────────────────────────────────────
+    if auto_split and cell_size > 0:
+        cells = compute_grid_cells(groups, cell_size)
+        if len(cells) > 1:
+            agg = {'dff': 0, 'col': 0, 'txd': 0, 'ide': 0, 'ipl': 0,
+                   'groups': 0, 'cells': 0}
+            for (cx, cy), cell_groups in sorted(cells.items()):
+                cell_name = format_cell_name(base_name, cx, cy)
+                cell_dir = os.path.join(target_dir, cell_name)
+                os.makedirs(cell_dir, exist_ok=True)
+
+                cell_objs: list[bpy.types.Object] = []
+                for g in cell_groups:
+                    cell_objs.append(g.dff)
+                    if g.lod:
+                        cell_objs.append(g.lod)
+                    cell_objs.extend(g.col_objects)
+
+                cell_stats = export_map(
+                    cell_dir, objects=cell_objs,
+                    export_dff=export_dff, export_col=export_col,
+                    col_library=col_library, export_txd=export_txd,
+                    export_ipl=export_ipl, export_ide=export_ide,
+                    binary_ipl=binary_ipl, id_pool_start=id_pool_start,
+                    base_name=cell_name, auto_split=False,
+                )
+                if 'error' in cell_stats:
+                    print(f"[map_export] cell {cell_name} failed: {cell_stats['error']}")
+                    continue
+                for k in ('dff', 'col', 'txd', 'ide', 'ipl', 'groups'):
+                    agg[k] += cell_stats.get(k, 0)
+                agg['cells'] += 1
+            return agg
+        # Single cell — fall through to non-split path
 
     stats = {'dff': 0, 'col': 0, 'txd': 0, 'ide': 0, 'ipl': 0}
 
@@ -257,10 +342,39 @@ class GTATOOLS_OT_map_export(bpy.types.Operator):
         name="ID Pool Start", default=20000, min=1, max=32000,
         description=T("Первый ID для DFF у которых inu.model_id == 0"),
     )
+    auto_split: bpy.props.BoolProperty(
+        name=T("Auto-split на районы"),
+        description=T("Автоматически разбить выделение на сетку XY-ячеек по cell_size метров. Каждая непустая ячейка получит свою подпапку с отдельными IDE/IPL/COL/TXD. Полезно для очень больших сцен (50k+ моделей) где одиночный district неподъёмен"),
+        default=False,
+    )
+    cell_size: bpy.props.FloatProperty(
+        name=T("Размер ячейки (м)"),
+        description=T("Сторона квадратной ячейки в метрах для auto-split. 256 м соответствует ванильному радиусу стриминга. Уменьшай для более мелких чанков, увеличивай если районов получается слишком много"),
+        default=256.0, min=16.0, soft_max=2048.0, max=8192.0,
+    )
 
     def invoke(self, context, event):
         context.window_manager.fileselect_add(self)
         return {'RUNNING_MODAL'}
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "base_name")
+        row = layout.row(align=True)
+        row.prop(self, "include_dff", toggle=True)
+        row.prop(self, "include_col", toggle=True)
+        row.prop(self, "include_txd", toggle=True)
+        row = layout.row(align=True)
+        row.prop(self, "include_ide", toggle=True)
+        row.prop(self, "include_ipl", toggle=True)
+        layout.prop(self, "col_library")
+        layout.prop(self, "binary_ipl")
+        layout.prop(self, "id_pool_start")
+        layout.separator()
+        layout.prop(self, "auto_split")
+        sub = layout.column()
+        sub.enabled = self.auto_split
+        sub.prop(self, "cell_size")
 
     def execute(self, context):
         if not self.directory or not os.path.isdir(self.directory):
@@ -283,13 +397,20 @@ class GTATOOLS_OT_map_export(bpy.types.Operator):
             binary_ipl=self.binary_ipl,
             id_pool_start=self.id_pool_start,
             base_name=self.base_name,
+            auto_split=self.auto_split,
+            cell_size=self.cell_size,
         )
         if 'error' in stats:
             self.report({'ERROR'}, stats['error'])
             return {'CANCELLED'}
-        msg = (f"{stats['groups']} group(s) → "
-               f"{stats['dff']} DFF, {stats['col']} COL, "
-               f"{stats['txd']} TXD, {stats['ide']} IDE, {stats['ipl']} IPL")
+        if 'cells' in stats:
+            msg = (f"{stats['cells']} cells, {stats['groups']} group(s) → "
+                   f"{stats['dff']} DFF, {stats['col']} COL, "
+                   f"{stats['txd']} TXD, {stats['ide']} IDE, {stats['ipl']} IPL")
+        else:
+            msg = (f"{stats['groups']} group(s) → "
+                   f"{stats['dff']} DFF, {stats['col']} COL, "
+                   f"{stats['txd']} TXD, {stats['ide']} IDE, {stats['ipl']} IPL")
         self.report({'INFO'}, msg)
         return {'FINISHED'}
 

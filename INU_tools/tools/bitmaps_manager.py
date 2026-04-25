@@ -15,6 +15,11 @@ from collections import defaultdict
 import bpy
 
 from .. import T
+from ..core.bitmap_diff import (
+    collect_used as _collect_used_from,
+    diff_unused_images as _diff_unused_images,
+    diff_unused_materials as _diff_unused_materials,
+)
 
 
 # ──────────────────────────── scanning ────────────────────────────────
@@ -181,6 +186,79 @@ def batch_copy_textures(target_dir: str, *, used_only: bool = True,
     return copied, skipped, errors
 
 
+# ──────────────────────────── unused cleanup ─────────────────────────
+
+def collect_used_images_and_materials():
+    """Return (used_images, used_materials) sets — datablocks that are
+    actually referenced by mesh-bound material slots → TEX_IMAGE nodes.
+
+    A material counts as used iff at least one MESH object's
+    ``data.materials`` slot points at it. An image counts as used iff
+    at least one *used* material has a TEX_IMAGE node pointing at it
+    (so a TEX_IMAGE node inside an orphaned material doesn't keep its
+    image alive).
+    """
+    return _collect_used_from(bpy.data.objects)
+
+
+def find_unused_images(*, respect_fake_user: bool = True):
+    """List images present in ``bpy.data.images`` but not reachable
+    via any mesh-bound material's TEX_IMAGE node.
+
+    Skips Blender-internal images (Render Result, Viewer Node) and,
+    by default, images flagged ``use_fake_user`` — those are the
+    explicit "keep this even when nothing references it" signal.
+    """
+    used_images, _ = collect_used_images_and_materials()
+    return _diff_unused_images(
+        bpy.data.images, used_images,
+        respect_fake_user=respect_fake_user)
+
+
+def find_unused_materials(*, respect_fake_user: bool = True):
+    """List materials not assigned to any MESH object's slot.
+
+    Same fake-user etiquette as :func:`find_unused_images`. Materials
+    living only inside a node group, library override, or other graph
+    edge cases get flagged — they're still detached from any mesh and
+    won't make it into a TXD/DFF export.
+    """
+    _, used_materials = collect_used_images_and_materials()
+    return _diff_unused_materials(
+        bpy.data.materials, used_materials,
+        respect_fake_user=respect_fake_user)
+
+
+def remove_unused_textures(*, remove_materials: bool = False,
+                            respect_fake_user: bool = True):
+    """Delete unused images (and optionally unused materials) in place.
+
+    Returns ``(images_removed, materials_removed)`` counts.
+    """
+    images = find_unused_images(respect_fake_user=respect_fake_user)
+    img_count = 0
+    for img in images:
+        try:
+            bpy.data.images.remove(img)
+            img_count += 1
+        except (RuntimeError, ReferenceError):
+            # Image was already gone (cascade-removed by a parent), or
+            # is locked by another datablock — skip rather than raise.
+            continue
+
+    mat_count = 0
+    if remove_materials:
+        materials = find_unused_materials(respect_fake_user=respect_fake_user)
+        for mat in materials:
+            try:
+                bpy.data.materials.remove(mat)
+                mat_count += 1
+            except (RuntimeError, ReferenceError):
+                continue
+
+    return img_count, mat_count
+
+
 # ──────────────────────────── duplicate detection ─────────────────────
 
 def find_duplicate_textures() -> dict[str, list[str]]:
@@ -292,6 +370,96 @@ class GTATOOLS_OT_bitmaps_copy(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class GTATOOLS_OT_bitmaps_find_unused(bpy.types.Operator):
+    """Найти неиспользуемые текстуры и материалы — те, на которые не ссылается ни один меш-слот в сцене"""
+    bl_idname = "gtatools.bitmaps_find_unused"
+    bl_label = "Find Unused"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        images = find_unused_images()
+        materials = find_unused_materials()
+        scene = context.scene
+        scene['bitmaps_unused_image_count'] = len(images)
+        scene['bitmaps_unused_material_count'] = len(materials)
+
+        if not images and not materials:
+            _report(self, 'INFO', "No unused textures or materials")
+            return {'FINISHED'}
+
+        if images:
+            print(f"[Bitmaps Manager] Unused images ({len(images)}):")
+            for img in images:
+                print(f"     {img.name}  ({img.filepath or 'no path'})")
+        if materials:
+            print(f"[Bitmaps Manager] Unused materials ({len(materials)}):")
+            for mat in materials:
+                print(f"     {mat.name}")
+
+        _report(self, 'WARNING',
+                f"Unused: {len(images)} images, {len(materials)} materials "
+                f"— see System Console")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_bitmaps_remove_unused(bpy.types.Operator):
+    """Удалить неиспользуемые текстуры и (опционально) материалы из сцены.
+
+    use_fake_user-помеченные datablocks пропускаются — это явный знак
+    «оставить даже без ссылок». Действие необратимо без Ctrl+Z, поэтому
+    показывает подтверждение со счётчиками перед удалением"""
+    bl_idname = "gtatools.bitmaps_remove_unused"
+    bl_label = "Remove Unused"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    remove_materials: bpy.props.BoolProperty(
+        name=T("Также удалить неиспользуемые материалы"),
+        description=T("Удалить также материалы, не назначенные ни на один меш-слот"),
+        default=False,
+    )
+
+    def invoke(self, context, event):
+        # Compute counts so the dialog shows what will be removed
+        # before the user clicks OK. Stored on self so draw() can read.
+        self._img_count = len(find_unused_images())
+        self._mat_count = len(find_unused_materials())
+        if not self._img_count and not self._mat_count:
+            _report(self, 'INFO', "No unused textures or materials")
+            return {'CANCELLED'}
+        return context.window_manager.invoke_props_dialog(self, width=400)
+
+    def draw(self, context):
+        layout = self.layout
+        box = layout.box()
+        box.label(text=T("Будет удалено:"), icon='TRASH')
+        box.label(text=f"{T('Текстуры')}: {self._img_count}", icon='IMAGE_DATA')
+        if self.remove_materials:
+            box.label(text=f"{T('Материалы')}: {self._mat_count}",
+                      icon='MATERIAL')
+        else:
+            box.label(text=f"{T('Материалы')}: {self._mat_count} "
+                           f"({T('пропущены')})",
+                      icon='MATERIAL')
+        layout.prop(self, "remove_materials")
+        layout.label(text=T("use_fake_user-помеченные пропускаются"),
+                     icon='FAKE_USER_ON')
+
+    def execute(self, context):
+        img_removed, mat_removed = remove_unused_textures(
+            remove_materials=self.remove_materials)
+        scene = context.scene
+        # Recompute remaining (could be non-zero if locked by other refs).
+        scene['bitmaps_unused_image_count'] = len(find_unused_images())
+        scene['bitmaps_unused_material_count'] = len(find_unused_materials())
+        if self.remove_materials:
+            _report(self, 'INFO',
+                    f"Removed {img_removed} images, {mat_removed} materials")
+        else:
+            _report(self, 'INFO',
+                    f"Removed {img_removed} images")
+        return {'FINISHED'}
+
+
 class GTATOOLS_OT_bitmaps_find_dupes(bpy.types.Operator):
     """Хэшировать все файлы текстур и показать группы одинаковых файлов"""
     bl_idname = "gtatools.bitmaps_find_dupes"
@@ -347,11 +515,28 @@ class GTATOOLS_PT_bitmaps_panel(bpy.types.Panel):
         col.operator("gtatools.bitmaps_find_dupes",
                      text=T("Найти дубликаты"), icon='DUPLICATE')
 
+        # Unused cleanup — scan first, then offer destructive remove.
+        col.separator()
+        row = col.row(align=True)
+        row.operator("gtatools.bitmaps_find_unused",
+                     text=T("Найти неиспользуемые"), icon='ZOOM_PREVIOUS')
+        unused_imgs = scene.get('bitmaps_unused_image_count')
+        unused_mats = scene.get('bitmaps_unused_material_count')
+        if unused_imgs is not None:
+            total = unused_imgs + (unused_mats or 0)
+            row.label(
+                text=f"{T('Неисп.')}: {unused_imgs}/{unused_mats or 0}",
+                icon='INFO' if total else 'CHECKMARK')
+        col.operator("gtatools.bitmaps_remove_unused",
+                     text=T("Удалить неиспользуемые…"), icon='TRASH')
+
 
 classes = (
     GTATOOLS_OT_bitmaps_scan,
     GTATOOLS_OT_bitmaps_resolve,
     GTATOOLS_OT_bitmaps_copy,
+    GTATOOLS_OT_bitmaps_find_unused,
+    GTATOOLS_OT_bitmaps_remove_unused,
     GTATOOLS_OT_bitmaps_find_dupes,
     GTATOOLS_PT_bitmaps_panel,
 )

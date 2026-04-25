@@ -116,6 +116,12 @@ def apply_ifp_action(action_name: str, armature, context=None):
     except Exception as e:
         return False, f"Error creating fcurves: {e}"
 
+    # IFP keyframe times are seconds (canonical, for both ANP3 and
+    # ANPK after the reader normalises). Blender's fcurve x-axis is
+    # frames at scene fps, so we scale up. At default 30fps this is
+    # the identity for vanilla SA peds.ifp data.
+    fps = float(getattr(bpy.context.scene.render, 'fps', 30) or 30)
+
     for abone in anim.bones:
         bone_name = abone.name
         pose_bone = armature.pose.bones.get(bone_name)
@@ -149,7 +155,7 @@ def apply_ifp_action(action_name: str, armature, context=None):
                 fc_rz = fc_container.new(data_path_rot, index=3)
 
                 for kf in abone.keyframes:
-                    frame = kf.time
+                    frame = kf.time * fps
                     qx, qy, qz, qw = kf.rotation
                     gta_quat = mathutils.Quaternion((qw, qx, qy, qz))
                     bl_quat = rest_inv @ gta_quat
@@ -164,7 +170,7 @@ def apply_ifp_action(action_name: str, armature, context=None):
                 fc_lz = fc_container.new(data_path_loc, index=2)
 
                 for kf in abone.keyframes:
-                    frame = kf.time
+                    frame = kf.time * fps
                     tx, ty, tz = kf.translation
                     gta_loc = mathutils.Vector((tx, ty, tz))
                     bl_loc = rest_inv.to_matrix() @ gta_loc
@@ -185,6 +191,209 @@ def apply_ifp_action(action_name: str, armature, context=None):
             pass
 
     return True, f"Applied '{action_name}' ({len(anim.bones)} bones)"
+
+
+# ──────────────────────────── live preview ───────────────────────────
+#
+# Preview an IFP animation on the armature WITHOUT creating/assigning
+# a Blender Action. The frame_change_post handler pokes pose bones
+# directly on every timeline scrub; when preview is turned off the
+# previously-bound action (if any) is restored.
+#
+# Rationale: browsing 294 vanilla animations via `apply_ifp_action`
+# creates 294 Action datablocks and burns the armature's animation_data.
+# For a "just show me what this anim looks like" pass, preview is
+# cheaper and leaves the Action editor untouched.
+
+_preview_state = {
+    'armature_name': None,
+    'anim_name': None,
+    'saved_action': None,
+    'rest_cache': None,  # dict bone_name → (rest_quat_inv, rest_quat_inv_mat)
+    'fps': 30.0,
+}
+
+
+def _build_rest_cache(armature):
+    """Pre-compute rest-pose inverses per bone for the interpolator.
+
+    Same math as apply_ifp_action: IFP rotations are stored absolute
+    in bone-local (relative-to-parent) space, Blender's
+    ``pose_bone.rotation_quaternion`` is a DELTA from rest. We subtract
+    the rest by pre-multiplying with ``rest_quat.inverted()``.
+    """
+    cache = {}
+    for pb in armature.pose.bones:
+        rest_bone = armature.data.bones.get(pb.name)
+        if not rest_bone:
+            continue
+        rest_mat = rest_bone.matrix_local
+        if rest_bone.parent:
+            rest_mat = rest_bone.parent.matrix_local.inverted() @ rest_mat
+        rest_inv = rest_mat.to_quaternion().inverted()
+        cache[pb.name] = (rest_inv, rest_inv.to_matrix())
+    return cache
+
+
+def _find_cached_anim(anim_name):
+    """Return the cached ``Animation`` object for *anim_name* across all
+    previously-imported IFPs, or None."""
+    for ifp in _ifp_cache.values():
+        for a in ifp.animations:
+            if a.name == anim_name:
+                return a
+    return None
+
+
+def _sample_anim_keyframe(anim_bone, time_sec):
+    """Linearly interpolate this bone's keyframes at ``time_sec``.
+
+    Returns (rotation_xyzw, translation_xyz, has_trans) or None if the
+    bone has no keyframes.
+    """
+    kfs = anim_bone.keyframes
+    if not kfs:
+        return None
+
+    # ``kf.time`` is canonical seconds (both ANP3 and ANPK readers
+    # normalise to seconds). The handler passes
+    # ``scene.frame_current / fps`` which is also seconds, so we
+    # compare directly with no conversion.
+    t = time_sec
+
+    # Find the pair surrounding t. Keyframes are already time-ordered.
+    lo = kfs[0]
+    hi = kfs[-1]
+    for i in range(len(kfs) - 1):
+        if kfs[i].time <= t <= kfs[i + 1].time:
+            lo, hi = kfs[i], kfs[i + 1]
+            break
+    else:
+        # Outside the range — clamp to endpoints for hold-behaviour.
+        if t <= kfs[0].time:
+            lo = hi = kfs[0]
+        else:
+            lo = hi = kfs[-1]
+
+    span = hi.time - lo.time
+    alpha = 0.0 if span <= 1e-6 else max(0.0, min(1.0, (t - lo.time) / span))
+
+    rot = tuple(
+        lo.rotation[i] + (hi.rotation[i] - lo.rotation[i]) * alpha
+        for i in range(4)
+    )
+    trans = tuple(
+        lo.translation[i] + (hi.translation[i] - lo.translation[i]) * alpha
+        for i in range(3)
+    )
+    has_trans = bool(anim_bone.key_type & HAS_TRANS)
+    return rot, trans, has_trans
+
+
+def _ifp_preview_frame_handler(scene, depsgraph=None):
+    """Called on frame_change_post while preview is active. Writes
+    interpolated pose to the cached armature's pose bones."""
+    st = _preview_state
+    arm_name = st['armature_name']
+    anim_name = st['anim_name']
+    if not arm_name or not anim_name:
+        return
+
+    armature = bpy.data.objects.get(arm_name)
+    if not armature or armature.type != 'ARMATURE':
+        return
+
+    anim = _find_cached_anim(anim_name)
+    if not anim:
+        return
+
+    rest_cache = st['rest_cache']
+    if rest_cache is None:
+        rest_cache = _build_rest_cache(armature)
+        st['rest_cache'] = rest_cache
+
+    fps = st.get('fps') or 30.0
+    time_sec = scene.frame_current / fps
+
+    for abone in anim.bones:
+        pbone = armature.pose.bones.get(abone.name)
+        if not pbone:
+            continue
+        sample = _sample_anim_keyframe(abone, time_sec)
+        if not sample:
+            continue
+
+        rot_xyzw, trans, has_trans = sample
+        rest_inv, rest_inv_mat = rest_cache.get(
+            pbone.name, (mathutils.Quaternion(), mathutils.Matrix.Identity(3)))
+
+        gta_quat = mathutils.Quaternion(
+            (rot_xyzw[3], rot_xyzw[0], rot_xyzw[1], rot_xyzw[2]))
+        bl_quat = rest_inv @ gta_quat
+        pbone.rotation_mode = 'QUATERNION'
+        pbone.rotation_quaternion = bl_quat
+
+        if has_trans:
+            gta_loc = mathutils.Vector(trans)
+            pbone.location = rest_inv_mat @ gta_loc
+
+
+def preview_start(armature, anim_name) -> tuple[bool, str]:
+    """Enable live preview: register handler, stash the currently bound
+    Action so we can restore it on stop."""
+    if not armature or armature.type != 'ARMATURE':
+        return False, "Select an armature"
+
+    anim = _find_cached_anim(anim_name)
+    if not anim:
+        return False, f"Animation '{anim_name}' not in IFP cache"
+
+    _preview_state['armature_name'] = armature.name
+    _preview_state['anim_name'] = anim_name
+    _preview_state['rest_cache'] = None  # rebuilt on first handler tick
+
+    # Stash the current action only on first enable so a repeat-toggle
+    # doesn't overwrite the saved baseline with None.
+    if _preview_state.get('saved_action') is None:
+        if armature.animation_data and armature.animation_data.action:
+            _preview_state['saved_action'] = armature.animation_data.action
+        if armature.animation_data:
+            armature.animation_data.action = None
+
+    if _ifp_preview_frame_handler not in bpy.app.handlers.frame_change_post:
+        bpy.app.handlers.frame_change_post.append(_ifp_preview_frame_handler)
+
+    # Kick the handler once so the current frame updates immediately.
+    try:
+        _ifp_preview_frame_handler(bpy.context.scene)
+    except Exception:
+        pass
+
+    return True, f"Preview: {anim_name}"
+
+
+def preview_stop() -> tuple[bool, str]:
+    """Disable preview: unregister handler, restore stashed Action."""
+    if _ifp_preview_frame_handler in bpy.app.handlers.frame_change_post:
+        bpy.app.handlers.frame_change_post.remove(_ifp_preview_frame_handler)
+
+    arm = bpy.data.objects.get(_preview_state['armature_name'] or '')
+    saved = _preview_state.get('saved_action')
+    if arm and saved is not None and arm.animation_data:
+        try:
+            arm.animation_data.action = saved
+        except Exception:
+            pass
+
+    _preview_state['armature_name'] = None
+    _preview_state['anim_name'] = None
+    _preview_state['saved_action'] = None
+    _preview_state['rest_cache'] = None
+    return True, "Preview stopped"
+
+
+def preview_is_active() -> bool:
+    return bool(_preview_state.get('anim_name'))
 
 
 # ──────────────────────────── batch import ────────────────────────────
@@ -320,6 +529,16 @@ class GTATOOLS_OT_ifp_batch_import(bpy.types.Operator):
         name="Gap Between Clips",
         default=10.0, min=0.0, soft_max=100.0,
     )
+    start_index: bpy.props.IntProperty(
+        name=T("Начальный индекс"),
+        description=T("0-based индекс первой анимации в отфильтрованном списке. Удобно бить ped.ifp на порции: 0..49 проверил → 50..99 следующим проходом, не забивая сцену сразу всеми 294 клипами"),
+        default=0, min=0,
+    )
+    count: bpy.props.IntProperty(
+        name=T("Сколько применить"),
+        description=T("Максимум анимаций для обработки в этом запуске. 0 = все оставшиеся после start_index"),
+        default=0, min=0,
+    )
 
     def invoke(self, context, event):
         context.window_manager.fileselect_add(self)
@@ -331,9 +550,25 @@ class GTATOOLS_OT_ifp_batch_import(bpy.types.Operator):
             self.report({'ERROR'}, "Select an armature as the active object")
             return {'CANCELLED'}
 
-        anims = enumerate_animations(self.directory, self.name_filter)
-        if not anims:
+        anims_all = enumerate_animations(self.directory, self.name_filter)
+        if not anims_all:
             self.report({'WARNING'}, "No animations matched in folder")
+            return {'CANCELLED'}
+
+        # Range slice — enumerate_animations already honours name_filter,
+        # so the indices below refer to positions in the FILTERED list.
+        # This means the user's mental model is stable: "5..15 of the
+        # WALK_* animations" stays consistent regardless of prefix.
+        total = len(anims_all)
+        start = min(self.start_index, total)
+        anims = anims_all[start:]
+        if self.count > 0:
+            anims = anims[:self.count]
+
+        if not anims:
+            self.report({'WARNING'},
+                f"Range empty: start={start}, count={self.count}, "
+                f"total matched={total}")
             return {'CANCELLED'}
 
         applied, msg = batch_apply_sequential(
@@ -341,7 +576,10 @@ class GTATOOLS_OT_ifp_batch_import(bpy.types.Operator):
         if applied == 0:
             self.report({'WARNING'}, "No animations applied")
             return {'CANCELLED'}
-        self.report({'INFO'}, f"{msg} from {len(anims)} candidate(s)")
+
+        end = start + len(anims)
+        self.report({'INFO'},
+            f"{msg} — {T('диапазон')} {start}..{end} {T('из')} {total}")
         return {'FINISHED'}
 
 

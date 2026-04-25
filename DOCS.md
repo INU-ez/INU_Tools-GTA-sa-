@@ -54,6 +54,7 @@
   - [Bitmaps Manager](#bitmaps-manager)
   - [CST IO](#cst-io)
   - [Vehicle Scale Helper](#vehicle-scale-helper)
+  - [Vehicle Damage Variants](#vehicle-damage-variants)
   - [Train Station Markers](#train-station-markers)
   - [Roadblocks & Traffic Lights](#roadblocks--traffic-lights)
   - [FLA4 Path Format](#fla4-path-format)
@@ -210,12 +211,30 @@ Drag PNG/JPG/TGA images from File Browser into the 3D viewport to automatically 
 - If cache is empty, the operator reports *"Cache is empty — run «Extract Resources» first"* and bails out
 - DFFs are parsed in parallel (4-worker thread pool, numpy releases GIL) while the main thread creates Blender objects — no wait between stages
 - COLs are parsed in the same pool. SA ships district-wide lib-COL files (LAs.col, LAn.col …) each containing hundreds of ColModel entries, so the map is keyed by model name (not filename); a DFF named `building01` automatically gets its `building01` ColModel if one exists anywhere in the cached COL libs
-- Objects auto-sorted into collections:
+- Objects auto-sorted into collections (default mode):
   - **Map_DFF_Far** — draw distance 300+
   - **Map_DFF_Mid** — draw distance 100-299
   - **Map_DFF_Near** — draw distance <100
   - **Map_LOD** — LOD models (detected by name: `LODfoo`, `foo_LOD`, `foo1LOD`, `modeLODlaett`)
   - **Map_COL** — collision meshes (created lazily, only if `Load COL` is on AND at least one match is found). Each COL object shares the transform of its DFF instance
+- **Group by IPL** toggle (default off) — when ON, the four `Map_DFF_*` / `Map_LOD` buckets and the global `Map_COL` are replaced by per-IPL collection trees:
+  ```
+  Map_LAn/
+    Map_LAn_DFF
+    Map_LAn_LOD
+    Map_LAn_COL
+  Map_LAs/
+    Map_LAs_DFF
+    Map_LAs_LOD
+    Map_LAs_COL
+  Map_SF/
+    …
+  ```
+  Each parent collection (`Map_<ipl>`) is hidden during import and re-shown afterwards; sub-collections are created lazily, so an IPL with no LODs gets no `_LOD` sub. Useful when you want to:
+  - Hide an entire district at once (toggle the parent's eye icon — DFFs, LODs and collisions go dark together)
+  - Co-author a map — author A edits `Map_LAn`, author B edits `Map_SF`, no overlap
+  - Keep IPL provenance visible in the outliner so you know where each model came from
+  - Source IPL is taken from each instance's parent file basename (text IPLs by file path, binary IPLs by their entry name in the IMG archive)
 - Typical time: ~30 seconds for a full LA-sized district with COL enabled
 
 **Performance tuning (advanced):**
@@ -610,6 +629,75 @@ Save/load prelight settings (Ambient, Intensity, Gamma, Shadows) as named preset
 **Edit/Paint modes:** buttons to switch between Object, Edit, and Vertex Paint modes for quick workflow.
 
 > 💡 **Example — quick-start Night from the Day bake:** you've only baked the `Day` attribute → **Day → Night** → `Night` gets created as a copy of `Day`. Now open Post-Processing → **Brightness** = −0.3 → apply to Night → you've got a darkened version of the daytime bake. Then tweak manually (add yellow fill around lamp posts, etc.).
+
+### VC Layer System (BETA)
+
+**Section:** Prelight panel → ▸ **Слои Vertex Color (BETA)** (collapsible, between LightMap and Запекание)
+
+Photoshop-style **non-destructive** vertex color editing. Stack of named layers per scope (Day / Night), each with its own opacity / blend mode / brightness / contrast. The composite is written back into `Day` / `Night` automatically — both for live viewport preview AND on DFF export. Layers themselves stay editable in the .blend.
+
+**Purpose:** when you want to:
+- Add a green tint to walls without re-baking lighting
+- Hand-paint a window glow on top of an Itera bake
+- Adjust shadow intensity in one area without touching the rest
+- Try a colour variation, then revert with one slider
+
+**Storage:** each layer is a `BYTE_COLOR` color attribute on the mesh, named `VCL_D_<label>` (Day stack) or `VCL_N_<label>` (Night stack). Capped at **10 layers per scope**. Visible in the Color Attributes list under «Дополнительные атрибуты» — layers are first-class data, painted with Blender's standard Vertex Paint mode.
+
+#### Pipeline (typical workflow)
+
+1. **Create `Day` / `Night`** — already there from your bake or via the regular Day/Night buttons above
+2. **Add Layer** — click [+] in «Слои Day» — creates `VCL_D_Layer_1`, fully transparent
+3. **Paint the layer** — click **Рисовать** on the active layer row → enters Vertex Paint mode on `VCL_D_Layer_1`
+4. **Tune layer** — adjust Opacity / Blend Mode / Brightness / Contrast on the active layer
+5. **Toggle Live Preview** ON → `Day` attribute now shows the composite (base + all visible Day layers)
+6. **Export DFF** — composite is auto-flattened into `Day` / `Night` for the duration of the export; layers stay intact in the .blend
+
+#### Buttons
+
+| Button | Description |
+|--------|-------------|
+| **▸ Слои Vertex Color (BETA)** | Expand / collapse the section |
+| **Live preview** (toggle) | Hijack `Day` / `Night` to show the composite. ON: original baked into custom prop, composite written into `Day` / `Night` live. OFF: originals restored from backup |
+| **↻** | Refresh composite manually (when Live Preview is on) |
+| **☀ Day** / **🌙 Night** | Switch active color attribute to `Day` or `Night` (which holds the composite when Live Preview is on). The currently-shown scope's button is depressed |
+| «Дополнительные атрибуты» list | All non-Day/Night color attributes (VCL layers, custom prelight). Radio = activate, ❌ = remove |
+| **Слои Day** [+] | Create a new Day-stack layer (cap: 10) |
+| **Слои Day** [−] | Remove the active layer + its attribute |
+| **Слои Day** [▲] [▼] | Reorder active layer in the blend stack |
+| Per-row [☑] | Multi-select for group editing |
+| Per-row [👁] | Visibility — hidden = excluded from composite (alpha → 0) |
+| Per-row [🔒] | Lock paint — slider edits still work, but Vertex Paint won't write |
+| Per-row label | Click to rename (renames the underlying attribute too) |
+| Per-row opacity slider | 0–1 layer opacity in the blend |
+| **Режим** | Blend mode: Normal / Multiply / Add / Subtract |
+| **Яркость до** | Pre-blend brightness offset on this layer's pixels (−1..+1) |
+| **Контраст до** | Pre-blend contrast scale around 0.5 mid-grey (0..3) |
+| **Рисовать** | Activate this layer's attribute + enter Vertex Paint mode |
+| **→ База** | Promote this VCL layer to a standalone color attribute (drops VCL prefix) |
+| Multi-edit footer (Absolute / Relative) | Group sliders applied to all selected (☑) layers |
+| **Перекрасить выделенные…** | Replace RGB of all painted pixels in selected layers with a chosen colour (alpha untouched) |
+
+#### Live Preview details
+
+- **ON:** `Day` (and `Night`) attributes are overwritten with the composite of their stack. Original data lives in `mesh["_vcl_backup_day"]` / `mesh["_vcl_backup_night"]` as a base64-encoded float buffer
+- **OFF:** originals restored from backup; backup custom props removed
+- Composite recomputes on: any layer slider change, `▲`/`▼` move, layer add/remove/promote/demote, paint stroke (depsgraph hook detects when active is a `VCL_*`)
+- The recompose is debounced ~100 ms via a one-shot `bpy.app.timers` so a rapid drag-slide produces one final composite, not 50
+
+> ⚠ **Don't paint directly on `Day` / `Night` while Live Preview is ON.** Those attributes hold the composite; your stroke gets overwritten on the next recompose. Paint on a layer instead — click **Рисовать** on the row.
+
+#### Export-time auto-flatten
+
+DFF exporter wraps `build_dff_clump` in a context manager:
+1. Snapshot current `Day` / `Night` to memory
+2. Composite Day stack into `Day`, Night stack into `Night`
+3. DFF writer reads composite vertex colors → writes into the file
+4. Restore `Day` / `Night` from snapshot
+
+Net effect: the .blend looks exactly like before export, but the .dff contains the flattened result. No manual «commit» step needed.
+
+> 💡 **Example — testing a colour variant for the green roof:** you have a building with `Day` baked. Add a Day layer named `green_roof`, paint the roof green, opacity 0.6, blend Normal. Live Preview ON → see the composite. Export DFF, test in game. Don't like it — back to Blender, set `green_roof` opacity to 0.3, re-export. Want it gone — `[−]` removes the layer; `Day` is back to the original bake on its own.
 
 ---
 
@@ -1025,6 +1113,25 @@ Unified one-click export of a scene district: DFF + COL + TXD + IDE + IPL into a
 
 Source: [`tools/map_export.py`](INU_tools/tools/map_export.py).
 
+#### Auto-split into districts
+
+For very large scenes (50k+ DFFs) one monolithic district produces an unwieldy IPL and a TXD that strains streaming. The **Auto-split into districts** toggle (in the Map Export dialog sidebar) bins DFFs into a regular XY grid and emits one full district per non-empty cell.
+
+**How it works:**
+- Each DFF's world-origin `(x, y)` is divided by `cell_size` and floored to give a cell index `(cx, cy)`. LOD/COL siblings travel with their DFF; cell membership is decided by the DFF only.
+- Each non-empty cell becomes a subdirectory named `<base>_x<cx>_y<cy>` under the chosen target folder (negative indices use `m` prefix, e.g. `district_xm3_y1`, so directory names never start with a dash).
+- For each cell the function recursively calls itself with `auto_split=False` and the cell's subset, producing the cell's own `*.dff`, `*.col`, `*.txd`, `*.ide`, `*.ipl` exactly the way a single-district export would.
+- If splitting yields exactly one cell (everything fits in one square), the function silently falls back to non-split mode — leaving the toggle on for small scenes is harmless.
+
+**When to use:**
+- Custom maps spanning multiple SA districts (50k+ models).
+- Streaming-budget-bound mods where a single 200 MB TXD spikes load times.
+- Co-op map editing — splitting by cell lets two authors work on `district_x0_y0` and `district_x1_y0` without IPL/TXD merge conflicts.
+
+**Cell size guidance:** 256 m matches SA's vanilla streaming radius (a model in cell N becomes visible to the player roughly when they enter cell N±1). 128 m for very dense interiors; 512 m or 1024 m when most models are large terrain meshes (highways, rivers).
+
+Source: [`tools/map_export.py`](INU_tools/tools/map_export.py) → `compute_grid_cells`, `format_cell_name`, `export_map(..., auto_split=True, cell_size=...)`.
+
 ### Binary IPL Write
 
 Adds `bnry`-format output to the IPL exporter (read was already supported).
@@ -1048,9 +1155,46 @@ Write a simple linear U/V scroll animation directly into the DFF binary as chunk
 
 **How it's encoded:** two keyframes (t=0 with identity transform, t=duration with translation = speed × duration), `node_to_uv[0] = 1` to target the material's first texture slot. For cyclic scrolls (conveyors, water) pick a duration so `speed × duration` lands on a whole UV unit.
 
-**Limitation:** read-back is not implemented yet. Importing an existing UV-animated DFF loses the animation and re-exporting drops it. Write-only.
+**Round-trip:** read-back is now implemented — importing a UV-animated DFF populates `mat.inu.uv_anim_write/speed_u/speed_v/duration` from the clump's 0x2B dict and the material's 0x135 PLG. The importer treats the write-side's 2-keyframe linear encoding as canonical: it reads the last keyframe's `trans_u/v` and divides by `time` to recover the scroll speed. Hand-edited multi-keyframe animations flatten to the same speed/duration pair on re-export (intermediate keyframes aren't preserved yet).
 
-Source: [`core/dff.py`](INU_tools/core/dff.py) → `UVAnim`, `UVAnimDict`, `_uv_anim_plg_bytes`; [`ops/dff_export.py`](INU_tools/ops/dff_export.py) → `_collect_uv_anim_dict`.
+Source: [`core/dff.py`](INU_tools/core/dff.py) → `UVAnim`, `UVAnimDict`, `_uv_anim_plg_bytes`, `_read_uv_anim_dict`, `_read_uv_anim_plg`; [`ops/dff_export.py`](INU_tools/ops/dff_export.py) → `_collect_uv_anim_dict`; [`ops/dff_import.py`](INU_tools/ops/dff_import.py) → `_apply_uv_anim_to_material`.
+
+#### Step-by-step tutorial
+
+**Use cases** — conveyors and escalators, water/lava surfaces, running neon signs, scrolling billboards, moving textures on windmills. Anything where the geometry stays still but the texture appears to translate.
+
+**1. Prepare a tileable texture.** Edges have to match — left↔right and top↔bottom — otherwise every cycle shows a visible seam. Typical sizes: 128×128 or 256×256. For a conveyor belt: a black strip with three evenly spaced yellow stripes = scroll one stripe-height per cycle for an «infinite belt» feel.
+
+**2. UV unwrap.** Select the target face loop in Edit Mode, unwrap it. UVs should cover the **full 0..1 range** (or exact tiled multiples 2×/3×). UVs squeezed into 0.2..0.5 will still scroll but only 30% of the texture ever gets to play.
+
+**3. Create a material.** Image Texture node with the tileable texture, connect to BSDF Color. Open Properties → Material panel → *UV Animation* block:
+
+- ☑ **Write UV Anim to DFF** — enables the 0x2B + 0x135 chunks on export.
+- **Speed U** (units/sec) — `+` scrolls right, `−` scrolls left.
+- **Speed V** (units/sec) — `+` scrolls down, `−` scrolls up.
+- **Duration** — cycle length in seconds.
+
+**4. Pick matching speed + duration.** For a seamless cycle, `Speed × Duration` must be a **whole UV unit** (1, 2, 3…). If `Speed × Duration = 0.7`, the texture jumps on every cycle wrap.
+
+| Effect | Speed U | Speed V | Duration | Shift per cycle |
+|---|---|---|---|---|
+| Slow conveyor (down) | 0 | 0.5 | 2.0 | 1 V unit |
+| Fast belt left | −2.0 | 0 | 1.0 | 2 U units |
+| Neon scrolling right | 1.0 | 0 | 4.0 | 4 U units |
+| Water (diagonal) | 0.2 | 0.1 | 5.0 | 1 U + 0.5 V |
+
+**5. Export.** Any DFF export path (single DFF export, Export All, Export to IMG) picks up the material's `uv_anim_write` flag automatically and writes the animation chunks. No IDE flag needed — the game engine activates the anim when the material chunk `0x135` is present.
+
+**6. Test in-game.** Drop the DFF into an IMG, **Rebuild Archive** in your IMG tool (otherwise the game keeps the cached old version), load a save near the model. If the anim doesn't play:
+
+- Re-import the exported DFF via INU Tools 1.6.6 — the read-back should re-populate the same `Speed U/V + Duration` in the material. If those come back empty, the export didn't write the chunks (check the toggle).
+- `node_to_uv[0] = 1` is set automatically; mutating that to all-zeros leaves the anim present but the engine doesn't bind it to a texture slot.
+- Scroll «stutters» on every loop → your `Speed × Duration` is fractional. Re-tune one of the two so the product lands on an integer.
+
+**Limitations of the 2-keyframe linear model:**
+- No rotation, no easing — only constant-speed translation. Spinning wheels or pulsing effects need a hex editor or custom DFF patches.
+- One scroll per material — layered scrolls (foreground ×2, background ×1) want two separate materials or shader tricks.
+- Round-trip of hand-edited multi-keyframe DFFs collapses intermediate keys to the linear endpoints. Not a blocker for addon-authored files, but something to know if you re-save someone else's hand-crafted UV animation.
 
 ### Breakable Objects
 
@@ -1149,6 +1293,36 @@ Uniformly rescale a whole vehicle hierarchy (Empty root + mesh + dummy children)
 **What it does:** walks the hierarchy DFS, multiplies every `obj.location` by the factor, clears `matrix_parent_inverse` to identity, applies `Matrix.Scale(factor)` to mesh data (copies shared meshes first) and Armature data, resets `scale` to `(1,1,1)` on every object. Empty display sizes scale too.
 
 Source: [`tools/vehicle_scale.py`](INU_tools/tools/vehicle_scale.py).
+
+### Vehicle Damage Variants
+
+Manage paired `_ok` / `_dam` body atomics for vehicle DFFs. The GTA SA engine swaps the visible mesh between the two variants when a panel takes damage — naming convention is the only contract: an atomic ending in `_ok` and one ending in `_dam` (with the same prefix) form a damage pair, e.g. `bonnet_ok` ↔ `bonnet_dam`, `door_lf_ok` ↔ `door_lf_dam`.
+
+**Location:** View3D → Sidebar (N) → GTA Tools → *Check* panel → block **Damage variants**.
+
+**Operators:**
+
+| Button | What it does |
+|---|---|
+| **Create _dam** (`gtatools.vehicle_add_damage_variant`) | Duplicates the active mesh's data into a new object named `<base>_dam`, parented to the same Empty as the source. If the source has no `_ok` / `_dam` suffix, it is auto-renamed to `<name>_ok` first. The new `_dam` is `hide_viewport=True` so the user previews the OK state by default — DFF export walks the full hierarchy regardless of viewport flag, so the variant still ships into the `.dff`. |
+| **Show OK / Dam / Both** (`gtatools.vehicle_show_damage`) | Toggles `hide_viewport` on every `_ok` and `_dam` mesh in the active object's hierarchy (or the whole scene if no active object). `OK` shows `_ok`, hides `_dam`. `Dam` shows `_dam`, hides `_ok`. `Both` shows everything (useful for debugging). Affects viewport only — does not change DFF export. |
+| **Check pairs** (`gtatools.vehicle_pair_report`) | Walks the active hierarchy and prints to the System Console: paired `_ok+_dam` meshes, orphan `_ok` (no matching `_dam`), orphan `_dam` (no matching `_ok`). Reports a summary in the status bar; if any orphans exist the level is `WARNING`. Orphan parts won't have a damaged variant in-game (the engine looks up the pair at load time). |
+
+**Workflow tutorial — bonnet damage:**
+
+1. Model the OK bonnet, name the mesh `bonnet_ok`. Place it under `bonnet_dummy` empty for the door-pivot transform.
+2. Select `bonnet_ok` → click **Create _dam**. A new mesh `bonnet_dam` appears with the same shape, hidden in viewport.
+3. Click **Show Dam** → the OK mesh hides, damaged mesh becomes visible. Edit the mesh (push verts inward, add dents).
+4. **Show OK** to compare quickly. **Show Both** if you want to see both meshes overlaid (handy for keeping silhouettes consistent).
+5. Run **Check pairs** — should report `1 paired, 0 orphans`. Add `door_lf_ok`/`_dam`, `boot_ok`/`_dam`, repeat.
+6. Export the DFF normally — both variants ride along into the `.dff`. In game the engine swaps them on damage based on per-component health.
+
+**Notes:**
+- The hide-on-create behaviour applies only to viewport (`hide_viewport`). Render flag stays untouched, so collection-driven exporters (Map Export, Export to IMG) don't lose the variant.
+- Use **Show OK** before exporting if you need a clean DFF preview screenshot — the `_dam` meshes are mostly cosmetic eyesores at full visibility.
+- `wheel_*` and `*_dummy` empties have no damage variant in vanilla SA — only painted body parts (chassis, doors, bonnet, bumpers, windshield, mudguards, boot) ship with `_ok` / `_dam` pairs.
+
+Source: [`tools/vehicle_scale.py`](INU_tools/tools/vehicle_scale.py) → `_strip_damage_suffix`, `find_damage_pairs`, `GTATOOLS_OT_vehicle_add_damage_variant`, `GTATOOLS_OT_vehicle_show_damage`, `GTATOOLS_OT_vehicle_pair_report`.
 
 ### Train Station Markers
 

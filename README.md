@@ -8,7 +8,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/Blender-4.2%E2%80%935.1-orange?logo=blender" alt="Blender">
-  <img src="https://img.shields.io/badge/Version-1.6.5-green" alt="Version">
+  <img src="https://img.shields.io/badge/Version-1.6.6-green" alt="Version">
   <img src="https://img.shields.io/badge/License-GPL--3.0-blue" alt="License">
 </p>
 <p>
@@ -45,54 +45,54 @@
 </tr>
 </table>
 
-## 🔮 Coming Soon
-
-**Animations**
-- 🎞️ **Merge IFP** — open `ped.ifp`, replace or add a single animation, save back — without external IFP Editor
-- ✅ **Bone-name validator on IFP export** — warn when Action fcurve names don't match the target skeleton's bones (prevents silent in-game fails)
-- 🔁 **IFP round-trip test** — byte-exact import → export comparison to guarantee XYZW↔WXYZ quaternion conversion is correct
-- ▶️ **IFP Preview without Apply** — scrub the Timeline before committing an animation to the armature's Action
-
-**DFF**
-- 🎞️ **UV Animation read-back** — currently write-only; importing a UV-animated DFF loses the animation. Parse `0x2B` + `0x135` on import
-- 🔩 **Vehicle Pipeline chunk** — migrate Pipeline chunk (0x253F2F3) from geometry extension to atomic extension to match Seggaeman/vanilla behaviour
-
-**Map workflow**
-- 🗺️ **Map Export auto-split** — grid-based district chunking for very large scenes (50k+ models)
-- 🚂 **Train Paths as splines** — spline-with-stations representation of `tracks.dat` for easier editing
-
-**Materials / Textures**
-- 🧹 **Bitmaps Manager — unused cleanup** — report textures in TXDs that no material references; texture size audit (flag 1024² where 256² suffices)
-- 🎨 **VC Layer System** — per-layer opacity / brightness / contrast for vertex colors, with multi-select
+## 🔮 Planned / In Progress
 
 **Vehicles**
-- 🚗 **Vehicles (Phase 2+)** — color slots (Primary / Secondary / Headlight), damage dummies, vehicle env-map presets
+- 🛡️ **Damage variants UI extension** — visual link between matching `_ok` / `_dam` atomics, custom pivot for door swings, batch tools for headlight `dummy` placement
+
+**Map workflow**
+- 📐 **Adaptive grid auto-split** — variable cell size driven by local density (currently fixed XY grid only); guarantee per-cell DFF count instead of uniform spatial sub-division
+
+**Animations**
+- 🎬 **IFP merge / round-trip preview** — ANPK ↔ ANP3 conversion validator, per-clip preview without re-import
 
 > [!NOTE]
 > The addon is under active development. Bug reports are welcome in [Issues](../../issues).
 
-## 🆕 What's new in 1.6.5
+## 🆕 What's new in 1.6.6
 
-Post-1.6.4-beta accumulated changes — focus on map workflow performance and round-trip.
+Closes the four 1.6.5-tracked Planned items (Pipeline chunk relocation, Map Export auto-split, Train paths verification, Vehicle damage variants) plus a batch of features that didn't make the v1.6.5-beta cut.
 
-- ⚡ **Import Map ~10× faster** — full LA-sized district now imports in ~30 s (was 5+ min). Cache-only flow (no IMG access during import), parallel DFF parsing (4-worker thread pool, numpy/zlib release the GIL), shared material cache across DFFs, direct `foreach_set` mesh building
-- 🗿 **Import Map — COL loading** — new `Load COL` toggle pulls collisions alongside geometry into a `Map_COL` collection, with per-instance transforms. Enables round-trip (import part of map → edit → export to IMG in another build). Keyed by inner `model_name` so SA's district-wide lib-COLs (LAs.col, LAn.col …) get split out correctly
-- 🚀 **Export to IMG ~5–15× faster** — new batch `ImgWriter` opens the archive once and rewrites the directory exactly once at the end (was rewriting it per file). DFF/COL serialisation runs in a 4-worker thread pool — `build_dff_clump` / `build_col_model` on the main thread (bpy reads), `to_bytes()` in workers (GIL-releasing numpy)
-- 📦 **Shared TXD toggle** — symmetric with COL Library, packs all textures into one shared `.txd` instead of one per model
-- 🐛 **«Only COL exports» fix** — unified the DFF/COL/LOD/TXD toggles across «To folder», «To IMG» and «INU Export». Previously the visible tumblers wrote one set of scene props but `Export to IMG` read a different set — flipping off DFF/TXD somewhere out of sight silently broke IMG exports
-- 🆔 **ID Manager — gaps and phantoms** — `sync_scene_to_preset` pulls every scene ID into the preset at the start of Auto Assign / Assign From so `allocate_id` can't skip around them. `reserve_id` makes Assign From write to the preset on each assignment. New **«Free phantoms»** button (ID Manager panel) releases preset slots that no scene object claims anymore — handles the hidden-collection / deleted-object case. New **«Clear ID»** button in Object Properties → INU Tools: Model, right under the Model ID field
-- 🧹 **Map import cleanliness** — `Skip 2DFX` on by default for bulk import (stops thousands of Light/Empty objects from grinding the viewport), no more bogus `<name>_Armature` for vanilla DFFs carrying HAnim without skin, `Map_LOD` collection only receives models whose name matches a LOD pattern
-- 🐛 **IPL lod_index remap fix** — when multiple IPL files are merged into one list, each file's local `lod_index` is now rebased onto the merged list. Previously indices from file A pointed into file B's region of the list and wrong models landed in `Map_LOD`
-- 🔧 **Import Map / Extract Resources profiler** (opt-in) — *Scene → INU Tools → Performance → Profile Import / Extract* dumps per-stage timing to `.inu_cache/_profile.log`
-- 🎨 **UI pipeline reorganization** (Stages 1-6) — all N-sidebar subpanels have pipeline `bl_order` grouped by SETUP / MODEL / DATA / EXPORT. Export moved to the top, 3-button row [To folder / To IMG / INU Export]. Suffix/Prefix and ID Manager moved out of the Scene Properties mega-dump. New *INU Tools: Model* panel in Object Properties with all per-object props in one place. Panel headers get Blender built-in icons for quick scanning
-- 💾 **Material Presets** — storage moved from ad-hoc JSON to `INU_Preset/` layout. Undo support added to 7 operators (Set Preset, Fill Colors, Scatter Light, Bake, Post-Process…)
-- 📊 **Progress bars** — added to Build Map / Export to IMG / Extract Resources for long operations
-- 🆔 **ID Manager multi-preset** — multiple preset files supported in `INU_Preset/id_presets/<name>.txt`, with UI for create/rename/delete
+**Map workflow**
+- 🗺️ **Map Export auto-split** — new `Auto-split into districts` toggle inside Map Export. DFFs are binned by XY origin into a configurable `cell_size` grid (default 256 m, vanilla streaming radius); each non-empty cell becomes its own subdirectory `<base>_x<cx>_y<cy>` with its own IDE / IPL / COL / TXD. Game-side it's identical to loading several IPLs sequentially. Falls back to a single district when only one cell is populated, so flipping the toggle on a small scene is harmless
+- 📂 **Map Import: Group by IPL** — new toggle next to *Без LOD* / *Без TXD* / *Без коллизии*. When ON, each source IPL gets a parent collection `Map_<ipl_basename>` (e.g. `Map_LAn`, `Map_LAs`, `Map_SF`, `Map_LV`) with three nested sub-collections `Map_<ipl>_DFF` / `Map_<ipl>_LOD` / `Map_<ipl>_COL`. LODs and collisions stay separated by kind but tied to their district — toggle one parent's eye icon and the entire district disappears from the viewport
+- ⚡ **COL import ~5× faster** — replaced bmesh with `mesh.from_pydata + foreach_set('material_index', …)`. Shared material cache across COL models (was creating ~10k duplicate `COL_N` materials on a large map). Profiler-driven fix: build COL was 60% of total wall time
+
+**Vehicles**
+- 🛡️ **Vehicle damage variants** — three new operators in *Check → Damage variants*: `Add _dam` duplicates the active mesh as a `_dam` variant (auto-renames source to `_ok` if needed, hides the new `_dam` from viewport but keeps it in the DFF export), `Show OK / Dam / Both` toggles viewport visibility for previewing damaged state, `Check pairs` reports paired and orphan `_ok` / `_dam` meshes via the system console
+- 🔩 **Pipeline chunk → atomic extension** — DFF writer now emits `0x253F2F3` only inside the atomic extension (matches Seggaeman / RW vanilla layout). Reader still accepts both atomic and geometry extensions for back-compat with older Kam-era DFFs. Vehicle env-map (`0x53F2009A`) and Day/Night building pipelines (`0x53F20098`) keep working in vanilla SA after a clean export round-trip
+
+**Vertex colors / lighting**
+- 🎨 **VC Layer System (BETA)** — Photoshop-style non-destructive vertex color editing. Stack of named layers per scope (Day / Night), each with opacity / blend mode / pre-blend brightness / contrast. Live composite written into Day / Night attributes (originals safely backed up). Auto-flatten on DFF export, restore after — .blend keeps layers, .dff gets composite. Multi-select group sliders, recolor, promote / demote operators. Cap 10 layers per stack. See [DOCS § VC Layer System](DOCS.md#vc-layer-system-beta)
+
+**Animations**
+- 📜 **IFP format dispatch — ANP2 / ANPK write** — III/VC modding now supported. `write_ifp(path, ifp, format='ANPK' | 'ANP3')`. Default preserves source format from `ifp.source_format`. Standardised `KeyFrame.time` to seconds (was raw frames for ANP3, seconds for ANPK — now both seconds). Fixed previously-broken writer that emitted invalid hybrid output
+
+**Paths**
+- 🚂 **Train paths as splines (verified)** — `tracks*.dat` import/export already uses Blender curves (POLY spline, cyclic) with station flags stored on the curve as `station_indices`. Round-trip preserves station stops; documented under [DOCS § Train Paths](DOCS.md#train-paths)
+
+**ID Manager / detection**
 - 📏 **LOD Detection for vanilla** — irregular naming handled: `LODfoo`, `foo_LOD`, `foo1LOD`, `modeLODlaett` — all four patterns covered by `is_lod_name`
+
+**UI / UX**
+- 🆕 **UI Stage 7** — zone separator strips «── MODEL ──» / «── DATA ──» between bl_order ranges in N-sidebar (Stages 1-6 shipped in v1.6.5-beta)
+- 🚿 **Export progress** — added to INU Export / Export All — workspace `status_text` shows current group / total during long batches (Build Map / Export to IMG / Extract Resources progress was already in v1.6.5-beta)
+- 🧹 **Bitmaps Manager — unused cleanup** — `Find Unused` / `Remove Unused` operators scan `bpy.data.images` and `bpy.data.materials` for orphans. Uses `core.bitmap_diff` (bpy-free pure helpers, fully tested) — orphan-material textures correctly count as unused
 
 <details>
 <summary>Older releases</summary>
 
+- **v1.6.5-beta** — map-workflow perf release: Import Map ~10× / Export to IMG ~5–15× faster, Load COL + Shared TXD toggles, Skip 2DFX default, ID Manager gaps & phantoms + multi-preset, UI pipeline reorganization (Stages 1-6) + Object Properties *INU Tools: Model* panel, Material Presets in `INU_Preset/`, progress bars (Build Map / Export to IMG / Extract Resources), opt-in Profiler — see [release page](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v1.6.5-beta)
 - **v1.6.4** — Experimental: Map Export (scene→IPL+IDE+COL+TXD one-op), Binary IPL Write, CST IO, UV Animation in DFF, Breakable Objects, IFP Batch Import, GTA Material Panel, Bitmaps Manager, Station Markers, Roadblocks & Traffic Lights, FLA4 Path Format, Vehicle Scale Helper
 - **v1.6.3** — Particle Effects (effects.fxp editor), Object Properties *GTA SA: IDE / IPL* panel, LightMap UV2, 2DFX UI (Detach All, attached effects list), ID Manager (Assign from ID…, Extend IDs FLA), Nodes multi-file I/O with 8×8 zone splitting
 - **v1.6.1** — IPL Import: COL moves with DFF, Empty placeholders; Model Links dashed lines; LOD/COL → DFF snap; Drag & Drop TXD

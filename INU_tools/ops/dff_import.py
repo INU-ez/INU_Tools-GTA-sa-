@@ -38,8 +38,52 @@ def _store_user_data(target, user_data: UserData):
     target['inu_user_data'] = sections
 
 
+def _apply_uv_anim_to_material(mat, dff_mat: DffMaterial, uv_anim_dict):
+    """Propagate clump UV anim (0x2B dict + 0x135 PLG names) into
+    ``mat.inu.uv_anim_*`` so the writer's linear scroll can round-trip.
+
+    Writer builds a 2-keyframe anim from ``speed_u/speed_v/duration`` —
+    we invert that: first name wins, read ``duration`` from the anim,
+    and derive speeds from ``kf1.trans / kf1.time``. More complex
+    multi-keyframe anims flatten to the same speed/duration pair (we
+    don't preserve intermediate keys yet; round-trip is lossy for
+    hand-edited IFP but correct for addon-round-tripped files).
+    """
+    if not dff_mat.uv_anim_names or uv_anim_dict is None:
+        return
+    name = dff_mat.uv_anim_names[0]
+    target = None
+    for anim in uv_anim_dict.anims:
+        if anim.name == name:
+            target = anim
+            break
+    if target is None or not target.keyframes:
+        return
+
+    inu = getattr(mat, 'inu', None)
+    if inu is None:
+        return
+
+    inu.uv_anim_write = True
+    try:
+        inu.animation_name = name
+    except Exception:
+        # animation_name may not exist on older addon builds —
+        # fall back to material name matching implicitly.
+        pass
+    inu.uv_anim_duration = max(0.01, float(target.duration))
+
+    # Linear-scroll inference: the writer encodes scroll speed as
+    # (trans_u, trans_v) on the last keyframe at time = duration.
+    last = target.keyframes[-1]
+    dt = max(last.time, 1e-6)
+    inu.uv_anim_speed_u = float(last.trans_u) / dt
+    inu.uv_anim_speed_v = float(last.trans_v) / dt
+
+
 def _create_blender_material(dff_mat: DffMaterial, index: int,
-                             material_cache: dict | None = None) -> bpy.types.Material:
+                             material_cache: dict | None = None,
+                             uv_anim_dict=None) -> bpy.types.Material:
     """Создаём Blender материал из DFF материала.
 
     If ``material_cache`` (shared dict) is provided, materials without
@@ -168,6 +212,10 @@ def _create_blender_material(dff_mat: DffMaterial, index: int,
     if dff_mat.user_data:
         _store_user_data(mat, dff_mat.user_data)
 
+    # UV animation — look up referenced anim names in the clump's dict
+    # and populate mat.inu.uv_anim_* so the export writer round-trips.
+    _apply_uv_anim_to_material(mat, dff_mat, uv_anim_dict)
+
     if cache_key is not None:
         material_cache[cache_key] = mat
     return mat
@@ -219,7 +267,8 @@ def _build_mesh_bmesh(mesh: bpy.types.Mesh, geom: DffGeometry):
 
 
 def _build_mesh(geom: DffGeometry, name: str, materials: list,
-                material_cache: dict | None = None) -> bpy.types.Mesh:
+                material_cache: dict | None = None,
+                uv_anim_dict=None) -> bpy.types.Mesh:
     """Build a Blender Mesh from DFF geometry via direct foreach_set.
 
     Avoids bmesh entirely — all attributes are pushed in bulk through
@@ -232,12 +281,17 @@ def _build_mesh(geom: DffGeometry, name: str, materials: list,
 
     ``material_cache`` is threaded through to ``_create_blender_material``
     for cross-DFF dedup in bulk map import.
+
+    ``uv_anim_dict`` (from the clump) is looked up by material's
+    ``uv_anim_names`` so ``mat.inu.uv_anim_*`` is populated on import
+    and the writer can round-trip the animation.
     """
     mesh = bpy.data.meshes.new(name)
 
     # Materials first — polygon material_index references these by slot.
     for mi, dff_mat in enumerate(materials):
-        bl_mat = _create_blender_material(dff_mat, mi, material_cache)
+        bl_mat = _create_blender_material(
+            dff_mat, mi, material_cache, uv_anim_dict)
         mesh.materials.append(bl_mat)
 
     n_verts = len(geom.vertices)
@@ -757,7 +811,8 @@ def import_dff_from_clump(clump, base_name: str, *, skip_2dfx=None,
         obj_name = frame.name if (frame and frame.name) else f"{base_name}_{gi}"
 
         with _stage('build_mesh'):
-            mesh = _build_mesh(geom, obj_name, geom.materials, material_cache)
+            mesh = _build_mesh(geom, obj_name, geom.materials,
+                               material_cache, clump.uv_anim_dict)
 
         # Создаём объект
         obj = bpy.data.objects.new(obj_name, mesh)
@@ -795,7 +850,8 @@ def import_dff_from_clump(clump, base_name: str, *, skip_2dfx=None,
         for gi, geom in enumerate(clump.geometries):
             obj_name = f"{base_name}_{gi}"
             with _stage('build_mesh'):
-                mesh = _build_mesh(geom, obj_name, geom.materials, material_cache)
+                mesh = _build_mesh(geom, obj_name, geom.materials,
+                               material_cache, clump.uv_anim_dict)
             obj = bpy.data.objects.new(obj_name, mesh)
             _set_object_props(obj, geom)
             collection.objects.link(obj)

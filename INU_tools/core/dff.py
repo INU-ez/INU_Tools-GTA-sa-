@@ -259,6 +259,135 @@ def _uv_anim_plg_bytes(anim_names: list, lib_id: int) -> bytes:
     return _chunk(CHUNK_UV_ANIM_PLG, data, lib_id)
 
 
+def _read_uv_anim(data: bytes, offset: int, size: int) -> 'UVAnim':
+    """Parse one UVAnim (CHUNK_ANIM_ANIMATION 0x1B) → ``UVAnim``.
+
+    The inverse of ``UVAnim.to_bytes``. Expects the outer 0x1B wrapper
+    was already consumed — *offset* points at the inner STRUCT chunk.
+
+    Layout (matches the writer):
+        STRUCT:
+            u32 version, u32 type_id, u32 num_keyframes, u32 flags,
+            f32 duration,
+            char name[32],
+            i32 node_to_uv[8],
+            keyframe[num_keyframes]  — 32 bytes each
+    """
+    import struct as _s
+    end = offset + size
+    anim = UVAnim()
+
+    # Inner STRUCT header
+    if offset + 12 > end:
+        return anim
+    struct_ident, struct_size = _s.unpack_from('<II', data, offset)[:2]
+    if struct_ident != CHUNK_STRUCT:
+        return anim
+    offset += 12  # ident + size + libid
+
+    # STRUCT body
+    if offset + 20 > end:
+        return anim
+    _version, type_id, num_kf, _flags, duration = _s.unpack_from(
+        '<IIIIf', data, offset)
+    anim.type_id = type_id
+    anim.duration = duration
+    offset += 20
+
+    # Name (32 bytes, null-padded)
+    if offset + 32 > end:
+        return anim
+    raw_name = data[offset:offset + 32]
+    anim.name = raw_name.split(b'\x00', 1)[0].decode('ascii', errors='replace')
+    offset += 32
+
+    # node_to_uv[8]
+    if offset + 32 > end:
+        return anim
+    anim.node_to_uv = tuple(_s.unpack_from('<8i', data, offset))
+    offset += 32
+
+    # Keyframes — 32 bytes each
+    for _i in range(num_kf):
+        if offset + UV_ANIM_KEYFRAME_SIZE > end:
+            break
+        _prev, t, su, sv, hu, hv, tu, tv = _s.unpack_from(
+            '<if6f', data, offset)
+        anim.keyframes.append(UVAnimKeyframe(
+            time=t,
+            scale_u=su, scale_v=sv,
+            shear_u=hu, shear_v=hv,
+            trans_u=tu, trans_v=tv,
+        ))
+        offset += UV_ANIM_KEYFRAME_SIZE
+
+    return anim
+
+
+def _read_uv_anim_dict(data: bytes, offset: int, size: int) -> 'UVAnimDict':
+    """Parse a CHUNK_UV_ANIM_DICT (0x2B) body → ``UVAnimDict``.
+
+    Inverse of ``UVAnimDict.to_bytes``. Expects *offset* points at
+    the inner STRUCT (count) chunk, *size* is the 0x2B body length.
+    """
+    import struct as _s
+    end = offset + size
+    result = UVAnimDict()
+
+    if offset + 12 > end:
+        return result
+    struct_ident, struct_size = _s.unpack_from('<II', data, offset)[:2]
+    if struct_ident != CHUNK_STRUCT:
+        return result
+    offset += 12
+    if offset + 4 > end:
+        return result
+    count = _s.unpack_from('<I', data, offset)[0]
+    offset += 4
+
+    # Each animation is wrapped in a 0x1B chunk
+    for _i in range(count):
+        if offset + 12 > end:
+            break
+        ch_ident, ch_size = _s.unpack_from('<II', data, offset)[:2]
+        inner_start = offset + 12
+        if ch_ident == CHUNK_ANIM_ANIMATION:
+            result.anims.append(
+                _read_uv_anim(data, inner_start, ch_size))
+        offset = inner_start + ch_size
+
+    return result
+
+
+def _read_uv_anim_plg(data: bytes, offset: int, size: int) -> list:
+    """Parse a CHUNK_UV_ANIM_PLG (0x135) body → list[str] of referenced
+    animation names (length ≤ 8, with empty strings filtered out).
+
+    Layout (matches ``_uv_anim_plg_bytes``): u32 version, u32 mask,
+    u32 unknown, u32 unknown, then 8 × name[32].
+    """
+    import struct as _s
+    end = offset + size
+    if offset + 16 > end:
+        return []
+    _version, mask = _s.unpack_from('<II', data, offset)[:2]
+    offset += 16  # version + mask + 2×unknown
+
+    names = []
+    for i in range(8):
+        if offset + 32 > end:
+            break
+        raw = data[offset:offset + 32]
+        name = raw.split(b'\x00', 1)[0].decode('ascii', errors='replace')
+        offset += 32
+        # Only include slots explicitly flagged by the mask AND with
+        # a non-empty name — anims.txd uses the mask to signal which
+        # slots are active; padded null slots are skipped on read.
+        if (mask & (1 << i)) and name:
+            names.append(name)
+    return names
+
+
 @dataclass
 class DffMaterial:
     """Single material with optional plugins."""
@@ -1049,6 +1178,11 @@ def _read_material_chunk(r: BinaryReader, size: int, rw_version: int) -> DffMate
                     mat.reflection = ReflectionMaterial(*vals)
                 elif ect == CHUNK_USERDATA_PLG:
                     mat.user_data = _read_userdata_plugin(r, ecs)
+                elif ect == CHUNK_UV_ANIM_PLG:
+                    # Material-level UV anim reference — list of names
+                    # pointing into the clump-level UV anim dict.
+                    mat.uv_anim_names = _read_uv_anim_plg(
+                        r.data, r.pos, ecs)
                 else:
                     pass
                 r.seek(plugin_end)
@@ -1663,6 +1797,15 @@ def read_dff(data: bytes) -> DffClump:
                 ect, ecs, ecl = _read_chunk_header(r)
                 if ect == CHUNK_COLLISION_MODEL:
                     clump.collision_data = r.read_bytes(ecs)
+                elif ect == CHUNK_UV_ANIM_DICT:
+                    # Parse the dict body off the BinaryReader's buffer
+                    # without advancing the cursor mid-parse — seek back
+                    # when done. _read_uv_anim_dict wants absolute
+                    # offsets into the whole file.
+                    body_start = r.pos
+                    clump.uv_anim_dict = _read_uv_anim_dict(
+                        r.data, body_start, ecs)
+                    r.seek(body_start + ecs)
                 else:
                     r.skip(ecs)
         else:

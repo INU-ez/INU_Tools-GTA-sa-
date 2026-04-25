@@ -1,4 +1,4 @@
-# INU_tools(gta_sa) for Blender 4.4+
+# INU_tools(gta_sa) for Blender 4.2+
 # Copyright (C) 2024-2026  INU
 #
 # This program is free software: you can redistribute it and/or modify
@@ -23,7 +23,7 @@
 bl_info = {
     "name": "INU_tools(gta_sa)",
     "author": "INU",
-    "version": (1, 6, 5),
+    "version": (1, 6, 6),
     "blender": (4, 2, 0),
     "location": "View3D > Sidebar (N) > GTA Tools",
     "description": "Toolset for GTA SA models",
@@ -220,6 +220,7 @@ import math
 import re as _re
 import struct
 import os
+import time
 import tempfile
 import subprocess
 import numpy as np
@@ -320,7 +321,20 @@ from .tools.uv_tools import (
 from .tools.bitmaps_manager import (
     GTATOOLS_OT_bitmaps_scan, GTATOOLS_OT_bitmaps_resolve,
     GTATOOLS_OT_bitmaps_copy, GTATOOLS_OT_bitmaps_find_dupes,
+    GTATOOLS_OT_bitmaps_find_unused, GTATOOLS_OT_bitmaps_remove_unused,
     GTATOOLS_PT_bitmaps_panel,
+)
+from .tools.vc_layers import (
+    GTATOOLS_VCLayerItem,
+    GTATOOLS_OT_vcl_add, GTATOOLS_OT_vcl_remove, GTATOOLS_OT_vcl_move,
+    GTATOOLS_OT_vcl_promote, GTATOOLS_OT_vcl_demote,
+    GTATOOLS_OT_vcl_set_active_attr,
+    GTATOOLS_OT_vcl_show_composite, GTATOOLS_OT_vcl_refresh_composite,
+    GTATOOLS_OT_vcl_apply_multi, GTATOOLS_OT_vcl_recolor_selected,
+    GTATOOLS_UL_vc_layers,
+    vc_layers_register_handlers, vc_layers_unregister_handlers,
+    _on_active_layer_change as _vc_on_active_layer_change,
+    _on_live_preview_toggle as _vc_on_live_preview_toggle,
 )
 from .ops.ifp_import import (
     GTATOOLS_OT_ifp_batch_import,
@@ -329,7 +343,12 @@ from .ops.ifp_import import (
 )
 from .ops.cst_import import GTATOOLS_OT_import_cst
 from .ops.cst_export import GTATOOLS_OT_export_cst
-from .tools.vehicle_scale import GTATOOLS_OT_vehicle_scale
+from .tools.vehicle_scale import (
+    GTATOOLS_OT_vehicle_scale,
+    GTATOOLS_OT_vehicle_add_damage_variant,
+    GTATOOLS_OT_vehicle_show_damage,
+    GTATOOLS_OT_vehicle_pair_report,
+)
 from .tools.map_export import (
     GTATOOLS_OT_map_export,
     GTATOOLS_PT_map_export_panel,
@@ -3211,6 +3230,11 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
         # lod_index onto the merged list, otherwise Map_LOD gets filled
         # with wrong models (indices from one file pointing into another
         # file's region). Do the same below for binary IPLs.
+        #
+        # Each instance gets ``_source_ipl`` (basename without extension)
+        # tagged on so the optional Group-by-IPL collection scheme can
+        # bin them later — this metadata is throwaway, dropped after
+        # the import loop completes.
         instances = []
         for p in info.ipl_paths:
             if os.path.isfile(p) and _ipl_matches_region(p):
@@ -3218,11 +3242,13 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
                     ipl = read_ipl(p)
                     base = len(instances)
                     n_local = len(ipl.instances)
+                    ipl_basename = os.path.splitext(os.path.basename(p))[0]
                     for inst in ipl.instances:
                         if 0 <= inst.lod_index < n_local:
                             inst.lod_index = base + inst.lod_index
                         else:
                             inst.lod_index = -1
+                        inst._source_ipl = ipl_basename
                         instances.append(inst)
                     if any([ipl.culls, ipl.garages, ipl.enexs, ipl.pickups,
                             ipl.cars, ipl.jumps, ipl.auzos, ipl.occls]):
@@ -3266,11 +3292,13 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
                             ipl_parsed = _read_binary_ipl(ipl_data)
                             base = len(instances)
                             n_local = len(ipl_parsed.instances)
+                            ipl_basename = os.path.splitext(e.name)[0]
                             for inst in ipl_parsed.instances:
                                 if 0 <= inst.lod_index < n_local:
                                     inst.lod_index = base + inst.lod_index
                                 else:
                                     inst.lod_index = -1
+                                inst._source_ipl = ipl_basename
                                 instances.append(inst)
                     except Exception:
                         pass
@@ -3293,25 +3321,40 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
                 context.scene.collection.children.link(c)
             return c
 
-        dff_far = _get_col("Map_DFF_Far")
-        dff_mid = _get_col("Map_DFF_Mid")
-        dff_near = _get_col("Map_DFF_Near")
-        lod_col = _get_col("Map_LOD")
+        # Group-by-IPL mode swaps the static draw-distance buckets
+        # (Map_DFF_Far / Mid / Near) for one collection per source IPL
+        # (Map_LAn / Map_LAs / Map_SF / …). Per-IPL collections are
+        # created lazily as instances are bucketed in _work — empty
+        # IPLs never produce empty collections.
+        group_by_ipl = bool(getattr(scene, 'gtatools_map_group_by_ipl', False))
+
+        if group_by_ipl:
+            dff_far = dff_mid = dff_near = lod_col = None
+            ipl_collections: dict = {}
+        else:
+            dff_far = _get_col("Map_DFF_Far")
+            dff_mid = _get_col("Map_DFF_Mid")
+            dff_near = _get_col("Map_DFF_Near")
+            lod_col = _get_col("Map_LOD")
+            ipl_collections = None
+
+            # Hide collections during import
+            dff_far.hide_viewport = True
+            dff_mid.hide_viewport = True
+            dff_near.hide_viewport = True
+            lod_col.hide_viewport = True
+
         # Map_COL is created lazily in _work only if load_col is on AND
         # at least one match is found — keeps the outliner clean when
         # the user doesn't need collisions.
         map_col_collection = None
 
-        # Hide collections during import
-        dff_far.hide_viewport = True
-        dff_mid.hide_viewport = True
-        dff_near.hide_viewport = True
-        lod_col.hide_viewport = True
-
         # Store state
         self._instances = instances
         self._ide_models = ide_models
         self._skip_lod = skip_lod
+        self._group_by_ipl = group_by_ipl
+        self._ipl_collections = ipl_collections
         self._dff_far = dff_far
         self._dff_mid = dff_mid
         self._dff_near = dff_near
@@ -3338,8 +3381,56 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
         context.workspace.status_text_set(T("Импорт карты..."))
         return {'RUNNING_MODAL'}
 
-    def _pick_dff_col(self, model_id):
+    def _get_ipl_subcol(self, ipl_basename: str, kind: str):
+        """Lazily fetch / create a sub-collection inside Map_<ipl>.
+
+        Layout:
+            Map_<ipl>/                 (parent, hidden during import)
+              Map_<ipl>_DFF
+              Map_<ipl>_LOD
+              Map_<ipl>_COL
+
+        ``kind`` is 'dff' / 'lod' / 'col'. The parent + the requested
+        sub-collection are created on demand — IPLs without LOD or COL
+        models never produce empty containers.
+        """
+        cache = self._ipl_collections
+        entry = cache.get(ipl_basename)
+        if entry is None:
+            parent_name = f"Map_{ipl_basename}"
+            parent = bpy.data.collections.get(parent_name)
+            if parent is None:
+                parent = bpy.data.collections.new(parent_name)
+                self._scene.collection.children.link(parent)
+                parent.hide_viewport = True
+            entry = {'parent': parent}
+            cache[ipl_basename] = entry
+
+        sub = entry.get(kind)
+        if sub is None:
+            sub_name = f"Map_{ipl_basename}_{kind.upper()}"
+            sub = bpy.data.collections.get(sub_name)
+            if sub is None:
+                sub = bpy.data.collections.new(sub_name)
+                entry['parent'].children.link(sub)
+            entry[kind] = sub
+        return sub
+
+    def _pick_target_col(self, inst, is_lod: bool):
+        """Route an IPL instance to its destination collection.
+
+        Group-by-IPL mode: instance lands in Map_<ipl>/Map_<ipl>_DFF or
+        Map_<ipl>_LOD depending on ``is_lod``. Default mode: LODs go to
+        ``Map_LOD``, non-LODs are bucketed by draw-distance into
+        Map_DFF_Far / Mid / Near.
+        """
+        if self._group_by_ipl:
+            ipl = getattr(inst, '_source_ipl', None) or 'unknown'
+            return self._get_ipl_subcol(ipl, 'lod' if is_lod else 'dff')
+        if is_lod:
+            return self._lod_col
         ide_models = self._ide_models
+        model_id = inst.model_id
         if model_id in ide_models:
             dd = ide_models[model_id].draw_distance
             if dd >= 300:
@@ -3349,6 +3440,25 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
             else:
                 return self._dff_near
         return self._dff_far
+
+    def _pick_col_collection(self, inst):
+        """Return the COL bucket for an instance.
+
+        Group-by-IPL: each IPL's own ``Map_<ipl>/Map_<ipl>_COL`` sub.
+        Default: lazy global ``Map_COL`` (created on first match).
+        """
+        if self._group_by_ipl:
+            ipl = getattr(inst, '_source_ipl', None) or 'unknown'
+            return self._get_ipl_subcol(ipl, 'col')
+
+        if self._map_col_collection is None:
+            mc = bpy.data.collections.get("Map_COL")
+            if mc is None:
+                mc = bpy.data.collections.new("Map_COL")
+                self._scene.collection.children.link(mc)
+                mc.hide_viewport = True
+            self._map_col_collection = mc
+        return self._map_col_collection
 
     def _work(self, context):
         from .core.ipl import is_lod_name
@@ -3363,7 +3473,6 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
         ide_models = self._ide_models
         skip_lod = self._skip_lod
         scene = self._scene
-        lod_col = self._lod_col
         prof = self._profiler
         load_col = bool(getattr(scene, 'gtatools_map_load_col', True))
         # LOD detection by name only. ``is_lod_name`` already handles
@@ -3381,6 +3490,10 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
         # imported_models. One unique model → one COL geometry,
         # copied per IPL instance.
         imported_col_models: dict = {}
+        # Shared material cache for COL bulk import — same surface
+        # tuple across many models reuses one datablock. See
+        # _create_mesh_from_col / project_col_import_perf.
+        col_material_cache: dict = {}
         tmpdir = _get_cache_dir()
         tex_cache = os.path.join(tmpdir, 'textures')
         tex_cache_exists = os.path.isdir(tex_cache)
@@ -3489,7 +3602,7 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
                         _need_yield = (idx % 32 == 0)
                     else:
                         _need_yield = True
-                        target = lod_col if is_lod else self._pick_dff_col(inst.model_id)
+                        target = self._pick_target_col(inst, is_lod)
                         dff_fn = model_name + '.dff'
                         dff_path = os.path.join(tmpdir, dff_fn)
 
@@ -3560,21 +3673,15 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
                                                 o.inu.txd_name = ide_obj.txd_name
 
                             # COL: build/copy + place at the same
-                            # transform as the DFF instance. Lazy-
-                            # create Map_COL collection on the first
-                            # match so the outliner stays clean when
-                            # nothing matches.
+                            # transform as the DFF instance. Default mode
+                            # uses one global Map_COL (lazy-created on
+                            # first match); group-by-IPL routes the
+                            # collision into the IPL's own Map_<ipl>_COL
+                            # sub-collection.
                             if load_col:
                                 col_model = col_by_name.get(model_name.lower())
                                 if col_model is not None:
-                                    if self._map_col_collection is None:
-                                        mc = bpy.data.collections.get("Map_COL")
-                                        if mc is None:
-                                            mc = bpy.data.collections.new("Map_COL")
-                                            context.scene.collection.children.link(mc)
-                                            mc.hide_viewport = True
-                                        self._map_col_collection = mc
-                                    map_col = self._map_col_collection
+                                    map_col = self._pick_col_collection(inst)
 
                                     col_src = imported_col_models.get(model_name)
                                     if col_src is None:
@@ -3583,6 +3690,7 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
                                                 [col_model],
                                                 bulk_mode=True,
                                                 target_collection=map_col,
+                                                material_cache=col_material_cache,
                                             )
                                             imported_col_models[model_name] = col_src
                                         col_new = col_src
@@ -3663,8 +3771,17 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
             self._parse_pool = None
 
         # Re-enable viewport
-        for col in (self._dff_far, self._dff_mid, self._dff_near,
-                    self._lod_col, self._map_col_collection):
+        buckets: list = []
+        if getattr(self, '_group_by_ipl', False):
+            for entry in (self._ipl_collections or {}).values():
+                parent = entry.get('parent')
+                if parent is not None:
+                    buckets.append(parent)
+        else:
+            buckets.extend([self._dff_far, self._dff_mid, self._dff_near,
+                            self._lod_col])
+        buckets.append(self._map_col_collection)
+        for col in buckets:
             if col:
                 col.hide_viewport = False
 
@@ -4165,6 +4282,33 @@ class GTATOOLS_OT_remove_from_img(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _append_export_report(report_path: str, title: str, rows: list[str], max_chars: int = 200000):
+    """Append one export run to text log and cap file size."""
+    ts = time.strftime('%Y-%m-%d %H:%M:%S')
+    block = [f"[{title}] {ts}"]
+    block.extend(rows if rows else ["- no results"])
+    payload = "\n".join(block) + "\n\n"
+
+    try:
+        if os.path.isfile(report_path):
+            with open(report_path, 'r', encoding='utf-8', errors='replace') as f:
+                prev = f.read()
+        else:
+            prev = ""
+    except Exception:
+        prev = ""
+
+    merged = prev + payload
+    if len(merged) > max_chars:
+        merged = merged[-max_chars:]
+        first_nl = merged.find('\n')
+        if first_nl != -1:
+            merged = merged[first_nl + 1:]
+
+    with open(report_path, 'w', encoding='utf-8') as f:
+        f.write(merged)
+
+
 class GTATOOLS_OT_export_to_img(bpy.types.Operator):
     """Экспортировать DFF + TXD + COL прямо в .img архив.
 
@@ -4370,157 +4514,134 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
 
         context.workspace.status_text_set(T("Экспорт в IMG..."))
 
-        with tempfile.TemporaryDirectory() as tmpdir, \
-                ImgWriter(img_path) as writer:
-            # Single ImgWriter session — directory read once on __enter__,
-            # rewritten once on __exit__. writer.add() just seeks+writes
-            # payload blocks.
-            #
-            # Two-phase flow for DFF/COL:
-            #   Phase A (main thread): build DffClump / ColModel from
-            #     Blender data (bpy access, not thread-safe)
-            #   Phase B (worker pool): serialise domain objects to bytes
-            #     (pure Python, numpy releases GIL)
-            # Then main thread calls writer.add() for each encoded blob.
-            # TXD stays per-bucket on the main thread — export_txd uses
-            # bpy.ops.object.select_all and its own numpy/DXT pool.
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir, ImgWriter(img_path) as writer:
+                # Bucket DFF/LOD objects by their resolved TXD name so every
+                # bucket produces exactly one .txd containing merged textures.
+                txd_buckets = defaultdict(list)
+                encode_jobs: list = []  # (filename, callable_returning_bytes, label)
 
-            # Bucket DFF/LOD objects by their resolved TXD name so every
-            # bucket produces exactly one .txd containing merged textures.
-            txd_buckets = defaultdict(list)
-
-            # Phase A: collect clumps/models + progress-tracking metadata
-            # for every group. Keeping the structure below uniform so the
-            # write phase can iterate in a single pass.
-            encode_jobs: list = []  # list of (filename, callable_returning_bytes, label)
-
-            for base_name, models in model_groups.items():
-                if not _is_included(base_name):
-                    continue
-
-                # LOD DFF
-                if export_lod_flag and models['LOD']:
-                    lod_name = 'LOD' + base_name
-                    try:
-                        clump = build_dff_clump(
-                            [models['LOD']], version=GTA_SA_VERSION,
-                            col_model_name=lod_name,
-                        )
-                        encode_jobs.append(
-                            (lod_name + '.dff', clump.to_bytes, f"{lod_name}.dff"))
-                    except Exception as e:
-                        results.append(f"{lod_name}.dff error: {e}")
-                        _tick(f"{lod_name}.dff")
-
-                # DFF + attached 2DFX
-                if export_dff_flag and models['DFF']:
-                    try:
-                        dff_objs = [models['DFF']]
-                        for child in models['DFF'].children:
-                            if child.type == 'EMPTY' and getattr(child, 'inu', None) and child.inu.type == '2DFX':
-                                dff_objs.append(child)
-                        clump = build_dff_clump(
-                            dff_objs, version=GTA_SA_VERSION,
-                            col_model_name=base_name,
-                        )
-                        encode_jobs.append(
-                            (base_name + '.dff', clump.to_bytes, f"{base_name}.dff"))
-                    except Exception as e:
-                        results.append(f"{base_name}.dff error: {e}")
-                        _tick(f"{base_name}.dff")
-
-                # COL (per-group)
-                if write_col_per_group and models['COL']:
-                    try:
-                        col_model = build_col_model(
-                            [models['COL']], version=3, model_name=base_name,
-                        )
-                        # write_col takes a list; bind with default arg
-                        # to avoid late-binding in the closure.
-                        encode_jobs.append((
-                            base_name + '.col',
-                            (lambda m=col_model: write_col([m])),
-                            f"{base_name}.col",
-                        ))
-                    except Exception as e:
-                        results.append(f"{base_name}.col error: {e}")
-                        _tick(f"{base_name}.col")
-
-                # TXD bucket collection
-                if export_txd_flag and (models['DFF'] or models['LOD']):
-                    bucket_name = _txd_for(base_name)
-                    for mt in ('DFF', 'LOD'):
-                        if models[mt] is not None:
-                            txd_buckets[bucket_name].append(models[mt])
-
-            # Phase B: serialise in parallel. to_bytes / write_col are
-            # CPU-bound Python+numpy, numpy struct packing releases the
-            # GIL on big buffers → real parallelism on 4 cores.
-            if encode_jobs:
-                enc_workers = min(os.cpu_count() or 4, 4)
-                with ThreadPoolExecutor(max_workers=enc_workers) as enc_pool:
-                    futures = [
-                        (filename, label, enc_pool.submit(encoder))
-                        for filename, encoder, label in encode_jobs
-                    ]
-                    # Drain in submit order → deterministic IMG layout.
-                    for filename, label, fut in futures:
-                        try:
-                            data = fut.result()
-                            status = writer.add(filename, data)
-                            results.append(f"{filename} {status}")
-                        except Exception as e:
-                            results.append(f"{filename} error: {e}")
-                        _tick(label)
-
-            # Now write one .txd per bucket by selecting all its objects
-            # in one pass and feeding them to export_txd(selected_only=True).
-            if export_txd_flag:
-                for txd_name, sources in txd_buckets.items():
-                    if not sources:
+                for base_name, models in model_groups.items():
+                    if not _is_included(base_name):
                         continue
-                    txd_path = os.path.join(tmpdir, txd_name + '.txd')
-                    try:
-                        bpy.ops.object.select_all(action='DESELECT')
-                        for src in sources:
-                            src.select_set(True)
-                        context.view_layer.objects.active = sources[0]
-                        result, msg, _ = export_txd(txd_path, context, True, use_gpu)
-                        if result == {'FINISHED'}:
-                            with open(txd_path, 'rb') as f:
-                                status = writer.add(txd_name + '.txd', f.read())
-                            results.append(f"{txd_name}.txd {status} ({len(sources)} models)")
-                        else:
-                            results.append(f"{txd_name}.txd: {msg}")
-                    except Exception as e:
-                        results.append(f"{txd_name}.txd error: {e}")
-                    _tick(f"{txd_name}.txd")
 
-            # Library COL — one multi-entry .col written and injected into IMG
-            if col_library and library_col_objects:
-                try:
+                    if export_lod_flag and models['LOD']:
+                        lod_name = 'LOD' + base_name
+                        try:
+                            clump = build_dff_clump([models['LOD']], version=GTA_SA_VERSION, col_model_name=lod_name)
+                            encode_jobs.append((lod_name + '.dff', clump.to_bytes, f"{lod_name}.dff"))
+                        except Exception as e:
+                            results.append(f"{lod_name}.dff error: {e}")
+                            _tick(f"{lod_name}.dff")
+
+                    if export_dff_flag and models['DFF']:
+                        try:
+                            dff_objs = [models['DFF']]
+                            for child in models['DFF'].children:
+                                if child.type == 'EMPTY' and getattr(child, 'inu', None) and child.inu.type == '2DFX':
+                                    dff_objs.append(child)
+                            clump = build_dff_clump(dff_objs, version=GTA_SA_VERSION, col_model_name=base_name)
+                            encode_jobs.append((base_name + '.dff', clump.to_bytes, f"{base_name}.dff"))
+                        except Exception as e:
+                            results.append(f"{base_name}.dff error: {e}")
+                            _tick(f"{base_name}.dff")
+
+                    if write_col_per_group and models['COL']:
+                        try:
+                            col_model = build_col_model([models['COL']], version=3, model_name=base_name)
+                            encode_jobs.append((base_name + '.col', (lambda m=col_model: write_col([m])), f"{base_name}.col"))
+                        except Exception as e:
+                            results.append(f"{base_name}.col error: {e}")
+                            _tick(f"{base_name}.col")
+
+                    if export_txd_flag and (models['DFF'] or models['LOD']):
+                        bucket_name = _txd_for(base_name)
+                        for mt in ('DFF', 'LOD'):
+                            if models[mt] is not None:
+                                txd_buckets[bucket_name].append(models[mt])
+
+                if encode_jobs:
+                    enc_workers = min(os.cpu_count() or 4, 4)
+                    with ThreadPoolExecutor(max_workers=enc_workers) as enc_pool:
+                        futures = [(filename, label, enc_pool.submit(encoder)) for filename, encoder, label in encode_jobs]
+                        for filename, label, fut in futures:
+                            try:
+                                data = fut.result()
+                                status = writer.add(filename, data)
+                                results.append(f"{filename} {status}")
+                            except Exception as e:
+                                results.append(f"{filename} error: {e}")
+                            _tick(label)
+
+                if export_txd_flag:
+                    for txd_name, sources in txd_buckets.items():
+                        if not sources:
+                            continue
+                        txd_path = os.path.join(tmpdir, txd_name + '.txd')
+                        prev_active = context.view_layer.objects.active
+                        prev_selected = [o for o in context.selected_objects]
+                        try:
+                            bpy.ops.object.select_all(action='DESELECT')
+                            for src in sources:
+                                src.select_set(True)
+                            context.view_layer.objects.active = sources[0]
+                            result, msg, _ = export_txd(txd_path, context, True, use_gpu)
+                            if result == {'FINISHED'}:
+                                with open(txd_path, 'rb') as f:
+                                    status = writer.add(txd_name + '.txd', f.read())
+                                results.append(f"{txd_name}.txd {status} ({len(sources)} models)")
+                            else:
+                                results.append(f"{txd_name}.txd: {msg}")
+                        except Exception as e:
+                            results.append(f"{txd_name}.txd error: {e}")
+                        finally:
+                            bpy.ops.object.select_all(action='DESELECT')
+                            for o in prev_selected:
+                                o.select_set(True)
+                            if prev_active is not None:
+                                context.view_layer.objects.active = prev_active
+                        _tick(f"{txd_name}.txd")
+
+                if col_library and library_col_objects:
                     lib_filename = f"{col_library_name}.col"
-                    lib_path = os.path.join(tmpdir, lib_filename)
                     original_locations = {}
-                    for obj in library_col_objects:
-                        original_locations[obj.name] = obj.location.copy()
-                        obj.location = (0, 0, 0)
-                    count = export_col_library(lib_path, library_col_objects, version=3)
-                    for obj in library_col_objects:
-                        if obj.name in original_locations:
-                            obj.location = original_locations[obj.name]
-                    with open(lib_path, 'rb') as f:
-                        status = writer.add(lib_filename, f.read())
-                    results.append(f"{lib_filename} {status} ({count} records)")
-                except Exception as e:
-                    results.append(f"{col_library_name}.col error: {e}")
-                _tick(lib_filename)
+                    try:
+                        lib_path = os.path.join(tmpdir, lib_filename)
+                        for obj in library_col_objects:
+                            original_locations[obj.name] = obj.location.copy()
+                            obj.location = (0, 0, 0)
+                        count = export_col_library(lib_path, library_col_objects, version=3)
+                        with open(lib_path, 'rb') as f:
+                            status = writer.add(lib_filename, f.read())
+                        results.append(f"{lib_filename} {status} ({count} records)")
+                    except Exception as e:
+                        results.append(f"{col_library_name}.col error: {e}")
+                    finally:
+                        for obj in library_col_objects:
+                            if obj.name in original_locations:
+                                obj.location = original_locations[obj.name]
+                    _tick(lib_filename)
+        finally:
+            # Always reset UI progress/status, even if an unexpected error aborts the run.
+            wm.progress_end()
+            context.workspace.status_text_set(None)
 
         # Refresh IMG file list
         _refresh_img_entries(context.scene, img_path)
-        wm.progress_end()
-        context.workspace.status_text_set(None)
-        self.report({'INFO'}, f"IMG: {', '.join(results)}")
+        # Persist full export report next to target IMG.
+        try:
+            report_path = os.path.join(os.path.dirname(img_path), "_export_report.txt")
+            rows = [f"IMG: {img_path}"]
+            rows.extend(f"- {row}" for row in results)
+            _append_export_report(report_path, "Export to IMG", rows)
+        except Exception as e:
+            self.report({'WARNING'}, f"{T('Не удалось записать отчёт:')} {e}")
+        if results:
+            preview = ', '.join(results[:6])
+            more = f" (+{len(results) - 6})" if len(results) > 6 else ""
+            self.report({'INFO'}, f"IMG: {preview}{more}")
+        else:
+            self.report({'WARNING'}, T("IMG: нет результатов экспорта"))
         return {'FINISHED'}
 
 
@@ -5162,11 +5283,11 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
         # Экспорт COL (версия GTA SA COL3)
         if models['COL'] and not skip_col:
             col_path = os.path.join(self.directory, f"{base_name}.col")
+            original_col_loc = models['COL'].location.copy()
             try:
                 from .ops.col_export import export_col as inu_export_col
 
                 # COL всегда экспортируется в центре (0,0,0)
-                original_col_loc = models['COL'].location.copy()
                 models['COL'].location = (0, 0, 0)
 
                 inu_export_col(
@@ -5182,10 +5303,15 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
                 exported.append(f"{base_name}.col")
             except Exception as e:
                 errors.append(f"{base_name}.col: {str(e)}")
+            finally:
+                # Always restore object transform even when export fails.
+                models['COL'].location = original_col_loc
 
         # Экспорт TXD (текстуры из DFF + LOD в один архив)
         if (models['DFF'] or models['LOD']) and not skip_txd:
             txd_path = os.path.join(self.directory, f"{base_name}.txd")
+            prev_active = context.view_layer.objects.active
+            prev_selected = [o for o in context.selected_objects]
             try:
                 bpy.ops.object.select_all(action='DESELECT')
                 # Выделяем DFF и LOD для сбора текстур
@@ -5203,6 +5329,13 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
                     errors.append(f"{base_name}.txd: {message}")
             except Exception as e:
                 errors.append(f"{base_name}.txd: {str(e)}")
+            finally:
+                # Restore previous user selection/active object after temporary hijack.
+                bpy.ops.object.select_all(action='DESELECT')
+                for o in prev_selected:
+                    o.select_set(True)
+                if prev_active is not None:
+                    context.view_layer.objects.active = prev_active
 
         return exported, errors
 
@@ -5278,79 +5411,96 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
 
         current_step = 0
         wm.progress_begin(0, total_steps)
+        context.workspace.status_text_set(T("Экспорт..."))
+        try:
+            # Экспортируем каждую группу моделей
+            for group_idx, (base_name, models) in enumerate(model_groups.items()):
+                wm.progress_update(current_step)
+                context.workspace.status_text_set(
+                    f"{T('Экспорт:')} {group_idx + 1}/{len(model_groups)} {base_name}")
+                exported, errors = self.export_model_group(context, base_name, models, skip_dff, skip_col, skip_lod, skip_txd, use_gpu)
+                all_exported.extend(exported)
+                all_errors.extend(errors)
 
-        # Экспортируем каждую группу моделей
-        for base_name, models in model_groups.items():
-            wm.progress_update(current_step)
-            exported, errors = self.export_model_group(context, base_name, models, skip_dff, skip_col, skip_lod, skip_txd, use_gpu)
-            all_exported.extend(exported)
-            all_errors.extend(errors)
+                # Обновляем прогресс
+                current_step += sum([
+                    1 if models['DFF'] and not skip_dff else 0,
+                    1 if models['LOD'] and not skip_lod else 0,
+                    1 if models['COL'] and not skip_col else 0,
+                    1 if (models['DFF'] or models['LOD']) and not skip_txd else 0
+                ])
 
-            # Обновляем прогресс
-            current_step += sum([
-                1 if models['DFF'] and not skip_dff else 0,
-                1 if models['LOD'] and not skip_lod else 0,
-                1 if models['COL'] and not skip_col else 0,
-                1 if (models['DFF'] or models['LOD']) and not skip_txd else 0
-            ])
-
-        wm.progress_end()
-
-        # Library COL — one multi-entry .col file from every group's COL mesh
-        if col_library and library_col_objects:
-            try:
+            # Library COL — one multi-entry .col file from every group's COL mesh
+            if col_library and library_col_objects:
                 from .ops.col_export import export_col_library
                 lib_path = os.path.join(self.directory, f"{col_library_name}.col")
                 # COL exports expect objects at origin — temporarily centre them
                 original_locations = {}
-                for obj in library_col_objects:
-                    original_locations[obj.name] = obj.location.copy()
-                    obj.location = (0, 0, 0)
-                count = export_col_library(lib_path, library_col_objects, version=3)
-                for obj in library_col_objects:
-                    if obj.name in original_locations:
-                        obj.location = original_locations[obj.name]
-                all_exported.append(f"{col_library_name}.col ({count} records)")
-            except Exception as e:
-                all_errors.append(f"{col_library_name}.col: {e}")
+                try:
+                    for obj in library_col_objects:
+                        original_locations[obj.name] = obj.location.copy()
+                        obj.location = (0, 0, 0)
+                    count = export_col_library(lib_path, library_col_objects, version=3)
+                    all_exported.append(f"{col_library_name}.col ({count} records)")
+                except Exception as e:
+                    all_errors.append(f"{col_library_name}.col: {e}")
+                finally:
+                    for obj in library_col_objects:
+                        if obj.name in original_locations:
+                            obj.location = original_locations[obj.name]
 
-        # Shared TXD — every texture from every exported mesh packed into
-        # one archive. Selection is hijacked because export_txd reads
-        # selection; we restore it on the way out.
-        if txd_shared and shared_txd_objects:
-            try:
+            # Shared TXD — every texture from every exported mesh packed into
+            # one archive. Selection is hijacked because export_txd reads
+            # selection; we restore it on the way out.
+            if txd_shared and shared_txd_objects:
                 shared_path = os.path.join(self.directory, f"{txd_shared_name}.txd")
                 prev_active = context.view_layer.objects.active
                 prev_selected = [o for o in context.selected_objects]
-                bpy.ops.object.select_all(action='DESELECT')
-                for src in shared_txd_objects:
-                    src.select_set(True)
-                context.view_layer.objects.active = shared_txd_objects[0]
-                result, message, _ = export_txd(
-                    shared_path, context, selected_only=True, use_gpu=use_gpu)
-                bpy.ops.object.select_all(action='DESELECT')
-                for o in prev_selected:
-                    o.select_set(True)
-                if prev_active is not None:
-                    context.view_layer.objects.active = prev_active
-                if result == {'FINISHED'}:
-                    all_exported.append(
-                        f"{txd_shared_name}.txd ({len(shared_txd_objects)} models)")
-                else:
-                    all_errors.append(f"{txd_shared_name}.txd: {message}")
-            except Exception as e:
-                all_errors.append(f"{txd_shared_name}.txd: {e}")
-
-        # Восстанавливаем prelight только где он был включён
-        for obj in prelight_was_on:
-            setup_prelight_preview(obj, enable=True)
+                try:
+                    bpy.ops.object.select_all(action='DESELECT')
+                    for src in shared_txd_objects:
+                        src.select_set(True)
+                    context.view_layer.objects.active = shared_txd_objects[0]
+                    result, message, _ = export_txd(
+                        shared_path, context, selected_only=True, use_gpu=use_gpu)
+                    if result == {'FINISHED'}:
+                        all_exported.append(
+                            f"{txd_shared_name}.txd ({len(shared_txd_objects)} models)")
+                    else:
+                        all_errors.append(f"{txd_shared_name}.txd: {message}")
+                except Exception as e:
+                    all_errors.append(f"{txd_shared_name}.txd: {e}")
+                finally:
+                    bpy.ops.object.select_all(action='DESELECT')
+                    for o in prev_selected:
+                        o.select_set(True)
+                    if prev_active is not None:
+                        context.view_layer.objects.active = prev_active
+        finally:
+            wm.progress_end()
+            context.workspace.status_text_set(None)
+            # Восстанавливаем prelight только где он был включён
+            for obj in prelight_was_on:
+                setup_prelight_preview(obj, enable=True)
 
         # Result
         num_groups = len(model_groups)
         if all_exported:
             self.report({'INFO'}, f"{T('Экспортировано:')} {len(all_exported)} файлов ({num_groups} моделей)")
         if all_errors:
-            self.report({'WARNING'}, f"{T('Ошибки:')} {'; '.join(all_errors)}")
+            preview = '; '.join(all_errors[:5])
+            more = f" (+{len(all_errors) - 5})" if len(all_errors) > 5 else ""
+            self.report({'WARNING'}, f"{T('Ошибки:')} {preview}{more}")
+
+        # Persist full per-run report into export directory.
+        try:
+            report_path = os.path.join(self.directory, "_export_report.txt")
+            rows = [f"Directory: {self.directory}"]
+            rows.extend(f"[OK] {row}" for row in all_exported)
+            rows.extend(f"[ERR] {row}" for row in all_errors)
+            _append_export_report(report_path, "Export All", rows)
+        except Exception as e:
+            self.report({'WARNING'}, f"{T('Не удалось записать отчёт:')} {e}")
 
         return {'FINISHED'}
 
@@ -5536,10 +5686,14 @@ class GTATOOLS_OT_inu_export(bpy.types.Operator, ExportHelper):
                     library_col_objects.append(_models['COL'])
 
         wm = context.window_manager
-        wm.progress_begin(0, len(groups))
+        total_groups = len(groups)
+        wm.progress_begin(0, total_groups)
+        context.workspace.status_text_set(T("INU Export..."))
 
         for idx, (base_name, models) in enumerate(groups.items()):
             wm.progress_update(idx)
+            context.workspace.status_text_set(
+                f"{T('INU Export:')} {idx + 1}/{total_groups} {base_name}")
 
             # ── DFF ──
             if self.export_dff and models['DFF']:
@@ -5654,10 +5808,10 @@ class GTATOOLS_OT_inu_export(bpy.types.Operator, ExportHelper):
                 except Exception as e:
                     all_errors.append(f"IPL: {e}")
 
-        wm.progress_end()
-
         # Library COL — one multi-entry .col after per-group loop
         if self.col_library and library_col_objects:
+            context.workspace.status_text_set(
+                f"{T('INU Export:')} library COL ({len(library_col_objects)} models)")
             try:
                 from .ops.col_export import export_col_library
                 lib_name = self.col_library_name or 'collision'
@@ -5673,6 +5827,9 @@ class GTATOOLS_OT_inu_export(bpy.types.Operator, ExportHelper):
                 all_exported.append(f"{lib_name}.col ({count} records)")
             except Exception as e:
                 all_errors.append(f"col library: {e}")
+
+        wm.progress_end()
+        context.workspace.status_text_set(None)
 
         # Restore prelight
         for obj in prelight_was_on:
@@ -8427,6 +8584,50 @@ class GTATOOLS_PT_main_panel(bpy.types.Panel):
         layout.label(text="GTA SA Modding Tools")
 
 
+class GTATOOLS_PT_zone_model(bpy.types.Panel):
+    """Visual zone divider — appears at the boundary between EXPORT-zone
+    panels (bl_order < 10) and MODEL-zone panels (bl_order 10–27).
+    Header is hidden via HIDE_HEADER so the divider looks like a thin
+    centred label strip rather than another collapsible block."""
+    bl_label = ""
+    bl_idname = "GTATOOLS_PT_zone_model"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'GTA Tools'
+    bl_parent_id = "GTATOOLS_PT_main_panel"
+    bl_order = 9
+    bl_options = {'HIDE_HEADER'}
+
+    def draw(self, context):
+        # ``scale_y < 1`` shrinks the row height — Blender still adds
+        # ~6 px panel margin top/bottom that we can't remove, but the
+        # actual label row goes from one full button height to about
+        # half, which is what the user asked for.
+        row = self.layout.row()
+        row.scale_y = 0.4
+        row.alignment = 'CENTER'
+        row.label(text="── MODEL ──", icon='MESH_DATA')
+
+
+class GTATOOLS_PT_zone_data(bpy.types.Panel):
+    """Visual zone divider — boundary between MODEL-zone panels and
+    DATA-zone panels (IDE/IPL/Paths/IDs starting at bl_order 29)."""
+    bl_label = ""
+    bl_idname = "GTATOOLS_PT_zone_data"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'GTA Tools'
+    bl_parent_id = "GTATOOLS_PT_main_panel"
+    bl_order = 28
+    bl_options = {'HIDE_HEADER'}
+
+    def draw(self, context):
+        row = self.layout.row()
+        row.scale_y = 0.4
+        row.alignment = 'CENTER'
+        row.label(text="── DATA ──", icon='WORLD')
+
+
 class GTATOOLS_PT_ide_ipl_panel(bpy.types.Panel):
     """Панель IDE / IPL / IMG для работы с существующими файлами GTA SA"""
     bl_label = "IDE / IPL / IMG"
@@ -9519,6 +9720,22 @@ class GTATOOLS_PT_check_panel(bpy.types.Panel):
         col.operator("gtatools.snap_to_dff", text=T("LOD/COL → DFF"), icon='SNAP_ON')
         col.operator("gtatools.vehicle_scale", text=T("Масштаб машины…"),
                      icon='FULLSCREEN_ENTER')
+
+        # Damage variants — _ok / _dam pair management for vehicles
+        box = layout.box()
+        box.label(text=T("Damage variants"), icon='AUTO')
+        box.operator("gtatools.vehicle_add_damage_variant",
+                     text=T("Создать _dam"), icon='DUPLICATE')
+        row = box.row(align=True)
+        row.label(text=T("Показать:"))
+        op = row.operator("gtatools.vehicle_show_damage", text=T("OK"))
+        op.state = 'OK'
+        op = row.operator("gtatools.vehicle_show_damage", text=T("Dam"))
+        op.state = 'DAM'
+        op = row.operator("gtatools.vehicle_show_damage", text=T("Оба"))
+        op.state = 'BOTH'
+        box.operator("gtatools.vehicle_pair_report",
+                     text=T("Проверить пары"), icon='CHECKMARK')
 
         # Материалы
         col = layout.column(align=True)
@@ -12050,6 +12267,19 @@ class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
             box.operator("gtatools.extract_textures",
                          text=T("Извлечь ресурсы"),
                          icon='PACKAGE')
+            # Inline toggles affecting Import Map. Same scene props
+            # the IMG section uses, surfaced here so the user can
+            # disable COL/TXD/LOD without scrolling.
+            row = box.row(align=True)
+            row.prop(scene, "gtatools_img_skip_lod",
+                     text=T("Без LOD"), toggle=True)
+            row.prop(scene, "gtatools_img_load_txd",
+                     text=T("Без TXD"), toggle=True, invert_checkbox=True)
+            row.prop(scene, "gtatools_map_load_col",
+                     text=T("Без коллизии"), toggle=True, invert_checkbox=True)
+            box.prop(scene, "gtatools_map_group_by_ipl",
+                     text=T("Группировать по IPL"), toggle=True,
+                     icon='OUTLINER_COLLECTION')
             box.operator("gtatools.import_map",
                          text=T("Import Map"),
                          icon='IMPORT')
@@ -12820,16 +13050,11 @@ class GTATOOLS_PT_prelight_panel(bpy.types.Panel):
                 op = row.operator("gtatools.create_color_attr", text="", icon='ADD')
                 op.attr_name = "Night"
 
-            # Other attributes (not Day/Night)
-            for attr in mesh.color_attributes:
-                if attr.name not in ("Day", "Night"):
-                    row = box.row(align=True)
-                    is_active = bool(active_attr and active_attr.name == attr.name)
-                    icon = 'RADIOBUT_ON' if is_active else 'RADIOBUT_OFF'
-                    op = row.operator("gtatools.select_color_attribute", text=attr.name, icon=icon, depress=is_active)
-                    op.attribute_name = attr.name
-                    op = row.operator("gtatools.remove_color_attr", text="", icon='REMOVE')
-                    op.attr_name = attr.name
+            # Other attributes are NOT shown here — they live in the
+            # «Слои Vertex Color» collapsible section below LightMap.
+            # Top list stays focused on Day/Night so the user isn't
+            # distracted by VCL_PREVIEW / VCL_D_… clutter while picking
+            # the canonical prelight to paint on.
 
             # Day/Night label and buttons
             row = layout.row(align=True)
@@ -12878,6 +13103,14 @@ class GTATOOLS_PT_prelight_panel(bpy.types.Panel):
                 row.label(text="", icon='HIDE_ON')
             row.operator("gtatools.apply_lightmap_uv2", text=T("Добавить LightMap"))
             row.operator("gtatools.remove_lightmap_uv2", text="", icon='REMOVE')
+
+            # ─── Слои Vertex Color (collapsible, inline) ──────────────
+            # Sits between LightMap and Запекание so the user sees it
+            # in the natural flow of vertex-color editing — pick base
+            # → tweak with layers → bake. Collapsed by default until
+            # the user adds their first VCL layer.
+            from .tools.vc_layers import draw_vc_layers_section
+            draw_vc_layers_section(layout, context, mesh)
 
         layout.separator()
 
@@ -13707,6 +13940,34 @@ class GTATOOLS_OT_export_ifp(bpy.types.Operator):
     filepath: StringProperty(subtype='FILE_PATH')
     filter_glob: StringProperty(default="*.ifp", options={'HIDDEN'})
     package_name: StringProperty(name="Package", default="custom")
+    ifp_format: EnumProperty(
+        name=T("Формат"),
+        description=T("Кодировка IFP-файла на диске. ANP3 — компактный формат GTA SA (int16). ANPK / ANP2 — chunked float32 (GTA III, VC, плюс совместим с SA)"),
+        items=[
+            ('ANPK', "ANPK / ANP2 (III, VC, SA)",
+             T("Chunked float32 — III, VC, читается и в SA")),
+            ('ANP3', "ANP3 (SA compressed)",
+             T("Flat int16-compressed — родной формат GTA SA, минимальный размер файла")),
+        ],
+        default='ANPK',
+    )
+    decimate: BoolProperty(
+        name=T("Прорежать ключи"),
+        description=T("Удалять keyframe'ы которые лежат на линейной интерполяции между соседями. Уменьшает размер .ifp без потери качества — первый и последний ключ каждой кости сохраняются всегда"),
+        default=False,
+    )
+    decimate_tol_rot: FloatProperty(
+        name=T("Допуск поворота"),
+        description=T("Max-norm tolerance по XYZW quaternion. 1e-3 безопасно — ANP3 квантует rotation c точностью 1/4096 ≈ 2.4e-4, поэтому ниже не имеет смысла"),
+        default=1e-3, min=0.0, soft_min=1e-4, soft_max=1e-1,
+        precision=5,
+    )
+    decimate_tol_trans: FloatProperty(
+        name=T("Допуск позиции"),
+        description=T("Max-norm tolerance по XYZ translation в DFF-единицах (обычно метры). 1e-3 = около 1 мм — незаметно при обычных масштабах сцены"),
+        default=1e-3, min=0.0, soft_min=1e-4, soft_max=1e-1,
+        precision=5,
+    )
 
     def invoke(self, context, event):
         if not self.filepath:
@@ -13714,15 +13975,313 @@ class GTATOOLS_OT_export_ifp(bpy.types.Operator):
         context.window_manager.fileselect_add(self)
         return {'RUNNING_MODAL'}
 
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "package_name")
+        layout.prop(self, "ifp_format")
+        layout.prop(self, "decimate")
+        if self.decimate:
+            box = layout.box()
+            box.prop(self, "decimate_tol_rot")
+            box.prop(self, "decimate_tol_trans")
+
     def execute(self, context):
-        from .ops.ifp_export import export_ifp
+        from .ops.ifp_export import export_ifp, validate_action_bones
+
+        # Bone-name validator — warn (not block) when Action fcurves
+        # reference bones the target armature doesn't have. Those rows
+        # would get bone_id=-1 and the game would silently skip them.
+        armature = context.active_object if (
+            context.active_object and context.active_object.type == 'ARMATURE'
+        ) else None
+        if armature and armature.animation_data and armature.animation_data.action:
+            unknown, _known = validate_action_bones(
+                armature.animation_data.action, armature)
+            if unknown:
+                preview = ', '.join(unknown[:5])
+                more = f" (+{len(unknown) - 5})" if len(unknown) > 5 else ""
+                self.report({'WARNING'},
+                    f"{T('Неизвестные кости в Action:')} {preview}{more}")
+
+        # Build → optionally decimate → write. Three separate calls so
+        # we can measure decimation savings (removed/total) for the
+        # report line. export_ifp() would do all three internally but
+        # would hide the count behind a single return.
+        from .ops.ifp_export import build_ifp_from_actions
+        from .core.ifp import write_ifp, decimate_ifp
+
         try:
-            count = export_ifp(filepath=self.filepath, package_name=self.package_name)
-            self.report({'INFO'}, f"IFP: {count} animations exported")
+            ifp = build_ifp_from_actions(
+                armature=armature, package_name=self.package_name)
+            if not ifp.animations:
+                self.report({'WARNING'}, T("Нет анимаций для экспорта"))
+                return {'CANCELLED'}
+
+            removed = 0
+            total_before = sum(
+                len(b.keyframes) for a in ifp.animations for b in a.bones)
+            if self.decimate and total_before:
+                removed, _ = decimate_ifp(
+                    ifp, self.decimate_tol_rot, self.decimate_tol_trans)
+
+            count = write_ifp(self.filepath, ifp, format=self.ifp_format)
+
+            if self.decimate and total_before:
+                pct = (removed / total_before * 100.0)
+                self.report({'INFO'},
+                    f"IFP {self.ifp_format}: {count} {T('анимаций')}, "
+                    f"{T('прорежено')} {removed}/{total_before} "
+                    f"({T('ключей')}, −{pct:.1f}%)")
+            else:
+                self.report({'INFO'},
+                    f"IFP {self.ifp_format}: {count} animations exported")
             return {'FINISHED'}
         except Exception as e:
             self.report({'ERROR'}, f"IFP export error: {str(e)}")
             return {'CANCELLED'}
+
+
+class GTATOOLS_OT_ifp_roundtrip(bpy.types.Operator):
+    """Диагностика round-trip для IFP — проверяет что read → write → read
+    не теряет анимации, не путает кости и не ломает квартернионы.
+
+    Выбранный файл не меняется: экспорт идёт во временный файл рядом,
+    результат сравнивается с оригиналом и удаляется. Отчёт показывает
+    счётчики и максимальные численные отклонения (dRot, dTrans, dTime)"""
+    bl_idname = "gtatools.ifp_roundtrip"
+    bl_label = "Validate IFP Round-trip"
+    bl_options = {'REGISTER'}
+
+    filepath: StringProperty(subtype='FILE_PATH')
+    filter_glob: StringProperty(default="*.ifp", options={'HIDDEN'})
+
+    # Stashed on the operator between execute and the follow-up dialog
+    # so draw() can format the multi-line report without re-running the
+    # round-trip (it's not cheap on ped.ifp with 294 anims).
+    _last_report: str = ""
+
+    def invoke(self, context, event):
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        from .core.ifp import roundtrip_test
+        if not self.filepath:
+            self.report({'ERROR'}, T("Укажите .ifp файл"))
+            return {'CANCELLED'}
+
+        r = roundtrip_test(self.filepath)
+
+        if r['error']:
+            self.report({'ERROR'}, f"IFP round-trip: {r['error']}")
+            return {'CANCELLED'}
+
+        # Build human-readable report
+        lines = []
+        lines.append(f"{T('Анимации:')} {r['anims_in']} → {r['anims_out']}")
+        lines.append(f"{T('Кости:')} {r['bones_in']} → {r['bones_out']}")
+        lines.append(f"{T('Ключи:')} {r['keyframes_in']} → {r['keyframes_out']}")
+        lines.append(f"{T('Макс. отклонение поворота:')} {r['max_rot_delta']:.6f}")
+        lines.append(f"{T('Макс. отклонение позиции:')} {r['max_trans_delta']:.6f}")
+        lines.append(f"{T('Макс. отклонение времени:')} {r['max_time_delta']:.6f}")
+
+        if r['missing_anims']:
+            mi = r['missing_anims'][:5]
+            more = f" (+{len(r['missing_anims']) - 5})" if len(r['missing_anims']) > 5 else ""
+            lines.append(f"{T('Потеряны анимации:')} {', '.join(mi)}{more}")
+
+        if r['missing_bones']:
+            lines.append(
+                f"{T('Анимаций с потерянными костями:')} {len(r['missing_bones'])}")
+
+        if r['kf_mismatches']:
+            lines.append(
+                f"{T('Несовпадений по числу ключей:')} {len(r['kf_mismatches'])}")
+
+        # Status banner: OK if everything matches and deltas are tiny.
+        ok = (
+            r['anims_in'] == r['anims_out'] and
+            r['bones_in'] == r['bones_out'] and
+            r['keyframes_in'] == r['keyframes_out'] and
+            not r['missing_anims'] and not r['missing_bones'] and
+            not r['kf_mismatches']
+        )
+        verdict = T("Round-trip: OK ✓") if ok else T("Round-trip: расхождения ⚠")
+        header = f"{verdict}\n" + "\n".join(lines)
+
+        # Print full report to console for the copy-paste workflow
+        print(f"\n[IFP Round-trip] {self.filepath}")
+        print(header)
+
+        # Status bar for the short reminder
+        self.report(
+            {'INFO' if ok else 'WARNING'},
+            f"{verdict} — "
+            f"anims {r['anims_in']}→{r['anims_out']}, "
+            f"Δrot {r['max_rot_delta']:.4f}, "
+            f"Δtrans {r['max_trans_delta']:.4f}"
+        )
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_merge_ifp(bpy.types.Operator):
+    """Добавить или заменить анимации в существующем IFP-паке.
+
+    Открывает ped.ifp / anim.ifp (или любой другой .ifp), подменяет
+    анимации по имени (case-insensitive) или дописывает в конец, и
+    сохраняет файл обратно. Остальные анимации пака сохраняются.
+    Позволяет обойтись без внешних IFP-редакторов при правке одной
+    анимации в ванильном паке"""
+    bl_idname = "gtatools.merge_ifp"
+    bl_label = "Merge Into IFP"
+    bl_options = {'REGISTER'}
+
+    filepath: StringProperty(subtype='FILE_PATH')
+    filter_glob: StringProperty(default="*.ifp", options={'HIDDEN'})
+    package_name: StringProperty(
+        name="Package",
+        description=T("Имя пакета (оставьте пустым чтобы сохранить имя существующего файла)"),
+        default="",
+    )
+    use_current_action: BoolProperty(
+        name=T("Только текущая анимация"),
+        description=T("Экспортировать только активную Action арматуры (Action Editor). Иначе — все Actions с меткой ifp_source плюс активная"),
+        default=True,
+    )
+    decimate: BoolProperty(
+        name=T("Прорежать ключи"),
+        description=T("Удалять keyframe'ы которые лежат на линейной интерполяции между соседями. Уменьшает размер .ifp без потери качества — первый и последний ключ каждой кости сохраняются всегда"),
+        default=False,
+    )
+    decimate_tol_rot: FloatProperty(
+        name=T("Допуск поворота"),
+        default=1e-3, min=0.0, soft_min=1e-4, soft_max=1e-1,
+        precision=5,
+    )
+    decimate_tol_trans: FloatProperty(
+        name=T("Допуск позиции"),
+        default=1e-3, min=0.0, soft_min=1e-4, soft_max=1e-1,
+        precision=5,
+    )
+
+    def invoke(self, context, event):
+        if not self.filepath:
+            self.filepath = "ped.ifp"
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        from .ops.ifp_export import merge_actions_into_ifp, validate_action_bones
+
+        armature = context.active_object
+        if not armature or armature.type != 'ARMATURE':
+            self.report({'ERROR'}, T("Выделите скелет (Armature)"))
+            return {'CANCELLED'}
+
+        # Narrow actions to only the one currently bound if the user
+        # wants the focused flow (editing ONE anim and pushing it back).
+        actions = None
+        if self.use_current_action:
+            if armature.animation_data and armature.animation_data.action:
+                actions = [armature.animation_data.action]
+            else:
+                self.report({'ERROR'},
+                    T("У арматуры нет активной Action — включите опцию «Только текущая» выкл. или присвойте Action"))
+                return {'CANCELLED'}
+
+        # Bone-name validation — merge into ped.ifp with a mismatched
+        # skeleton is the classic silent-fail path (bone_id=-1 rows get
+        # skipped in-game, animation plays empty). Warn per-Action so
+        # the user can rename bones before committing.
+        actions_to_check = actions if actions is not None else (
+            [a for a in bpy.data.actions
+             if a.get('ifp_source') or (
+                 armature.animation_data
+                 and armature.animation_data.action == a)]
+        )
+        for act in actions_to_check:
+            unknown, _known = validate_action_bones(act, armature)
+            if unknown:
+                preview = ', '.join(unknown[:5])
+                more = f" (+{len(unknown) - 5})" if len(unknown) > 5 else ""
+                self.report({'WARNING'},
+                    f"{act.name}: {T('неизвестные кости:')} {preview}{more}")
+
+        # Same three-step flow as Export IFP — gives us the decimation
+        # savings counter (removed/total) for the report.
+        from .ops.ifp_export import build_ifp_from_actions
+        from .core.ifp import merge_ifp, decimate_ifp
+
+        try:
+            ifp = build_ifp_from_actions(
+                actions=actions, armature=armature,
+                package_name=self.package_name or 'ped')
+            if not ifp.animations:
+                self.report({'WARNING'}, T("Нет анимаций для merge"))
+                return {'CANCELLED'}
+
+            removed = 0
+            total_before = sum(
+                len(b.keyframes) for a in ifp.animations for b in a.bones)
+            if self.decimate and total_before:
+                removed, _ = decimate_ifp(
+                    ifp, self.decimate_tol_rot, self.decimate_tol_trans)
+
+            replaced, added = merge_ifp(
+                self.filepath, ifp.animations,
+                package_name=self.package_name or None)
+
+            if self.decimate and total_before:
+                pct = (removed / total_before * 100.0)
+                self.report({'INFO'},
+                    f"IFP: {T('заменено')} {replaced}, {T('добавлено')} {added}, "
+                    f"{T('прорежено')} {removed}/{total_before} (−{pct:.1f}%)")
+            else:
+                self.report({'INFO'},
+                    f"IFP: {T('заменено')} {replaced}, {T('добавлено')} {added}")
+            return {'FINISHED'}
+        except Exception as e:
+            self.report({'ERROR'}, f"IFP merge error: {e}")
+            return {'CANCELLED'}
+
+
+class GTATOOLS_OT_ifp_preview_toggle(bpy.types.Operator):
+    """Переключить живой preview IFP-анимации без коммита в Action.
+
+    Позволяет быстро пробежаться по 294 ванильным анимациям `ped.ifp`
+    простым переключением Action-dropdown'а без захламления Action
+    Editor'а. Handler frame_change_post напрямую пишет в pose bones
+    при скрабе Timeline. Повторный клик — выключает preview и
+    восстанавливает предыдущий Action арматуры"""
+    bl_idname = "gtatools.ifp_preview_toggle"
+    bl_label = "Preview"
+    bl_options = {'REGISTER'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.active_object and context.active_object.type == 'ARMATURE'
+
+    def execute(self, context):
+        from .ops.ifp_import import preview_start, preview_stop, preview_is_active
+
+        armature = context.active_object
+
+        if preview_is_active():
+            ok, msg = preview_stop()
+            self.report({'INFO'}, msg)
+            return {'FINISHED'} if ok else {'CANCELLED'}
+
+        name = context.scene.gtatools_ifp_action
+        if not name:
+            self.report({'ERROR'}, T("Выберите анимацию в списке"))
+            return {'CANCELLED'}
+
+        ok, msg = preview_start(armature, name)
+        if ok:
+            self.report({'INFO'}, msg)
+            return {'FINISHED'}
+        self.report({'ERROR'}, msg)
+        return {'CANCELLED'}
 
 
 class GTATOOLS_OT_apply_ifp(bpy.types.Operator):
@@ -13777,6 +14336,10 @@ class GTATOOLS_PT_anim_panel(bpy.types.Panel):
         row = box.row(align=True)
         row.operator("gtatools.import_ifp", text=T("Импорт"), icon='IMPORT')
         row.operator("gtatools.export_ifp", text=T("Экспорт"), icon='EXPORT')
+        box.operator("gtatools.merge_ifp",
+                     text=T("Добавить в IFP"), icon='FILE_REFRESH')
+        box.operator("gtatools.ifp_roundtrip",
+                     text=T("Проверить round-trip"), icon='CHECKMARK')
         box.operator("gtatools.ifp_batch_import",
                      text=T("Batch папка…"), icon='FILE_FOLDER')
 
@@ -13790,7 +14353,21 @@ class GTATOOLS_PT_anim_panel(bpy.types.Panel):
                 # Dropdown with search
                 box.prop_search(context.scene, "gtatools_ifp_action", bpy.data, "actions",
                                 text=T("Анимация"), icon='ACTION')
-                box.operator("gtatools.apply_ifp", text=T("Применить анимацию"), icon='PLAY')
+                row = box.row(align=True)
+                row.operator("gtatools.apply_ifp",
+                             text=T("Применить анимацию"), icon='PLAY')
+                # Live preview toggle — depress the button while active
+                # so the user sees preview is on. Importing the module
+                # here keeps UI drawing cheap when the panel is closed.
+                try:
+                    from .ops.ifp_import import preview_is_active as _pv
+                    _pv_on = _pv()
+                except Exception:
+                    _pv_on = False
+                row.operator("gtatools.ifp_preview_toggle",
+                             text=T("Preview") if not _pv_on else T("Preview ●"),
+                             icon='HIDE_OFF' if not _pv_on else 'RESTRICT_VIEW_OFF',
+                             depress=_pv_on)
 
                 if obj.animation_data and obj.animation_data.action:
                     action = obj.animation_data.action
@@ -14320,6 +14897,8 @@ classes = (
     GTATOOLS_OT_snap_uv_to_grid,
     GTATOOLS_OT_set_uv_align,
     GTATOOLS_PT_main_panel,
+    GTATOOLS_PT_zone_model,
+    GTATOOLS_PT_zone_data,
     GTATOOLS_OT_import_dff,
     GTATOOLS_OT_import_col,
     GTATOOLS_OT_import_txd,
@@ -14343,6 +14922,9 @@ classes = (
     GTATOOLS_OT_export_nodes,
     GTATOOLS_OT_import_ifp,
     GTATOOLS_OT_export_ifp,
+    GTATOOLS_OT_merge_ifp,
+    GTATOOLS_OT_ifp_roundtrip,
+    GTATOOLS_OT_ifp_preview_toggle,
     GTATOOLS_OT_apply_ifp,
     GTATOOLS_OT_import_paths_ipl,
     GTATOOLS_OT_export_paths_ipl,
@@ -14415,8 +14997,22 @@ classes = (
     GTATOOLS_OT_bitmaps_scan,
     GTATOOLS_OT_bitmaps_resolve,
     GTATOOLS_OT_bitmaps_copy,
+    GTATOOLS_OT_bitmaps_find_unused,
+    GTATOOLS_OT_bitmaps_remove_unused,
     GTATOOLS_OT_bitmaps_find_dupes,
     GTATOOLS_PT_bitmaps_panel,
+    GTATOOLS_VCLayerItem,
+    GTATOOLS_OT_vcl_add,
+    GTATOOLS_OT_vcl_remove,
+    GTATOOLS_OT_vcl_move,
+    GTATOOLS_OT_vcl_promote,
+    GTATOOLS_OT_vcl_demote,
+    GTATOOLS_OT_vcl_set_active_attr,
+    GTATOOLS_OT_vcl_show_composite,
+    GTATOOLS_OT_vcl_refresh_composite,
+    GTATOOLS_OT_vcl_apply_multi,
+    GTATOOLS_OT_vcl_recolor_selected,
+    GTATOOLS_UL_vc_layers,
     GTATOOLS_OT_ifp_batch_import,
     GTATOOLS_OT_refresh_station_markers,
     GTATOOLS_OT_path_node_flag,
@@ -14429,6 +15025,9 @@ classes = (
     GTATOOLS_OT_import_cst,
     GTATOOLS_OT_export_cst,
     GTATOOLS_OT_vehicle_scale,
+    GTATOOLS_OT_vehicle_add_damage_variant,
+    GTATOOLS_OT_vehicle_show_damage,
+    GTATOOLS_OT_vehicle_pair_report,
 )
 
 
@@ -15000,6 +15599,11 @@ def register():
         description=T("Загружать коллизии из кеша при импорте карты. Нужно для round-trip (импорт части карты → редактирование → экспорт в IMG другой сборки). При выключенном — только DFF геометрия, сцена легче"),
         default=True,
     )
+    bpy.types.Scene.gtatools_map_group_by_ipl = BoolProperty(
+        name="Group by IPL",
+        description=T("Создавать отдельную коллекцию на каждый IPL-файл (Map_LAn, Map_LAs, Map_SF…) вместо одиночных Map_DFF_Far/Mid/Near. Удобно для скрытия районов целиком и для совместного редактирования карты. LOD-меши идут в коллекцию своего IPL вместе с обычными мешами"),
+        default=False,
+    )
 
     # Game root path (for gta.dat auto-discovery)
     bpy.types.Scene.gtatools_game_root = StringProperty(
@@ -15448,6 +16052,82 @@ def register():
         return None
     bpy.app.timers.register(_deferred_load_paths, first_interval=0.5)
 
+    # VC Layer System — per-mesh stack of editing layers that compose
+    # into Day / Night at export-flatten time. Stored on Mesh (data)
+    # so linked-duplicate objects share the same layer stack.
+    # Wrapped in try/except so a VCL bug never takes out the whole
+    # addon — better to log loudly and keep the rest of the operators
+    # functional than to leave the user with nothing.
+    try:
+        bpy.types.Mesh.gtatools_vc_layers = CollectionProperty(
+            type=GTATOOLS_VCLayerItem)
+        bpy.types.Mesh.gtatools_vc_active_layer = IntProperty(
+            name="Active VC Layer", default=0, min=0,
+            update=_vc_on_active_layer_change)
+        bpy.types.Mesh.gtatools_vc_edit_target = EnumProperty(
+            name=T("Стек"),
+            items=[
+                ('DAY',   T("Day"),   T("Редактируем Day-стек")),
+                ('NIGHT', T("Night"), T("Редактируем Night-стек")),
+            ],
+            default='DAY',
+        )
+        bpy.types.Mesh.gtatools_vc_multi_mode = EnumProperty(
+            name=T("Multi-edit"),
+            description=T("Как групповые слайдеры применяются к выделенным слоям"),
+            items=[
+                ('ABSOLUTE', T("Absolute"),
+                    T("Все выделенные получают одинаковое значение")),
+                ('RELATIVE', T("Relative"),
+                    T("Все выделенные сдвигаются на одну дельту от текущего")),
+            ],
+            default='ABSOLUTE',
+        )
+        bpy.types.Mesh.gtatools_vc_live_preview = BoolProperty(
+            name=T("Live preview"),
+            description=T("Авто-композиция стека при изменении любого слайдера или мазке кистью"),
+            default=False,
+            update=_vc_on_live_preview_toggle,
+        )
+        # Tracks which scope the VCL_PREVIEW buffer currently holds so
+        # the panel can show «Preview: Day» / «Preview: Night» and the
+        # update hook on layer sliders knows whether a same-scope edit
+        # warrants a refresh.
+        bpy.types.Mesh.gtatools_vc_preview_scope = EnumProperty(
+            name="Preview Scope",
+            items=[
+                ('DAY',   "Day",   ""),
+                ('NIGHT', "Night", ""),
+            ],
+            default='DAY',
+            options={'HIDDEN'},
+        )
+        # Multi-edit scratch values — separate from per-layer fields so
+        # adjusting them doesn't accidentally fire per-layer update
+        # callbacks. User clicks "Apply" to push them to selected layers.
+        bpy.types.Mesh.gtatools_vc_multi_opacity = FloatProperty(
+            name="Multi Opacity", default=1.0, min=0.0, max=1.0,
+            subtype='FACTOR')
+        bpy.types.Mesh.gtatools_vc_multi_brightness = FloatProperty(
+            name="Multi Brightness", default=0.0, min=-1.0, max=1.0,
+            subtype='FACTOR')
+        bpy.types.Mesh.gtatools_vc_multi_contrast = FloatProperty(
+            name="Multi Contrast", default=1.0, min=0.0, max=3.0)
+        # Section-expanded toggle for the inline «Слои Vertex Color»
+        # block in the prelight panel. Stored on Scene (not Mesh) so
+        # the user's collapsed/expanded preference persists across
+        # the active object — switching meshes shouldn't fold the
+        # section every time.
+        bpy.types.Scene.gtatools_vc_layers_expanded = BoolProperty(
+            name="VC Layers Section Expanded",
+            default=False,
+        )
+        vc_layers_register_handlers()
+    except Exception as _e:
+        import traceback
+        print(f"[GTA Tools] VC Layer System register failed: {_e}")
+        traceback.print_exc()
+
     print("[GTA Tools Panel] Addon registered!")
 
 
@@ -15516,6 +16196,14 @@ def unregister():
     # 2DFX billboard timer
     from .ops.fx_preview import stop_billboard_timer
     stop_billboard_timer()
+
+    # IFP live preview — unregister frame-change handler so reload
+    # doesn't leave a stale callable pointing at the old module.
+    try:
+        from .ops.ifp_import import preview_stop
+        preview_stop()
+    except Exception:
+        pass
 
     # 2DFX handlers
     if _on_depsgraph_update_2dfx in bpy.app.handlers.depsgraph_update_post:
@@ -15590,6 +16278,10 @@ def unregister():
     del bpy.types.Scene.gtatools_img_skip_lod
     del bpy.types.Scene.gtatools_img_load_txd
     del bpy.types.Scene.gtatools_map_load_col
+    try:
+        del bpy.types.Scene.gtatools_map_group_by_ipl
+    except Exception:
+        pass
     del bpy.types.Scene.gtatools_ide_path
     del bpy.types.Scene.gtatools_ipl_path
     del bpy.types.Scene.gtatools_txd_auto_import
@@ -15640,6 +16332,26 @@ def unregister():
     del bpy.types.Scene.gtatools_scatter_intensity
     del bpy.types.Scene.gtatools_fill_color
     del bpy.types.Object.gtatools_fill_colors
+    # VC Layer System — guarded delete so cleanup never blocks unregister.
+    try:
+        vc_layers_unregister_handlers()
+    except Exception:
+        pass
+    for _attr in ('gtatools_vc_layers', 'gtatools_vc_active_layer',
+                  'gtatools_vc_edit_target', 'gtatools_vc_multi_mode',
+                  'gtatools_vc_live_preview',
+                  'gtatools_vc_preview_scope',
+                  'gtatools_vc_multi_opacity',
+                  'gtatools_vc_multi_brightness',
+                  'gtatools_vc_multi_contrast'):
+        try:
+            delattr(bpy.types.Mesh, _attr)
+        except (AttributeError, RuntimeError):
+            pass
+    try:
+        delattr(bpy.types.Scene, 'gtatools_vc_layers_expanded')
+    except (AttributeError, RuntimeError):
+        pass
     del bpy.types.Scene.gtatools_v_offset
     del bpy.types.Scene.gtatools_vc_smooth_iterations
     del bpy.types.Scene.gtatools_vc_smooth_factor
