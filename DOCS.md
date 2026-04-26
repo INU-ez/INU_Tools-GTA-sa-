@@ -1110,6 +1110,7 @@ Unified one-click export of a scene district: DFF + COL + TXD + IDE + IPL into a
 - Auto-assigns Model IDs from `[id_pool_start, 19999]` to any DFF with `inu.model_id == 0`, writing them back into the object
 - Exports per-group `*.dff` and `*.col` with existing exporters
 - **TXD: one `.txd` per unique `inu.txd_name`** — DFFs with the same `txd_name` (e.g. `vegas01.txd` shared by 50 buildings) get bucketed into one shared TXD; DFFs with their own dedicated TXD (`cj.txd`) get their own file. Empty `txd_name` falls back to the model's own base name. Preserves the vanilla SA layout exactly when the scene was imported with IDE-populated `txd_name`s
+- **COL: one `.col` library per unique `inu.col_name`** (when `col_library` toggle is on) — same pattern as TXD. `col_name` is auto-populated on Map Import to the source `.col` filename (`vegasN`, `LAs`, `LAn`, …). Round-trip rebuilds the original library file with all its original model entries. Empty `col_name` falls back to `txd_name` then to the model's own base name. Disabling `col_library` writes one `<base>.col` per individual DFF instead
 - Writes one `{base_name}.ide` (objs section) and one `{base_name}.ipl` (inst section) covering the entire selection
 - The operator runs as a **modal generator** with a window-manager timer: status bar shows current group / TXD bucket / IPL stage (`vegasN: TXD vegas02 (12 models)`), the viewport stays responsive, **ESC** cancels the export.
 
@@ -1194,7 +1195,7 @@ Source: [`core/dff.py`](INU_tools/core/dff.py) → `UVAnim`, `UVAnimDict`, `_uv_
 
 **6. Test in-game.** Drop the DFF into an IMG, **Rebuild Archive** in your IMG tool (otherwise the game keeps the cached old version), load a save near the model. If the anim doesn't play:
 
-- Re-import the exported DFF via INU Tools 1.6.6 — the read-back should re-populate the same `Speed U/V + Duration` in the material. If those come back empty, the export didn't write the chunks (check the toggle).
+- Re-import the exported DFF via INU Tools 1.6.7 — the read-back should re-populate the same `Speed U/V + Duration` in the material. If those come back empty, the export didn't write the chunks (check the toggle).
 - `node_to_uv[0] = 1` is set automatically; mutating that to all-zeros leaves the anim present but the engine doesn't bind it to a texture slot.
 - Scroll «stutters» on every loop → your `Speed × Duration` is fractional. Re-tune one of the two so the product lands on an integer.
 

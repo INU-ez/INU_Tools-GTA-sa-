@@ -8,7 +8,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/Blender-4.2%E2%80%935.1-orange?logo=blender" alt="Blender">
-  <img src="https://img.shields.io/badge/Version-1.6.6-green" alt="Version">
+  <img src="https://img.shields.io/badge/Version-1.6.7-green" alt="Version">
   <img src="https://img.shields.io/badge/License-GPL--3.0-blue" alt="License">
 </p>
 <p>
@@ -59,47 +59,18 @@
 > [!NOTE]
 > Аддон в активной разработке. Сообщения об ошибках приветствуются в [Issues](../../issues).
 
-## 🆕 Что нового в 1.6.6
+## 🆕 Что нового в 1.6.7
 
-Закрывает 4 пункта Planned 1.6.5 (Pipeline chunk relocation, Map Export auto-split, Train paths verification, Vehicle damage variants) плюс пакет фич, которые не успели в `v1.6.5-beta`.
+Первый стабильный релиз после [v1.6.6-beta](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v1.6.6-beta). Добавляет полный round-trip Map Import → правка → Map Export с сохранением IDE / IPL / COL / TXD-лейаута точно как в ванильной SA, модальный экспорт с progress-bar'ом, и пакет format-conformance фиксов (CRLF line endings, IPL inst dedup, согласованность ID для `.NNN` дубликатов).
 
-**Map workflow**
-- 🗺️ **Map Export — режимы разбиения** — новый дропдаун в Map Export с тремя опциями:
-  - **Без разбиения** (по умолчанию) — один district, текущее поведение.
-  - **XY-сетка** — биннить DFF по XY-координате origin'а на сетку с настраиваемым `cell_size` (по умолчанию 256 м — ванильный радиус стриминга); каждая непустая ячейка получает свою подпапку `<base>_x<cx>_y<cy>`. Откатывается к *Без разбиения* если ячейка одна.
-  - **По коллекциям** — биннить DFF по имени верхней пользовательской коллекции. Имя коллекции переиспользуется как имя district'а — round-trip с *Map Import → Группировать по IPL* теперь закрывается чисто: коллекция `vegasn_stream0` в Blender → `vegasn_stream0.ipl` на диске.
-- 📂 **Map Import: Группировать по IPL** — новый тумблер рядом с *Без LOD* / *Без TXD* / *Без коллизии*. При включении каждый исходный IPL получает родительскую коллекцию названную точно как имя IPL-файла (без префикса `Map_` — например `vegasN`, `vegasn_stream0`, `LAn`) с тремя вложенными подколлекциями `<ipl>_DFF` / `<ipl>_LOD` / `<ipl>_COL`. LOD и COL остаются разделены по типу, но связаны со своим районом — выключи глаз родительской коллекции и весь район пропадает из viewport. Естественно пара с режимом экспорта **По коллекциям** для round-trip
-- 📊 **Map Export — модальный прогресс** — оператор работает как модальный генератор с таймером; статус-текст в нижнем баре обновляется на каждую группу / TXD / IDE / IPL, ESC отменяет, viewport остаётся отзывчивым во время долгих экспортов (ванильный VC экспорт = ~5 ячеек, ~700 group writes, ~50 с — больше не замораживает UI)
-- 📦 **Map Export — TXD-баккетинг по `txd_name`** — вместо одного монолитного `<cell>.txd` экспортёр группирует DFF по `inu.txd_name` (сохраняется при Map Import из IDE) и пишет один `.txd` на каждое уникальное имя. Модели, делящие `vegas01.txd`, попадают в один общий файл; модель со своим `cj.txd` получает отдельный — round-trip с ванильным SA сохраняет оригинальную TXD-структуру
-- 🚀 **Map Export — NVTT auto-detect + параллельный DXT1** — если в `gtatools_nvtt_path` указан рабочий NVIDIA Texture Tools, Map Export теперь сам использует GPU-компрессор без отдельного тумблера. NVTT-пайплайн разделён на serial-фазу `image.save()` PNG (main thread, bpy) и пул из 4-воркеров `ThreadPoolExecutor` запускающих `nvcompress.exe` параллельно — несколько текстур кодируются + DDS-парсятся одновременно вместо по одной. Типичный прирост: ~3-4× поверх однопоточного NVTT, ~10-15× над CPU DXT для shared TXD с сотнями текстур
-- 🚗 **Отдельная панель Машины** — Vehicle Scale + Damage variants вынесены из панели Проверка в свою sub-панель *Машины* (N-сайдбар, `bl_order=11`). Map-моддеры больше не видят vehicle-специфичные тулзы во время обычной работы над районами
-- 🔁 **Кнопка Export Map переехала к Import Map** — Properties → Scene → INU Tools → блок *Import Map* теперь содержит и `Import Map`, и `Export Map` в одну строку, отражая round-trip workflow. Старая Map Export панель в N-сайдбаре остаётся для тех кто привык
-- ⚡ **COL импорт ~5× быстрее** — `mesh.from_pydata + foreach_set('material_index', …)` вместо bmesh, общий material cache между COL-моделями (раньше делало ~10k дубликатов `COL_N` материалов на большой карте). Фикс по реальному профайлеру: build COL занимал 60% времени
+**Главное** — round-trip preservation через `inu.col_name` + `inu.lod_object` свойства · Group by IPL импорт + By-collection экспорт-режим · парность main ↔ LOD в IDE/IPL · TXD-баккетинг по `txd_name` · per-DFF COL по умолчанию · модальный экспорт с ESC cancel · multi-collection чекбоксный picker · NVTT auto + параллельный DXT1 · отдельная Vehicles панель.
 
-**Машины**
-- 🛡️ **Vehicle damage variants** — три новых оператора в *Check → Damage variants*: `Создать _dam` дублирует активный меш как `_dam` (источник переименовывается в `_ok`, новый `_dam` скрыт во viewport, экспорт его всё равно подбирает), `Показать OK / Dam / Оба` переключает видимость в иерархии, `Проверить пары` отчитывается через системную консоль о парных и одиноких `_ok` / `_dam` мешах
-- 🔩 **Pipeline chunk → atomic extension** — DFF-writer пишет `0x253F2F3` только внутри расширения атомика (Seggaeman / ванильный RW). Reader читает оба расширения для back-compat. Vehicle env-map (`0x53F2009A`) и Day/Night building пайплайны (`0x53F20098`) корректно работают после чистого экспорт-round-trip
-
-**Vertex colors / освещение**
-- 🎨 **VC Layer System (BETA)** — Photoshop-стайл неразрушающее редактирование vertex colors. Стек именованных слоёв на каждый scope (Day / Night), у каждого свои opacity / blend mode / pre-blend brightness / contrast. Live composite пишется в Day / Night атрибуты (оригиналы безопасно бэкапятся). Auto-flatten при экспорте DFF, restore после. Multi-select групповые слайдеры, recolor, операторы promote / demote. Лимит 10 слоёв на стек. См. [DOCS § Слои Vertex Color](DOCS_rus.md#слои-vertex-color-beta)
-
-**Анимации**
-- 📜 **IFP format dispatch — ANP2 / ANPK write** — III/VC моддинг теперь поддержан. `write_ifp(path, ifp, format='ANPK' | 'ANP3')`. По умолчанию сохраняет формат источника. Стандартизировал `KeyFrame.time` в секунды для всех форматов
-
-**Пути**
-- 🚂 **Train Paths как сплайны (верифицировано)** — `tracks*.dat` import/export использует Blender-кривые (POLY-сплайн, cyclic) с `station_indices`. Round-trip сохраняет станции; документировано в [DOCS § Train Paths](DOCS_rus.md#train-paths)
-
-**ID Manager / детекция**
-- 📏 **LOD Detection для ванили** — обрабатывает нерегулярные имена: `LODfoo`, `foo_LOD`, `foo1LOD`, `modeLODlaett`
-
-**UI / UX**
-- 🆕 **UI Этап 7** — зональные сепараторы «── MODEL ──» / «── DATA ──» между диапазонами bl_order в N-sidebar (Этапы 1-6 уже были в `v1.6.5-beta`)
-- 🚿 **Прогресс экспорта** — добавлен в INU Export / Export All — нижняя статус-строка показывает текущую группу / total во время длинных батчей (прогресс Build Map / Export to IMG / Extract Resources уже был в `v1.6.5-beta`)
-- 🧹 **Bitmaps Manager — очистка неиспользуемых** — операторы `Найти неиспользуемые` / `Удалить неиспользуемые` сканируют `bpy.data.images` и `bpy.data.materials` на orphans. Использует `core.bitmap_diff` (bpy-free pure helpers, под тестами)
+→ **[Полные release notes на GitHub](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v1.6.7)**
 
 <details>
 <summary>Более старые релизы</summary>
 
+- **v1.6.6-beta** — частичный pre-release с первым набором 1.6.6: Map auto-split (XY-сетка), damage variants, train paths verified, COL ~5×, VC Layer System (BETA), IFP ANP2 / ANPK write, Bitmaps Manager unused cleanup. Заменён на v1.6.7 (round-trip preservation, modal export, format-conformance фиксы) — [страница релиза](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v1.6.6-beta)
 - **v1.6.5-beta** — релиз о производительности map-workflow: Import Map ~10× / Export to IMG ~5–15× быстрее, тумблеры Load COL + Shared TXD, Skip 2DFX по умолчанию, ID Manager дыры/фантомы + multi-preset, UI pipeline реорганизация (Этапы 1-6) + панель *INU Tools: Model* в Object Properties, Material Presets в `INU_Preset/`, прогресс-бары (Build Map / Export to IMG / Extract Resources), опциональный Профайлер — см. [страницу релиза](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v1.6.5-beta)
 - **v1.6.4** — Experimental: Map Export (сцена→IPL+IDE+COL+TXD одной кнопкой), Binary IPL Write, CST IO, UV-анимация в DFF, Breakable Objects, IFP Batch Import, GTA Material Panel, Bitmaps Manager, Station Markers, Roadblocks & Traffic Lights, FLA4 Path Format, Vehicle Scale Helper
 - **v1.6.3** — Particle Effects (редактор effects.fxp), Object Properties *GTA SA: IDE / IPL* панель, LightMap UV2, 2DFX UI (Detach All, список эффектов), ID Manager (Assign from ID…, Extend IDs FLA), Nodes multi-file I/O с разбивкой на 8×8 зон

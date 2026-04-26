@@ -1730,4 +1730,12 @@ LANG = {
     "(пусто = выделение из outliner на момент нажатия)":
         "(empty = outliner selection captured when button was pressed)",
     "Export Map": "Export Map",
+
+    # ── 1.6.6 — LOD round-trip + COL library property ──────────────────
+    "COL Library": "COL Library",
+    "Имя .col-библиотеки в которой хранится коллизия модели. Заполняется автоматически при Map Import (= имя исходного .col файла). При Map Export DFF группируются в одну .col-библиотеку по совпадающему col_name. Пусто → fallback на txd_name, затем на имя модели":
+        "Name of the .col library this model's collision belongs to. Auto-populated on Map Import (= source .col filename). On Map Export, DFFs sharing a col_name are merged into one .col library. Empty → falls back to txd_name, then to the model's own name",
+    "LOD partner": "LOD partner",
+    "LOD-модель этой DFF — заполняется автоматически при Map Import из IPL lod_index. При Map Export пересчитывается в lod_index = позицию LOD-инстанса в выходном IPL. Пусто = модель не имеет LOD":
+        "LOD model paired with this DFF — auto-populated on Map Import from the source IPL's lod_index. On Map Export it is converted back into a lod_index = position of the LOD instance in the output IPL. Empty = no LOD partner",
 }

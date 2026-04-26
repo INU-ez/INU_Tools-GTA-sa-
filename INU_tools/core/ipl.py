@@ -858,7 +858,7 @@ def write_ipl(filepath: str, ipl: IplFile, *, binary: bool = False) -> None:
     if binary:
         write_binary_ipl(filepath, ipl)
         return
-    with open(filepath, 'w', encoding='utf-8', newline='\n') as f:
+    with open(filepath, 'w', encoding='utf-8', newline='\r\n') as f:
         # Standard GTA SA IPL layout — all 12 sections are emitted, even
         # when empty, to match the vanilla file structure expected by
         # most tools (MEd, IPL Editor, etc.).
@@ -1008,7 +1008,7 @@ def upsert_ipl(filepath: str, entries: list[IplInstance]) -> tuple[int, int]:
                 result_lines.append(_format_inst_line(e) + '\n')
             result_lines.append('end\n')
 
-    with open(filepath, 'w', encoding='utf-8', newline='\n') as f:
+    with open(filepath, 'w', encoding='utf-8', newline='\r\n') as f:
         f.writelines(result_lines)
 
     return (updated, added)
@@ -1085,7 +1085,7 @@ def remove_ipl(filepath: str, model_ids: set[int]) -> int:
 
         result_lines.append(line)
 
-    with open(filepath, 'w', encoding='utf-8', newline='\n') as f:
+    with open(filepath, 'w', encoding='utf-8', newline='\r\n') as f:
         f.writelines(result_lines)
 
     return len(removed_indices)

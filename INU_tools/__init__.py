@@ -23,7 +23,7 @@
 bl_info = {
     "name": "INU_tools(gta_sa)",
     "author": "INU",
-    "version": (1, 6, 6),
+    "version": (1, 6, 7),
     "blender": (4, 2, 0),
     "location": "View3D > Sidebar (N) > GTA Tools",
     "description": "Toolset for GTA SA models",
@@ -226,7 +226,7 @@ import subprocess
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from mathutils import Vector
-from bpy.props import StringProperty, BoolProperty, FloatProperty, FloatVectorProperty, IntProperty, CollectionProperty, EnumProperty
+from bpy.props import StringProperty, BoolProperty, FloatProperty, FloatVectorProperty, IntProperty, CollectionProperty, EnumProperty, PointerProperty
 from bpy.app.handlers import persistent
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
@@ -351,7 +351,6 @@ from .tools.vehicle_scale import (
 )
 from .tools.map_export import (
     GTATOOLS_OT_map_export,
-    GTATOOLS_PT_map_export_panel,
 )
 from .tools.gta_material_panel import (
     GTATOOLS_OT_material_preset,
@@ -1174,6 +1173,16 @@ class INUObjectProps(bpy.types.PropertyGroup):
         name="TXD Name",
         default="",
         description=T("Имя словаря текстур (IDE). По умолчанию = имя модели"),
+    )
+    col_name : StringProperty(
+        name="COL Library",
+        default="",
+        description=T("Имя .col-библиотеки в которой хранится коллизия модели. Заполняется автоматически при Map Import (= имя исходного .col файла). При Map Export DFF группируются в одну .col-библиотеку по совпадающему col_name. Пусто → fallback на txd_name, затем на имя модели"),
+    )
+    lod_object : PointerProperty(
+        type=bpy.types.Object,
+        name="LOD partner",
+        description=T("LOD-модель этой DFF — заполняется автоматически при Map Import из IPL lod_index. При Map Export пересчитывается в lod_index = позицию LOD-инстанса в выходном IPL. Пусто = модель не имеет LOD"),
     )
     draw_distance : FloatProperty(
         name="Draw Distance",
@@ -3591,6 +3600,13 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
         # against total wall time this tells us how much time is eaten
         # by modal-tick overhead / viewport redraw / depsgraph work
         # happening OUTSIDE the generator (i.e. between yields).
+        # Track which Blender object got created for each source IPL
+        # instance — needed AFTER the loop to wire ``inu.lod_object``
+        # PointerProperty from the source IPL's lod_index. Without this
+        # the re-export's IPL writes lod_index = -1 for every entry and
+        # SA stops swapping in low-poly LODs at long range.
+        instance_to_main_obj: list = [None] * len(instances)
+
         for idx, inst in enumerate(instances):
             with prof.stage('loop iter'):
                 self._progress = idx + 1
@@ -3662,11 +3678,14 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
                             with prof.stage('transform apply'):
                                 pos = (inst.pos_x, inst.pos_y, inst.pos_z)
                                 rot = Quaternion((inst.rot_w, inst.rot_x, inst.rot_y, inst.rot_z)).conjugated()
+                                main_obj = None
                                 for o in new_objs:
                                     if o.type == 'MESH':
                                         o.location = pos
                                         o.rotation_mode = 'QUATERNION'
                                         o.rotation_quaternion = rot
+                                        if main_obj is None:
+                                            main_obj = o
                                         if hasattr(o, 'inu'):
                                             o.inu.model_id = inst.model_id
                                             if inst.model_id in ide_models:
@@ -3674,6 +3693,10 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
                                                 o.inu.draw_distance = ide_obj.draw_distance
                                                 o.inu.ide_flags = ide_obj.flags
                                                 o.inu.txd_name = ide_obj.txd_name
+                                # Stash reference for the post-loop LOD
+                                # wire-up pass; first MESH child stands
+                                # in for the whole instance.
+                                instance_to_main_obj[idx] = main_obj
 
                             # COL: build/copy + place at the same
                             # transform as the DFF instance. Default mode
@@ -3715,6 +3738,30 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
                             self._imported += 1
             if _need_yield:
                 yield
+
+        # ── LOD wire-up pass ────────────────────────────────────────
+        # IPL ``lod_index`` is a position pointer into the same IPL's
+        # instance list. Now that every instance has its main Blender
+        # object captured in ``instance_to_main_obj``, walk the
+        # original instance list and resolve each lod_index → object
+        # → store as PointerProperty so re-export can recompute the
+        # position (which will differ — different IPL ordering /
+        # filtering). Without this, every re-exported instance has
+        # lod_index = -1 and SA never streams in low-poly LODs.
+        with prof.stage('LOD wire-up'):
+            n_inst = len(instances)
+            for idx, inst in enumerate(instances):
+                main_obj = instance_to_main_obj[idx]
+                if main_obj is None:
+                    continue
+                lod_idx = getattr(inst, 'lod_index', -1)
+                if 0 <= lod_idx < n_inst:
+                    lod_obj = instance_to_main_obj[lod_idx]
+                    if lod_obj is not None and hasattr(main_obj, 'inu'):
+                        try:
+                            main_obj.inu.lod_object = lod_obj
+                        except Exception:
+                            pass
 
         # Shut the parse pool down — at this point all consumed futures
         # have been popped; any leftovers belong to models we skipped.
@@ -12129,9 +12176,13 @@ class GTATOOLS_PT_object_inu_tools(bpy.types.Panel):
         col.prop(inu, "txd_name", text="TXD")
         col.prop(inu, "draw_distance", text="Draw Dist")
         col.prop(inu, "lod_draw_distance", text="LOD Dist")
-        row = col.row(align=True)
-        row.prop(inu, "interior_id", text="Interior")
-        row.prop(inu, "lod_index", text="LOD")
+        col.prop(inu, "interior_id", text="Interior")
+        # LOD partner — clickable object picker. Auto-filled on Map
+        # Import (preserves the IPL lod_index relationship even when
+        # vanilla LOD names don't follow the lod* convention), but
+        # the user can re-target it if naming heuristics get it wrong.
+        # Map Export converts the pointer back into IPL lod_index.
+        col.prop(inu, "lod_object", text="LOD partner")
 
         # Batch distance button
         n_sel = sum(1 for o in context.selected_objects if o.type == 'MESH')
@@ -15050,7 +15101,6 @@ classes = (
     GTATOOLS_OT_refresh_station_markers,
     GTATOOLS_OT_path_node_flag,
     GTATOOLS_OT_map_export,
-    GTATOOLS_PT_map_export_panel,
     GTATOOLS_OT_material_preset,
     GTATOOLS_OT_material_preset_save,
     GTATOOLS_OT_material_preset_delete,
@@ -15620,22 +15670,22 @@ def register():
     bpy.types.Scene.gtatools_img_skip_lod = BoolProperty(
         name="Skip LOD",
         description=T("Пропустить LOD модели при импорте"),
-        default=False,
+        default=True,
     )
     bpy.types.Scene.gtatools_img_load_txd = BoolProperty(
         name="Load TXD",
         description=T("Загружать TXD текстуры вместе с DFF"),
-        default=True,
+        default=False,
     )
     bpy.types.Scene.gtatools_map_load_col = BoolProperty(
         name="Load COL",
         description=T("Загружать коллизии из кеша при импорте карты. Нужно для round-trip (импорт части карты → редактирование → экспорт в IMG другой сборки). При выключенном — только DFF геометрия, сцена легче"),
-        default=True,
+        default=False,
     )
     bpy.types.Scene.gtatools_map_group_by_ipl = BoolProperty(
         name="Group by IPL",
         description=T("Создавать отдельную коллекцию на каждый IPL-файл (Map_LAn, Map_LAs, Map_SF…) вместо одиночных Map_DFF_Far/Mid/Near. Удобно для скрытия районов целиком и для совместного редактирования карты. LOD-меши идут в коллекцию своего IPL вместе с обычными мешами"),
-        default=False,
+        default=True,
     )
 
     # Game root path (for gta.dat auto-discovery)

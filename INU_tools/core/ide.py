@@ -417,7 +417,7 @@ def write_ide(filepath: str, ide: IdeFile) -> None:
     objs = [o for o in ide.objects if not o.is_timed]
     tobjs = [o for o in ide.objects if o.is_timed]
 
-    with open(filepath, 'w', encoding='utf-8', newline='\n') as f:
+    with open(filepath, 'w', encoding='utf-8', newline='\r\n') as f:
         # objs — always emitted
         f.write('objs\n')
         for o in objs:
@@ -551,7 +551,7 @@ def upsert_ide(filepath: str, entries: list[IdeObject]) -> tuple[int, int]:
                 result_lines.append(_format_obj_line(e) + '\n')
             result_lines.append('end\n')
 
-    with open(filepath, 'w', encoding='utf-8', newline='\n') as f:
+    with open(filepath, 'w', encoding='utf-8', newline='\r\n') as f:
         f.writelines(result_lines)
 
     return (updated, added)
@@ -598,7 +598,7 @@ def remove_ide(filepath: str, model_ids: set[int]) -> int:
         result_lines.append(line)
 
     if removed > 0:
-        with open(filepath, 'w', encoding='utf-8', newline='\n') as f:
+        with open(filepath, 'w', encoding='utf-8', newline='\r\n') as f:
             f.writelines(result_lines)
 
     return removed

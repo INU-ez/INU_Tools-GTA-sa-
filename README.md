@@ -8,7 +8,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/Blender-4.2%E2%80%935.1-orange?logo=blender" alt="Blender">
-  <img src="https://img.shields.io/badge/Version-1.6.6-green" alt="Version">
+  <img src="https://img.shields.io/badge/Version-1.6.7-green" alt="Version">
   <img src="https://img.shields.io/badge/License-GPL--3.0-blue" alt="License">
 </p>
 <p>
@@ -59,47 +59,18 @@
 > [!NOTE]
 > The addon is under active development. Bug reports are welcome in [Issues](../../issues).
 
-## 🆕 What's new in 1.6.6
+## 🆕 What's new in 1.6.7
 
-Closes the four 1.6.5-tracked Planned items (Pipeline chunk relocation, Map Export auto-split, Train paths verification, Vehicle damage variants) plus a batch of features that didn't make the v1.6.5-beta cut.
+First stable release after [v1.6.6-beta](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v1.6.6-beta). Adds full Map Import → edit → Map Export round-trip that preserves IDE / IPL / COL / TXD layout exactly as vanilla SA expects, plus modal export with progress bar and a batch of format-conformance fixes (CRLF line endings, IPL inst dedup, ID consistency across `.NNN` duplicates).
 
-**Map workflow**
-- 🗺️ **Map Export — Split modes** — new dropdown in Map Export with three options:
-  - **No split** (default) — single district, current behaviour.
-  - **XY grid** — bin DFFs by XY origin into a configurable `cell_size` grid (default 256 m, vanilla streaming radius); each non-empty cell becomes its own subdirectory `<base>_x<cx>_y<cy>` with its own IDE / IPL / COL / TXD. Falls back to *No split* when only one cell is populated.
-  - **By collection** — bin DFFs by the name of their topmost user collection. The collection's name is reused as the district name — round-trip with *Map Import → Group by IPL* now closes cleanly: `vegasn_stream0` collection in Blender → `vegasn_stream0.ipl` on disk.
-- 📂 **Map Import: Group by IPL** — new toggle next to *Без LOD* / *Без TXD* / *Без коллизии*. When ON, each source IPL gets a parent collection named exactly after the IPL filename (no `Map_` prefix — e.g. `vegasN`, `vegasn_stream0`, `LAn`) with three nested sub-collections `<ipl>_DFF` / `<ipl>_LOD` / `<ipl>_COL`. LODs and collisions stay separated by kind but tied to their district — toggle one parent's eye icon and the entire district disappears from the viewport. Pairs naturally with the **By collection** export split mode for round-trip
-- 📊 **Map Export — modal progress** — operator runs as a modal generator with timer; status text in the workspace bar updates per group / TXD / IDE / IPL write, ESC cancels, viewport stays responsive during long exports (vanilla VC export = ~5 cells, ~700 group writes, ~50 s — no longer freezes the UI)
-- 📦 **Map Export — per-`txd_name` TXD bucketing** — instead of one monolithic `<cell>.txd`, the exporter now groups DFFs by their `inu.txd_name` (preserved on Map Import from IDE) and writes one `.txd` per unique name. Models sharing `vegas01.txd` go into one shared file; a model with its own `cj.txd` gets a dedicated file — round-trip with vanilla SA preserves the original TXD layout
-- 🚀 **Map Export — NVTT auto-detect + parallel DXT1** — when `gtatools_nvtt_path` points at a working NVIDIA Texture Tools install, Map Export now uses the GPU compressor without needing a separate toggle. The NVTT pipeline got split into a serial PNG-save phase (main thread, bpy-bound) plus a 4-worker `ThreadPoolExecutor` running `nvcompress.exe` calls in parallel — multiple textures encode + DDS-parse simultaneously instead of one-at-a-time. Typical speedup: ~3-4× on top of the single-threaded NVTT baseline, ~10-15× over CPU DXT for shared TXDs with hundreds of textures
-- 🚗 **Dedicated Vehicles panel** — moved Vehicle Scale + Damage variants out of the Check panel into their own *Vehicles* sub-panel (N-sidebar, `bl_order=11`). Map modders no longer see vehicle-specific tools during regular district work
-- 🔁 **Map Export button moved next to Import Map** — Properties → Scene → INU Tools → *Import Map* block now has both `Import Map` and `Export Map` buttons in a single row, mirroring the round-trip workflow. The N-sidebar Map Export panel stays for users who prefer it there
-- ⚡ **COL import ~5× faster** — replaced bmesh with `mesh.from_pydata + foreach_set('material_index', …)`. Shared material cache across COL models (was creating ~10k duplicate `COL_N` materials on a large map). Profiler-driven fix: build COL was 60% of total wall time
+**Highlights** — round-trip preservation via `inu.col_name` + `inu.lod_object` properties · Group by IPL import + By-collection export split mode · main ↔ LOD pairing in IDE/IPL output · per-`txd_name` TXD bucketing · per-DFF COL by default · modal export with ESC cancel · multi-collection checkbox picker · NVTT auto + parallel DXT1 · dedicated Vehicles panel.
 
-**Vehicles**
-- 🛡️ **Vehicle damage variants** — three new operators in *Check → Damage variants*: `Add _dam` duplicates the active mesh as a `_dam` variant (auto-renames source to `_ok` if needed, hides the new `_dam` from viewport but keeps it in the DFF export), `Show OK / Dam / Both` toggles viewport visibility for previewing damaged state, `Check pairs` reports paired and orphan `_ok` / `_dam` meshes via the system console
-- 🔩 **Pipeline chunk → atomic extension** — DFF writer now emits `0x253F2F3` only inside the atomic extension (matches Seggaeman / RW vanilla layout). Reader still accepts both atomic and geometry extensions for back-compat with older Kam-era DFFs. Vehicle env-map (`0x53F2009A`) and Day/Night building pipelines (`0x53F20098`) keep working in vanilla SA after a clean export round-trip
-
-**Vertex colors / lighting**
-- 🎨 **VC Layer System (BETA)** — Photoshop-style non-destructive vertex color editing. Stack of named layers per scope (Day / Night), each with opacity / blend mode / pre-blend brightness / contrast. Live composite written into Day / Night attributes (originals safely backed up). Auto-flatten on DFF export, restore after — .blend keeps layers, .dff gets composite. Multi-select group sliders, recolor, promote / demote operators. Cap 10 layers per stack. See [DOCS § VC Layer System](DOCS.md#vc-layer-system-beta)
-
-**Animations**
-- 📜 **IFP format dispatch — ANP2 / ANPK write** — III/VC modding now supported. `write_ifp(path, ifp, format='ANPK' | 'ANP3')`. Default preserves source format from `ifp.source_format`. Standardised `KeyFrame.time` to seconds (was raw frames for ANP3, seconds for ANPK — now both seconds). Fixed previously-broken writer that emitted invalid hybrid output
-
-**Paths**
-- 🚂 **Train paths as splines (verified)** — `tracks*.dat` import/export already uses Blender curves (POLY spline, cyclic) with station flags stored on the curve as `station_indices`. Round-trip preserves station stops; documented under [DOCS § Train Paths](DOCS.md#train-paths)
-
-**ID Manager / detection**
-- 📏 **LOD Detection for vanilla** — irregular naming handled: `LODfoo`, `foo_LOD`, `foo1LOD`, `modeLODlaett` — all four patterns covered by `is_lod_name`
-
-**UI / UX**
-- 🆕 **UI Stage 7** — zone separator strips «── MODEL ──» / «── DATA ──» between bl_order ranges in N-sidebar (Stages 1-6 shipped in v1.6.5-beta)
-- 🚿 **Export progress** — added to INU Export / Export All — workspace `status_text` shows current group / total during long batches (Build Map / Export to IMG / Extract Resources progress was already in v1.6.5-beta)
-- 🧹 **Bitmaps Manager — unused cleanup** — `Find Unused` / `Remove Unused` operators scan `bpy.data.images` and `bpy.data.materials` for orphans. Uses `core.bitmap_diff` (bpy-free pure helpers, fully tested) — orphan-material textures correctly count as unused
+→ **[Full release notes on GitHub](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v1.6.7)**
 
 <details>
 <summary>Older releases</summary>
 
+- **v1.6.6-beta** — partial pre-release with the initial 1.6.6 set: Map auto-split (XY grid), damage variants, train paths verified, COL ~5×, VC Layer System (BETA), IFP ANP2 / ANPK write, Bitmaps Manager unused cleanup. Superseded by v1.6.7 (which adds round-trip preservation, modal export, format-conformance fixes) — [release page](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v1.6.6-beta)
 - **v1.6.5-beta** — map-workflow perf release: Import Map ~10× / Export to IMG ~5–15× faster, Load COL + Shared TXD toggles, Skip 2DFX default, ID Manager gaps & phantoms + multi-preset, UI pipeline reorganization (Stages 1-6) + Object Properties *INU Tools: Model* panel, Material Presets in `INU_Preset/`, progress bars (Build Map / Export to IMG / Extract Resources), opt-in Profiler — see [release page](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v1.6.5-beta)
 - **v1.6.4** — Experimental: Map Export (scene→IPL+IDE+COL+TXD one-op), Binary IPL Write, CST IO, UV Animation in DFF, Breakable Objects, IFP Batch Import, GTA Material Panel, Bitmaps Manager, Station Markers, Roadblocks & Traffic Lights, FLA4 Path Format, Vehicle Scale Helper
 - **v1.6.3** — Particle Effects (effects.fxp editor), Object Properties *GTA SA: IDE / IPL* panel, LightMap UV2, 2DFX UI (Detach All, attached effects list), ID Manager (Assign from ID…, Extend IDs FLA), Nodes multi-file I/O with 8×8 zone splitting

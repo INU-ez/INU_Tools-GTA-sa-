@@ -306,6 +306,40 @@ def _get_or_assign_id(obj, id_pool_start: int, used_ids: set[int]) -> int:
 
 # ──────────────────────────── main export ─────────────────────────────
 
+def _pair_main_lod_groups(cell_groups: list) -> list:
+    """Reorder cell_groups so each main DFF is immediately followed by
+    its LOD partner from ``inu.lod_object``.
+
+    Vanilla SA IPL/IDE files interleave main → LOD → main → LOD →…,
+    which keeps a model and its low-poly twin physically close in the
+    binary stream. We mirror that by walking ``cell_groups`` once,
+    emitting each main and (if it points at a LOD that's also being
+    exported) the LOD right after. Groups already emitted via this
+    pairing are skipped on their direct visit so a LOD never appears
+    twice. Anything without a resolvable LOD partner keeps its
+    original position.
+    """
+    by_obj: dict = {id(g.dff): g for g in cell_groups}
+    out: list = []
+    consumed: set = set()
+
+    for g in cell_groups:
+        if id(g.dff) in consumed:
+            continue
+        out.append(g)
+        consumed.add(id(g.dff))
+        inu = getattr(g.dff, 'inu', None)
+        lod_obj = getattr(inu, 'lod_object', None) if inu is not None else None
+        if lod_obj is None:
+            continue
+        partner = by_obj.get(id(lod_obj))
+        if partner is not None and id(partner.dff) not in consumed:
+            out.append(partner)
+            consumed.add(id(partner.dff))
+
+    return out
+
+
 def _plan_cells(groups, *, base_name: str, target_dir: str,
                 split_mode: str, cell_size: float, scene):
     """Split groups into a flat list of (cell_name, cell_dir, cell_groups).
@@ -396,15 +430,85 @@ def iter_export_map(context, target_dir: str, *, objects=None,
         stats['error'] = 'no DFF meshes found in selection'
         return
 
+    # ── Assign / unify Model IDs across duplicate-name objects ──
+    # Many scenes have several DFFs sharing the same cleaned model
+    # name (Blender's .001 / .002 instance suffixes, or hand-placed
+    # copies of vegas_palm01). The IDE dedupes by cleaned name and
+    # writes ONE entry per model, but the IPL writes every instance
+    # with that DFF's own ``inu.model_id`` — if duplicates carry
+    # different IDs (e.g. one vanilla 6870, others auto-assigned
+    # 20000/20001/…), the IPL ends up with model_ids that have no
+    # IDE definition and the game crashes on load.
+    #
+    # Resolution: bucket DFFs by cleaned model name; for each bucket
+    # pick the existing nonzero ID if any, otherwise allocate one
+    # via ``_get_or_assign_id``; then propagate the chosen ID to
+    # every duplicate in the bucket.
+    from .model_utils import get_model_type
     used_ids: set[int] = set()
+
+    def _bucket_key(obj):
+        """Strip Blender's .001 / .002 instance suffix BEFORE running
+        the model-type detector — get_model_type leaves digit-suffixes
+        intact and would otherwise put each duplicate in its own bucket."""
+        n = obj.name
+        if '.' in n:
+            b, s = n.rsplit('.', 1)
+            if s.isdigit():
+                n = b
+        class _Mock:
+            def __init__(self, nn):
+                self.name = nn
+        _, base = get_model_type(_Mock(n))
+        return base
+
+    name_to_groups: dict[str, list] = {}
     for g in groups:
-        _get_or_assign_id(g.dff, id_pool_start, used_ids)
+        name_to_groups.setdefault(_bucket_key(g.dff), []).append(g)
+
+    for base, gs in name_to_groups.items():
+        existing_id = 0
+        for g in gs:
+            inu = getattr(g.dff, 'inu', None)
+            mid = int(getattr(inu, 'model_id', 0) or 0) if inu else 0
+            if mid > 0:
+                existing_id = mid
+                break
+
+        if existing_id > 0:
+            used_ids.add(existing_id)
+            for g in gs:
+                inu = getattr(g.dff, 'inu', None)
+                if inu is not None:
+                    try:
+                        inu.model_id = existing_id
+                    except Exception:
+                        pass
+        else:
+            shared_id = _get_or_assign_id(gs[0].dff, id_pool_start, used_ids)
+            for g in gs[1:]:
+                inu = getattr(g.dff, 'inu', None)
+                if inu is not None:
+                    try:
+                        inu.model_id = shared_id
+                    except Exception:
+                        pass
 
     cells = _plan_cells(groups, base_name=base_name, target_dir=target_dir,
                         split_mode=split_mode, cell_size=cell_size,
                         scene=getattr(context, 'scene', None))
     if (split_mode or 'NONE').upper() != 'NONE' and len(cells) > 1:
         stats['cells'] = len(cells)
+
+    # ── Reorder each cell's groups so each main DFF is immediately
+    # followed by its LOD partner (matching the vanilla SA layout
+    # main→LOD→main→LOD…). Pairing reads ``inu.lod_object`` set during
+    # Map Import; LOD partners that aren't part of the same export
+    # subset stay in their original spot.
+    cells = [
+        (cell_name, cell_dir, _pair_main_lod_groups(cell_groups))
+        for cell_name, cell_dir, cell_groups in cells
+    ]
 
     # Pre-bucket each cell's groups by their target ``inu.txd_name``.
     # SA's IDE assigns every model to a TXD by name; many models share
@@ -640,8 +744,8 @@ class GTATOOLS_OT_map_export(bpy.types.Operator):
     include_col: bpy.props.BoolProperty(name="COL", default=True)
     col_library: bpy.props.BoolProperty(
         name=T("COL Library"),
-        description=T("Писать все коллизии в один <district>.col файл (multi-entry library). Каждая запись в файле — отдельная коллизия со своим model_id, сопоставляется с DFF по ID"),
-        default=True,
+        description=T("OFF (по умолчанию): каждая DFF получает свой отдельный <model>.col файл — соответствует ванильному SA где у большинства моделей коллизии в собственных файлах.\nON: все коллизии группируются в .col-библиотеки по inu.col_name (vegasN.col, LAs.col, …). Полезно когда есть осознанная shared collision на много моделей"),
+        default=False,
     )
     include_txd: bpy.props.BoolProperty(name="TXD", default=True)
     include_ide: bpy.props.BoolProperty(name="IDE", default=True)
@@ -873,23 +977,6 @@ class GTATOOLS_OT_map_export(bpy.types.Operator):
         self._gen = None
 
 
-class GTATOOLS_PT_map_export_panel(bpy.types.Panel):
-    bl_label = "Map Export"
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category = 'GTA Tools'
-    bl_parent_id = "GTATOOLS_PT_main_panel"
-    bl_order = 1
-    bl_options = {'DEFAULT_CLOSED'}
-
-    def draw_header(self, context):
-        self.layout.label(text="", icon='WORLD')
-
-    def draw(self, context):
-        self.layout.operator("gtatools.map_export", icon='WORLD')
-
-
 classes = (
     GTATOOLS_OT_map_export,
-    GTATOOLS_PT_map_export_panel,
 )
