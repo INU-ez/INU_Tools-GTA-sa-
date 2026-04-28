@@ -47,14 +47,29 @@
 
 ## 🔮 Planned / In Progress
 
+### 🚧 Coming in next release
+
+**Animation — Bone-based IK rig for SA peds**
+- 🦴 Inline IK control bones inside the SA armature (chain / pole / rot / root) with custom-shape wireframe cubes — no external empties or auxiliary rig objects
+- 🎯 FK → IK bake on **Add Rig**: existing animations are preserved as control-bone keyframes; brute-force `pole_angle` calibration handles arbitrary SA bone roll without chain twist
+- 🦶 **Floor limiter** — bundled `INU_Ground` plane (`dev_anim.png` texture, 10×10 m) + tunable offset slider; auto-pinned to every foot IK target so feet can't sink below ground
+
+**UI / UX cleanup**
+- 🗂️ IDE / IPL panel switched to a 2-column layout — niche IPL utilities (Sections, Replace Empty) live full-width below the columns
+- 💾 Save-required wrappers for **Extract Resources / Import Map / Export Map** — red alert-box with disabled buttons until `.blend` is saved
+- ⚠️ Soft cache-empty warning on Import Map (continues with Empty placeholders instead of hard-cancelling)
+- 📦 Compact mass export — single `В папку` / `В IMG` button-pair; format pickers (DFF / COL / LOD / TXD) + COL library + Shared TXD options now live inside each export dialog
+- 🎨 Material **Check / Cleanup / Sort** consolidated into Texture Manager alongside Find Unused / Remove Unused / Find Duplicates
+- 🖱️ Drag-drop DFF / COL straight into the 3D viewport (Blender 4.1+ `FileHandler`); existing TXD drop now attaches new materials to selected mesh objects
+- 🔗 DFF ↔ LOD ↔ COL link visualisation moved to the **Проверка** panel as a `Связи: ON/OFF` toggle
+
+### 🔭 Genuinely future
+
 **Vehicles**
 - 🛡️ **Damage variants UI extension** — visual link between matching `_ok` / `_dam` atomics, custom pivot for door swings, batch tools for headlight `dummy` placement
 
 **Map workflow**
 - 📐 **Adaptive grid auto-split** — variable cell size driven by local density (currently fixed XY grid only); guarantee per-cell DFF count instead of uniform spatial sub-division
-
-**Animations**
-- 🎬 **IFP merge / round-trip preview** — ANPK ↔ ANP3 conversion validator, per-clip preview without re-import
 
 > [!NOTE]
 > The addon is under active development. Bug reports are welcome in [Issues](../../issues).
