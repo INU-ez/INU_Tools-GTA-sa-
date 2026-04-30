@@ -360,7 +360,7 @@ Legend: 🆕 new in 1.6.3 · ⚡ performance · 🎨 UI · 📦 format support
 
 | Integration | Purpose |
 |---|---|
-| Itera Tools 3 | Vertex Lit Linear / Quickstart |
+| [Itera Tools 3](https://itera.gumroad.com/l/IteraTools3) | Vertex Lit Linear / Quickstart |
 | LightMap (beta_MTA) | apply pre-baked lightmap via MTA script |
 | Pipeline | Building / Reflections |
 | Hotkeys | `Shift+T`, `Shift+A` |
@@ -410,6 +410,11 @@ Inspired by and partially compatible with:
 
 - **[DragonFF](https://github.com/Parik27/DragonFF)** (Parik, GPL-3.0) — Blender addon for RenderWare formats. INU_tools uses compatible material and object property names for easy transition between addons.
 - **[RenderWare](https://en.wikipedia.org/wiki/RenderWare)** — GTA SA game engine, DFF/COL/TXD format documentation.
+
+### 🔧 Recommended companion tools
+
+- **[Itera Tools 3](https://itera.gumroad.com/l/IteraTools3)** — Blender addon for vertex lighting (Vertex Lit Linear / Quickstart). INU_tools' Prelight panel integrates with Itera workflows via `Save Materials` / `Restore` buttons.
+- **[NVIDIA Texture Tools](https://developer.nvidia.com/texture-tools-exporter)** — standalone CLI/GUI for GPU-accelerated DXT compression. Optional but recommended: when installed and pointed at via `Scene → INU Tools → NVTT Path`, TXD export uses GPU encoding (parallel DXT1, much faster than the bundled CPU encoder).
 
 ### Author
 

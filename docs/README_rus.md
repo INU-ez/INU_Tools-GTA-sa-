@@ -360,7 +360,7 @@ Building01_COL   ← коллизия
 
 | Интеграция | Назначение |
 |---|---|
-| Itera Tools 3 | Vertex Lit Linear / Quickstart |
+| [Itera Tools 3](https://itera.gumroad.com/l/IteraTools3) | Vertex Lit Linear / Quickstart |
 | LightMap (beta_MTA) | подключение готовой lightmap через MTA-скрипт |
 | Pipeline | Building / Reflections |
 | Hotkeys | `Shift+T`, `Shift+A` |
@@ -409,6 +409,11 @@ Building01_COL   ← коллизия
 
 - **[DragonFF](https://github.com/Parik27/DragonFF)** (Parik, GPL-3.0) — Blender-аддон для форматов RenderWare. INU_tools использует совместимые имена свойств материалов и объектов для удобного перехода между аддонами.
 - **[RenderWare](https://en.wikipedia.org/wiki/RenderWare)** — игровой движок GTA SA, документация форматов DFF/COL/TXD.
+
+### 🔧 Рекомендуемые сопутствующие инструменты
+
+- **[Itera Tools 3](https://itera.gumroad.com/l/IteraTools3)** — Blender-аддон для vertex lighting (Vertex Lit Linear / Quickstart). Панель Prelight в INU_tools интегрируется с workflow Itera через кнопки `Save Materials` / `Restore`.
+- **[NVIDIA Texture Tools](https://developer.nvidia.com/texture-tools-exporter)** — отдельный CLI/GUI для GPU-сжатия DXT. Опционально, но рекомендуется: установи и пропиши путь в `Scene → INU Tools → NVTT Path` — экспорт TXD будет использовать GPU-кодирование (параллельный DXT1, заметно быстрее встроенного CPU-кодера).
 
 ### Автор
 
