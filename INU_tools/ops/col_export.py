@@ -3,9 +3,13 @@
 # Uses INU_tools.core.col for binary format writing.
 
 import math
+import bpy
 import bmesh
 import mathutils
+from bpy.props import StringProperty, BoolProperty
+from bpy_extras.io_utils import ExportHelper
 
+from .. import T
 from ..core.col import (
     ColModel, ColFace, ColSphere, ColBox,
     Bounds, Vec3, Surface,
@@ -341,3 +345,85 @@ def export_col_library(filepath: str, objects, version: int = 3) -> int:
         from ..core.col import write_col_file
         write_col_file(filepath, models)
     return len(models)
+
+
+# ──────────────────── Blender operator wrapper ────────────────────────
+
+class GTATOOLS_OT_export_col(bpy.types.Operator, ExportHelper):
+    """Экспортировать COL модель коллизии"""
+    bl_idname = "gtatools.export_col"
+    bl_label = "INU: Export COL"
+    bl_options = {'PRESET'}
+    filename_ext = ".col"
+    filter_glob: StringProperty(default="*.col", options={'HIDDEN'})
+
+    library_mode: BoolProperty(
+        name=T("Library (несколько коллизий)"),
+        description=T("Сгруппировать выделение по базовому имени (house1_COL + house1_SHA → одна запись 'house1') и записать все группы в один .col файл подряд. Так vanilla SA хранит <district>.col и vehicles.col"),
+        default=False,
+    )
+
+    def execute(self, context):
+        from ..tools.prelight import setup_prelight_preview
+        prelight_was_on = []
+        try:
+            for obj in context.selected_objects:
+                if obj.type == 'MESH':
+                    has_prelight = False
+                    for mat_slot in obj.material_slots:
+                        mat = mat_slot.material
+                        if mat and mat.use_nodes and mat.node_tree.nodes.get("Prelight_Mix"):
+                            has_prelight = True
+                            break
+                    if has_prelight:
+                        prelight_was_on.append(obj)
+                        setup_prelight_preview(obj, enable=False)
+
+            # COL is always exported around (0,0,0) — temporarily move
+            original_locations = {}
+            for obj in context.selected_objects:
+                if obj.type == 'MESH':
+                    original_locations[obj.name] = obj.location.copy()
+                    obj.location = (0, 0, 0)
+
+            col_objects = [o for o in context.selected_objects
+                           if o.type in ('MESH', 'EMPTY')]
+
+            if self.library_mode:
+                count = export_col_library(
+                    filepath=self.filepath,
+                    objects=col_objects,
+                    version=3,
+                )
+                msg = f"Exported COL library: {self.filepath} ({count} records)"
+            else:
+                export_col(
+                    filepath=self.filepath,
+                    objects=col_objects,
+                    version=3,
+                )
+                msg = f"Exported COL: {self.filepath}"
+
+            # Restore original positions
+            for obj in context.selected_objects:
+                if obj.name in original_locations:
+                    obj.location = original_locations[obj.name]
+
+            for obj in prelight_was_on:
+                setup_prelight_preview(obj, enable=True)
+
+            self.report({'INFO'}, msg)
+            return {'FINISHED'}
+        except Exception as e:
+            for obj in prelight_was_on:
+                try:
+                    setup_prelight_preview(obj, enable=True)
+                except:
+                    pass
+            self.report({'ERROR'}, f"COL export error: {str(e)}")
+            return {'CANCELLED'}
+
+
+classes = (
+    GTATOOLS_OT_export_col,
+)

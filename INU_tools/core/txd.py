@@ -474,3 +474,45 @@ def read_txd_file(filepath: str) -> list:
     """Read a TXD file and return list of TxdTexture."""
     with open(filepath, 'rb') as f:
         return read_txd(f.read())
+
+
+def read_txd_texture_names(filepath: str) -> list[str]:
+    """Return only the texture names from a TXD — no pixel decoding,
+    no palette parsing. ~50× faster than ``read_txd_file`` and used by
+    auto-TXD selection in DFF import to score candidate .txd files
+    against the just-imported material set without paying the full
+    decompression cost.
+
+    Returns ``[]`` on parse failure (caller can treat as zero matches).
+    """
+    try:
+        with open(filepath, 'rb') as f:
+            data = f.read()
+    except OSError:
+        return []
+
+    try:
+        r = BinaryReader(data)
+        ct, cs, cl = _read_chunk_header(r)
+        if ct != CHUNK_TEX_DICTIONARY:
+            return []
+        # struct: texture count + device_id (skip rest of struct)
+        ct, cs, cl = _read_chunk_header(r)
+        tex_count = r.read_one('<H')
+        r.read_one('<H')  # device_id
+        r.seek(r.pos + cs - 4)
+
+        names = []
+        for _ in range(tex_count):
+            ct, cs, cl = _read_chunk_header(r)
+            chunk_end = r.pos + cs
+            if ct == CHUNK_TEX_NATIVE:
+                # Inside the Texture Native: another Struct chunk header,
+                # then platform_id(u32) + filter_flags(u32) + name(32B).
+                _ = _read_chunk_header(r)  # struct header
+                r.read('<II')  # platform + filter flags
+                names.append(_read_str32(r))
+            r.seek(chunk_end)
+        return names
+    except Exception:
+        return []

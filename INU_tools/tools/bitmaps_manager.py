@@ -296,7 +296,7 @@ def _report(op, level: str, msg: str):
 class GTATOOLS_OT_bitmaps_scan(bpy.types.Operator):
     """Проверить все материалы и показать текстуры, файлы которых не найдены"""
     bl_idname = "gtatools.bitmaps_scan"
-    bl_label = "Scan Missing Textures"
+    bl_label = "INU: Scan Missing Textures"
     bl_options = {'REGISTER'}
 
     def execute(self, context):
@@ -318,7 +318,7 @@ class GTATOOLS_OT_bitmaps_scan(bpy.types.Operator):
 class GTATOOLS_OT_bitmaps_resolve(bpy.types.Operator):
     """Рекурсивно искать в выбранной папке и подставлять image.filepath для найденных по имени недостающих текстур"""
     bl_idname = "gtatools.bitmaps_resolve"
-    bl_label = "Resolve From Folder…"
+    bl_label = "INU: Resolve From Folder…"
     bl_options = {'REGISTER'}
 
     directory: bpy.props.StringProperty(subtype='DIR_PATH')
@@ -343,7 +343,7 @@ class GTATOOLS_OT_bitmaps_resolve(bpy.types.Operator):
 class GTATOOLS_OT_bitmaps_copy(bpy.types.Operator):
     """Скопировать все используемые материалами текстуры сцены в выбранную папку"""
     bl_idname = "gtatools.bitmaps_copy"
-    bl_label = "Copy Used To Folder…"
+    bl_label = "INU: Copy Used To Folder…"
     bl_options = {'REGISTER'}
 
     directory: bpy.props.StringProperty(subtype='DIR_PATH')
@@ -373,7 +373,7 @@ class GTATOOLS_OT_bitmaps_copy(bpy.types.Operator):
 class GTATOOLS_OT_bitmaps_find_unused(bpy.types.Operator):
     """Найти неиспользуемые текстуры и материалы — те, на которые не ссылается ни один меш-слот в сцене"""
     bl_idname = "gtatools.bitmaps_find_unused"
-    bl_label = "Find Unused"
+    bl_label = "INU: Find Unused"
     bl_options = {'REGISTER'}
 
     def execute(self, context):
@@ -409,7 +409,7 @@ class GTATOOLS_OT_bitmaps_remove_unused(bpy.types.Operator):
     «оставить даже без ссылок». Действие необратимо без Ctrl+Z, поэтому
     показывает подтверждение со счётчиками перед удалением"""
     bl_idname = "gtatools.bitmaps_remove_unused"
-    bl_label = "Remove Unused"
+    bl_label = "INU: Remove Unused"
     bl_options = {'REGISTER', 'UNDO'}
 
     remove_materials: bpy.props.BoolProperty(
@@ -463,7 +463,7 @@ class GTATOOLS_OT_bitmaps_remove_unused(bpy.types.Operator):
 class GTATOOLS_OT_bitmaps_find_dupes(bpy.types.Operator):
     """Хэшировать все файлы текстур и показать группы одинаковых файлов"""
     bl_idname = "gtatools.bitmaps_find_dupes"
-    bl_label = "Find Duplicates"
+    bl_label = "INU: Find Duplicates"
     bl_options = {'REGISTER'}
 
     def execute(self, context):
@@ -483,13 +483,49 @@ class GTATOOLS_OT_bitmaps_find_dupes(bpy.types.Operator):
 
 # ──────────────────────────── panel ───────────────────────────────────
 
+from ..ui.registry import apply_order
+
+
+@apply_order
+class GTATOOLS_MT_textures_menu(bpy.types.Menu):
+    bl_label = "INU: Текстуры"
+    bl_idname = "GTATOOLS_MT_textures_menu"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("gtatools.bitmaps_resolve",
+                        text=T("Найти в папке…"), icon='FILE_REFRESH')
+        layout.operator("gtatools.bitmaps_copy",
+                        text=T("Скопировать в папку…"), icon='COPY_ID')
+        layout.operator("gtatools.bitmaps_find_dupes",
+                        text=T("Найти дубликаты"), icon='DUPLICATE')
+        layout.separator()
+        layout.operator("gtatools.bitmaps_find_unused",
+                        text=T("Найти неиспользуемые"), icon='ZOOM_PREVIOUS')
+        layout.operator("gtatools.bitmaps_remove_unused",
+                        text=T("Удалить неиспользуемые…"), icon='TRASH')
+
+
+class GTATOOLS_MT_materials_menu(bpy.types.Menu):
+    bl_label = "INU: Материалы"
+    bl_idname = "GTATOOLS_MT_materials_menu"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("gtatools.check_materials",
+                        text=T("Проверка материалов"), icon='MATERIAL')
+        layout.operator("gtatools.cleanup_materials",
+                        text=T("Очистка материалов"), icon='BRUSH_DATA')
+        layout.operator("gtatools.sort_materials",
+                        text=T("Сортировка материалов"), icon='SORTALPHA')
+
+
 class GTATOOLS_PT_bitmaps_panel(bpy.types.Panel):
     bl_label = T("Менеджер текстур")
+    bl_idname = "GTATOOLS_PT_bitmaps_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'GTA Tools'
     bl_parent_id = "GTATOOLS_PT_main_panel"
-    bl_order = 2
     bl_options = {'DEFAULT_CLOSED'}
 
     def draw_header(self, context):
@@ -507,19 +543,12 @@ class GTATOOLS_PT_bitmaps_panel(bpy.types.Panel):
             row.label(text=f"{T('Пропущено')}: {miss}",
                       icon='ERROR' if miss else 'CHECKMARK')
 
-        col = layout.column(align=True)
-        col.operator("gtatools.bitmaps_resolve",
-                     text=T("Найти в папке…"), icon='FILE_REFRESH')
-        col.operator("gtatools.bitmaps_copy",
-                     text=T("Скопировать в папку…"), icon='COPY_ID')
-        col.operator("gtatools.bitmaps_find_dupes",
-                     text=T("Найти дубликаты"), icon='DUPLICATE')
-
-        # Unused cleanup — scan first, then offer destructive remove.
-        col.separator()
-        row = col.row(align=True)
-        row.operator("gtatools.bitmaps_find_unused",
-                     text=T("Найти неиспользуемые"), icon='ZOOM_PREVIOUS')
+        # Текстуры dropdown — file ops + unused cleanup all live here.
+        # Unused-count badge sits next to the menu since «Найти/Удалить
+        # неиспользуемые» are the ops that produce/consume that count.
+        row = layout.row(align=True)
+        row.menu("GTATOOLS_MT_textures_menu",
+                 text=T("Текстуры"), icon='IMAGE_DATA')
         unused_imgs = scene.get('bitmaps_unused_image_count')
         unused_mats = scene.get('bitmaps_unused_material_count')
         if unused_imgs is not None:
@@ -527,11 +556,16 @@ class GTATOOLS_PT_bitmaps_panel(bpy.types.Panel):
             row.label(
                 text=f"{T('Неисп.')}: {unused_imgs}/{unused_mats or 0}",
                 icon='INFO' if total else 'CHECKMARK')
-        col.operator("gtatools.bitmaps_remove_unused",
-                     text=T("Удалить неиспользуемые…"), icon='TRASH')
+
+        # Материалы dropdown — Check / Cleanup / Sort consolidated here
+        # for the same scene-wide asset-management scope as bitmaps.
+        layout.menu("GTATOOLS_MT_materials_menu",
+                    text=T("Материалы"), icon='MATERIAL')
 
 
 classes = (
+    GTATOOLS_MT_textures_menu,
+    GTATOOLS_MT_materials_menu,
     GTATOOLS_OT_bitmaps_scan,
     GTATOOLS_OT_bitmaps_resolve,
     GTATOOLS_OT_bitmaps_copy,

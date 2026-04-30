@@ -130,7 +130,7 @@ def preset_items(self, context):
 class GTATOOLS_OT_material_preset(bpy.types.Operator):
     """Записать выбранный GTA Material пресет в свойства mat.inu.*"""
     bl_idname = "gtatools.material_preset"
-    bl_label = "Apply Material Preset"
+    bl_label = "INU: Apply Material Preset"
     bl_options = {'REGISTER', 'UNDO'}
 
     preset: bpy.props.StringProperty(default='VEHICLE')
@@ -165,7 +165,7 @@ class GTATOOLS_OT_material_preset(bpy.types.Operator):
 class GTATOOLS_OT_material_preset_save(bpy.types.Operator):
     """Сохранить текущие настройки материала как новый пресет"""
     bl_idname = "gtatools.material_preset_save"
-    bl_label = "Сохранить пресет"
+    bl_label = "INU: Сохранить пресет"
     bl_options = {'REGISTER'}
 
     preset_name: bpy.props.StringProperty(
@@ -218,7 +218,7 @@ class GTATOOLS_OT_material_preset_save(bpy.types.Operator):
 class GTATOOLS_OT_material_preset_delete(bpy.types.Operator):
     """Удалить пользовательский пресет (встроенные удалить нельзя)"""
     bl_idname = "gtatools.material_preset_delete"
-    bl_label = "Удалить пресет"
+    bl_label = "INU: Удалить пресет"
     bl_options = {'REGISTER'}
 
     preset_name: bpy.props.StringProperty(default="")
@@ -240,74 +240,60 @@ class GTATOOLS_OT_material_preset_delete(bpy.types.Operator):
         return {'FINISHED'}
 
 
-# ──────────────────────────── panel ──────────────────────────────────
+# ──────────────────── draw helper for unified Material panel ─────────
+#
+# Old GTATOOLS_PT_gta_material_panel was removed in Phase 1 of the UI
+# redesign (3 material panels → 1 unified panel with SURFACE/EFFECTS/
+# PIPELINE tabs). The drawing logic lives on as a helper so the unified
+# panel's PIPELINE tab can call into it without re-importing operators.
 
-class GTATOOLS_PT_gta_material_panel(bpy.types.Panel):
-    bl_label = "GTA Material"
-    bl_idname = "GTATOOLS_PT_gta_material_panel"
-    bl_space_type = 'PROPERTIES'
-    bl_region_type = 'WINDOW'
-    bl_context = 'material'
-    bl_options = {'DEFAULT_CLOSED'}
+def draw_pipeline_tab(layout, context):
+    """PIPELINE tab content for the unified Material panel.
+    Preset selection + read-only summary of active effects.
+    Caller has already verified context.material exists."""
+    mat = context.material
+    inu = getattr(mat, 'inu', None)
+    if not inu:
+        layout.label(text="No inu properties on material", icon='ERROR')
+        return
 
-    @classmethod
-    def poll(cls, context):
-        return context.material is not None
+    scene = context.scene
+    current = getattr(scene, 'gtatools_material_preset', 'GENERIC') or 'GENERIC'
+    is_user = current.startswith('USER:')
 
-    def draw(self, context):
-        layout = self.layout
-        mat = context.material
-        inu = getattr(mat, 'inu', None)
-        if not inu:
-            layout.label(text="No inu properties on material", icon='ERROR')
-            return
+    box = layout.box()
+    box.label(text="Preset", icon='PRESET')
+    row = box.row(align=True)
+    row.prop(scene, 'gtatools_material_preset', text="")
+    op = row.operator("gtatools.material_preset", text="", icon='CHECKMARK')
+    op.preset = current
 
-        scene = context.scene
-        current = getattr(scene, 'gtatools_material_preset', 'GENERIC') or 'GENERIC'
-        is_user = current.startswith('USER:')
+    row = box.row(align=True)
+    row.operator("gtatools.material_preset_save",
+                 text="Сохранить как…", icon='ADD')
+    del_row = row.row(align=True)
+    del_row.enabled = is_user
+    op_del = del_row.operator("gtatools.material_preset_delete",
+                              text="Удалить", icon='REMOVE')
+    op_del.preset_name = current[5:] if is_user else ''
 
-        # Preset dropdown + Apply
-        box = layout.box()
-        box.label(text="Preset", icon='PRESET')
-        row = box.row(align=True)
-        row.prop(scene, 'gtatools_material_preset', text="")
-        op = row.operator("gtatools.material_preset", text="", icon='CHECKMARK')
-        op.preset = current
-
-        # Save always available; Delete only when a user preset is active
-        row = box.row(align=True)
-        row.operator("gtatools.material_preset_save",
-                     text="Сохранить как…", icon='ADD')
-        del_row = row.row(align=True)
-        del_row.enabled = is_user
-        op_del = del_row.operator("gtatools.material_preset_delete",
-                                  text="Удалить", icon='REMOVE')
-        op_del.preset_name = current[5:] if is_user else ''
-
-        # Vehicle color slot (carcols.dat magic)
-        box = layout.box()
-        box.label(text="Vehicle Color", icon='COLOR')
-        box.prop(inu, "vehicle_color_slot", text="")
-
-        # Quick toggles summary
-        box = layout.box()
-        box.label(text="Active Effects", icon='MODIFIER')
-        col = box.column(align=True)
-        for attr, label in (
-            ('export_env_map',    "Env Map"),
-            ('export_bump_map',   "Bump Map"),
-            ('export_specular',   "Specular"),
-            ('export_reflection', "Reflection"),
-            ('export_dual_tex',   "Dual Texture"),
-            ('uv_anim_write',     "UV Animation"),
-        ):
-            if hasattr(inu, attr):
-                col.prop(inu, attr, text=label)
+    box = layout.box()
+    box.label(text="Active Effects", icon='MODIFIER')
+    col = box.column(align=True)
+    for attr, label in (
+        ('export_env_map',    "Env Map"),
+        ('export_bump_map',   "Bump Map"),
+        ('export_specular',   "Specular"),
+        ('export_reflection', "Reflection"),
+        ('export_dual_tex',   "Dual Texture"),
+        ('uv_anim_write',     "UV Animation"),
+    ):
+        if hasattr(inu, attr):
+            col.prop(inu, attr, text=label)
 
 
 classes = (
     GTATOOLS_OT_material_preset,
     GTATOOLS_OT_material_preset_save,
     GTATOOLS_OT_material_preset_delete,
-    GTATOOLS_PT_gta_material_panel,
 )

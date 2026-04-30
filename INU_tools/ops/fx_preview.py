@@ -260,7 +260,11 @@ def create_light_preview(parent_obj):
     billboard = bpy.data.objects.new(billboard_name, plane_mesh)
     billboard.parent = parent_obj
     billboard.location = (0, 0, 0)
-    billboard.scale = (corona_size * 5.0, corona_size * 5.0, corona_size * 5.0)
+    # corona_size is the world-space corona radius in metres — use it
+    # directly as the plane scale so the preview matches the real sprite
+    # footprint. Earlier we multiplied by 5×, which made every preview
+    # plane appear 5× the actual GTA corona.
+    billboard.scale = (corona_size, corona_size, corona_size)
 
     collection.objects.link(billboard)
 
@@ -627,7 +631,7 @@ def sync_preview_from_props(parent_obj):
                 child.data.cutoff_distance = shadow_size
 
         elif child.type == 'MESH' and '_corona' in child.name:
-            child.scale = (corona_size * 5.0, corona_size * 5.0, corona_size * 5.0)
+            child.scale = (corona_size, corona_size, corona_size)
             # Update emission color in material
             if child.data.materials:
                 mat = child.data.materials[0]

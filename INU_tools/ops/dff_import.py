@@ -8,6 +8,10 @@ import bmesh
 import mathutils
 import numpy as np
 
+from .. import T
+from bpy.props import (
+    EnumProperty, StringProperty, CollectionProperty,
+)
 from ..core.dff import (
     read_dff_file, DffClump, DffGeometry, DffFrame, DffAtomic,
     RGBA, TexCoords, DffMaterial, DffTexture, UserData,
@@ -98,17 +102,40 @@ def _create_blender_material(dff_mat: DffMaterial, index: int,
     if dff_mat.texture and dff_mat.texture.name:
         tex_name = dff_mat.texture.name
 
-    # Advanced effects prevent caching — each model may ship its own
-    # env_map/bump_map coefficients even under the same texture name.
-    has_effects = bool(
-        dff_mat.env_map or dff_mat.bump_map or dff_mat.specular or
-        dff_mat.reflection or dff_mat.dual_texture or dff_mat.user_data
-    )
-
+    # Cache key combines everything that affects the material's
+    # rendered appearance: texture, base RGBA, and a fingerprint of
+    # each optional effect block. Two materials with the SAME texture +
+    # SAME color + SAME effects collapse to one — that's the typical
+    # vehicle case where 6 body panels all reference vehiclebody +
+    # xvehicleenv128 with identical coefficients. Earlier code skipped
+    # the cache whenever ANY effect was present, so vehicles ended up
+    # with vehiclelights128.001/.002/.../.005 dupes.
+    #
+    # user_data is excluded from the key because it's metadata, not
+    # appearance — two materials with same look but different user_data
+    # should still dedupe (the user_data of the first wins).
     cache_key = None
-    if material_cache is not None and tex_name and not has_effects:
+    if material_cache is not None and tex_name:
         c = dff_mat.color
-        cache_key = (tex_name, c.r, c.g, c.b, c.a)
+        em = dff_mat.env_map
+        bm = dff_mat.bump_map
+        sp = dff_mat.specular
+        rf = dff_mat.reflection
+        du = dff_mat.dual_texture
+        cache_key = (
+            tex_name, c.r, c.g, c.b, c.a,
+            (em.coefficient, em.use_fb_alpha,
+             em.texture.name if em.texture else "") if em else None,
+            (bm.intensity,
+             bm.bump_texture.name if bm.bump_texture else "",
+             bm.height_texture.name if bm.height_texture else "")
+            if bm else None,
+            (sp.level, sp.name) if sp else None,
+            (rf.scale_x, rf.scale_y, rf.offset_x, rf.offset_y,
+             rf.intensity) if rf else None,
+            (du.src_blend, du.dst_blend,
+             du.texture.name if du.texture else "") if du else None,
+        )
         cached = material_cache.get(cache_key)
         if cached is not None:
             return cached
@@ -754,6 +781,15 @@ def import_dff(filepath: str, context=None, *, skip_2dfx=None,
     """
     clump = read_dff_file(filepath)
     base_name = os.path.splitext(os.path.basename(filepath))[0]
+    # Always thread a material cache through — even single-DFF imports
+    # benefit. A vehicle.dff has 30+ parts but typically only ~5 unique
+    # textures; without the cache that's ~30 bpy.data.materials.new
+    # calls and we'd see vehiclelights128.001/.002/.../.005 copies for
+    # every part that re-uses the same texture. Bulk imports already
+    # pass their shared cache to dedupe across files; for a single
+    # import we just want intra-file deduplication.
+    if material_cache is None:
+        material_cache = {}
     return import_dff_from_clump(
         clump, base_name, skip_2dfx=skip_2dfx, bulk_mode=bulk_mode,
         target_collection=target_collection, material_cache=material_cache,
@@ -971,3 +1007,297 @@ def import_dff_from_clump(clump, base_name: str, *, skip_2dfx=None,
             bpy.context.view_layer.objects.active = imported_objects[0]
 
     return imported_objects
+
+
+# ──────────────────── Auto-TXD picker ────────────────────────────────
+#
+# When a user imports a DFF, we want to auto-pull the matching TXD so
+# materials get textured. The naïve heuristic ("same name first, else
+# any .txd in the folder") fails on common cases like
+#   BillBd2.dff  ←→  billbrd.txd
+# where the artist used different shorthand names. So instead we score
+# every .txd in the search dirs by how many of its texture names show
+# up as `mat['dff_texture_name']` on a freshly-imported material, and
+# pick the highest-scoring file. Same-name still wins ties for free
+# (it scores ≥0 like everything else, and the loop preserves order).
+#
+# The probe uses ``read_txd_texture_names`` which only reads texture
+# headers (no pixel decode) — sub-millisecond per file even on big TXDs.
+
+def _collect_recent_dff_texture_names() -> set:
+    """Names recorded as ``mat['dff_texture_name']`` across all current
+    materials. After a DFF import this includes every texture the just-
+    imported model references, which is exactly what we need to match
+    candidate TXD files against."""
+    out = set()
+    for mat in bpy.data.materials:
+        n = mat.get('dff_texture_name')
+        if n:
+            out.add(n.lower())
+    return out
+
+
+_PICK_BEST_TXD_MIN_COVERAGE = 0.5  # 50% of DFF textures must be in TXD
+
+
+def _pick_best_txd(search_dirs: list, dff_basename: str) -> str | None:
+    """Pick the most relevant .txd file for the just-imported DFF.
+
+    Strategy:
+      1. Same-named ``<dff_basename>.txd`` wins immediately (cheap path).
+      2. Otherwise, score every .txd in the search dirs by **coverage**:
+         what fraction of the DFF's referenced textures live in that
+         TXD. We pick the highest-coverage file as long as it clears
+         ``_PICK_BEST_TXD_MIN_COVERAGE`` (default 50%). Tie-break:
+         prefer the *smaller* TXD (fewer extras = more model-specific,
+         less likely to be a generic catch-all).
+      3. If only ONE .txd exists in the folder we still take it as a
+         last resort — the user wouldn't have put it there if it was
+         unrelated.
+
+    Returns absolute path or ``None`` if no plausible .txd was found.
+    A None return is a real "I refuse to guess" — the caller should
+    warn the user so they can pick manually.
+    """
+    from ..core.txd import read_txd_texture_names
+
+    # Pass 1: same-name shortcut
+    for d in search_dirs:
+        if not os.path.isdir(d):
+            continue
+        cand = os.path.join(d, dff_basename + ".txd")
+        if os.path.isfile(cand):
+            return cand
+
+    # Gather every .txd we could pick from
+    candidates = []
+    for d in search_dirs:
+        if not os.path.isdir(d):
+            continue
+        for name in os.listdir(d):
+            if name.lower().endswith('.txd'):
+                candidates.append(os.path.join(d, name))
+    if not candidates:
+        return None
+
+    # Pass 2: coverage-based scoring
+    needed = _collect_recent_dff_texture_names()
+    if needed:
+        # Build (coverage, txd_size, path) tuples for every candidate.
+        # coverage = fraction of DFF textures that exist in this TXD.
+        # txd_size used as tie-breaker (smaller = more specific).
+        scored = []
+        for c in candidates:
+            names_in_txd = {n.lower() for n in read_txd_texture_names(c)}
+            matched = needed & names_in_txd
+            coverage = len(matched) / len(needed)
+            scored.append((coverage, len(names_in_txd), c, len(matched)))
+
+        # Sort: highest coverage first, then smallest TXD on ties.
+        scored.sort(key=lambda t: (-t[0], t[1]))
+        best_cov, best_size, best_path, best_matched = scored[0]
+
+        if best_cov >= _PICK_BEST_TXD_MIN_COVERAGE:
+            return best_path
+        # Best candidate covered less than the threshold — too risky to
+        # guess, especially when shared textures (asphalt, glass…) leak
+        # across many TXDs. Better to load nothing and surface a warning.
+
+    # Pass 3: solo .txd in the folder — user clearly meant this one.
+    if len(candidates) == 1:
+        return candidates[0]
+
+    return None
+
+
+# ──────────────────── Blender operator wrapper ────────────────────────
+
+class GTATOOLS_OT_import_dff(bpy.types.Operator):
+    """Импорт DFF модели GTA SA"""
+    bl_idname = "gtatools.import_dff"
+    bl_label = "INU: Import DFF (.dff)"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    filepath: StringProperty(subtype='FILE_PATH')
+    filter_glob: StringProperty(default="*.dff", options={'HIDDEN'})
+
+    def invoke(self, context, event):
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def draw(self, context):
+        """Help-panel that shows the user how Auto-TXD picks a .txd
+        next to the chosen DFF — explains the same-name → score-by-
+        content → first-fallback strategy and the toggle that disables
+        the whole thing."""
+        layout = self.layout
+        scene = context.scene
+
+        layout.prop(scene, "gtatools_txd_auto_import", text=T("Авто TXD"))
+
+        if not getattr(scene, 'gtatools_txd_auto_import', True):
+            layout.label(text=T("TXD не будет загружаться автоматически"),
+                         icon='INFO')
+            return
+
+        box = layout.box()
+        box.label(text=T("Как ищется TXD:"), icon='QUESTION')
+        col = box.column(align=True)
+        col.scale_y = 0.85
+        col.label(text=T("1. <имя_dff>.txd в той же папке"))
+        col.label(text=T("2. .txd с покрытием ≥50% текстур DFF"))
+        col.label(text=T("   (выбирается с макс. покрытием,"))
+        col.label(text=T("    меньший по размеру при равенстве)"))
+        col.label(text=T("3. Единственный .txd в папке"))
+        col.label(text=T("Иначе — warning, ничего не грузится"))
+
+        custom_dir = getattr(scene, 'gtatools_txd_import_path', '')
+        if custom_dir:
+            box.label(text=f"+ {T('доп. папка')}: {custom_dir}",
+                      icon='FILE_FOLDER')
+
+    def execute(self, context):
+        from .txd_import import import_txd as inu_import_txd
+        try:
+            import_dff(filepath=self.filepath, context=context)
+            self.report({'INFO'}, f"Imported DFF: {self.filepath}")
+        except Exception as e:
+            self.report({'ERROR'}, f"DFF import error: {str(e)}")
+            return {'CANCELLED'}
+
+        # Auto-import matching .txd from same folder (or user-set search path)
+        if not getattr(context.scene, 'gtatools_txd_auto_import', True):
+            return {'FINISHED'}
+        dff_name = os.path.splitext(os.path.basename(self.filepath))[0]
+        custom_dir = getattr(context.scene, 'gtatools_txd_import_path', '')
+        if custom_dir:
+            custom_dir = bpy.path.abspath(custom_dir)
+
+        search_dirs = []
+        if custom_dir and os.path.isdir(custom_dir):
+            search_dirs.append(custom_dir)
+        search_dirs.append(os.path.dirname(self.filepath))
+
+        txd_file = _pick_best_txd(search_dirs, dff_name)
+
+        if txd_file:
+            try:
+                # Only decode textures that the just-imported DFF
+                # actually references. Loading every texture in a
+                # 150-texture vehicle.txd for one car door used to
+                # spawn dozens of orphan images and freeze Blender on
+                # the DXT decode pass. The filter narrows the work to
+                # ~5-10 actually-used textures.
+                needed = _collect_recent_dff_texture_names()
+                images = inu_import_txd(
+                    filepath=txd_file,
+                    name_filter=needed if needed else None)
+                self.report({'INFO'}, f"TXD: {len(images)} textures ({os.path.basename(txd_file)})")
+            except Exception as e:
+                self.report({'WARNING'}, f"TXD import error: {str(e)}")
+        else:
+            # Tell the user explicitly — the materials will look black in
+            # the viewport otherwise and they have no idea why. The
+            # warning travels to both the status bar and the Info editor.
+            # Include EVERY directory that was scanned so the user can
+            # check whether they need to point gtatools_txd_import_path
+            # somewhere else.
+            dirs_str = " | ".join(search_dirs)
+            self.report({'WARNING'},
+                        f"TXD: {T('не найден ни по имени')} '{dff_name}.txd' "
+                        f"{T('ни по покрытию ≥50% текстур в')} {dirs_str}")
+
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_drop_dff(bpy.types.Operator):
+    """Импорт DFF при перетаскивании во viewport.
+
+    Принимает несколько файлов сразу (батч), каждый импортируется
+    как отдельная модель. Та же логика автоматического подцепления
+    одноимённого .txd, что и в обычном импорте.
+    """
+    bl_idname = "gtatools.drop_dff"
+    bl_label = "INU: Import DFF (Drop)"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    filepath: StringProperty(subtype='FILE_PATH')
+    files: CollectionProperty(type=bpy.types.OperatorFileListElement)
+    directory: StringProperty(subtype='DIR_PATH')
+
+    def execute(self, context):
+        from .txd_import import import_txd as inu_import_txd
+        auto_txd = bool(getattr(
+            context.scene, 'gtatools_txd_auto_import', True))
+        custom_dir = getattr(
+            context.scene, 'gtatools_txd_import_path', '')
+        if custom_dir:
+            custom_dir = bpy.path.abspath(custom_dir)
+
+        imported = 0
+        for f in self.files:
+            path = os.path.join(self.directory, f.name)
+            if not (os.path.isfile(path)
+                    and path.lower().endswith('.dff')):
+                continue
+            try:
+                import_dff(filepath=path, context=context)
+                imported += 1
+            except Exception as e:
+                self.report({'WARNING'},
+                            f"{os.path.basename(path)}: {e}")
+                continue
+
+            if not auto_txd:
+                continue
+            # Auto-pull a matching TXD using the smart picker:
+            # same-name first, then content-based scoring against the
+            # imported material set, then any .txd as last resort.
+            dff_name = os.path.splitext(os.path.basename(path))[0]
+            search_dirs = []
+            if custom_dir and os.path.isdir(custom_dir):
+                search_dirs.append(custom_dir)
+            search_dirs.append(os.path.dirname(path))
+
+            txd_file = _pick_best_txd(search_dirs, dff_name)
+            if txd_file:
+                try:
+                    # Same name-filter trick as in import_dff — avoid
+                    # loading 100+ unrelated textures from shared
+                    # archives like vehicle.txd.
+                    needed = _collect_recent_dff_texture_names()
+                    inu_import_txd(
+                        filepath=txd_file,
+                        name_filter=needed if needed else None)
+                except Exception as e:
+                    self.report({'WARNING'},
+                                f"TXD {os.path.basename(txd_file)}: {e}")
+            else:
+                # Per-file warning during batch drop — still useful so
+                # the user can see which DFFs lost their textures.
+                self.report({'WARNING'},
+                            f"{os.path.basename(path)}: "
+                            f"{T('TXD не найден')} ({dff_name}.txd "
+                            f"{T('и нет .txd с подходящими текстурами')})")
+
+        self.report({'INFO'}, f"DFF: {imported}")
+        return {'FINISHED'}
+
+
+class GTATOOLS_FH_dff_drop(bpy.types.FileHandler):
+    """File Handler для перетаскивания DFF во viewport"""
+    bl_idname = "GTATOOLS_FH_dff_drop"
+    bl_label = "GTA DFF Drop"
+    bl_import_operator = "gtatools.drop_dff"
+    bl_file_extensions = ".dff"
+
+    @classmethod
+    def poll_drop(cls, context):
+        return context.area and context.area.type == 'VIEW_3D'
+
+
+classes = (
+    GTATOOLS_OT_import_dff,
+    GTATOOLS_OT_drop_dff,
+    GTATOOLS_FH_dff_drop,
+)

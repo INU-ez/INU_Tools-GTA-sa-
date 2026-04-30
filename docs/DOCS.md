@@ -1543,6 +1543,3 @@ All scene-level settings stored in `bpy.types.Scene`:
 | gtatools_water_speed_x/y/z | Water flow speed |
 | gtatools_uv_grid_cols/rows | UV grid dimensions |
 
----
-
-> **[Feature comparison with other tools](COMPARISON.md)**

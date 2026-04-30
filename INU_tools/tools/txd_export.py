@@ -250,6 +250,12 @@ def collect_textures(selected_only=False):
     else:
         materials = bpy.data.materials
 
+    # First pass: gather every texture used by a connected image node, and
+    # remember the "main" image of each material (its first connected
+    # texture). The main image's basename is what paintjob alts attach
+    # to in pass 2.
+    material_main_image = {}
+
     for mat in materials:
         if not mat.use_nodes or not mat.node_tree:
             continue
@@ -275,6 +281,39 @@ def collect_textures(selected_only=False):
                     textures[name] = (img, existing_alpha or uses_alpha)
                 else:
                     textures[name] = (img, uses_alpha)
+
+                # Record this material's main image (first one we see).
+                if mat not in material_main_image:
+                    material_main_image[mat] = name
+
+    # Second pass: vehicle paintjob alts — pack them with derived names so
+    # the game's runtime swap works: <base>_paintjob1 / <base>_paintjob2.
+    # Materials without a main image are skipped (no <base> to attach to).
+    for mat in materials:
+        inu = getattr(mat, 'inu', None)
+        if inu is None:
+            continue
+        alt1 = getattr(inu, 'paintjob_alt_1', None)
+        alt2 = getattr(inu, 'paintjob_alt_2', None)
+        if not (alt1 or alt2):
+            continue
+        base = material_main_image.get(mat)
+        if not base:
+            # Material has paintjob alts but no main texture — silently
+            # skip; the validator operator surfaces this to the user.
+            continue
+        for alt_img, suffix in ((alt1, '_paintjob1'), (alt2, '_paintjob2')):
+            if not alt_img:
+                continue
+            tex_name = f"{base}{suffix}"
+            has_transparent = check_image_has_transparent_pixels(alt_img)
+            if has_transparent:
+                transparent_textures.add(alt_img.name)
+            # Paintjobs swap into the body slot — use same alpha mode
+            # as the base texture so DXT format matches.
+            base_uses_alpha = textures.get(base, (None, False))[1]
+            uses_alpha = base_uses_alpha or has_transparent
+            textures[tex_name] = (alt_img, uses_alpha)
 
     return textures, list(transparent_textures)
 

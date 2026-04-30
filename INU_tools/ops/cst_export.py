@@ -5,6 +5,9 @@ from __future__ import annotations
 import os
 import bpy
 
+from bpy.props import (
+    StringProperty,
+)
 from ..core.col import ColModel
 from ..core.cst import write_cst
 from .col_export import (
@@ -34,7 +37,7 @@ def export_cst(filepath: str, objects, version: int = 3,
 class GTATOOLS_OT_export_cst(bpy.types.Operator):
     """Экспорт выделения в текстовый файл Steve's COL Editor (.cst)"""
     bl_idname = "gtatools.export_cst"
-    bl_label = "Export CST (.cst)"
+    bl_label = "INU: Export CST (.cst)"
     bl_options = {'REGISTER'}
 
     filepath: bpy.props.StringProperty(subtype='FILE_PATH')

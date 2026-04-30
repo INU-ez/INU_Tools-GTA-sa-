@@ -1,6 +1,6 @@
 <div align="center">
 
-![INU Tools Logo](https://github.com/INU-ez/INU_Tools-GTA-sa-/blob/5e82d62dd40105c557ef9cb6be261bb70b63d3a2/logo.jpg)
+![INU Tools Logo](docs/logo.jpg)
 
 # INU_Tools (GTA SA)
 
@@ -8,7 +8,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/Blender-4.2%E2%80%935.1-orange?logo=blender" alt="Blender">
-  <img src="https://img.shields.io/badge/Version-1.6.7-green" alt="Version">
+  <img src="https://img.shields.io/badge/Version-1.7.0-green" alt="Version">
   <img src="https://img.shields.io/badge/License-GPL--3.0-blue" alt="License">
 </p>
 <p>
@@ -17,7 +17,7 @@
   <a href="../../stargazers"><img src="https://img.shields.io/github/stars/INU-ez/INU_Tools-GTA-sa-?style=social" alt="Stars"></a>
 </p>
 
-**[🇷🇺 Русская версия](README_rus.md)** · **[📖 Documentation](DOCS.md)** · **[⚖️ Comparison with other tools](COMPARISON.md)**
+**[🇷🇺 Русская версия](docs/README_rus.md)** · **[📖 Documentation](docs/DOCS.md)**
 
 </div>
 
@@ -39,7 +39,7 @@
 </td>
 <td width="50%" valign="top">
 
-![2DFX tutorial](gif/cj-explosion.gif)
+![2DFX tutorial](docs/gif/cj-explosion.gif)
 
 </td>
 </tr>
@@ -49,42 +49,27 @@
 
 ### 🚧 Coming in next release
 
-**Animation — Bone-based IK rig for SA peds**
-- 🦴 Inline IK control bones inside the SA armature (chain / pole / rot / root) with custom-shape wireframe cubes — no external empties or auxiliary rig objects
-- 🎯 FK → IK bake on **Add Rig**: existing animations are preserved as control-bone keyframes; brute-force `pole_angle` calibration handles arbitrary SA bone roll without chain twist
-- 🦶 **Floor limiter** — bundled `INU_Ground` plane (`dev_anim.png` texture, 10×10 m) + tunable offset slider; auto-pinned to every foot IK target so feet can't sink below ground
-
-**UI / UX cleanup**
-- 🗂️ IDE / IPL panel switched to a 2-column layout — niche IPL utilities (Sections, Replace Empty) live full-width below the columns
-- 💾 Save-required wrappers for **Extract Resources / Import Map / Export Map** — red alert-box with disabled buttons until `.blend` is saved
-- ⚠️ Soft cache-empty warning on Import Map (continues with Empty placeholders instead of hard-cancelling)
-- 📦 Compact mass export — single `В папку` / `В IMG` button-pair; format pickers (DFF / COL / LOD / TXD) + COL library + Shared TXD options now live inside each export dialog
-- 🎨 Material **Check / Cleanup / Sort** consolidated into Texture Manager alongside Find Unused / Remove Unused / Find Duplicates
-- 🖱️ Drag-drop DFF / COL straight into the 3D viewport (Blender 4.1+ `FileHandler`); existing TXD drop now attaches new materials to selected mesh objects
-- 🔗 DFF ↔ LOD ↔ COL link visualisation moved to the **Проверка** panel as a `Связи: ON/OFF` toggle
+_Nothing scheduled yet — bug reports and feature requests welcome in [Issues](../../issues)._
 
 ### 🔭 Genuinely future
 
-**Vehicles**
-- 🛡️ **Damage variants UI extension** — visual link between matching `_ok` / `_dam` atomics, custom pivot for door swings, batch tools for headlight `dummy` placement
-
-**Map workflow**
-- 📐 **Adaptive grid auto-split** — variable cell size driven by local density (currently fixed XY grid only); guarantee per-cell DFF count instead of uniform spatial sub-division
+_Nothing in this bucket right now._
 
 > [!NOTE]
 > The addon is under active development. Bug reports are welcome in [Issues](../../issues).
 
-## 🆕 What's new in 1.6.7
+## 🆕 What's new in 1.7.0
 
-First stable release after [v1.6.6-beta](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v1.6.6-beta). Adds full Map Import → edit → Map Export round-trip that preserves IDE / IPL / COL / TXD layout exactly as vanilla SA expects, plus modal export with progress bar and a batch of format-conformance fixes (CRLF line endings, IPL inst dedup, ID consistency across `.NNN` duplicates).
+A major UX-and-features release. Highlights: **bone-based IK rig** for SA peds (FK→IK bake, brute-force pole calibration, INU_Ground floor limiter), **Animated Map Object** workflow (one-click DFF+IFP+IDE for windmills/cranes), **Frame Hierarchy Editor** with vanilla VEHICLE/PED templates, **Vehicle Paintjob** support (Pay'n'Spray alt textures), **Profile system** (custom N-sidebar layouts saved as JSON), and a deep refactor: monolithic `__init__.py` (16k lines) split into 22 dedicated `ops/*.py` modules.
 
-**Highlights** — round-trip preservation via `inu.col_name` + `inu.lod_object` properties · Group by IPL import + By-collection export split mode · main ↔ LOD pairing in IDE/IPL output · per-`txd_name` TXD bucketing · per-DFF COL by default · modal export with ESC cancel · multi-collection checkbox picker · NVTT auto + parallel DXT1 · dedicated Vehicles panel.
+**Highlights** — IK Rig with FK→IK bake · Animated Map Object Setup wizard · Frame Hierarchy Editor + Validate Vehicle/Ped · Vehicle Paintjob (`<base>_paintjob1/2`) · Profile system (per-user N-sidebar visibility/order) · DFF/COL drag-drop into viewport · Smart auto-TXD picker (coverage-based scoring) · Save-required wrappers · Texture Manager dropdowns (Текстуры/Материалы) · 2DFX collapsible sections + semantic flag groups · BreakableData round-trip · IFP layered-Action support (Blender 5.x).
 
-→ **[Full release notes on GitHub](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v1.6.7)**
+→ **[Full release notes on GitHub](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v1.7.0)**
 
 <details>
 <summary>Older releases</summary>
 
+- **v1.6.7** — full Map Import → edit → Map Export round-trip preserving IDE / IPL / COL / TXD layout (CRLF, IPL inst dedup, ID consistency across `.NNN` duplicates), modal export with progress bar, `inu.col_name` + `inu.lod_object` properties, Group-by-IPL import + By-collection export split mode, main ↔ LOD pairing, per-`txd_name` TXD bucketing, per-DFF COL by default, modal ESC cancel, multi-collection picker, NVTT auto + parallel DXT1, dedicated Vehicles panel — [release page](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v1.6.7)
 - **v1.6.6-beta** — partial pre-release with the initial 1.6.6 set: Map auto-split (XY grid), damage variants, train paths verified, COL ~5×, VC Layer System (BETA), IFP ANP2 / ANPK write, Bitmaps Manager unused cleanup. Superseded by v1.6.7 (which adds round-trip preservation, modal export, format-conformance fixes) — [release page](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v1.6.6-beta)
 - **v1.6.5-beta** — map-workflow perf release: Import Map ~10× / Export to IMG ~5–15× faster, Load COL + Shared TXD toggles, Skip 2DFX default, ID Manager gaps & phantoms + multi-preset, UI pipeline reorganization (Stages 1-6) + Object Properties *INU Tools: Model* panel, Material Presets in `INU_Preset/`, progress bars (Build Map / Export to IMG / Extract Resources), opt-in Profiler — see [release page](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v1.6.5-beta)
 - **v1.6.4** — Experimental: Map Export (scene→IPL+IDE+COL+TXD one-op), Binary IPL Write, CST IO, UV Animation in DFF, Breakable Objects, IFP Batch Import, GTA Material Panel, Bitmaps Manager, Station Markers, Roadblocks & Traffic Lights, FLA4 Path Format, Vehicle Scale Helper
@@ -207,7 +192,7 @@ Legend: 🆕 new in 1.6.3 · ⚡ performance · 🎨 UI · 📦 format support
 <details>
 <summary>📹 Tutorial .gif</summary>
 
-![COL Light](gif/col_light.gif)
+![COL Light](docs/gif/col_light.gif)
 
 </details>
 
@@ -243,7 +228,7 @@ Legend: 🆕 new in 1.6.3 · ⚡ performance · 🎨 UI · 📦 format support
 <details>
 <summary>📹 Tutorial .gif</summary>
 
-![2DFX](gif/2DFX.gif)
+![2DFX](docs/gif/2DFX.gif)
 
 </details>
 
@@ -302,7 +287,7 @@ Legend: 🆕 new in 1.6.3 · ⚡ performance · 🎨 UI · 📦 format support
 <details>
 <summary>📹 Tutorial .gif</summary>
 
-![Random windows](gif/random_windows.gif)
+![Random windows](docs/gif/random_windows.gif)
 
 </details>
 
@@ -325,7 +310,7 @@ Legend: 🆕 new in 1.6.3 · ⚡ performance · 🎨 UI · 📦 format support
 <details>
 <summary>📹 Tutorial .gif</summary>
 
-![Check](gif/Check.gif)
+![Check](docs/gif/Check.gif)
 
 </details>
 

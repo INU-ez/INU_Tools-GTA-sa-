@@ -258,7 +258,7 @@ def _draw_col_light_text():
 class GTATOOLS_OT_preview_col_light(bpy.types.Operator):
     """Превью COL Night Light — зелёная визуализация и числа на полигонах"""
     bl_idname = "gtatools.preview_col_light"
-    bl_label = "Preview COL Light"
+    bl_label = "INU: Preview COL Light"
     bl_options = {'REGISTER'}
 
     @classmethod
@@ -304,7 +304,7 @@ class GTATOOLS_OT_preview_col_light(bpy.types.Operator):
 class GTATOOLS_OT_bake_col_light(bpy.types.Operator):
     """Конвертировать vertex colors в COL Day/Night Light (разбиение материалов по яркости)"""
     bl_idname = "gtatools.bake_col_light"
-    bl_label = "Bake COL Light"
+    bl_label = "INU: Bake COL Light"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -463,7 +463,7 @@ class GTATOOLS_OT_bake_col_light(bpy.types.Operator):
 class GTATOOLS_OT_clear_col_light_mats(bpy.types.Operator):
     """Удалить COL light материалы, созданные Bake COL Light"""
     bl_idname = "gtatools.clear_col_light_mats"
-    bl_label = "Clear COL Light"
+    bl_label = "INU: Clear COL Light"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod

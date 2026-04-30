@@ -1393,6 +1393,20 @@ def _read_geometry_chunk(r: BinaryReader, size: int, rw_version: int) -> DffGeom
                     geom.user_data = _read_userdata_plugin(r, ecs)
                 elif ect == CHUNK_2DFXPLG:
                     geom.ext_2dfx = _read_2dfx_plugin(r, ecs)
+                elif ect == CHUNK_BREAKABLE:
+                    # Breakable Objects extension (Kams brakableobjects.ms):
+                    # 4×u32 buffer-allocs + 3×float offset + float force.
+                    # 28 bytes total — short enough that we just read the
+                    # whole struct here without a dedicated helper.
+                    if ecs >= 28:
+                        va, fa, ma, ua = r.read('<4I')
+                        ox, oy, oz = r.read('<3f')
+                        force = r.read_one('<f')
+                        geom.breakable = BreakableData(
+                            vertices_alloc=va, faces_alloc=fa,
+                            materials_alloc=ma, uvs_alloc=ua,
+                            offset=(ox, oy, oz), force=force,
+                        )
                 else:
                     pass
                 r.seek(plugin_end)

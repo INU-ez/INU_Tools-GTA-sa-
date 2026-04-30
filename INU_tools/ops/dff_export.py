@@ -3,7 +3,10 @@
 # Uses INU_tools.core.dff for binary format writing.
 
 import os
+import bpy
 import bmesh
+from bpy.props import StringProperty
+from bpy_extras.io_utils import ExportHelper
 
 from ..core.dff import (
     DffClump, DffFrame, DffGeometry, DffAtomic, DffLight,
@@ -1231,3 +1234,90 @@ def export_dff(filepath: str, objects, version: int = GTA_SA_VERSION):
     model_name = os.path.splitext(os.path.basename(filepath))[0]
     clump = build_dff_clump(objects, version=version, col_model_name=model_name)
     write_dff_file(filepath, clump)
+
+
+# ──────────────────── Blender operator wrapper ────────────────────────
+
+class GTATOOLS_OT_export_dff(bpy.types.Operator, ExportHelper):
+    """Экспортировать DFF модель"""
+    bl_idname = "gtatools.export_dff"
+    bl_label = "INU: Export DFF"
+    bl_options = {'PRESET'}
+    filename_ext = ".dff"
+    filter_glob: StringProperty(default="*.dff", options={'HIDDEN'})
+
+    def execute(self, context):
+        from ..tools.prelight import setup_prelight_preview
+        try:
+            # Remember which objects had prelight preview on (Prelight_Mix node)
+            # so we can disable for export and restore the visual after.
+            prelight_was_on = []
+            for obj in context.selected_objects:
+                if obj.type == 'MESH':
+                    has_prelight = False
+                    for mat_slot in obj.material_slots:
+                        mat = mat_slot.material
+                        if mat and mat.use_nodes and mat.node_tree.nodes.get("Prelight_Mix"):
+                            has_prelight = True
+                            break
+                    if has_prelight:
+                        prelight_was_on.append(obj)
+                        setup_prelight_preview(obj, enable=False)
+
+            # Auto-include hierarchy: walk parents and children of selection
+            # so the DFF clump frame chain is preserved (dummies + meshes).
+            def _inu_type(o):
+                return getattr(getattr(o, 'inu', None), 'type', 'OBJ')
+
+            def _is_exportable(o):
+                if o.type == 'MESH':
+                    return _inu_type(o) != 'NON'
+                if o.type == 'EMPTY':
+                    return _inu_type(o) in ('OBJ', '2DFX')
+                return False
+
+            selected = [o for o in context.selected_objects if _is_exportable(o)]
+            dff_objects = list(selected)
+            seen = set(dff_objects)
+
+            for o in list(selected):
+                p = o.parent
+                while p is not None and p not in seen:
+                    if p.type == 'EMPTY' and _inu_type(p) == 'OBJ':
+                        dff_objects.append(p)
+                        seen.add(p)
+                    p = p.parent
+
+            def _walk_children(o):
+                for c in o.children:
+                    if c in seen or not _is_exportable(c):
+                        continue
+                    dff_objects.append(c)
+                    seen.add(c)
+                    _walk_children(c)
+            for o in list(selected):
+                _walk_children(o)
+
+            print(f"[DFF Export] selector: selected={len(selected)}, total={len(dff_objects)} objects → {self.filepath}")
+            for o in dff_objects[:20]:
+                print(f"  - {o.name} ({o.type})")
+            export_dff(filepath=self.filepath, objects=dff_objects)
+
+            for obj in prelight_was_on:
+                setup_prelight_preview(obj, enable=True)
+
+            self.report({'INFO'}, f"Exported DFF: {self.filepath}")
+            return {'FINISHED'}
+        except Exception as e:
+            for obj in prelight_was_on:
+                try:
+                    setup_prelight_preview(obj, enable=True)
+                except:
+                    pass
+            self.report({'ERROR'}, f"DFF export error: {str(e)}")
+            return {'CANCELLED'}
+
+
+classes = (
+    GTATOOLS_OT_export_dff,
+)

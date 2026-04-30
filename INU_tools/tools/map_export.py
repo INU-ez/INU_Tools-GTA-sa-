@@ -20,7 +20,7 @@ from dataclasses import dataclass
 
 import bpy
 
-from ..tools.model_utils import get_model_type
+from .model_utils import get_model_type
 from .. import T
 
 
@@ -103,6 +103,94 @@ def format_cell_name(base_name: str, cx: int, cy: int) -> str:
     def _fmt(n: int) -> str:
         return f"m{abs(n)}" if n < 0 else f"{n}"
     return f"{base_name}_x{_fmt(cx)}_y{_fmt(cy)}"
+
+
+# ──────────────────────────── adaptive grid (quadtree) ────────────────
+
+def compute_adaptive_cells(groups: list[MapGroup], *,
+                           max_per_cell: int = 200,
+                           min_cell_size: float = 16.0
+                           ) -> dict[tuple, list[MapGroup]]:
+    """Density-aware quadtree subdivision: dense regions get small cells,
+    sparse regions stay one big cell, every leaf cell holds at most
+    ``max_per_cell`` DFFs (best-effort — see floor below).
+
+    Starts with one cell covering the world-XY bbox of all groups and
+    recursively splits 2×2 any cell exceeding ``max_per_cell``. Uses
+    the DFF object's world-origin XY for binning; LOD/COL members
+    travel with their DFF (same contract as :func:`compute_grid_cells`).
+
+    Two safety floors prevent runaway recursion:
+
+    * ``min_cell_size`` — cell side length below which we stop splitting
+      even if the cell is over budget. Protects against pathological
+      cases where many DFFs share an XY origin (e.g. stacked vertical
+      buildings).
+    * Implicit depth — cells are keyed by a tuple of quadrant indices
+      ``(0=SW, 1=SE, 2=NW, 3=NE)`` so the path encodes the recursion
+      history. The ``min_cell_size`` floor caps depth around
+      ``log2(world_extent / min_cell_size)``.
+
+    Returns a dict keyed by quadrant-path tuples (e.g. ``(0, 1, 3)`` for
+    «SW → SE → NE» three subdivisions deep). The empty tuple ``()``
+    means a single, unsplit cell holding everything — happens when the
+    population fits in ``max_per_cell`` from the start.
+    """
+    if not groups:
+        return {}
+
+    locs = [g.dff.matrix_world.translation for g in groups]
+    xs = [loc.x for loc in locs]
+    ys = [loc.y for loc in locs]
+    # Pad the bbox slightly so points exactly on the max edge stay
+    # strictly inside the cell after midpoint splits (otherwise they
+    # could escape into a non-existent neighbour cell on the boundary).
+    pad = max(0.5, (max(xs) - min(xs) + max(ys) - min(ys)) * 1e-6)
+    x0, x1 = min(xs) - pad, max(xs) + pad
+    y0, y1 = min(ys) - pad, max(ys) + pad
+
+    cells: dict[tuple, list[MapGroup]] = {}
+
+    def _split(g_list, x0, x1, y0, y1, path):
+        cell_size = min(x1 - x0, y1 - y0)
+        if (len(g_list) <= max_per_cell
+                or cell_size <= min_cell_size):
+            cells[path] = g_list
+            return
+        xm = (x0 + x1) * 0.5
+        ym = (y0 + y1) * 0.5
+        buckets = [[], [], [], []]
+        for g in g_list:
+            loc = g.dff.matrix_world.translation
+            qx = 1 if loc.x >= xm else 0
+            qy = 1 if loc.y >= ym else 0
+            buckets[qy * 2 + qx].append(g)
+        for q, sub in enumerate(buckets):
+            if not sub:
+                continue
+            qx = q & 1
+            qy = (q >> 1) & 1
+            sub_x0 = xm if qx else x0
+            sub_x1 = x1 if qx else xm
+            sub_y0 = ym if qy else y0
+            sub_y1 = y1 if qy else ym
+            _split(sub, sub_x0, sub_x1, sub_y0, sub_y1, path + (q,))
+
+    _split(list(groups), x0, x1, y0, y1, ())
+    return cells
+
+
+def format_adaptive_cell_name(base_name: str, path: tuple) -> str:
+    """Encode a quadtree path as a filesystem-safe district suffix.
+
+    The empty path (single root cell) returns the bare ``base_name`` so
+    a small scene that doesn't need subdivision doesn't sprout a noisy
+    ``_q0`` directory. Otherwise the suffix is ``_q`` followed by the
+    quadrant indices joined: ``_q0123`` means «SW → SE → NW → NE».
+    """
+    if not path:
+        return base_name
+    return f"{base_name}_q{''.join(str(q) for q in path)}"
 
 
 def _build_top_collection_lookup(scene) -> dict:
@@ -341,7 +429,9 @@ def _pair_main_lod_groups(cell_groups: list) -> list:
 
 
 def _plan_cells(groups, *, base_name: str, target_dir: str,
-                split_mode: str, cell_size: float, scene):
+                split_mode: str, cell_size: float, scene,
+                max_per_cell: int = 200,
+                min_cell_size: float = 16.0):
     """Split groups into a flat list of (cell_name, cell_dir, cell_groups).
 
     ``split_mode`` is one of:
@@ -351,6 +441,11 @@ def _plan_cells(groups, *, base_name: str, target_dir: str,
       result is emitted in deterministic order. Single-cell result
       degrades to the NONE layout so flipping GRID on a small scene
       doesn't produce a dead subdirectory.
+    * ``'ADAPTIVE'`` — quadtree subdivision driven by per-cell DFF count.
+      Dense areas get small cells, sparse areas stay big. Each leaf
+      cell holds at most ``max_per_cell`` DFFs (best-effort, capped by
+      ``min_cell_size`` to avoid infinite recursion on stacked
+      buildings). Single-leaf scenes degrade to the NONE layout.
     * ``'COLLECTION'`` — bin DFFs by their topmost user collection.
       Each cell gets the collection's name as its district name and
       its own subdirectory (always, even when only one bucket is
@@ -368,6 +463,24 @@ def _plan_cells(groups, *, base_name: str, target_dir: str,
                  os.path.join(target_dir, format_cell_name(base_name, cx, cy)),
                  cell_groups)
                 for (cx, cy), cell_groups in sorted(cells.items())
+            ]
+
+    if mode == 'ADAPTIVE' and max_per_cell > 0:
+        adaptive = compute_adaptive_cells(
+            groups,
+            max_per_cell=max_per_cell,
+            min_cell_size=max(1.0, min_cell_size),
+        )
+        # Single-leaf scene means «didn't need to split» — fall through
+        # to the bare base_name layout instead of emitting a single
+        # «<base>` (no suffix) subdirectory; that's identical to NONE.
+        if len(adaptive) > 1:
+            return [
+                (format_adaptive_cell_name(base_name, path),
+                 os.path.join(target_dir,
+                              format_adaptive_cell_name(base_name, path)),
+                 cell_groups)
+                for path, cell_groups in sorted(adaptive.items())
             ]
 
     if mode == 'COLLECTION' and scene is not None:
@@ -397,6 +510,8 @@ def iter_export_map(context, target_dir: str, *, objects=None,
                     base_name: str = "district",
                     split_mode: str = 'NONE',
                     cell_size: float = 256.0,
+                    max_per_cell: int = 200,
+                    min_cell_size: float = 16.0,
                     stats: dict | None = None):
     """Generator-driven map export.
 
@@ -496,7 +611,9 @@ def iter_export_map(context, target_dir: str, *, objects=None,
 
     cells = _plan_cells(groups, base_name=base_name, target_dir=target_dir,
                         split_mode=split_mode, cell_size=cell_size,
-                        scene=getattr(context, 'scene', None))
+                        scene=getattr(context, 'scene', None),
+                        max_per_cell=max_per_cell,
+                        min_cell_size=min_cell_size)
     if (split_mode or 'NONE').upper() != 'NONE' and len(cells) > 1:
         stats['cells'] = len(cells)
 
@@ -710,7 +827,9 @@ def export_map(target_dir: str, *, objects=None,
                id_pool_start: int = 20000,
                base_name: str = "district",
                split_mode: str = 'NONE',
-               cell_size: float = 256.0) -> dict:
+               cell_size: float = 256.0,
+               max_per_cell: int = 200,
+               min_cell_size: float = 16.0) -> dict:
     """Synchronous wrapper around :func:`iter_export_map` for callers
     that don't need progress reporting (scripts, INU Export, etc.).
 
@@ -725,7 +844,9 @@ def export_map(target_dir: str, *, objects=None,
             export_ipl=export_ipl, export_ide=export_ide,
             binary_ipl=binary_ipl, id_pool_start=id_pool_start,
             base_name=base_name, split_mode=split_mode,
-            cell_size=cell_size, stats=stats):
+            cell_size=cell_size,
+            max_per_cell=max_per_cell, min_cell_size=min_cell_size,
+            stats=stats):
         pass
     return stats
 
@@ -735,7 +856,7 @@ def export_map(target_dir: str, *, objects=None,
 class GTATOOLS_OT_map_export(bpy.types.Operator):
     """Экспортировать выделение как готовый район GTA SA (DFF + COL + TXD + IDE + IPL в одну папку)"""
     bl_idname = "gtatools.map_export"
-    bl_label = "Export Map…"
+    bl_label = "INU: Export Map…"
     bl_options = {'REGISTER'}
 
     directory: bpy.props.StringProperty(subtype='DIR_PATH')
@@ -763,6 +884,8 @@ class GTATOOLS_OT_map_export(bpy.types.Operator):
              T("Один общий district, все DFF в корне target_dir. base_name используется для имён IDE/IPL/COL/TXD")),
             ('GRID', T("XY-сетка"),
              T("Биннить DFF по XY-координате origin'а на ячейки cell_size метров. Каждая непустая ячейка получает подпапку <base>_x<cx>_y<cy> со своими IDE/IPL/COL/TXD")),
+            ('ADAPTIVE', T("Адаптивная сетка"),
+             T("Quadtree-разбиение по плотности: ячейка делится 2×2 пока в ней больше max_per_cell DFF. Плотные районы получают мелкие ячейки, разреженные остаются одной большой. Гарантирует число DFF на ячейку вместо равномерного пространственного разбиения. Имена подпапок: <base>_q<path>, где path — путь по квадрантам (0=SW, 1=SE, 2=NW, 3=NE)")),
             ('COLLECTION', T("По коллекциям"),
              T("Биннить DFF по имени верхней (top-level) коллекции, в которой объект лежит. Имя коллекции становится именем district'а — идеально для round-trip с Group-by-IPL импортом (vegasn_stream0 в Blender → vegasn_stream0.ipl на выходе)")),
         ],
@@ -772,6 +895,16 @@ class GTATOOLS_OT_map_export(bpy.types.Operator):
         name=T("Размер ячейки (м)"),
         description=T("Сторона квадратной ячейки в метрах для разбиения по XY-сетке. 256 м соответствует ванильному радиусу стриминга. Уменьшай для более мелких чанков, увеличивай если районов получается слишком много"),
         default=256.0, min=16.0, soft_max=2048.0, max=8192.0,
+    )
+    max_per_cell: bpy.props.IntProperty(
+        name=T("Макс. DFF на ячейку"),
+        description=T("Целевой потолок DFF в одной адаптивной ячейке. Когда число превышено — ячейка делится на 4. Меньше = больше мелких ячеек (тоньше streaming, но больше IPL-файлов). Больше = крупные ячейки. Vanilla SA streaming-радиус хорошо работает с ~150-300 DFF на IPL"),
+        default=200, min=10, soft_max=2000, max=10000,
+    )
+    min_cell_size: bpy.props.FloatProperty(
+        name=T("Мин. размер ячейки (м)"),
+        description=T("Минимальная сторона ячейки для адаптивной сетки — нижняя граница рекурсии. Защищает от бесконечного деления когда много DFF разделяют одну XY-точку (вертикально стопкой, как небоскрёбы). При достижении этого предела ячейка остаётся, даже если в ней больше max_per_cell"),
+        default=16.0, min=1.0, soft_max=256.0, max=2048.0,
     )
 
     # ENUM_FLAG = multi-checkbox in the operator dialog. Wins over outliner
@@ -787,7 +920,9 @@ class GTATOOLS_OT_map_export(bpy.types.Operator):
             for c in context.scene.collection.children
         ][:32],  # ENUM_FLAG hard limit at 32 bits
         options={'ENUM_FLAG'},
-        default=set(),
+        # No `default=` — Blender 5.x rejects non-int defaults when
+        # `items` is a callable. Empty set is the natural default for
+        # an ENUM_FLAG with dynamic items.
     )
 
     _timer = None
@@ -846,9 +981,12 @@ class GTATOOLS_OT_map_export(bpy.types.Operator):
         layout.prop(self, "id_pool_start")
         layout.separator()
         layout.prop(self, "split_mode")
-        sub = layout.column()
-        sub.enabled = (self.split_mode == 'GRID')
-        sub.prop(self, "cell_size")
+        if self.split_mode == 'GRID':
+            layout.prop(self, "cell_size")
+        elif self.split_mode == 'ADAPTIVE':
+            sub = layout.column(align=True)
+            sub.prop(self, "max_per_cell")
+            sub.prop(self, "min_cell_size")
 
     def execute(self, context):
         if not self.directory or not os.path.isdir(self.directory):
@@ -900,6 +1038,8 @@ class GTATOOLS_OT_map_export(bpy.types.Operator):
             base_name=self.base_name,
             split_mode=self.split_mode,
             cell_size=self.cell_size,
+            max_per_cell=self.max_per_cell,
+            min_cell_size=self.min_cell_size,
             stats=self._stats,
         )
 

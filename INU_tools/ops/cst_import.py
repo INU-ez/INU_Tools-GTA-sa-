@@ -8,6 +8,9 @@ from .col_import import _create_mesh_from_col
 import bpy
 
 
+from bpy.props import (
+    StringProperty,
+)
 def import_cst(filepath: str):
     """Parse the CST file and create Blender objects for every MODEL block."""
     models = read_cst(filepath)
@@ -26,7 +29,7 @@ def import_cst(filepath: str):
 class GTATOOLS_OT_import_cst(bpy.types.Operator):
     """Импорт текстового файла Steve's COL Editor (.cst)"""
     bl_idname = "gtatools.import_cst"
-    bl_label = "Import CST (.cst)"
+    bl_label = "INU: Import CST (.cst)"
     bl_options = {'REGISTER', 'UNDO'}
 
     filepath: bpy.props.StringProperty(subtype='FILE_PATH')

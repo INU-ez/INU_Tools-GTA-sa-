@@ -789,7 +789,7 @@ class GTATOOLS_OT_vcl_add(bpy.types.Operator):
     ``VCL_N_`` и инициализирует его прозрачным (alpha=0). Стек ограничен
     10 слоями — операция отказывает с предупреждением при переполнении"""
     bl_idname = "gtatools.vcl_add"
-    bl_label = "Add VC Layer"
+    bl_label = "INU: Add VC Layer"
     bl_options = {'REGISTER', 'UNDO'}
 
     label: StringProperty(name="Label", default="")
@@ -871,7 +871,7 @@ class GTATOOLS_OT_vcl_add(bpy.types.Operator):
 class GTATOOLS_OT_vcl_remove(bpy.types.Operator):
     """Удалить активный слой и его color attribute. Действие undo-able"""
     bl_idname = "gtatools.vcl_remove"
-    bl_label = "Remove VC Layer"
+    bl_label = "INU: Remove VC Layer"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -908,7 +908,7 @@ class GTATOOLS_OT_vcl_remove(bpy.types.Operator):
 class GTATOOLS_OT_vcl_move(bpy.types.Operator):
     """Переместить активный слой вверх/вниз в стеке (меняет порядок блендинга)"""
     bl_idname = "gtatools.vcl_move"
-    bl_label = "Move VC Layer"
+    bl_label = "INU: Move VC Layer"
     bl_options = {'REGISTER', 'UNDO'}
 
     direction: EnumProperty(items=[
@@ -953,7 +953,7 @@ class GTATOOLS_OT_vcl_promote(bpy.types.Operator):
     исчезнет. Полезно когда заведомо «временный» слой пора зафиксировать
     как новый базовый прилайт"""
     bl_idname = "gtatools.vcl_promote"
-    bl_label = "Promote to Base"
+    bl_label = "INU: Promote to Base"
     bl_options = {'REGISTER', 'UNDO'}
 
     attr_name: StringProperty()
@@ -999,7 +999,7 @@ class GTATOOLS_OT_vcl_demote(bpy.types.Operator):
     Scope (Day или Night) определяется параметром оператора — на UI
     кнопки «→ Day» / «→ Night» рядом с не-VCL атрибутами в секции «База»"""
     bl_idname = "gtatools.vcl_demote"
-    bl_label = "Demote to Layer"
+    bl_label = "INU: Demote to Layer"
     bl_options = {'REGISTER', 'UNDO'}
 
     attr_name: StringProperty()
@@ -1059,7 +1059,7 @@ class GTATOOLS_OT_vcl_show_composite(bpy.types.Operator):
     стек. Если Live Preview OFF — Day/Night содержат оригиналы, кнопки
     работают как обычный «выбрать атрибут»"""
     bl_idname = "gtatools.vcl_show_composite"
-    bl_label = "Show Composite"
+    bl_label = "INU: Show Composite"
     bl_options = {'REGISTER', 'UNDO'}
 
     scope: EnumProperty(items=_SCOPE_ITEMS, default='DAY')
@@ -1102,7 +1102,7 @@ class GTATOOLS_OT_vcl_refresh_composite(bpy.types.Operator):
     слайдер — например после ручного редактирования атрибутов через
     Mesh Data Properties"""
     bl_idname = "gtatools.vcl_refresh_composite"
-    bl_label = "Refresh Composite"
+    bl_label = "INU: Refresh Composite"
     bl_options = {'REGISTER'}
 
     def execute(self, context):
@@ -1124,7 +1124,7 @@ class GTATOOLS_OT_vcl_apply_multi(bpy.types.Operator):
     значение. 'RELATIVE' — каждое значение сдвигается на дельту
     относительно своего текущего"""
     bl_idname = "gtatools.vcl_apply_multi"
-    bl_label = "Apply to Selected"
+    bl_label = "INU: Apply to Selected"
     bl_options = {'REGISTER', 'UNDO'}
 
     target: EnumProperty(items=[
@@ -1171,7 +1171,7 @@ class GTATOOLS_OT_vcl_recolor_selected(bpy.types.Operator):
     Полезно когда хочешь поменять оттенок группы слоёв, не трогая то
     что под ними и не перерисовывая руками"""
     bl_idname = "gtatools.vcl_recolor_selected"
-    bl_label = "Recolor Selected"
+    bl_label = "INU: Recolor Selected"
     bl_options = {'REGISTER', 'UNDO'}
 
     color: FloatVectorProperty(
@@ -1240,7 +1240,7 @@ class GTATOOLS_OT_vcl_set_active_attr(bpy.types.Operator):
     рисовать в нужный атрибут без ручного переключения в Mesh Data
     Properties → Color Attributes"""
     bl_idname = "gtatools.vcl_set_active_attr"
-    bl_label = "Activate Layer"
+    bl_label = "INU: Activate Layer"
     bl_options = {'REGISTER', 'UNDO'}
 
     attr_name: StringProperty()

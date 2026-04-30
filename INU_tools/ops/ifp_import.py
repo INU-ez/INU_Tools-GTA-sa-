@@ -1,6 +1,9 @@
 # INU_tools.ops.ifp_import — Import GTA SA IFP animations into Blender
 
 import bpy
+from bpy.props import (
+    EnumProperty, FloatProperty, IntProperty, StringProperty,
+)
 import mathutils
 from ..core.ifp import read_ifp, HAS_ROT, HAS_TRANS
 from .. import T
@@ -122,6 +125,21 @@ def apply_ifp_action(action_name: str, armature, context=None):
     # the identity for vanilla SA peds.ifp data.
     fps = float(getattr(bpy.context.scene.render, 'fps', 30) or 30)
 
+    # Pre-build a bone_id → pose_bone map. Custom skins commonly rename
+    # the root bone (vanilla 'Normal' becomes 'Root', 'Bip01', etc.) but
+    # keep the canonical SA bone_id on each frame's HAnim entry. The
+    # DFF importer stashes that id on the data bone as 'bone_id', so we
+    # can fall back to id-matching whenever the IFP's bone name doesn't
+    # match an armature bone — without this fallback, custom skins lose
+    # their root-motion fcurves (id=0), the exported IFP comes out with
+    # 31 bones instead of 32, and MTA tends to crash silently inside
+    # engineLoadIFP.
+    id_to_pose_bone = {}
+    for pb in armature.pose.bones:
+        db = armature.data.bones.get(pb.name)
+        if db is not None and 'bone_id' in db:
+            id_to_pose_bone[int(db['bone_id'])] = pb
+
     for abone in anim.bones:
         bone_name = abone.name
         pose_bone = armature.pose.bones.get(bone_name)
@@ -130,6 +148,8 @@ def apply_ifp_action(action_name: str, armature, context=None):
                 if pb.name.lower() == bone_name.lower():
                     pose_bone = pb
                     break
+        if not pose_bone and abone.bone_id is not None:
+            pose_bone = id_to_pose_bone.get(abone.bone_id)
 
         if not pose_bone:
             continue
@@ -315,8 +335,22 @@ def _ifp_preview_frame_handler(scene, depsgraph=None):
     fps = st.get('fps') or 30.0
     time_sec = scene.frame_current / fps
 
+    # Same bone_id fallback as apply_ifp_action — keeps the live preview
+    # in sync with custom-named root bones (e.g. army.dff calls it 'Root'
+    # while vanilla IFP says 'Normal').
+    id_to_pose_bone = st.get('id_map')
+    if id_to_pose_bone is None:
+        id_to_pose_bone = {}
+        for pb in armature.pose.bones:
+            db = armature.data.bones.get(pb.name)
+            if db is not None and 'bone_id' in db:
+                id_to_pose_bone[int(db['bone_id'])] = pb
+        st['id_map'] = id_to_pose_bone
+
     for abone in anim.bones:
         pbone = armature.pose.bones.get(abone.name)
+        if not pbone and abone.bone_id is not None:
+            pbone = id_to_pose_bone.get(abone.bone_id)
         if not pbone:
             continue
         sample = _sample_anim_keyframe(abone, time_sec)
@@ -325,7 +359,8 @@ def _ifp_preview_frame_handler(scene, depsgraph=None):
 
         rot_xyzw, trans, has_trans = sample
         rest_inv, rest_inv_mat = rest_cache.get(
-            pbone.name, (mathutils.Quaternion(), mathutils.Matrix.Identity(3)))
+            pbone.name,
+            (mathutils.Quaternion(), mathutils.Matrix.Identity(3)))
 
         gta_quat = mathutils.Quaternion(
             (rot_xyzw[3], rot_xyzw[0], rot_xyzw[1], rot_xyzw[2]))
@@ -351,6 +386,7 @@ def preview_start(armature, anim_name) -> tuple[bool, str]:
     _preview_state['armature_name'] = armature.name
     _preview_state['anim_name'] = anim_name
     _preview_state['rest_cache'] = None  # rebuilt on first handler tick
+    _preview_state['id_map'] = None      # bone_id → pose_bone, also rebuilt
 
     # Stash the current action only on first enable so a repeat-toggle
     # doesn't overwrite the saved baseline with None.
@@ -508,7 +544,7 @@ def batch_apply_sequential(armature, anims: list[tuple[str, str]],
 class GTATOOLS_OT_ifp_batch_import(bpy.types.Operator):
     """Импортировать все *.ifp из папки и уложить анимации на NLA-трек активного armature"""
     bl_idname = "gtatools.ifp_batch_import"
-    bl_label = "Batch Import IFP Folder"
+    bl_label = "INU: Batch Import IFP Folder"
     bl_options = {'REGISTER', 'UNDO'}
 
     directory: bpy.props.StringProperty(subtype='DIR_PATH')
@@ -646,7 +682,7 @@ def _refresh_station_markers(track_obj):
 class GTATOOLS_OT_refresh_station_markers(bpy.types.Operator):
     """Пересоздать видимые Empty-маркеры для каждой станции на активном ж/д пути"""
     bl_idname = "gtatools.refresh_station_markers"
-    bl_label = "Refresh Station Markers"
+    bl_label = "INU: Refresh Station Markers"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -668,7 +704,7 @@ classes = classes + (GTATOOLS_OT_refresh_station_markers,)
 class GTATOOLS_OT_path_node_flag(bpy.types.Operator):
     """Переключить roadblock или задать тип светофора на выделенных точках кривой пути"""
     bl_idname = "gtatools.path_node_flag"
-    bl_label = "Set Path Node Flag"
+    bl_label = "INU: Set Path Node Flag"
     bl_options = {'REGISTER', 'UNDO'}
 
     action: bpy.props.EnumProperty(

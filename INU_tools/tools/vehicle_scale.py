@@ -121,7 +121,7 @@ def _rescale_hierarchy(root, factor: float, *, dummies_only: bool):
 class GTATOOLS_OT_vehicle_scale(bpy.types.Operator):
     """Пропорционально масштабировать всю иерархию машины (Empty-корень + меши + дамми), сохраняя структуру. Применяет масштаб к данным меша чтобы DFF-экспорт остался чистым"""
     bl_idname = "gtatools.vehicle_scale"
-    bl_label = "Vehicle Scale"
+    bl_label = "INU: Vehicle Scale"
     bl_options = {'REGISTER', 'UNDO'}
 
     factor: bpy.props.FloatProperty(

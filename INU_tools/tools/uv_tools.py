@@ -161,7 +161,7 @@ class GTATOOLS_OT_toggle_uv_editor(bpy.types.Operator):
 class GTATOOLS_OT_toggle_uv_grid(bpy.types.Operator):
     """Показать/скрыть сетку на UV"""
     bl_idname = "gtatools.toggle_uv_grid"
-    bl_label = "Toggle UV Grid"
+    bl_label = "INU: Toggle UV Grid"
 
     def execute(self, context):
         global _uv_grid_draw_handler, _uv_grid_visible
@@ -310,7 +310,7 @@ def move_island_uv(island, uv_layer, offset_u, offset_v):
 class GTATOOLS_OT_randomize_uv_grid(bpy.types.Operator):
     """Рандомно распределить UV выделенных полигонов по сетке (для окон, вариаций)"""
     bl_idname = "gtatools.randomize_uv_grid"
-    bl_label = "Randomize UV Grid"
+    bl_label = "INU: Randomize UV Grid"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -424,7 +424,7 @@ class GTATOOLS_OT_randomize_uv_grid(bpy.types.Operator):
 class GTATOOLS_OT_snap_uv_to_grid(bpy.types.Operator):
     """Привязать UV выделенных полигонов к ближайшей ячейке сетки"""
     bl_idname = "gtatools.snap_uv_to_grid"
-    bl_label = "Snap UV to Grid"
+    bl_label = "INU: Snap UV to Grid"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -547,7 +547,7 @@ class GTATOOLS_OT_snap_uv_to_grid(bpy.types.Operator):
 class GTATOOLS_OT_set_uv_align(bpy.types.Operator):
     """Выбрать позицию привязки UV в ячейке"""
     bl_idname = "gtatools.set_uv_align"
-    bl_label = "Set UV Align"
+    bl_label = "INU: Set UV Align"
     bl_options = {'INTERNAL'}
 
     alignment: bpy.props.StringProperty()
@@ -623,7 +623,7 @@ _GTASA_MODELS = {
 class GTATOOLS_OT_add_gtasa_model(bpy.types.Operator):
     """Add a GTA SA model to the scene"""
     bl_idname = "gtatools.add_gtasa_model"
-    bl_label = "Add GTA SA Model"
+    bl_label = "INU: Add GTA SA Model"
     bl_options = {'REGISTER', 'UNDO'}
 
     model: EnumProperty(

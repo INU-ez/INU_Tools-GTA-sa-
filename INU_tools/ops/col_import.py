@@ -3,6 +3,8 @@
 # Uses INU_tools.core.col for binary format reading.
 
 import bpy
+import os
+from bpy.props import StringProperty, CollectionProperty
 
 from ..core.col import read_col_file, ColModel, Vec3
 
@@ -212,3 +214,79 @@ def import_col_from_models(models, *, bulk_mode: bool = False,
             bpy.context.view_layer.objects.active = imported_objects[0]
 
     return imported_objects
+
+
+# ──────────────────── Blender operator wrapper ────────────────────────
+
+class GTATOOLS_OT_import_col(bpy.types.Operator):
+    """Импорт COL коллизии GTA SA"""
+    bl_idname = "gtatools.import_col"
+    bl_label = "INU: Import COL (.col)"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    filepath: StringProperty(subtype='FILE_PATH')
+    filter_glob: StringProperty(default="*.col", options={'HIDDEN'})
+
+    def invoke(self, context, event):
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        try:
+            import_col(filepath=self.filepath, context=context)
+            self.report({'INFO'}, f"Imported COL: {self.filepath}")
+            return {'FINISHED'}
+        except Exception as e:
+            self.report({'ERROR'}, f"COL import error: {str(e)}")
+            return {'CANCELLED'}
+
+
+class GTATOOLS_OT_drop_col(bpy.types.Operator):
+    """Импорт COL при перетаскивании во viewport.
+
+    Принимает несколько файлов сразу (батч), каждый импортируется
+    как отдельный объект коллизии. Селекция игнорируется — COL
+    создаёт собственные mesh-объекты, не цепляется к существующим.
+    """
+    bl_idname = "gtatools.drop_col"
+    bl_label = "INU: Import COL (Drop)"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    filepath: StringProperty(subtype='FILE_PATH')
+    files: CollectionProperty(type=bpy.types.OperatorFileListElement)
+    directory: StringProperty(subtype='DIR_PATH')
+
+    def execute(self, context):
+        imported = 0
+        for f in self.files:
+            path = os.path.join(self.directory, f.name)
+            if not (os.path.isfile(path)
+                    and path.lower().endswith('.col')):
+                continue
+            try:
+                import_col(filepath=path, context=context)
+                imported += 1
+            except Exception as e:
+                self.report({'WARNING'},
+                            f"{os.path.basename(path)}: {e}")
+        self.report({'INFO'}, f"COL: {imported}")
+        return {'FINISHED'}
+
+
+class GTATOOLS_FH_col_drop(bpy.types.FileHandler):
+    """File Handler для перетаскивания COL во viewport"""
+    bl_idname = "GTATOOLS_FH_col_drop"
+    bl_label = "GTA COL Drop"
+    bl_import_operator = "gtatools.drop_col"
+    bl_file_extensions = ".col"
+
+    @classmethod
+    def poll_drop(cls, context):
+        return context.area and context.area.type == 'VIEW_3D'
+
+
+classes = (
+    GTATOOLS_OT_import_col,
+    GTATOOLS_OT_drop_col,
+    GTATOOLS_FH_col_drop,
+)
