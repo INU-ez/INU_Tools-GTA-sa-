@@ -413,7 +413,7 @@ Inspired by and partially compatible with:
 
 ### 🔧 Recommended companion tools
 
-- **[Itera Tools 3](https://itera.gumroad.com/l/IteraTools3)** — Blender addon for vertex lighting (Vertex Lit Linear / Quickstart). INU_tools' Prelight panel integrates with Itera workflows via `Save Materials` / `Restore` buttons.
+- **[Itera Tools 3](https://itera.gumroad.com/l/IteraTools3)** — Blender addon for vertex lighting. INU_tools includes a dedicated **Itera Tools 3** sub-panel (under the *Lighting* container) that auto-detects Itera in your Asset Libraries and applies its `Vertex Lit Linear` / `Quickstart` material presets to the selection (with one-click `Remove Itera` to restore original materials).
 - **[NVIDIA Texture Tools](https://developer.nvidia.com/texture-tools-exporter)** — standalone CLI/GUI for GPU-accelerated DXT compression. Optional but recommended: when installed and pointed at via `Scene → INU Tools → NVTT Path`, TXD export uses GPU encoding (parallel DXT1, much faster than the bundled CPU encoder).
 
 ### Author

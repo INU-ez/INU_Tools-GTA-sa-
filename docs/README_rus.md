@@ -412,7 +412,7 @@ Building01_COL   ← коллизия
 
 ### 🔧 Рекомендуемые сопутствующие инструменты
 
-- **[Itera Tools 3](https://itera.gumroad.com/l/IteraTools3)** — Blender-аддон для vertex lighting (Vertex Lit Linear / Quickstart). Панель Prelight в INU_tools интегрируется с workflow Itera через кнопки `Save Materials` / `Restore`.
+- **[Itera Tools 3](https://itera.gumroad.com/l/IteraTools3)** — Blender-аддон для vertex lighting. В INU_tools есть отдельная подпанель **Itera Tools 3** (внутри контейнера *Освещение*): авто-определяет Itera в Asset Libraries и применяет его пресеты `Vertex Lit Linear` / `Quickstart` к выделению (плюс `Убрать Itera` одной кнопкой — восстанавливает оригинальные материалы).
 - **[NVIDIA Texture Tools](https://developer.nvidia.com/texture-tools-exporter)** — отдельный CLI/GUI для GPU-сжатия DXT. Опционально, но рекомендуется: установи и пропиши путь в `Scene → INU Tools → NVTT Path` — экспорт TXD будет использовать GPU-кодирование (параллельный DXT1, заметно быстрее встроенного CPU-кодера).
 
 ### Автор
