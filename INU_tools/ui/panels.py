@@ -2551,10 +2551,14 @@ class GTATOOLS_PT_anim_panel(bpy.types.Panel):
                           else 'RESTRICT_VIEW_OFF'),
                     depress=_pv_on)
                 if obj.animation_data and obj.animation_data.action:
-                    layout.label(
+                    cur_row = layout.row(align=True)
+                    cur_row.label(
                         text=f"{T('Текущая')}: "
                              f"{obj.animation_data.action.name}",
                         icon='ARMATURE_DATA')
+                    cur_row.operator(
+                        "gtatools.delete_active_action",
+                        text="", icon='TRASH')
             else:
                 layout.label(text=T("Выделите скелет для применения"),
                              icon='INFO')

@@ -420,6 +420,35 @@ class GTATOOLS_OT_apply_ifp(bpy.types.Operator):
             return {'CANCELLED'}
 
 
+class GTATOOLS_OT_delete_active_action(bpy.types.Operator):
+    """Удалить активную Action арматуры из файла полностью.
+    В отличие от кнопки X в Action Editor (которая только отвязывает),
+    этот оператор стирает Action из bpy.data.actions — полезно чтобы
+    в IFP-экспорт не попадали забытые анимации."""
+    bl_idname = "gtatools.delete_active_action"
+    bl_label = "INU: Delete Active Action"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj and obj.type == 'ARMATURE'
+                and obj.animation_data
+                and obj.animation_data.action is not None)
+
+    def execute(self, context):
+        armature = context.active_object
+        action = armature.animation_data.action
+        name = action.name
+        try:
+            bpy.data.actions.remove(action, do_unlink=True)
+        except Exception as e:
+            self.report({'ERROR'}, f"{T('Не удалось удалить')}: {e}")
+            return {'CANCELLED'}
+        self.report({'INFO'}, f"{T('Удалена Action')}: {name}")
+        return {'FINISHED'}
+
+
 classes = (
     GTATOOLS_OT_import_ifp,
     GTATOOLS_OT_export_ifp,
@@ -427,4 +456,5 @@ classes = (
     GTATOOLS_OT_merge_ifp,
     GTATOOLS_OT_ifp_preview_toggle,
     GTATOOLS_OT_apply_ifp,
+    GTATOOLS_OT_delete_active_action,
 )

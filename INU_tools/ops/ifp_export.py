@@ -351,6 +351,14 @@ def _build_animation(action, armature, fps: float) -> Animation:
                     quat[fc.array_index] = fc.evaluate(frame)
                 bl_quat = mathutils.Quaternion(
                     (quat[0], quat[1], quat[2], quat[3]))
+                # Per-channel evaluate on Bezier-sampled (densified)
+                # fcurves can produce non-unit quaternions — magnitudes
+                # drift to 0.7-1.2. Without this normalize, the off
+                # magnitude propagates through ANP3 int16×4096 quant
+                # and the engine applies slightly-off rotations every
+                # 30Hz tick → visible "stepped" playback in-game.
+                if bl_quat.magnitude > 0:
+                    bl_quat.normalize()
                 gta_quat = rest_quat @ bl_quat
                 kf.rotation = (
                     gta_quat.x, gta_quat.y, gta_quat.z, gta_quat.w)

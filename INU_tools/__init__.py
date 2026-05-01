@@ -2359,6 +2359,7 @@ from .ops.ifp_ops import (
     GTATOOLS_OT_merge_ifp,
     GTATOOLS_OT_ifp_preview_toggle,
     GTATOOLS_OT_apply_ifp,
+    GTATOOLS_OT_delete_active_action,
 )
 from .ops.ik_rig import (
     GTATOOLS_OT_add_ik_rig,
@@ -2519,6 +2520,7 @@ classes = (
     GTATOOLS_OT_ifp_roundtrip,
     GTATOOLS_OT_ifp_preview_toggle,
     GTATOOLS_OT_apply_ifp,
+    GTATOOLS_OT_delete_active_action,
     GTATOOLS_OT_add_ik_rig,
     GTATOOLS_OT_bake_ik_rig,
     GTATOOLS_OT_add_ground_plane,
