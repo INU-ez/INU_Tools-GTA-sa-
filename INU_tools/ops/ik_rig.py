@@ -83,10 +83,15 @@ _SA_ROT_BONES = [
     ("head", [" Head", "Head", "Bip01 Head"]),
 ]
 
-# Root controller — Copy Location + Copy Rotation on the topmost
-# bone, so grabbing one control moves/rotates the whole character.
-# SA peds use "Normal" (HAnim id 0); older DFFs land on "Bip01" or
-# "Root" depending on how the rig was named.
+# Root controller — Copy Location + Copy Rotation on Pelvis by
+# default (idle / crouch / aim / on-spot animations: SA root bone is
+# expected to stay at world origin, the actual body movement comes
+# from Pelvis). Switch to the topmost bone with the Scene flag
+# ``gtatools_ik_root_motion`` for walk/run/jump where root carries
+# world translation.
+_SA_PELVIS_BONES = [
+    ("root", [" Pelvis", "Pelvis", "Bip01 Pelvis"]),
+]
 _SA_ROOT_BONES = [
     ("root", [" Normal", "Normal", " Bip01", "Bip01", " Root", "Root"]),
 ]
@@ -533,7 +538,10 @@ class GTATOOLS_OT_add_ik_rig(bpy.types.Operator):
                 })
 
         root_target = None
-        for ctrl_name, candidates in _SA_ROOT_BONES:
+        ik_root_lookup = (_SA_ROOT_BONES
+                          if getattr(scene, 'gtatools_ik_root_motion', False)
+                          else _SA_PELVIS_BONES)
+        for ctrl_name, candidates in ik_root_lookup:
             pb = _resolve_bone_alt(armature, candidates)
             if pb is not None:
                 root_target = {

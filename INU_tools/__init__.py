@@ -3589,6 +3589,17 @@ def register():
         default=False,
     )
 
+    bpy.types.Scene.gtatools_ik_root_motion = BoolProperty(
+        name=T("Root motion"),
+        description=T("Включить для анимаций которые двигают "
+                      "персонажа по миру (walk/run/jump): IK_root "
+                      "цепляется на топ-кость скелета. По умолчанию "
+                      "выключено — IK_root сидит на Pelvis, что "
+                      "удобнее для idle/crouch/aim/static, где root "
+                      "должен оставаться в (0,0,0)"),
+        default=False,
+    )
+
     def _on_chain_offset_change(self, context):
         # Visual offset for chain (hand/foot) IK control cubes —
         # custom_shape_translation moves the rendered shape only,
@@ -4370,6 +4381,7 @@ def unregister():
         'gtatools_ik_show_rot',
         'gtatools_ik_show_root',
         'gtatools_ik_chain_offset',
+        'gtatools_ik_root_motion',
     ):
         try:
             delattr(bpy.types.Scene, _attr)

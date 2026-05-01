@@ -2569,6 +2569,11 @@ class GTATOOLS_PT_anim_panel(bpy.types.Panel):
                 layout.operator("gtatools.bake_ik_rig",
                                 text=T("Bake & Clear IK"), icon='REC')
             else:
+                # Root motion toggle — must be set BEFORE Add IK Rig,
+                # determines whether INU_IK_root targets Pelvis (off,
+                # default) or the topmost bone (on, for walk/run).
+                layout.prop(scene, "gtatools_ik_root_motion",
+                            text=T("Root motion (walk/run)"))
                 layout.operator("gtatools.add_ik_rig",
                                 text=T("Add IK Rig"),
                                 icon='CON_KINEMATIC')
