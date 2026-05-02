@@ -27,7 +27,6 @@ bl_info = {
     "blender": (4, 2, 0),
     "location": "View3D > Sidebar (N) > GTA Tools",
     "description": "Toolset for GTA SA models",
-    "warning": "Experimental features — not fully tested in-game",
     "category": "3D View",
 }
 
@@ -310,7 +309,6 @@ import struct
 import os
 import time
 import tempfile
-import subprocess
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from mathutils import Vector
@@ -438,6 +436,7 @@ from .ui.panels import (  # noqa: E501
     GTATOOLS_PT_main_panel,
     GTATOOLS_PT_ide_ipl_panel,
     GTATOOLS_PT_export_panel,
+    GTATOOLS_PT_validate_scene,
     GTATOOLS_MT_import_menu,
     GTATOOLS_MT_export_menu,
     GTATOOLS_MT_create_2dfx,
@@ -474,6 +473,21 @@ from .ops.ifp_import import (
 from .ops.cst_import import GTATOOLS_OT_import_cst
 from .ops.cst_export import GTATOOLS_OT_export_cst
 from .ops.paintjob_ops import GTATOOLS_OT_validate_paintjobs
+from .ops.onboarding_ops import (
+    GTATOOLS_OT_open_docs,
+    GTATOOLS_OT_open_issues,
+    GTATOOLS_OT_open_release,
+    GTATOOLS_OT_whats_new,
+)
+from .ops.validate_scene import (
+    INUValidateIssue,
+    GTATOOLS_OT_validate_run,
+    GTATOOLS_OT_validate_clear,
+    GTATOOLS_OT_validate_goto,
+    GTATOOLS_OT_validate_fix_quaternions,
+    GTATOOLS_OT_validate_fix_suffix,
+    GTATOOLS_OT_validate_fix_modulate_color,
+)
 from .ops.frame_hierarchy import (
     GTATOOLS_OT_frame_select,
     GTATOOLS_OT_frame_rename,
@@ -1335,6 +1349,12 @@ class INUObjectProps(bpy.types.PropertyGroup):
         name="LOD partner",
         description=T("LOD-модель этой DFF — заполняется автоматически при Map Import из IPL lod_index. При Map Export пересчитывается в lod_index = позицию LOD-инстанса в выходном IPL. Пусто = модель не имеет LOD"),
     )
+    real_interior : IntProperty(
+        name="Real Interior (FLA)",
+        default=0,
+        min=0,
+        description=T("Fastman92 Limit Adjuster: 12-я колонка `realInterior` в IPL inst. Обычная SA читает только 11 колонок — это поле игнорируется без FLA. Пусто (0) = не использовать. Включить запись 12-й колонки можно в Map Export → FLA Extended IPL"),
+    )
     draw_distance : FloatProperty(
         name="Draw Distance",
         default=299.0,
@@ -1746,13 +1766,14 @@ def _ipl_entry_from_obj(obj):
     model_id = getattr(inu, 'model_id', 0) if inu else 0
     interior = getattr(inu, 'interior_id', 0) if inu else 0
     lod_index = getattr(inu, 'lod_index', -1) if inu else -1
+    real_interior = getattr(inu, 'real_interior', 0) if inu else 0
     loc = obj.matrix_world.translation
     rot = obj.matrix_world.to_quaternion().conjugated()
     return IplInstance(model_id=model_id, model_name=name,
                        interior=interior,
                        pos_x=loc.x, pos_y=loc.y, pos_z=loc.z,
                        rot_x=rot.x, rot_y=rot.y, rot_z=rot.z, rot_w=rot.w,
-                       lod_index=lod_index)
+                       lod_index=lod_index, real_interior=real_interior)
 
 
 def _clean_model_name_ide(name):
@@ -2545,6 +2566,7 @@ classes = (
     GTATOOLS_OT_replace_ipl_placeholders,
     GTATOOLS_PT_ide_ipl_panel,
     GTATOOLS_PT_export_panel,
+    GTATOOLS_PT_validate_scene,
     GTATOOLS_MT_import_menu,
     GTATOOLS_MT_export_menu,
     GTATOOLS_MT_create_2dfx,
@@ -2633,6 +2655,17 @@ classes = (
     GTATOOLS_OT_import_cst,
     GTATOOLS_OT_export_cst,
     GTATOOLS_OT_validate_paintjobs,
+    GTATOOLS_OT_open_docs,
+    GTATOOLS_OT_open_issues,
+    GTATOOLS_OT_open_release,
+    GTATOOLS_OT_whats_new,
+    INUValidateIssue,
+    GTATOOLS_OT_validate_run,
+    GTATOOLS_OT_validate_clear,
+    GTATOOLS_OT_validate_goto,
+    GTATOOLS_OT_validate_fix_quaternions,
+    GTATOOLS_OT_validate_fix_suffix,
+    GTATOOLS_OT_validate_fix_modulate_color,
     GTATOOLS_OT_frame_select,
     GTATOOLS_OT_frame_rename,
     GTATOOLS_OT_frame_set_parent,
@@ -3024,13 +3057,113 @@ def _upd_prefix_col(self, ctx):
         self.gtatools_suffix_col = ""
 
 
+def _prewarm_dff_subsystem():
+    """One-shot warmup that touches the slow lazily-initialised parts
+    of Blender + the DFF import stack so the user's first
+    Shift+A → GTA SA Model click doesn't pay the full cold-start cost.
+
+    Cold-start budget on first DFF import:
+      • bpy.data.materials/objects RNA init   ~200ms
+      • first bpy.ops.object.select_all       ~100ms (undo bootstrap)
+      • DFF parser numpy buffer setup         ~100ms
+      • bmesh ops first call                  ~100ms
+
+    We force all four here, well before the user clicks anything.
+    Returning ``None`` from a timer callback means «don't repeat» —
+    this runs exactly once per addon load.
+    """
+    try:
+        # 1) Touch global collections — forces RNA init.
+        _ = list(bpy.data.materials)
+        _ = list(bpy.data.objects)
+        # 2) Pull in the DFF + COL parser modules. They're already
+        #    imported eagerly in this __init__.py, but referencing
+        #    their hot symbols nudges any lazy submodule binding.
+        from .core.dff import read_dff_file  # noqa: F401
+        from .core.col import read_col_file  # noqa: F401
+        from .ops.dff_import import import_dff  # noqa: F401
+        # 3) numpy primitives — touch a small array so numpy's
+        #    internal buffer pool gets allocated. The DFF parser
+        #    creates large numpy arrays per-mesh; first allocation
+        #    is the expensive one.
+        try:
+            import numpy as _np
+            _np.zeros(16, dtype=_np.float32)
+        except Exception:
+            pass
+    except Exception as e:
+        print(f"[INU prewarm] skipped: {e}")
+    return None  # don't reschedule
+
+
+def _register_blender_translations():
+    """Register the addon's localization with Blender's native i18n
+    system so ``bl_label``/``bl_description`` translate dynamically
+    when the user switches UI language.
+
+    Background: ``T(...)`` is a regular Python function — when it
+    appears as ``bl_label = T("Русский")`` it runs ONCE at class-
+    definition time, the result is baked into ``bl_rna``, and never
+    updates. Blender's own ``app.translations`` is the only way to
+    have static class attributes follow locale changes — Blender
+    consults the registered dict via ``pgettext_iface`` at draw time.
+
+    Format: ``{locale: {(context, msg): translation}}``. Blender uses
+    different contexts for different UI element types — panels often
+    use ``"*"``, operators use ``"Operator"``, property names use
+    ``"Property"`` etc. We register the SAME translation under the
+    most common contexts so any UI element looking up our message
+    finds it regardless of the context Blender picks.
+    """
+    from .locale import get_translation
+    eng_dict = get_translation('eng')
+    if not eng_dict:
+        return
+
+    # Mirror every entry across the contexts Blender consults for
+    # different UI element kinds. Costs a few KiB of dict — negligible.
+    contexts = ('*', 'Operator', 'Property', 'WindowManager')
+    en_us_entries = {}
+    for k, v in eng_dict.items():
+        for ctx in contexts:
+            en_us_entries[(ctx, k)] = v
+
+    blender_dict = {'en_US': en_us_entries}
+
+    # Idempotent — addon reload may otherwise hit «already registered».
+    try:
+        bpy.app.translations.unregister(__name__)
+    except Exception:
+        pass
+    try:
+        bpy.app.translations.register(__name__, blender_dict)
+    except Exception as e:
+        print(f"[INU translations] register failed: {e}")
+
+
+def _unregister_blender_translations():
+    try:
+        bpy.app.translations.unregister(__name__)
+    except Exception:
+        pass
+
+
 def register():
-    # Auto-translate tooltips: docstrings are in Russian,
-    # bl_description is set via T() so locale/eng.py handles English
+    # Hook the addon's localization into Blender's i18n FIRST — before
+    # we touch class bl_descriptions. Once registered, raw Russian
+    # strings on bl_label/bl_description get translated dynamically by
+    # Blender at draw time when the user is on a non-Russian UI.
+    _register_blender_translations()
+
+    # Auto-fill operator tooltip from the class docstring when one
+    # isn't explicitly set. We assign the *raw* Russian text rather
+    # than T(...) — Blender's translation system above handles the
+    # locale switch dynamically. Using T() here would snapshot the
+    # text in whatever locale the addon loaded with and freeze it.
     for cls in classes:
         doc = getattr(cls, '__doc__', None)
         if doc and doc.strip():
-            cls.bl_description = T(doc.strip())
+            cls.bl_description = doc.strip()
         try:
             bpy.utils.register_class(cls)
         except ValueError:
@@ -3057,6 +3190,11 @@ def register():
 
     bpy.types.Scene.gtatools_lightmap_result = StringProperty(name="Result", default="")
     bpy.types.Scene.gtatools_lightmap_path = StringProperty(name="Lightmap Path", default="lightmaps/lightmap.png")
+
+    # Pre-export validation results — refilled by GTATOOLS_OT_validate_run
+    # and consumed by GTATOOLS_PT_validate_scene panel.
+    bpy.types.Scene.inu_validate_issues = bpy.props.CollectionProperty(
+        type=INUValidateIssue)
 
     # Collapsible-section state for the PARTICLE 2DFX editor panel
     # All Particle expert sections start collapsed for a clean panel.
@@ -4023,6 +4161,17 @@ def register():
     # Add > GTA SA submenu
     bpy.types.VIEW3D_MT_add.append(_gtasa_add_menu_draw)
 
+    # Pre-warm DFF import path so the user's first Shift+A → GTA SA
+    # Model click is fast. Without this, the first click takes 1-3s
+    # because Blender does cold-start work (RNA init for materials/
+    # objects collections, first bpy.ops call setting up undo, numpy
+    # JIT, bmesh setup) ON the call. Subsequent clicks are instant.
+    # Run after a short delay so the UI doesn't stutter during
+    # addon load — by the time the user actually hits Shift+A this
+    # has long completed.
+    bpy.app.timers.register(_prewarm_dff_subsystem,
+                            first_interval=2.0)
+
     # 2DFX real-time preview handler
     bpy.app.handlers.depsgraph_update_post.append(_on_depsgraph_update_2dfx)
 
@@ -4182,6 +4331,10 @@ def _on_depsgraph_update_2dfx(scene, depsgraph):
 
 
 def unregister():
+    # Drop our locale dict before any classes go away — keeps Blender's
+    # translation table clean across addon reloads.
+    _unregister_blender_translations()
+
     # 2DFX billboard timer
     from .ops.fx_preview import stop_billboard_timer
     stop_billboard_timer()
@@ -4398,6 +4551,8 @@ def unregister():
     del bpy.types.Scene.gtatools_vc_analysis
     del bpy.types.Scene.gtatools_lightmap_result
     del bpy.types.Scene.gtatools_lightmap_path
+    if hasattr(bpy.types.Scene, 'inu_validate_issues'):
+        del bpy.types.Scene.inu_validate_issues
     del bpy.types.Scene.gtatools_model_id
 
     # Stop particle sim timer and drop meshes

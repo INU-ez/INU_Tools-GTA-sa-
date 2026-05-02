@@ -2,6 +2,7 @@
 #
 # Phase 3 (2026-04-26): operators moved from __init__.py.
 
+import ast
 import os
 import bpy
 import bmesh
@@ -707,7 +708,7 @@ class GTATOOLS_OT_mark_station(bpy.types.Operator):
         obj = context.active_object
         raw = obj.get('station_indices', '[]')
         try:
-            stations = set(eval(raw))
+            stations = set(ast.literal_eval(raw))
         except Exception:
             stations = set()
 

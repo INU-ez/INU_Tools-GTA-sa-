@@ -197,6 +197,163 @@ def _chain_direction(start_head, tip_head):
     return v.normalized()
 
 
+# Canonical rest pose applied to deform bones BEFORE the IK pipeline
+# runs, but only when the armature has zero animation keys. The
+# rotations break the IK-plane degeneracy that an unposed straight
+# rest chain would otherwise have — pole_angle calibration converges
+# on the correct bend side because the chain isn't a flat line at
+# calibration time. Captured by INU via the dev-side pose-dump
+# script. Bone names use SA's leading-space convention; _resolve_bone
+# strips leading whitespace as a fallback so either form works.
+_REST_POSE = {
+    'Root': {'rot': (1.0, -0.0, 0.0, -0.0),
+             'loc': (-0.020707, -0.003663, -0.0)},
+    ' Pelvis': (0.0, -0.99844, 0.0, 0.05583),
+    ' Spine': (0.999639, 0.002941, 0.020998, -0.016513),
+    ' Spine1': (0.997566, 0.010012, 0.052992, 0.044201),
+    ' Neck': (0.999011, -0.031481, -0.014937, 0.027637),
+    ' Head': (0.9959, 0.054052, 0.07132, 0.013226),
+    'Jaw': (0.999985, -0.0, 1e-06, 0.005395),
+    'L Brow': (0.99999, 0.002968, -0.000428, 0.003353),
+    'R Brow': (0.999852, 0.015993, 0.00163, 0.006155),
+    'Bip01 L Clavicle': (0.994921, -0.034688, 0.047642, 0.081598),
+    ' L UpperArm': (0.966937, 0.228035, 0.095553, -0.062474),
+    ' L ForeArm': (0.993836, -0.0, 1e-06, -0.11086),
+    ' L Hand': (0.992712, 0.083451, -0.079519, -0.035149),
+    ' L Finger': (0.962828, 0.000131, -0.000125, 0.270116),
+    'L Finger01': (0.920734, -0.0, -0.0, 0.39019),
+    'Bip01 R Clavicle': (0.994677, 0.02799, -0.095563, 0.026479),
+    ' R UpperArm': (0.982845, -0.168682, -0.06244, -0.04078),
+    ' R ForeArm': (0.998923, -0.0, 1e-06, -0.046393),
+    ' R Hand': (0.993859, 0.063271, 0.077838, 0.046712),
+    ' R Finger': (0.825937, 0.013055, -0.012764, 0.563467),
+    'R Finger01': (0.918711, 0.0, -0.0, 0.39493),
+    'L breast': (1.0, -0.000183, -0.000103, -9.6e-05),
+    'R breast': (1.0, 0.000119, 4.1e-05, 5.2e-05),
+    'Belly': (1.0, -0.0, 1e-06, -2.8e-05),
+    ' L Thigh': (0.981469, -0.125843, 0.042563, 0.138094),
+    ' L Calf': (0.971695, -0.0, -0.0, -0.236239),
+    ' L Foot': (0.993511, -0.074613, -0.003255, 0.085776),
+    ' L Toe0': (0.999789, 0.000345, 0.000345, 0.020545),
+    ' R Thigh': (0.988712, 0.082174, 0.098286, 0.077688),
+    ' R Calf': (0.98751, 0.0, -0.0, -0.157559),
+    ' R Foot': (0.993469, 0.061039, -0.060722, 0.074878),
+    ' R Toe0': (1.0, 0.0, -0.0, 0.000345),
+}
+
+
+def _flip_armature_facing(armature):
+    """Compose an extra 180° rotation around the (1, 0, 1) axis onto
+    the armature object's existing rotation. Only called from Phase 0
+    of Add IK Rig, alongside _apply_rest_pose, so it never fires on
+    armatures that already carry FK animation.
+
+    Why object-level (not bone-level): SA peds come out of DFF
+    import lying on their X-up rest, and the canonical _REST_POSE
+    stands them up via Pelvis basis. After standing, the body still
+    faces an axis Blender treats as «back» rather than «front» —
+    rotating the OBJECT lets us correct that without untangling
+    Pelvis bone-rest conventions. Tweak the angle / axis below if
+    a future ped variant needs different alignment."""
+    flip = mathutils.Quaternion(
+        (1.0, 0.0, 1.0), math.radians(180.0))
+
+    if armature.rotation_mode == 'QUATERNION':
+        cur = mathutils.Quaternion(armature.rotation_quaternion)
+        new = flip @ cur
+        armature.rotation_quaternion = new
+    elif armature.rotation_mode == 'AXIS_ANGLE':
+        aa = armature.rotation_axis_angle
+        cur = mathutils.Quaternion((aa[1], aa[2], aa[3]), aa[0])
+        new = flip @ cur
+        axis, angle = new.to_axis_angle()
+        armature.rotation_axis_angle = (
+            angle, axis.x, axis.y, axis.z)
+    else:
+        cur_q = armature.rotation_euler.to_quaternion()
+        new_q = flip @ cur_q
+        armature.rotation_euler = new_q.to_euler(
+            armature.rotation_mode)
+
+
+def _armature_has_any_keys(armature):
+    """True if the armature carries an Action with at least one
+    pose-bone keyframe. Used to gate the rest-pose pre-step in Add
+    IK Rig — overlaying a 32-bone canonical pose on top of an
+    existing FK animation would silently retarget / clobber it,
+    so we only stamp keys on a clean rig."""
+    ad = armature.animation_data
+    if ad is None or ad.action is None:
+        return False
+    for fc in _iter_action_fcurves(ad.action):
+        if fc.data_path.startswith('pose.bones['):
+            if len(fc.keyframe_points) > 0:
+                return True
+    return False
+
+
+def _apply_rest_pose(armature, frame=0):
+    """Write _REST_POSE values to deform bones that are still at
+    near-identity rotation, then keyframe them at ``frame`` so the
+    pose persists across action evaluation / save+reload / timeline
+    scrub. Bones already rotated (|q.w| < 0.999, ~5°+) are skipped —
+    the caller still gates this whole function on
+    _armature_has_any_keys so existing FK actions never reach here.
+
+    Returns the list of bone names that were updated."""
+    applied = []
+    for bone_name, data in _REST_POSE.items():
+        pb = _resolve_bone(armature, bone_name)
+        if pb is None:
+            continue
+
+        if pb.rotation_mode == 'QUATERNION':
+            q_now = pb.rotation_quaternion
+        else:
+            q_now = pb.matrix_basis.to_quaternion()
+        if abs(q_now.w) < 0.999:
+            continue
+
+        if isinstance(data, dict):
+            rot = data.get('rot')
+            loc = data.get('loc')
+        else:
+            rot = data
+            loc = None
+
+        if rot is not None:
+            q = mathutils.Quaternion(rot)
+            if pb.rotation_mode == 'QUATERNION':
+                pb.rotation_quaternion = q
+            elif pb.rotation_mode == 'AXIS_ANGLE':
+                axis, angle = q.to_axis_angle()
+                pb.rotation_axis_angle = (
+                    angle, axis.x, axis.y, axis.z)
+            else:
+                pb.rotation_euler = q.to_euler(pb.rotation_mode)
+
+        if loc is not None:
+            pb.location = loc
+
+        try:
+            if pb.rotation_mode == 'QUATERNION':
+                pb.keyframe_insert(
+                    'rotation_quaternion', frame=frame)
+            elif pb.rotation_mode == 'AXIS_ANGLE':
+                pb.keyframe_insert(
+                    'rotation_axis_angle', frame=frame)
+            else:
+                pb.keyframe_insert('rotation_euler', frame=frame)
+        except Exception:
+            pass
+        if loc is not None:
+            try:
+                pb.keyframe_insert('location', frame=frame)
+            except Exception:
+                pass
+
+        applied.append(pb.name)
+    return applied
 
 
 def _resolve_bone_alt(armature, candidates):
@@ -491,6 +648,25 @@ class GTATOOLS_OT_add_ik_rig(bpy.types.Operator):
         scene = context.scene
 
         context.view_layer.update()
+
+        # ── Phase 0 ──────────────────────────────────────────────
+        # On a freshly imported ped (zero animation keys), apply the
+        # canonical rest pose to the deform bones, keyframe it at
+        # frame 0, and reorient the armature object so the character
+        # ends up facing Blender's front. Without this step the IK
+        # chain calibration in Phase 3 would run on a perfectly
+        # straight chain — the IK plane is degenerate there,
+        # brute-force pole_angle converges on an arbitrary angle,
+        # and the limb bends the wrong way the moment the user
+        # drags an IK target. Armatures that already carry FK keys
+        # are LEFT ALONE — the existing animation provides a non-
+        # degenerate reference pose, so calibration converges
+        # naturally and we must not overwrite the user's keys.
+        if not _armature_has_any_keys(armature):
+            if _apply_rest_pose(armature, frame=0):
+                context.view_layer.update()
+                _flip_armature_facing(armature)
+                context.view_layer.update()
 
         # ── Phase 1 ──────────────────────────────────────────────
         # Capture current-pose target positions in armature-local

@@ -693,6 +693,12 @@ class GTATOOLS_OT_remove_from_img(bpy.types.Operator):
         if removed:
             _refresh_img_entries(context.scene, img_path)
             self.report({'INFO'}, f"IMG: {T('удалено')} {', '.join(removed)}")
+            # Status-bar reminder shows the *latest* report — make sure
+            # the rebuild hint is the one users see. The list of removed
+            # files stays in the report log for click-through.
+            self.report(
+                {'INFO'},
+                T("Rebuild Archive в IMG-туле — иначе игра подтянет старую запись"))
         else:
             self.report({'WARNING'}, T("Файлы не найдены в IMG"))
         return {'FINISHED'}
@@ -1029,6 +1035,15 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
             preview = ', '.join(results[:6])
             more = f" (+{len(results) - 6})" if len(results) > 6 else ""
             self.report({'INFO'}, f"IMG: {preview}{more}")
+            # Common pitfall ("новый DFF не появляется в игре"): the
+            # archive directory updates but external IMG editors / game
+            # caches may keep showing the old entry until a Rebuild
+            # Archive pass. Status-bar shows the *latest* report — make
+            # this the visible one; the file list above stays accessible
+            # via the report-log click-through.
+            self.report(
+                {'INFO'},
+                T("Rebuild Archive в IMG-туле — иначе игра подтянет старую запись"))
         else:
             self.report({'WARNING'}, T("IMG: нет результатов экспорта"))
         return {'FINISHED'}

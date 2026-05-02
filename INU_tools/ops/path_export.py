@@ -1,5 +1,6 @@
 # INU_tools.ops.path_export — Export Blender objects to GTA SA path files
 
+import ast
 import bpy
 from ..core.paths import (
     FlightFile, FlightPath, FlightPoint, write_flight,
@@ -51,7 +52,7 @@ def export_track(filepath: str, obj=None):
     station_indices = set()
     raw = obj.get('station_indices', '[]')
     try:
-        station_indices = set(eval(raw))
+        station_indices = set(ast.literal_eval(raw))
     except Exception:
         pass
 

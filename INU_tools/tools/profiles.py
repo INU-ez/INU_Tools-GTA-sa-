@@ -760,17 +760,24 @@ class GTATOOLS_OT_profile_edit(bpy.types.Operator):
         # Hint row — always visible, switches to red (alert) when a
         # panel is picked. Keeps layout height stable so the rest of
         # the list doesn't jump up/down when picking starts/ends.
+        # Strings are translated via Blender's i18n (pgettext_iface) so
+        # they follow the active UI locale dynamically. The picked f-
+        # string is decomposed into translatable fragments around the
+        # interpolated panel name — that name comes from a separate
+        # localised lookup (panel_label) and shouldn't go through the
+        # message catalog twice.
+        from bpy.app.translations import pgettext_iface as _t
         hint = layout.row()
         if picked:
             hint.alert = True
             hint.label(
-                text=f"Взято: «{panel_label(picked)}» — "
-                     f"клик на другую = переместить сюда",
+                text=(f"{_t('Взято:')} «{panel_label(picked)}» — "
+                      f"{_t('клик на другую = переместить сюда')}"),
                 icon='RESTRICT_SELECT_OFF')
         else:
             hint.label(
-                text="Клик на название = взять, потом клик на "
-                     "другую = поставить",
+                text=_t("Клик на название = взять, потом клик на "
+                        "другую = поставить"),
                 icon='INFO')
 
         col = layout.column(align=True)

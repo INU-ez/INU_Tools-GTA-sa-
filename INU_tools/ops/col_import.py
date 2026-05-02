@@ -6,6 +6,7 @@ import bpy
 import os
 from bpy.props import StringProperty, CollectionProperty
 
+from .. import T
 from ..core.col import read_col_file, ColModel, Vec3
 
 
@@ -216,10 +217,215 @@ def import_col_from_models(models, *, bulk_mode: bool = False,
     return imported_objects
 
 
+# ──────────────────── Modal-friendly generator ────────────────────────
+
+
+def _iter_import_col_files(filepaths, target_collection, stats):
+    """Yield ``(current, total, label)`` tuples while importing each
+    .col file from ``filepaths`` and every model inside.
+
+    Memory: the COL parsing step (``read_col_file``) is a single bulk
+    decode per file — not chunked here. The slow part for COL libraries
+    (vegasN.col with thousands of models) is the per-model object
+    creation, which is what we yield-pace below.
+
+    On completion, ``stats`` is filled with:
+      - ``imported_objects`` — list of bpy.types.Object created
+      - ``files_done`` — count of .col files successfully read
+      - ``errors`` — list of (filename, error_str)
+    """
+    stats.setdefault('imported_objects', [])
+    stats.setdefault('files_done', 0)
+    stats.setdefault('errors', [])
+
+    # Share the material cache across files so a multi-file drop with
+    # repeating COL surface tuples (very common — vanilla COL only uses
+    # ~64 distinct surfaces) doesn't create duplicate datablocks.
+    material_cache: dict = {}
+
+    # Pre-count total models for accurate progress. Read-twice would be
+    # wasteful, so we count files first and refine inside the loop.
+    file_count = len(filepaths)
+
+    for file_idx, fpath in enumerate(filepaths):
+        label = os.path.basename(fpath)
+        yield (file_idx, max(file_count, 1), f"read: {label}")
+
+        try:
+            models = read_col_file(fpath)
+        except Exception as e:
+            stats['errors'].append((label, str(e)))
+            continue
+
+        if not models:
+            stats['errors'].append((label, "no models"))
+            continue
+
+        for m_idx, model in enumerate(models):
+            mname = model.model_name or f"model_{m_idx + 1}"
+            yield (file_idx, max(file_count, 1),
+                   f"{label} • {m_idx + 1}/{len(models)}: {mname}")
+
+            obj = _create_mesh_from_col(
+                model, target_collection, 'COL',
+                material_cache=material_cache)
+            if obj:
+                stats['imported_objects'].append(obj)
+            sha_obj = _create_mesh_from_col(
+                model, target_collection, 'SHA',
+                material_cache=material_cache)
+            if sha_obj:
+                stats['imported_objects'].append(sha_obj)
+            for s_idx, sphere in enumerate(model.spheres):
+                emp = _create_sphere(
+                    sphere, target_collection,
+                    model.model_name or "col", s_idx)
+                stats['imported_objects'].append(emp)
+
+        stats['files_done'] += 1
+
+    # Final position-match pass. Same logic as the synchronous
+    # import_col_from_models but applied to ALL imported objects from
+    # this batch (one match-DFF lookup per COL mesh).
+    yield (file_count, max(file_count, 1), "matching DFF positions")
+    for obj in stats['imported_objects']:
+        if obj.type != 'MESH':
+            continue
+        base = obj.name
+        for suffix in ('_col', '_sha', '_COL', '_SHA'):
+            if base.endswith(suffix):
+                base = base[:-len(suffix)]
+                break
+        for candidate in bpy.data.objects:
+            if candidate is obj or candidate.type != 'MESH':
+                continue
+            cname_low = candidate.name.lower()
+            base_low = base.lower()
+            if cname_low == base_low or cname_low == base_low + '_dff':
+                obj.location = candidate.location.copy()
+                break
+
+    # Selection: deselect all, select all imported, set first as active.
+    yield (file_count, max(file_count, 1), "selecting imported")
+    bpy.ops.object.select_all(action='DESELECT')
+    for obj in stats['imported_objects']:
+        try:
+            obj.select_set(True)
+        except RuntimeError:
+            pass  # not in active view layer; rare for fresh imports
+    if stats['imported_objects']:
+        try:
+            bpy.context.view_layer.objects.active = stats['imported_objects'][0]
+        except Exception:
+            pass
+
+
 # ──────────────────── Blender operator wrapper ────────────────────────
 
-class GTATOOLS_OT_import_col(bpy.types.Operator):
-    """Импорт COL коллизии GTA SA"""
+
+class _COLImportModalMixin:
+    """Shared modal-loop scaffolding for the two COL import operators.
+
+    Both ``import_col`` (file picker, single path) and ``drop_col``
+    (drag-drop, multi path) drive the same per-model generator with
+    progress + ESC cancel. The mixin owns timer / progress / status-bar
+    plumbing so the operators only have to provide ``_collect_paths()``.
+    """
+
+    _timer = None
+    _gen = None
+    _stats: dict = None
+
+    def _collect_paths(self) -> list:
+        """Subclasses return the list of .col paths to import."""
+        raise NotImplementedError
+
+    def _start_modal(self, context):
+        paths = self._collect_paths()
+        if not paths:
+            self.report({'WARNING'}, T("Не выбран ни один .col файл"))
+            return {'CANCELLED'}
+
+        self._stats = {}
+        self._gen = _iter_import_col_files(
+            paths, context.collection, self._stats)
+
+        wm = context.window_manager
+        wm.progress_begin(0, 100)
+        self._timer = wm.event_timer_add(0.05, window=context.window)
+        wm.modal_handler_add(self)
+        context.workspace.status_text_set(T("COL Import: подготовка..."))
+        return {'RUNNING_MODAL'}
+
+    def modal(self, context, event):
+        if event.type == 'ESC':
+            self._finish(context)
+            self.report({'WARNING'}, T("COL Import отменён"))
+            return {'CANCELLED'}
+
+        if event.type != 'TIMER':
+            return {'PASS_THROUGH'}
+
+        import time
+        wm = context.window_manager
+        deadline = time.monotonic() + 0.05  # ~20 fps frame budget
+
+        while time.monotonic() < deadline:
+            try:
+                current, total, label = next(self._gen)
+            except StopIteration:
+                self._finish(context)
+                stats = self._stats or {}
+                imported = len(stats.get('imported_objects', []))
+                files_done = stats.get('files_done', 0)
+                errors = stats.get('errors', [])
+                if errors and not imported:
+                    err_msg = '; '.join(f"{n}: {e}" for n, e in errors[:3])
+                    self.report({'ERROR'}, f"COL: {err_msg}")
+                    return {'CANCELLED'}
+                msg = (f"COL: {imported} {T('объект(ов)')} "
+                       f"{T('из')} {files_done} {T('файлов')}")
+                if errors:
+                    msg += f" ({len(errors)} {T('с ошибкой')})"
+                self.report({'INFO'}, msg)
+                return {'FINISHED'}
+            except Exception as e:
+                self._finish(context)
+                self.report({'ERROR'},
+                            f"{T('Ошибка импорта COL')}: {e}")
+                print(f"[col_import] aborted: {e}")
+                import traceback
+                traceback.print_exc()
+                return {'CANCELLED'}
+
+            pct = int(100 * current / max(total, 1))
+            wm.progress_update(pct)
+            context.workspace.status_text_set(
+                f"COL Import: {current}/{total} — {label}")
+
+        return {'RUNNING_MODAL'}
+
+    def _finish(self, context):
+        if self._timer:
+            try:
+                context.window_manager.event_timer_remove(self._timer)
+            except Exception:
+                pass
+            self._timer = None
+        try:
+            context.window_manager.progress_end()
+        except Exception:
+            pass
+        try:
+            context.workspace.status_text_set(None)
+        except Exception:
+            pass
+        self._gen = None
+
+
+class GTATOOLS_OT_import_col(_COLImportModalMixin, bpy.types.Operator):
+    """Импорт COL коллизии GTA SA с прогресс-баром.
+    ESC прерывает импорт, уже созданные объекты остаются в сцене."""
     bl_idname = "gtatools.import_col"
     bl_label = "INU: Import COL (.col)"
     bl_options = {'REGISTER', 'UNDO'}
@@ -227,25 +433,21 @@ class GTATOOLS_OT_import_col(bpy.types.Operator):
     filepath: StringProperty(subtype='FILE_PATH')
     filter_glob: StringProperty(default="*.col", options={'HIDDEN'})
 
+    def _collect_paths(self):
+        return [self.filepath] if self.filepath else []
+
     def invoke(self, context, event):
         context.window_manager.fileselect_add(self)
         return {'RUNNING_MODAL'}
 
     def execute(self, context):
-        try:
-            import_col(filepath=self.filepath, context=context)
-            self.report({'INFO'}, f"Imported COL: {self.filepath}")
-            return {'FINISHED'}
-        except Exception as e:
-            self.report({'ERROR'}, f"COL import error: {str(e)}")
-            return {'CANCELLED'}
+        return self._start_modal(context)
 
 
-class GTATOOLS_OT_drop_col(bpy.types.Operator):
-    """Импорт COL при перетаскивании во viewport.
+class GTATOOLS_OT_drop_col(_COLImportModalMixin, bpy.types.Operator):
+    """Импорт COL при перетаскивании во viewport (батч, прогресс + ESC).
 
-    Принимает несколько файлов сразу (батч), каждый импортируется
-    как отдельный объект коллизии. Селекция игнорируется — COL
+    Принимает несколько файлов сразу. Селекция игнорируется — COL
     создаёт собственные mesh-объекты, не цепляется к существующим.
     """
     bl_idname = "gtatools.drop_col"
@@ -256,21 +458,16 @@ class GTATOOLS_OT_drop_col(bpy.types.Operator):
     files: CollectionProperty(type=bpy.types.OperatorFileListElement)
     directory: StringProperty(subtype='DIR_PATH')
 
-    def execute(self, context):
-        imported = 0
+    def _collect_paths(self):
+        out = []
         for f in self.files:
             path = os.path.join(self.directory, f.name)
-            if not (os.path.isfile(path)
-                    and path.lower().endswith('.col')):
-                continue
-            try:
-                import_col(filepath=path, context=context)
-                imported += 1
-            except Exception as e:
-                self.report({'WARNING'},
-                            f"{os.path.basename(path)}: {e}")
-        self.report({'INFO'}, f"COL: {imported}")
-        return {'FINISHED'}
+            if os.path.isfile(path) and path.lower().endswith('.col'):
+                out.append(path)
+        return out
+
+    def execute(self, context):
+        return self._start_modal(context)
 
 
 class GTATOOLS_FH_col_drop(bpy.types.FileHandler):

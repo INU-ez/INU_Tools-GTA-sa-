@@ -10,6 +10,7 @@
 # lazily inside each method. T() is top-level since panel class bodies
 # use T(...) at class-definition time.
 
+import ast
 import bpy
 import bmesh
 from bpy.props import (
@@ -309,6 +310,21 @@ class GTATOOLS_PT_main_panel(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         scene = context.scene
+
+        # ── Onboarding row ──
+        # Three icon buttons that lead a fresh user to docs / issues /
+        # release notes. Without this, a new install dumps 14 panels in
+        # the sidebar with no pointer to the manual; from the N-tab
+        # there's no other way to reach docs/. URLs are GitHub-hosted
+        # so they survive the addons-folder install path that strips
+        # everything but the INU_tools/ module.
+        row = layout.row(align=True)
+        row.operator("gtatools.open_docs",
+                     text=T("Docs"), icon='HELP')
+        row.operator("gtatools.open_issues",
+                     text=T("Issues"), icon='URL')
+        row.operator("gtatools.whats_new",
+                     text="", icon='SOLO_ON')
 
         # ── Profile switcher ──
         # ALL = no filter, default order. User profiles are saved in
@@ -691,6 +707,164 @@ class GTATOOLS_PT_export_panel(bpy.types.Panel):
 
 
 
+class GTATOOLS_PT_validate_scene(bpy.types.Panel):
+    """Pre-export sweep: paintjob slots, quaternion normalisation,
+    Modulate Color на прилайтах, парность _ok/_dam.
+
+    Sub-panel живёт внутри Export panel — pre-flight check рядом с
+    кнопкой экспорта, без отдельного слота в registry."""
+    bl_label = T("Проверка перед экспортом")
+    bl_idname = "GTATOOLS_PT_validate_scene"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_parent_id = "GTATOOLS_PT_export_panel"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    _SEVERITY_ICON = {
+        'ERROR':   'ERROR',
+        'WARNING': 'ERROR',  # Blender has no separate WARN icon; ERROR is closest
+        'INFO':    'INFO',
+    }
+
+    # Human-readable category labels — mirror the (raw) category tag
+    # written by core/validate.py. Keep in sync if a new check is added.
+    _CATEGORY_LABEL = {
+        'Paintjob':       "Paintjob",
+        'Quaternions':    "Кватернионы",
+        'ModulateColor':  "Modulate Color",
+        'DamagePair':     "Пары _ok / _dam",
+        'OrphanModel':    "Сирые LOD / COL",
+        'Orphan2DFX':     "Непривязанный 2DFX",
+        'DuplicateID':    "Дубликаты model_id",
+        'EmptyMesh':      "Пустые меши",
+        'LargeMesh':      "Большие меши",
+        'NoTexture':      "Материал без текстуры",
+        'SuffixMismatch': "Суффиксы / префиксы",
+        'BadScale':       "Scale объектов",
+        'LightBeamASI':   "Light Beam ASI",
+    }
+
+    def draw_header(self, context):
+        self.layout.label(text="", icon='CHECKMARK')
+
+    def draw(self, context):
+        layout = self.layout
+        issues = context.scene.inu_validate_issues
+
+        row = layout.row(align=True)
+        row.operator("gtatools.validate_run",
+                     text=T("Проверить сцену"), icon='VIEWZOOM')
+        if len(issues):
+            row.operator("gtatools.validate_clear",
+                         text="", icon='X')
+
+        if not len(issues):
+            return
+
+        # Summary banner
+        errors = sum(1 for i in issues if i.severity == 'ERROR')
+        warns = sum(1 for i in issues if i.severity == 'WARNING')
+        infos = sum(1 for i in issues if i.severity == 'INFO')
+        box = layout.box()
+        srow = box.row(align=True)
+        if errors:
+            srow.label(text=f"{errors} ✗", icon='CANCEL')
+        if warns:
+            srow.label(text=f"{warns} ⚠", icon='ERROR')
+        if infos:
+            srow.label(text=f"{infos} i", icon='INFO')
+        if not (errors or warns or infos):
+            srow.label(text=T("OK"), icon='CHECKMARK')
+
+        # ── Group issues by category, preserving first-seen order ──
+        # Each category becomes a collapsible-feeling section: a small
+        # header with severity colour + count, followed by per-issue
+        # rows. A flat list with 6 categories was hard to scan when
+        # one category had many entries.
+        grouped: "dict[str, list]" = {}
+        for issue in issues:
+            grouped.setdefault(issue.category, []).append(issue)
+
+        import json as _json
+        for cat, group in grouped.items():
+            # Worst severity in the group drives the header icon.
+            worst = 'INFO'
+            for it in group:
+                if it.severity == 'ERROR':
+                    worst = 'ERROR'
+                    break
+                if it.severity == 'WARNING' and worst != 'ERROR':
+                    worst = 'WARNING'
+            cat_box = layout.box()
+            header = cat_box.row(align=True)
+            # Category label is stored as raw Russian in _CATEGORY_LABEL
+            # — wrap with T() so the active locale picks up its
+            # eng.py translation at draw time.
+            header.label(
+                text=f"{T(self._CATEGORY_LABEL.get(cat, cat))}  ({len(group)})",
+                icon=self._SEVERITY_ICON.get(worst, 'INFO'))
+
+            for issue in group:
+                ibox = cat_box.box()
+                if issue.target_name:
+                    ibox.label(text=issue.target_name,
+                               icon='OBJECT_DATA' if issue.target_kind == 'OBJECT'
+                                    else 'MATERIAL' if issue.target_kind == 'MATERIAL'
+                                    else 'ACTION' if issue.target_kind == 'ACTION'
+                                    else 'BLANK1')
+                # Render the message:
+                #   • If the check function emitted a translation
+                #     template + JSON args, look up the template's
+                #     localised form and format the args into it. That
+                #     way interpolated messages (e.g. «.DFF vs _DFF»)
+                #     follow the active locale.
+                #   • Otherwise the message is static — pass it
+                #     through T() directly.
+                shown = ""
+                if issue.message_template:
+                    template = T(issue.message_template)
+                    args = {}
+                    if issue.message_args:
+                        try:
+                            args = _json.loads(issue.message_args)
+                        except Exception:
+                            args = {}
+                    try:
+                        shown = template.format(**args)
+                    except (KeyError, IndexError, ValueError):
+                        shown = T(issue.message)
+                else:
+                    shown = T(issue.message)
+                ibox.label(text=shown)
+
+                actions = ibox.row(align=True)
+                if issue.target_name:
+                    op = actions.operator("gtatools.validate_goto",
+                                          text=T("Перейти"),
+                                          icon='RESTRICT_SELECT_OFF')
+                    op.target_kind = issue.target_kind
+                    op.target_name = issue.target_name
+                if issue.fix_op_id:
+                    # Three fixers; each takes a single StringProperty
+                    # arg. Dispatch by idname so we pass the correct
+                    # arg name (action_name / object_name).
+                    if issue.fix_op_id == 'gtatools.validate_fix_quaternions':
+                        fix = actions.operator(issue.fix_op_id,
+                                               text=T("Нормализовать"),
+                                               icon='FILE_REFRESH')
+                        fix.action_name = issue.fix_arg
+                    elif issue.fix_op_id == 'gtatools.validate_fix_modulate_color':
+                        fix = actions.operator(issue.fix_op_id,
+                                               text=T("Снять"),
+                                               icon='X')
+                        fix.object_name = issue.fix_arg
+                    elif issue.fix_op_id == 'gtatools.validate_fix_suffix':
+                        fix = actions.operator(issue.fix_op_id,
+                                               text=T("Исправить"),
+                                               icon='OUTLINER_DATA_FONT')
+                        fix.object_name = issue.fix_arg
+
+
 
 
 @apply_order
@@ -821,12 +995,6 @@ class GTATOOLS_PT_frame_hierarchy(bpy.types.Panel):
     bl_parent_id = "GTATOOLS_PT_main_panel"
     bl_options = {'DEFAULT_CLOSED'}
 
-    @classmethod
-    def poll(cls, context):
-        # Hide when nothing is selected — the panel needs a root to
-        # walk children from. Map-only and empty scenes get no clutter.
-        return context.active_object is not None
-
     def draw_header(self, context):
         self.layout.label(text="", icon='OUTLINER')
 
@@ -855,6 +1023,15 @@ class GTATOOLS_PT_frame_hierarchy(bpy.types.Panel):
                         text=T("Зеркало L↔R"), icon='MOD_MIRROR')
 
         layout.separator()
+
+        # Tree section needs a selected root. Show a hint when there's
+        # no active object instead of hiding the whole panel — the
+        # operator buttons above stay accessible (e.g. you can pick a
+        # template in the Validate dialog without selecting first).
+        if active is None:
+            layout.label(text=T("Выдели объект чтобы увидеть иерархию"),
+                         icon='INFO')
+            return
 
         # Tree view of active object's hierarchy
         layout.label(text=f"{T('Корень')}: {active.name}", icon='OBJECT_DATA')
@@ -906,15 +1083,6 @@ class GTATOOLS_PT_2dfx_panel(bpy.types.Panel):
     bl_region_type = 'UI'
     bl_parent_id = "GTATOOLS_PT_main_panel"
     bl_options = {'DEFAULT_CLOSED'}
-
-    @classmethod
-    def poll(cls, context):
-        # 2DFX panel needs an active MESH (to attach effects / show list)
-        # or EMPTY (existing 2DFX object or fresh empty for creating one).
-        # Other contexts (no selection, camera, light) hide the panel —
-        # cuts noise for users who don't work with 2DFX effects.
-        obj = context.active_object
-        return obj is not None and obj.type in ('MESH', 'EMPTY')
 
     def _is_2dfx(self, context):
         obj = context.active_object
@@ -2786,7 +2954,7 @@ class GTATOOLS_PT_paths_panel(bpy.types.Panel):
                 count = sum(len(s.points) for s in obj.data.splines)
                 stations = obj.get('station_indices', '[]')
                 try:
-                    num_st = len(eval(stations))
+                    num_st = len(ast.literal_eval(stations))
                 except Exception:
                     num_st = 0
                 box.label(text=f"{obj.name}: {label} ({count} pts, {num_st} stations)", icon='INFO')

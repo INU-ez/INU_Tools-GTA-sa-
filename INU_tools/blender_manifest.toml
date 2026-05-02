@@ -1,0 +1,58 @@
+schema_version = "1.0.0"
+
+# Unique extension ID — reverse-DNS-style. Must not change between versions.
+id = "inu_tools_gta_sa"
+version = "1.7.0"
+name = "INU Tools (GTA SA)"
+tagline = "Full-pipeline Blender addon for GTA San Andreas modding"
+maintainer = "INU <discord:1.n.u>"
+
+# add-on / theme / asset-pack — INU is an addon
+type = "add-on"
+
+# URL shown on extension page
+website = "https://github.com/INU-ez/INU_Tools-GTA-sa-"
+
+# Tags from Blender's official extension taxonomy.
+# https://docs.blender.org/manual/en/latest/extensions/tags.html
+tags = [
+  "Import-Export",
+  "Pipeline",
+  "Animation",
+  "Rigging",
+  "Material",
+  "UV",
+]
+
+# Minimum supported Blender version. INU uses Blender 4.2+ extension API.
+blender_version_min = "4.2.0"
+# Optional max — leave blank for forward compatibility (tested up to 5.1).
+# blender_version_max = ""
+
+# SPDX license expression. INU is GPL-3.0-or-later (`or any later version` in headers).
+license = [
+  "SPDX:GPL-3.0-or-later",
+]
+
+# Copyright lines (one per holder/year span).
+copyright = [
+  "2024-2026 INU",
+]
+
+# Permissions — declare any platform capability the addon uses,
+# with a one-line user-facing reason. Reviewers and end-users see these.
+[permissions]
+files = "Read and write GTA San Andreas model and map files"
+
+# Build options — files/folders to exclude from the packaged .zip.
+# __pycache__ is auto-generated, never ship it.
+[build]
+paths_exclude_pattern = [
+  "__pycache__/",
+  "*.pyc",
+  ".DS_Store",
+  "Thumbs.db",
+  "*.bak",
+  ".git/",
+  ".gitignore",
+]

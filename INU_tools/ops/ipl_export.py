@@ -4,13 +4,18 @@ from __future__ import annotations
 from ..core.ipl import IplFile, IplInstance, write_ipl
 
 
-def export_ipl(filepath: str, objects: list, *, binary: bool = False) -> None:
+def export_ipl(filepath: str, objects: list, *, binary: bool = False,
+               fla_extended: bool = False) -> None:
     """
     Generate an IPL file from selected Blender objects.
 
     Position and rotation are taken from the object's world transform.
     Blender quaternion is (W, X, Y, Z), GTA SA IPL stores (X, Y, Z, W).
     If ``binary=True`` the file is written in `bnry` format.
+
+    ``fla_extended=True`` writes a 12th ``realInterior`` column in each
+    inst row — Fastman92 Limit Adjuster reads it; vanilla SA ignores
+    it. Off by default to keep diffs minimal against vanilla output.
 
     LOD pairing: each ``inst`` line ends with ``lod_index`` — a position
     pointer into the same IPL's instance list. We resolve it by reading
@@ -30,6 +35,7 @@ def export_ipl(filepath: str, objects: list, *, binary: bool = False) -> None:
         model_name = _clean_model_name(obj.name)
         model_id = getattr(inu, 'model_id', 0) if inu else 0
         interior = getattr(inu, 'interior_id', 0) if inu else 0
+        real_interior = getattr(inu, 'real_interior', 0) if inu else 0
 
         # World position
         loc = obj.matrix_world.translation
@@ -50,6 +56,7 @@ def export_ipl(filepath: str, objects: list, *, binary: bool = False) -> None:
             rot_z=rot.z,
             rot_w=rot.w,
             lod_index=-1,  # provisionally; resolved below
+            real_interior=real_interior,
         ))
         obj_per_inst.append(obj)
 
@@ -98,7 +105,7 @@ def export_ipl(filepath: str, objects: list, *, binary: bool = False) -> None:
         if lod_idx >= 0:
             ipl.instances[i].lod_index = lod_idx
 
-    write_ipl(filepath, ipl, binary=binary)
+    write_ipl(filepath, ipl, binary=binary, fla_extended=fla_extended)
 
 
 def _clean_model_name(name: str) -> str:

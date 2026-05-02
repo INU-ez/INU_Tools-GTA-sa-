@@ -2006,4 +2006,115 @@ LANG = {
         "Nighttime light range for COL materials\nMin/Max — values from 0 to 15\nUses the Night color attribute if present",
     "COL Surface Type — тип физической поверхности и Day/Night Light":
         "COL Surface Type — physical surface type and Day/Night Light",
+
+    # Validate Scene + COL Import + Onboarding strings (added 2026-05-02)
+    "Action не найден": "Action not found",
+    "COL Import отменён": "COL Import cancelled",
+    "COL Import: подготовка...": "COL Import: preparing...",
+    "Fastman92 Limit Adjuster: 12-я колонка `realInterior` в IPL inst. Обычная SA читает только 11 колонок — это поле игнорируется без FLA. Пусто (0) = не использовать. Включить запись 12-й колонки можно в Map Export → FLA Extended IPL":
+        "Fastman92 Limit Adjuster: 12th `realInterior` column in IPL inst. Vanilla SA reads only 11 columns — this field is ignored without FLA. Empty (0) = not used. Enable 12th column writing in Map Export → FLA Extended IPL",
+    "Modulate Color снят": "Modulate Color disabled",
+    "Rebuild Archive в IMG-туле — иначе игра подтянет старую запись":
+        "Rebuild Archive in IMG tool — otherwise game keeps the old entry",
+    "Имя Action содержит спецсимволы — IDE entry может не сработать":
+        "Action name contains special characters — IDE entry may not work",
+    "Материал без носителя": "Material without owner",
+    "Материал не найден": "Material not found",
+    "Не выбран ни один .col файл": "No .col file selected",
+    "Не удалось удалить": "Failed to delete",
+    "Нормализовано ключей": "Keyframes normalised",
+    "Нормализовать": "Normalise",
+    "Объект вне View Layer": "Object outside View Layer",
+    "Объект не найден": "Object not found",
+    "Открыть полный changelog на GitHub": "Open full changelog on GitHub",
+    "Ошибка импорта COL": "COL import error",
+    "Перейти": "Go to",
+    "Проверить сцену": "Validate scene",
+    "Проверка перед экспортом": "Pre-export check",
+    "Русский": "Russian",
+    "Снять": "Disable",
+    "Сцена готова к экспорту — проблем не найдено":
+        "Scene ready to export — no problems found",
+    "Удалена Action": "Action deleted",
+    "Что делать если такой .ifp уже существует на диске":
+        "What to do if such .ifp already exists on disk",
+    "Экспорт пройдёт OK, замечаний": "Export will proceed OK, notes",
+    "включи коллекцию в outliner": "enable collection in outliner",
+    "выбери armature и повтори": "pick armature and retry",
+    "нет основной текстуры — paintjob не к чему привязать":
+        "no base texture — paintjob has nothing to bind to",
+    "объект(ов)": "object(s)",
+    "с ошибкой": "with error",
+    "файлов": "files",
+    "из": "of",
+    "Docs": "Docs",
+    "Issues": "Issues",
+    "Только SAMP": "SAMP only",
+    "Блокировать Map Export при SAMP-предупреждениях":
+        "Block Map Export on SAMP warnings",
+    "FLA: real_interior": "FLA: real_interior",
+    "Записать 12-ю колонку realInterior в каждой inst-строке IPL. Fastman92 Limit Adjuster читает её, vanilla SA молча игнорирует. Значение берётся из obj.inu.real_interior":
+        "Write the 12th realInterior column in each IPL inst row. Fastman92 Limit Adjuster reads it, vanilla SA silently ignores. Value is taken from obj.inu.real_interior",
+
+    # Profile editor popup hints
+    "Взято:": "Picked:",
+    "клик на другую = переместить сюда": "click another = move here",
+    "Клик на название = взять, потом клик на другую = поставить":
+        "Click the name = pick up, then click another = drop here",
+
+    # Validate Scene category labels
+    "Кватернионы": "Quaternions",
+    "Modulate Color": "Modulate Color",
+    "Пары _ok / _dam": "_ok / _dam pairs",
+    "Сирые LOD / COL": "Orphan LOD / COL",
+    "Непривязанный 2DFX": "Unattached 2DFX",
+    "Дубликаты model_id": "Duplicate model_id",
+    "Пустые меши": "Empty meshes",
+    "Большие меши": "Large meshes",
+    "Материал без текстуры": "Material without texture",
+    "Суффиксы / префиксы": "Suffixes / prefixes",
+    "Scale объектов": "Object scale",
+
+    # Validate Scene — static issue messages
+    "заполнен только Paintjob 2 — нужны оба":
+        "only Paintjob 2 filled — both required",
+    "заполнен только Paintjob 1 — нужны оба":
+        "only Paintjob 1 filled — both required",
+    "Modulate Color на меше с vertex colors — может flicker":
+        "Modulate Color on mesh with vertex colors — may flicker",
+    "LOD без main DFF — engine не сможет переключиться между ближним и дальним LOD":
+        "LOD without a main DFF — the engine can't switch between near/far LODs",
+    "COL без main DFF — коллизия не привязана к модели":
+        "COL without a main DFF — collision is not linked to a model",
+    "меш с 0 вершин — экспортируется как пустой атомик":
+        "mesh with 0 vertices — exports as an empty atomic",
+    "материал без image texture — pipeline скорее всего ожидает базовую":
+        "material without image texture — pipeline likely expects a base one",
+    "флаг Light Beam ASI включён, но SA_Light.asi не найден в game root — плагин не активируется":
+        "Light Beam ASI flag is set but SA_Light.asi not found in game root — plugin won't activate",
+    "нет парного _dam": "no paired _dam",
+    "нет парного _ok": "no paired _ok",
+
+    # Validate Scene — interpolated message templates
+    "{count} ненормированных ключей (экспорт чинит сам, но preview прыгает)":
+        "{count} non-unit keyframes (export auto-normalises, but preview stutters)",
+    "2DFX не привязан к MESH (parent: {parent}) — не попадёт в DFF":
+        "2DFX not parented to a MESH (parent: {parent}) — won't go into the DFF",
+    "model_id={mid} занят {count} разными моделями: {names}":
+        "model_id={mid} is used by {count} different models: {names}",
+    "{count} вершин — лимит атомика 65535, возможно стоит разрезать":
+        "{count} vertices — atomic limit is 65535, consider splitting",
+    "имя содержит '{combo}' — лишний суффикс рядом с {kind}":
+        "name contains '{combo}' — extra suffix next to {kind}",
+    "имя оканчивается на '{alt}', но настройка ожидает '{sfx}'":
+        "name ends with '{alt}' but settings expect '{sfx}'",
+    "отрицательный scale ({sx:.2f}, {sy:.2f}, {sz:.2f}) — нормали вывернутся, faces могут стать невидимы":
+        "negative scale ({sx:.2f}, {sy:.2f}, {sz:.2f}) — normals flip, faces may become invisible",
+    "non-uniform scale ({sx:.2f}, {sy:.2f}, {sz:.2f}) — перед экспортом сделай Ctrl+A → All Transforms":
+        "non-uniform scale ({sx:.2f}, {sy:.2f}, {sz:.2f}) — Ctrl+A → All Transforms before export",
+
+    # Validate Scene — fix button label + new fix operator strings
+    "Исправить": "Fix",
+    "Не нашёл несоответствия суффикса для этого объекта":
+        "No suffix mismatch found for this object",
 }

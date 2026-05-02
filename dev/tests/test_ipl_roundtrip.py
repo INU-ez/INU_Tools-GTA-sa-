@@ -55,6 +55,82 @@ def test_inst_text_round_trip(tmp_path):
     assert b.lod_index == 0  # LOD link to first instance
 
 
+# ── inst FLA-extended (12th column realInterior) ────────────────
+
+
+def test_inst_fla_extended_round_trip(tmp_path):
+    """With fla_extended=True the writer adds a 12th realInterior
+    column. Reader auto-detects (counts tokens) and fills the
+    real_interior field on each IplInstance."""
+    p = tmp_path / "fla.ipl"
+    write_ipl(str(p), IplFile(instances=[
+        IplInstance(model_id=1700, model_name="cj_house", interior=0,
+                    pos_x=2495.0, pos_y=-1700.0, pos_z=13.5,
+                    rot_x=0.0, rot_y=0.0, rot_z=0.707, rot_w=0.707,
+                    lod_index=-1, real_interior=5),
+        IplInstance(model_id=1701, model_name="cj_lod", interior=0,
+                    pos_x=2495.0, pos_y=-1700.0, pos_z=13.5,
+                    rot_x=0.0, rot_y=0.0, rot_z=0.707, rot_w=0.707,
+                    lod_index=0, real_interior=0),
+    ]), fla_extended=True)
+    parsed = read_ipl(str(p))
+    assert len(parsed.instances) == 2
+    assert parsed.instances[0].real_interior == 5
+    assert parsed.instances[1].real_interior == 0
+
+
+def test_inst_fla_off_strips_real_interior_column(tmp_path):
+    """With fla_extended=False (default) the writer must NOT emit the
+    12th column even when real_interior is set on the data — round-trip
+    drops the field, vanilla SA stays happy."""
+    p = tmp_path / "vanilla.ipl"
+    write_ipl(str(p), IplFile(instances=[
+        IplInstance(model_id=1700, model_name="cj_house", interior=0,
+                    pos_x=10.0, pos_y=20.0, pos_z=30.0,
+                    rot_x=0.0, rot_y=0.0, rot_z=0.0, rot_w=1.0,
+                    lod_index=-1, real_interior=42),
+    ]))
+    text = p.read_text(encoding='utf-8')
+    inst_line = next(l for l in text.splitlines()
+                     if 'cj_house' in l)
+    # Vanilla format = exactly 11 comma-separated fields
+    assert len(inst_line.split(',')) == 11
+
+    parsed = read_ipl(str(p))
+    assert parsed.instances[0].real_interior == 0  # not in file → default
+
+
+def test_inst_vanilla_file_reads_with_zero_real_interior(tmp_path):
+    """A file written in vanilla format (11 columns) loads cleanly with
+    real_interior=0. Backwards-compat check — old IPLs in the wild keep
+    working without changes."""
+    p = tmp_path / "old.ipl"
+    p.write_text(
+        "inst\n"
+        "1700, cj_house, 0, 100.0, 200.0, 30.0, 0.0, 0.0, 0.0, 1.0, -1\n"
+        "end\n",
+        encoding='utf-8')
+    parsed = read_ipl(str(p))
+    assert len(parsed.instances) == 1
+    assert parsed.instances[0].real_interior == 0
+
+
+def test_inst_fla_garbage_token_falls_back_to_zero(tmp_path):
+    """If the 12th token isn't an int (e.g. user-edited file with a
+    typo or extension), the parser doesn't crash — it leaves
+    real_interior=0 and keeps the rest of the row."""
+    p = tmp_path / "garbage.ipl"
+    p.write_text(
+        "inst\n"
+        "1700, cj, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, -1, abc\n"
+        "end\n",
+        encoding='utf-8')
+    parsed = read_ipl(str(p))
+    assert len(parsed.instances) == 1
+    assert parsed.instances[0].real_interior == 0
+    assert parsed.instances[0].model_name == "cj"
+
+
 # ── inst (binary) ────────────────────────────────────────────────
 
 def test_inst_binary_round_trip(tmp_path):

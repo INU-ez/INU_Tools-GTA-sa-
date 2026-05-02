@@ -506,6 +506,7 @@ def iter_export_map(context, target_dir: str, *, objects=None,
                     export_ipl: bool = True,
                     export_ide: bool = True,
                     binary_ipl: bool = False,
+                    fla_extended_ipl: bool = False,
                     id_pool_start: int = 20000,
                     base_name: str = "district",
                     split_mode: str = 'NONE',
@@ -808,7 +809,8 @@ def iter_export_map(context, target_dir: str, *, objects=None,
             ipl_path = os.path.join(cell_dir, f"{cell_name}.ipl")
             ipl_objs = [g.dff for g in cell_groups]
             try:
-                _export_ipl(ipl_path, ipl_objs, binary=binary_ipl)
+                _export_ipl(ipl_path, ipl_objs, binary=binary_ipl,
+                            fla_extended=fla_extended_ipl)
                 stats['ipl'] += 1
             except Exception as e:
                 print(f"[map_export] IPL failed: {e}")
@@ -824,6 +826,7 @@ def export_map(target_dir: str, *, objects=None,
                export_ipl: bool = True,
                export_ide: bool = True,
                binary_ipl: bool = False,
+               fla_extended_ipl: bool = False,
                id_pool_start: int = 20000,
                base_name: str = "district",
                split_mode: str = 'NONE',
@@ -842,7 +845,8 @@ def export_map(target_dir: str, *, objects=None,
             export_dff=export_dff, export_col=export_col,
             col_library=col_library, export_txd=export_txd,
             export_ipl=export_ipl, export_ide=export_ide,
-            binary_ipl=binary_ipl, id_pool_start=id_pool_start,
+            binary_ipl=binary_ipl, fla_extended_ipl=fla_extended_ipl,
+            id_pool_start=id_pool_start,
             base_name=base_name, split_mode=split_mode,
             cell_size=cell_size,
             max_per_cell=max_per_cell, min_cell_size=min_cell_size,
@@ -872,6 +876,14 @@ class GTATOOLS_OT_map_export(bpy.types.Operator):
     include_ide: bpy.props.BoolProperty(name="IDE", default=True)
     include_ipl: bpy.props.BoolProperty(name="IPL", default=True)
     binary_ipl: bpy.props.BoolProperty(name="Binary IPL", default=False)
+    fla_extended_ipl: bpy.props.BoolProperty(
+        name=T("FLA: real_interior"),
+        description=T(
+            "Записать 12-ю колонку realInterior в каждой inst-строке IPL. "
+            "Fastman92 Limit Adjuster читает её, vanilla SA молча "
+            "игнорирует. Значение берётся из obj.inu.real_interior"),
+        default=False,
+    )
     id_pool_start: bpy.props.IntProperty(
         name="ID Pool Start", default=20000, min=1, max=32000,
         description=T("Первый ID для DFF у которых inu.model_id == 0"),
@@ -978,6 +990,7 @@ class GTATOOLS_OT_map_export(bpy.types.Operator):
         row.prop(self, "include_ipl", toggle=True)
         layout.prop(self, "col_library")
         layout.prop(self, "binary_ipl")
+        layout.prop(self, "fla_extended_ipl")
         layout.prop(self, "id_pool_start")
         layout.separator()
         layout.prop(self, "split_mode")
@@ -1034,6 +1047,7 @@ class GTATOOLS_OT_map_export(bpy.types.Operator):
             export_ide=self.include_ide,
             export_ipl=self.include_ipl,
             binary_ipl=self.binary_ipl,
+            fla_extended_ipl=self.fla_extended_ipl,
             id_pool_start=self.id_pool_start,
             base_name=self.base_name,
             split_mode=self.split_mode,

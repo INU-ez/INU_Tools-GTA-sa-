@@ -29,7 +29,15 @@ from typing import Optional
 
 @dataclass
 class IplInstance:
-    """One placed object from the IPL ``inst`` section."""
+    """One placed object from the IPL ``inst`` section.
+
+    ``real_interior`` is a Fastman92 Limit Adjuster (FLA) extension: a
+    12th column on each ``inst`` line that distinguishes interior 13
+    «multi-zone interior» variants. Vanilla SA reads only the first 11
+    tokens and silently ignores the extra column, so a file written
+    with this set is forward-compatible with FLA installs and harmless
+    on plain SA. Default 0 = no override.
+    """
     model_id: int
     model_name: str
     interior: int = 0
@@ -41,6 +49,7 @@ class IplInstance:
     rot_z: float = 0.0
     rot_w: float = 1.0
     lod_index: int = -1
+    real_interior: int = 0
 
 
 @dataclass
@@ -260,7 +269,7 @@ def _parse_inst_line(line: str) -> Optional[IplInstance]:
     try:
         if len(parts) < 11:
             return None
-        return IplInstance(
+        inst = IplInstance(
             model_id=int(parts[0]), model_name=parts[1],
             interior=int(parts[2]),
             pos_x=float(parts[3]), pos_y=float(parts[4]), pos_z=float(parts[5]),
@@ -268,6 +277,15 @@ def _parse_inst_line(line: str) -> Optional[IplInstance]:
             rot_z=float(parts[8]), rot_w=float(parts[9]),
             lod_index=int(parts[10]),
         )
+        # FLA extension: optional 12th token = realInterior. Tolerate
+        # garbage gracefully — we just leave default 0 if the token
+        # isn't a clean int. Vanilla SA files won't have this column.
+        if len(parts) >= 12:
+            try:
+                inst.real_interior = int(parts[11])
+            except ValueError:
+                pass
+        return inst
     except (ValueError, IndexError):
         return None
 
@@ -468,11 +486,18 @@ def _ff(v: float) -> str:
     return f'{v:.6f}'
 
 
-def _format_inst_line(i: IplInstance) -> str:
-    return (f'{i.model_id}, {i.model_name}, {i.interior}, '
+def _format_inst_line(i: IplInstance, *, fla_extended: bool = False) -> str:
+    """Vanilla SA ``inst`` line is 11 fields. With ``fla_extended=True``
+    we append the 12th ``realInterior`` column for FLA installs. Vanilla
+    SA reads only the first 11 tokens, so the extra column is ignored
+    by plain installs and parsed only by Fastman-Limit-Adjuster builds."""
+    base = (f'{i.model_id}, {i.model_name}, {i.interior}, '
             f'{_ff(i.pos_x)}, {_ff(i.pos_y)}, {_ff(i.pos_z)}, '
             f'{_ff(i.rot_x)}, {_ff(i.rot_y)}, {_ff(i.rot_z)}, {_ff(i.rot_w)}, '
             f'{i.lod_index}')
+    if fla_extended:
+        base += f', {i.real_interior}'
+    return base
 
 
 def _format_cull_line(c: IplCull) -> str:
@@ -849,11 +874,16 @@ def write_binary_ipl(filepath: str, ipl: IplFile) -> None:
         f.write(_write_binary_ipl(ipl))
 
 
-def write_ipl(filepath: str, ipl: IplFile, *, binary: bool = False) -> None:
+def write_ipl(filepath: str, ipl: IplFile, *, binary: bool = False,
+              fla_extended: bool = False) -> None:
     """Write a text IPL file with all populated sections.
 
     If ``binary=True`` the file is emitted in the binary ``bnry`` format
     instead (only inst + cars sections are preserved).
+
+    If ``fla_extended=True`` the ``inst`` section adds a 12th
+    ``realInterior`` column per row — Fastman92 Limit Adjuster reads
+    it, vanilla SA ignores. Other sections are unaffected.
     """
     if binary:
         write_binary_ipl(filepath, ipl)
@@ -865,7 +895,7 @@ def write_ipl(filepath: str, ipl: IplFile, *, binary: bool = False) -> None:
 
         f.write('inst\n')
         for i in ipl.instances:
-            f.write(_format_inst_line(i) + '\n')
+            f.write(_format_inst_line(i, fla_extended=fla_extended) + '\n')
         f.write('end\n')
 
         f.write('cull\n')

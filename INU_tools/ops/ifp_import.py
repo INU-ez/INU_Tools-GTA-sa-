@@ -1,5 +1,6 @@
 # INU_tools.ops.ifp_import — Import GTA SA IFP animations into Blender
 
+import ast
 import bpy
 from bpy.props import (
     EnumProperty, FloatProperty, IntProperty, StringProperty,
@@ -648,7 +649,7 @@ def _refresh_station_markers(track_obj):
                 pass
 
     try:
-        stations = set(eval(track_obj.get('station_indices', '[]')))
+        stations = set(ast.literal_eval(track_obj.get('station_indices', '[]')))
     except Exception:
         return 0
 

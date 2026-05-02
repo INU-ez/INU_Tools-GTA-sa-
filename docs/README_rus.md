@@ -17,7 +17,7 @@
   <a href="../../../stargazers"><img src="https://img.shields.io/github/stars/INU-ez/INU_Tools-GTA-sa-?style=social" alt="Stars"></a>
 </p>
 
-**[🇬🇧 English version](../README.md)** · **[📖 Документация](DOCS_rus.md)**
+**[🇬🇧 English version](../README.md)** · **[📖 Документация](DOCS_rus.md)** · **[⚖️ Сравнение с Kams / DragonFF](COMPARISON_rus.md)**
 
 </div>
 
