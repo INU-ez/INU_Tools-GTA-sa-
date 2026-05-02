@@ -318,6 +318,76 @@ def read_col_file(filepath: str) -> list:
 
 # ── Writer ───────────────────────────────────────────────────────
 
+_U16_MAX = 65535
+
+
+class ColLimitError(ValueError):
+    """Raised when a ColModel exceeds the binary format's uint16 limits.
+
+    Wraps the cryptic ``struct.pack('H', ...)`` overflow with a message
+    that names the model and the specific count that broke the limit.
+    """
+    pass
+
+
+def _validate_col_writable(model: 'ColModel'):
+    """Reject models that would overflow COL's uint16 fields.
+
+    COL2/COL3/COL4 stores sphere/box/face counts and face vertex indices
+    as uint16 (max 65 535). The COL header (all versions) stores model_id
+    as uint16. COL1 uses uint32 for counts and indices, so only model_id
+    is checked there.
+    """
+    name = model.model_name or "<unnamed>"
+
+    if not (0 <= model.model_id <= _U16_MAX):
+        raise ColLimitError(
+            f"'{name}': model_id={model.model_id} вне диапазона 0..{_U16_MAX} "
+            f"(заголовок COL хранит ID в uint16)"
+        )
+
+    if model.version == 1:
+        return
+
+    n_spheres = len(model.spheres)
+    if n_spheres > _U16_MAX:
+        raise ColLimitError(
+            f"'{name}': {n_spheres} сфер — COL2/3/4 поддерживает максимум {_U16_MAX}"
+        )
+
+    n_boxes = len(model.boxes)
+    if n_boxes > _U16_MAX:
+        raise ColLimitError(
+            f"'{name}': {n_boxes} боксов — COL2/3/4 поддерживает максимум {_U16_MAX}"
+        )
+
+    n_faces = len(model.faces)
+    if n_faces > _U16_MAX:
+        raise ColLimitError(
+            f"'{name}': {n_faces} треугольников — COL формат поддерживает максимум {_U16_MAX}. "
+            f"Разбей меш на части или упрости коллизию (Decimate)."
+        )
+
+    n_verts = len(model.vertices)
+    if n_verts > _U16_MAX + 1:
+        raise ColLimitError(
+            f"'{name}': {n_verts} вершин — COL хранит индексы в uint16 (максимум {_U16_MAX + 1} вершин). "
+            f"Разбей меш на части или упрости коллизию (Decimate)."
+        )
+
+    n_sh_faces = len(model.shadow_faces)
+    if n_sh_faces > _U16_MAX:
+        raise ColLimitError(
+            f"'{name}': {n_sh_faces} shadow-треугольников — максимум {_U16_MAX}"
+        )
+
+    n_sh_verts = len(model.shadow_vertices)
+    if n_sh_verts > _U16_MAX + 1:
+        raise ColLimitError(
+            f"'{name}': {n_sh_verts} shadow-вершин — максимум {_U16_MAX + 1}"
+        )
+
+
 def _write_vec3(w: BinaryWriter, v: Vec3):
     w.write_vec3(v.x, v.y, v.z)
 
@@ -502,6 +572,8 @@ def write_col(models: list) -> bytes:
     out = BinaryWriter()
 
     for model in models:
+        _validate_col_writable(model)
+
         # Build body first to know its size
         body = BinaryWriter()
 

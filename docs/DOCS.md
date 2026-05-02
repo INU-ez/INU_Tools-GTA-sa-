@@ -129,6 +129,25 @@
 
 > 💡 **Example — export a single mesh:** select mesh → N → Export / Import → **Export DFF** → choose path → saves with current materials and vertex colors.
 
+#### DFF format limits (uint16 / uint8)
+RenderWare packs triangle indices and counts into small integer types — these limits apply **per geometry (Atomic)**:
+
+| Field | Type | Max |
+|---|---|---|
+| Vertices | u16 (triangle index in `<4H>`) | 65 536 |
+| Triangles | — | 65 536 |
+| Materials | u16 (material index in triangle) | 65 536 |
+| UV layers | u8 (bits 16-23 of geometry flags) | 255 (SA renders max 2) |
+| Bones in Skin PLG | u8 | 255 |
+
+If a mesh exceeds the limit, export raises a clear error such as:
+```
+admiral.dff: geometry #0: 78432 vertices — RenderWare stores triangle indices
+in uint16 (max 65536). Split the mesh or simplify (Decimate).
+```
+
+**There is no workaround**: the limit is hard-coded into the binary format and the RenderWare engine. Either split the mesh into multiple `model_id`s or simplify the geometry.
+
 ### COL (Collision)
 
 | Button | Operator | Description |
@@ -139,6 +158,25 @@
 COL export automatically sets object type to Collision, centers at origin, and writes surface material IDs.
 
 > 💡 **Example:** create a cube, name it `mybuilding_COL`, assign a material with `col_mat_index = 0` (default asphalt) in Properties → Material → **COL Surface Type**. Select → **Export COL** → you get `mybuilding.col` with the correct surface material.
+
+#### COL format limits (uint16)
+COL2/COL3/COL4 stores counts and indices as **uint16**, so per-model limits are:
+
+| Field | Max |
+|---|---|
+| Vertices | 65 536 |
+| Faces (triangles) | 65 535 |
+| Spheres / boxes | 65 535 each |
+| Shadow mesh (verts/faces) | same limits |
+| Header `model_id` | 65 535 |
+
+If a mesh exceeds the limit, export raises a clear error such as:
+```
+collision.col: 'collision': 78432 faces — COL format supports max 65535.
+Split the mesh or simplify (Decimate).
+```
+
+**There is no workaround**: the limit is hard-coded into the COL format and the RenderWare engine. Either split the mesh into multiple `model_id`s or simplify (vanilla SA collisions are typically below 5–10k tris).
 
 ### TXD (Textures)
 

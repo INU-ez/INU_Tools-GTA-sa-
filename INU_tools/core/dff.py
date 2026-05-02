@@ -965,6 +965,101 @@ class DffLight:
     flags: int = 3          # rpLIGHTLIGHTATOMICS | rpLIGHTLIGHTWORLD
 
 
+_U16_MAX = 65535
+_U8_MAX = 255
+
+
+class DffLimitError(ValueError):
+    """Raised when a DffClump exceeds the binary format's uint16/uint8 limits.
+
+    Wraps the cryptic ``struct.pack('H'/'B', ...)`` overflow with a message
+    that names the geometry index and the specific field that broke the limit.
+    """
+    pass
+
+
+def _validate_geometry_writable(geom: 'DffGeometry', idx: int):
+    """Reject geometries that would overflow RenderWare's u16/u8 fields.
+
+    DffGeometry.to_bytes() packs triangles as ``<4H`` (b, a, material, c) — so
+    vertex count and material count are capped at 65 536 (indices 0..65 535).
+    UV layer count is packed into 8 bits of the geometry flags. Skin data
+    packs bone counts and per-vertex bone indices as u8 (max 255).
+    """
+    label = f"геометрия #{idx}"
+
+    n_verts = len(geom.vertices)
+    if n_verts > _U16_MAX + 1:
+        raise DffLimitError(
+            f"{label}: {n_verts} вершин — RenderWare хранит индексы треугольников "
+            f"в uint16 (максимум {_U16_MAX + 1} вершин). Разбей меш на части или упрости (Decimate)."
+        )
+
+    n_tris = len(geom.triangles)
+    if n_tris > _U16_MAX + 1:
+        # Triangle count is u32 in the struct, but each triangle's vertex
+        # indices are u16 — so the practical limit is the same as vertices.
+        # Flag this as a sanity check anyway.
+        raise DffLimitError(
+            f"{label}: {n_tris} треугольников — слишком много для одной геометрии. "
+            f"Разбей меш на части."
+        )
+
+    n_mats = len(geom.materials)
+    if n_mats > _U16_MAX + 1:
+        raise DffLimitError(
+            f"{label}: {n_mats} материалов — RenderWare хранит material-индекс "
+            f"в uint16 (максимум {_U16_MAX + 1}). Используй меньше материалов."
+        )
+
+    n_uv = len(geom.uv_layers)
+    if n_uv > _U8_MAX:
+        raise DffLimitError(
+            f"{label}: {n_uv} UV-слоёв — флаги геометрии хранят кол-во UV в uint8 "
+            f"(максимум {_U8_MAX}). GTA SA рендерит максимум 2."
+        )
+
+    if geom.skin is not None:
+        skin = geom.skin
+        if skin.num_bones > _U8_MAX:
+            raise DffLimitError(
+                f"{label}: skin.num_bones={skin.num_bones} — RenderWare skin "
+                f"хранит счётчики костей в uint8 (максимум {_U8_MAX})."
+            )
+        if skin.num_used > _U8_MAX:
+            raise DffLimitError(
+                f"{label}: skin.num_used={skin.num_used} > {_U8_MAX} (uint8)."
+            )
+        if skin.max_weights > _U8_MAX:
+            raise DffLimitError(
+                f"{label}: skin.max_weights={skin.max_weights} > {_U8_MAX} (uint8)."
+            )
+        for bu in skin.bones_used:
+            if not (0 <= bu <= _U8_MAX):
+                raise DffLimitError(
+                    f"{label}: skin.bones_used содержит индекс {bu} вне 0..{_U8_MAX} (uint8)."
+                )
+        for vi, indices in enumerate(skin.bone_indices):
+            for bi in indices:
+                if not (0 <= bi <= _U8_MAX):
+                    raise DffLimitError(
+                        f"{label}: skin.bone_indices[{vi}] содержит индекс {bi} "
+                        f"вне 0..{_U8_MAX} (uint8). Слишком много костей в арматуре."
+                    )
+
+
+def _validate_dff_writable(clump: 'DffClump'):
+    """Validate everything that would be packed from Python objects.
+
+    Skips geometries when ``raw_geometry_list`` is set (round-trip path —
+    those bytes are reused as-is and don't go through ``geom.to_bytes``).
+    """
+    if clump.raw_geometry_list:
+        return
+    for idx, geom in enumerate(clump.geometries):
+        _validate_geometry_writable(geom, idx)
+
+
 @dataclass
 class DffClump:
     """Root DFF structure containing frames, geometries, and atomics."""
@@ -980,6 +1075,8 @@ class DffClump:
     uv_anim_dict: Optional['UVAnimDict'] = None  # Clump-level UV anim dictionary
 
     def to_bytes(self) -> bytes:
+        _validate_dff_writable(self)
+
         lib_id = make_library_id(self.version)
         rw_version = self.version
 
