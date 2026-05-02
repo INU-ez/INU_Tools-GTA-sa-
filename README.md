@@ -21,6 +21,13 @@
 
 </div>
 
+> [!IMPORTANT]
+> **Two ways to install — pick based on your priority:**
+>
+> 🟢 **[Latest release](../../releases/latest)** — recommended for most users. Tested before publication, predictable behaviour.
+>
+> 🟡 **`main` branch** (this page's `Code → Download ZIP`, or `git clone`) — latest fixes and in-progress features that haven't shipped in a release yet. May contain bugs, unfinished work, or breaking changes. All `main` fixes eventually ship in the next release. If you hit a bug here, please mention **"from main"** in the issue so I can tell apart release vs. development reports.
+
 ---
 
 ## ✨ Highlights
