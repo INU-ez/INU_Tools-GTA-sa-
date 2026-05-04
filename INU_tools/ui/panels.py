@@ -2092,8 +2092,9 @@ class GTATOOLS_PT_prelight_panel(bpy.types.Panel):
         # explicit separators that used to sit between bake/V-offset
         # were eating screen real estate without adding clarity.
         layout.label(text=T("Запекание:"), icon='RENDER_STILL')
+        layout.prop(scene, "gtatools_bake_shadows", text=T("Тени"),
+                    icon='SHADING_RENDERED', toggle=True)
         row = layout.row(align=True)
-        row.prop(scene, "gtatools_bake_shadows", text=T("Тени"), icon='SHADING_RENDERED', toggle=True)
         row.operator("gtatools.bake_vertex_colors_simple", text=T("Запечь"), icon='RENDER_STILL')
         row.operator("gtatools.bake_vertex_colors", text=T("С тенями"), icon='RENDER_RESULT')
 
