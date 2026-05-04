@@ -306,12 +306,12 @@ def test_occl_round_trip(tmp_path):
     write_ipl(str(p), IplFile(occls=[
         IplOccl(mid_x=100.0, mid_y=200.0, bottom_z=10.0,
                 width_x=20.0, width_y=30.0, height=15.0,
-                rotation=45.0, unknown3=1),
+                rot_x=45.0, flags=1),
     ]))
     parsed = read_ipl(str(p))
     o = parsed.occls[0]
-    assert abs(o.rotation - 45.0) < 1e-3
-    assert o.unknown3 == 1
+    assert abs(o.rot_x - 45.0) < 1e-3
+    assert o.flags == 1
 
 
 # ── tcyc ─────────────────────────────────────────────────────────

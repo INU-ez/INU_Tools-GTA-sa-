@@ -15,7 +15,7 @@ from .. import T
 
 class GTASAPrelight:
     def __init__(self, obj, split_angle=90.0, normal_threshold=0.1,
-                 top_color=(1.0, 1.0, 1.0), bottom_color=(0.3, 0.3, 0.3),
+                 top_color=(0.8235, 0.7608, 0.7137), bottom_color=(0.3, 0.3, 0.3),
                  ambient_color=(0.5, 0.5, 0.5)):
         self.obj = obj
         self.split_angle = math.radians(split_angle)
@@ -907,6 +907,47 @@ def adjust_vertex_colors_gamma(obj, gamma=1.0):
     return True, f"Gamma: {gamma:.2f}"
 
 
+# ── Modulate Color presets ──────────────────────────────────────
+# Хардкод значений из ванильного timecyc.dat (EXTRASUNNY_LA),
+# чтобы пользователю не нужно было ничего настраивать.
+# Источник: pcBuildingVS.hlsl + CPostEffects::ColourFilter
+# (gta-reversed-modern).
+_MODULATE_PRESETS = {
+    'DAY': {
+        # Midday — цвет ambient_obj. Сила (mix) задаётся слайдером
+        # пользователем. Post-fx тинты пока отключены (pf1a/pf2a=0):
+        # аддитивные фуллскрин-overlay из движка после AgX-тонмапа
+        # Blender'а уходят в whiteout, поэтому в preview не годятся.
+        'ambient': (210/255, 194/255, 182/255),
+        'pf1':  (66/255, 66/255, 48/255), 'pf1a': 0.0,
+        'pf2':  (166/255, 129/255, 60/255), 'pf2a': 0.0,
+    },
+    'NIGHT': {
+        # Midnight — то же без post-fx.
+        'ambient': (220/255, 212/255, 130/255),
+        'pf1':  (87/255, 87/255, 87/255), 'pf1a': 0.0,
+        'pf2':  (60/255, 121/255, 122/255), 'pf2a': 0.0,
+    },
+}
+
+
+def _modulate_preset_values(mode, mix=0.15, contrast=0.0, gamma=1.0):
+    """Return shader values for the given preset mode (OFF/DAY/NIGHT).
+
+    Returns: (amb_b, amb_factor, pf1_b, pf1_f, pf2_b, pf2_f, contrast, gamma).
+    OFF мод обнуляет ambient/post-fx и сбрасывает contrast/gamma в нейтраль."""
+    p = _MODULATE_PRESETS.get(mode)
+    if p is None:
+        return ((0.0, 0.0, 0.0, 0.0), 0.0,
+                (0.0, 0.0, 0.0, 0.0), 0.0,
+                (0.0, 0.0, 0.0, 0.0), 0.0,
+                0.0, 1.0)
+    return ((p['ambient'][0], p['ambient'][1], p['ambient'][2], 0.0), mix,
+            (p['pf1'][0],     p['pf1'][1],     p['pf1'][2],     0.0), p['pf1a'],
+            (p['pf2'][0],     p['pf2'][1],     p['pf2'][2],     0.0), p['pf2a'],
+            contrast, gamma)
+
+
 def setup_prelight_preview(obj, enable=True):
     """Setup materials to show vertex colors multiplied with textures in Material Preview
 
@@ -925,6 +966,18 @@ def setup_prelight_preview(obj, enable=True):
         color_attr = mesh.color_attributes[0]
     color_name = color_attr.name
 
+    # Read «Modulate Color» preview state from scene (если scene доступна)
+    # — ambient_obj × surfAmbient добавляется к vertex color, имитируя
+    # формулу из ванильного шейдера зданий SA (см. euryopa
+    # pcBuildingVS.hlsl: OUT.Color.rgb += ambient * surfAmb).
+    scene = getattr(bpy.context, 'scene', None)
+    mode = getattr(scene, 'gtatools_modulate_mode', 'OFF') if scene else 'OFF'
+    mix = float(getattr(scene, 'gtatools_modulate_mix', 0.15)) if scene else 0.15
+    contrast = float(getattr(scene, 'gtatools_modulate_contrast', 0.0)) if scene else 0.0
+    gamma = float(getattr(scene, 'gtatools_modulate_gamma', 1.0)) if scene else 1.0
+    (amb_b, amb_factor, pf1_b, pf1_f, pf2_b, pf2_f,
+     bc_contrast, gm_gamma) = _modulate_preset_values(mode, mix, contrast, gamma)
+
     modified_count = 0
 
     for mat_slot in obj.material_slots:
@@ -939,6 +992,11 @@ def setup_prelight_preview(obj, enable=True):
         vc_node = nodes.get("Prelight_VertexColor")
         mix_node = nodes.get("Prelight_Mix")
         bright_node = nodes.get("Prelight_Bright")
+        amb_node = nodes.get("Prelight_Ambient")
+        pf1_node = nodes.get("Prelight_PostFx1")
+        pf2_node = nodes.get("Prelight_PostFx2")
+        bc_node = nodes.get("Prelight_BrightContrast")
+        gm_node = nodes.get("Prelight_Gamma")
 
         if enable:
             # Find the Principled BSDF and texture connected to Base Color
@@ -969,6 +1027,74 @@ def setup_prelight_preview(obj, enable=True):
                 elif hasattr(vc_node, 'attribute_name'):
                     vc_node.attribute_name = color_name
                 bright_node.inputs['B'].default_value = (0.0, 0.0, 0.0, 0.0)
+                # Insert Prelight_Ambient if missing (older preview without it)
+                if amb_node is None:
+                    amb_node = nodes.new('ShaderNodeMix')
+                    amb_node.name = "Prelight_Ambient"
+                    amb_node.label = "Ambient (Modulate)"
+                    amb_node.data_type = 'RGBA'
+                    amb_node.blend_type = 'ADD'
+                    amb_node.location = (
+                        principled.location.x - 280, principled.location.y - 100)
+                    # Splice between bright_node and mix_node B
+                    for lnk in list(mix_node.inputs['B'].links):
+                        links.remove(lnk)
+                    links.new(bright_node.outputs['Result'], amb_node.inputs['A'])
+                    links.new(amb_node.outputs['Result'], mix_node.inputs['B'])
+                amb_node.inputs['Factor'].default_value = amb_factor
+                amb_node.inputs['B'].default_value = amb_b
+                # Создать недостающие ноды: PostFx1, PostFx2, BrightContrast, Gamma
+                if pf1_node is None:
+                    pf1_node = nodes.new('ShaderNodeMix')
+                    pf1_node.name = "Prelight_PostFx1"
+                    pf1_node.label = "PostFx1 (Add)"
+                    pf1_node.data_type = 'RGBA'
+                    pf1_node.blend_type = 'ADD'
+                    pf1_node.location = (
+                        principled.location.x - 200, principled.location.y - 50)
+                if pf2_node is None:
+                    pf2_node = nodes.new('ShaderNodeMix')
+                    pf2_node.name = "Prelight_PostFx2"
+                    pf2_node.label = "PostFx2 (Add)"
+                    pf2_node.data_type = 'RGBA'
+                    pf2_node.blend_type = 'ADD'
+                    pf2_node.location = (
+                        principled.location.x - 150, principled.location.y - 50)
+                if bc_node is None:
+                    bc_node = nodes.new('ShaderNodeBrightContrast')
+                    bc_node.name = "Prelight_BrightContrast"
+                    bc_node.label = "Contrast"
+                    bc_node.location = (
+                        principled.location.x - 100, principled.location.y - 50)
+                    bc_node.inputs['Bright'].default_value = 0.0
+                if gm_node is None:
+                    gm_node = nodes.new('ShaderNodeGamma')
+                    gm_node.name = "Prelight_Gamma"
+                    gm_node.label = "Gamma"
+                    gm_node.location = (
+                        principled.location.x - 50, principled.location.y - 50)
+                # Перевязать цепочку: Mix → PostFx1 → PostFx2 → BrightContrast → Gamma → Base Color
+                for lnk in list(base_color_input.links):
+                    links.remove(lnk)
+                for lnk in list(pf1_node.inputs['A'].links):
+                    links.remove(lnk)
+                for lnk in list(pf2_node.inputs['A'].links):
+                    links.remove(lnk)
+                for lnk in list(bc_node.inputs['Color'].links):
+                    links.remove(lnk)
+                for lnk in list(gm_node.inputs['Color'].links):
+                    links.remove(lnk)
+                links.new(mix_node.outputs['Result'], pf1_node.inputs['A'])
+                links.new(pf1_node.outputs['Result'], pf2_node.inputs['A'])
+                links.new(pf2_node.outputs['Result'], bc_node.inputs['Color'])
+                links.new(bc_node.outputs['Color'], gm_node.inputs['Color'])
+                links.new(gm_node.outputs['Color'], base_color_input)
+                pf1_node.inputs['Factor'].default_value = pf1_f
+                pf1_node.inputs['B'].default_value = pf1_b
+                pf2_node.inputs['Factor'].default_value = pf2_f
+                pf2_node.inputs['B'].default_value = pf2_b
+                bc_node.inputs['Contrast'].default_value = bc_contrast
+                gm_node.inputs['Gamma'].default_value = gm_gamma
                 continue
 
             # Create Color Attribute node (compatible 4.4+)
@@ -1000,6 +1126,21 @@ def setup_prelight_preview(obj, enable=True):
                 bright_node.inputs['Factor'].default_value = 1.0
             bright_node.inputs['B'].default_value = (0.0, 0.0, 0.0, 0.0)
 
+            # Create Ambient (Modulate) node — adds ambient_obj × surfAmb
+            # to vertex color, mirroring ванильный SA-шейдер зданий
+            # (см. euryopa pcBuildingVS.hlsl: Color.rgb += ambient*surfAmb).
+            # B input управляется глобальной настройкой scene; default 0.
+            if not amb_node:
+                amb_node = nodes.new('ShaderNodeMix')
+                amb_node.name = "Prelight_Ambient"
+                amb_node.label = "Ambient (Modulate)"
+                amb_node.data_type = 'RGBA'
+                amb_node.blend_type = 'ADD'
+                amb_node.location = (
+                    principled.location.x - 280, principled.location.y - 100)
+            amb_node.inputs['Factor'].default_value = amb_factor
+            amb_node.inputs['B'].default_value = amb_b
+
             # Create Mix node (Multiply with texture)
             if not mix_node:
                 mix_node = nodes.new('ShaderNodeMix')
@@ -1009,6 +1150,49 @@ def setup_prelight_preview(obj, enable=True):
                 mix_node.blend_type = 'MULTIPLY'
                 mix_node.location = (principled.location.x - 200, principled.location.y)
                 mix_node.inputs['Factor'].default_value = 1.0
+
+            # ── PostFx1 + PostFx2 — точная игровая формула из
+            # CPostEffects::ColourFilter (gta-reversed-modern):
+            #   final += postfx1.rgb*alpha + postfx2.rgb*alpha
+            # Два аддитивных тинта с настраиваемой alpha. По дефолту
+            # alpha=0 для DAY/NIGHT (Blender'овский AgX-тонмап
+            # пересвечивает их), цветовое значение оставлено для
+            # будущей точной настройки.
+            if not pf1_node:
+                pf1_node = nodes.new('ShaderNodeMix')
+                pf1_node.name = "Prelight_PostFx1"
+                pf1_node.label = "PostFx1 (Add)"
+                pf1_node.data_type = 'RGBA'
+                pf1_node.blend_type = 'ADD'
+                pf1_node.location = (principled.location.x - 200, principled.location.y - 50)
+            pf1_node.inputs['Factor'].default_value = pf1_f
+            pf1_node.inputs['B'].default_value = pf1_b
+
+            if not pf2_node:
+                pf2_node = nodes.new('ShaderNodeMix')
+                pf2_node.name = "Prelight_PostFx2"
+                pf2_node.label = "PostFx2 (Add)"
+                pf2_node.data_type = 'RGBA'
+                pf2_node.blend_type = 'ADD'
+                pf2_node.location = (principled.location.x - 150, principled.location.y - 50)
+            pf2_node.inputs['Factor'].default_value = pf2_f
+            pf2_node.inputs['B'].default_value = pf2_b
+
+            # ── BrightContrast + Gamma — color-grading на финальный результат
+            if not bc_node:
+                bc_node = nodes.new('ShaderNodeBrightContrast')
+                bc_node.name = "Prelight_BrightContrast"
+                bc_node.label = "Contrast"
+                bc_node.location = (principled.location.x - 100, principled.location.y - 50)
+            bc_node.inputs['Bright'].default_value = 0.0
+            bc_node.inputs['Contrast'].default_value = bc_contrast
+
+            if not gm_node:
+                gm_node = nodes.new('ShaderNodeGamma')
+                gm_node.name = "Prelight_Gamma"
+                gm_node.label = "Gamma"
+                gm_node.location = (principled.location.x - 50, principled.location.y - 50)
+            gm_node.inputs['Gamma'].default_value = gm_gamma
 
             # Connect nodes
             if tex_node and original_link:
@@ -1021,11 +1205,18 @@ def setup_prelight_preview(obj, enable=True):
             # Vertex Color -> Bright A
             links.new(vc_node.outputs['Color'], bright_node.inputs['A'])
 
-            # Bright Result -> Mix B
-            links.new(bright_node.outputs['Result'], mix_node.inputs['B'])
+            # Bright Result -> Ambient A
+            links.new(bright_node.outputs['Result'], amb_node.inputs['A'])
 
-            # Mix -> Base Color
-            links.new(mix_node.outputs['Result'], base_color_input)
+            # Ambient Result -> Mix B
+            links.new(amb_node.outputs['Result'], mix_node.inputs['B'])
+
+            # Mix -> PostFx1 -> PostFx2 -> BrightContrast -> Gamma -> Base Color
+            links.new(mix_node.outputs['Result'], pf1_node.inputs['A'])
+            links.new(pf1_node.outputs['Result'], pf2_node.inputs['A'])
+            links.new(pf2_node.outputs['Result'], bc_node.inputs['Color'])
+            links.new(bc_node.outputs['Color'], gm_node.inputs['Color'])
+            links.new(gm_node.outputs['Color'], base_color_input)
 
             # ── Alpha: vertex color alpha → Principled Alpha ──
             # Only if active color attribute actually has any alpha < 1.0 painted
@@ -1134,6 +1325,21 @@ def setup_prelight_preview(obj, enable=True):
                 nodes.remove(mix_node)
                 modified_count += 1
 
+            if gm_node:
+                nodes.remove(gm_node)
+
+            if bc_node:
+                nodes.remove(bc_node)
+
+            if pf2_node:
+                nodes.remove(pf2_node)
+
+            if pf1_node:
+                nodes.remove(pf1_node)
+
+            if amb_node:
+                nodes.remove(amb_node)
+
             if bright_node:
                 nodes.remove(bright_node)
 
@@ -1144,6 +1350,138 @@ def setup_prelight_preview(obj, enable=True):
         return True, f"Prelight preview enabled on {modified_count} materials"
     else:
         return True, f"Prelight preview disabled on {modified_count} materials"
+
+
+def apply_modulate_preview(scene=None):
+    """Push Modulate Color preview values into every material that has a
+    Prelight_Ambient node.
+
+    Сценарий: пользователь крутит slider/color-picker → надо
+    мгновенно обновить ambient во всех уже настроенных материалах
+    без переотрисовки графа. Дешевле чем повторно вызывать
+    setup_prelight_preview на каждом меше.
+
+    Returns: (count, color_used) для отчёта в UI/коллбэке.
+    """
+    if scene is None:
+        scene = getattr(bpy.context, 'scene', None)
+    if scene is None:
+        return 0, (0.0, 0.0, 0.0)
+
+    mode = getattr(scene, 'gtatools_modulate_mode', 'OFF')
+    mix = float(getattr(scene, 'gtatools_modulate_mix', 0.15))
+    contrast = float(getattr(scene, 'gtatools_modulate_contrast', 0.0))
+    gamma = float(getattr(scene, 'gtatools_modulate_gamma', 1.0))
+    (amb_b, amb_factor, pf1_b, pf1_f, pf2_b, pf2_f,
+     bc_contrast, gm_gamma) = _modulate_preset_values(mode, mix, contrast, gamma)
+
+    count = 0
+    for mat in bpy.data.materials:
+        if not mat or not getattr(mat, 'use_nodes', False):
+            continue
+        nt = mat.node_tree
+        if nt is None:
+            continue
+        bright_n = nt.nodes.get("Prelight_Bright")
+        mix_n = nt.nodes.get("Prelight_Mix")
+        # No prelight setup at all → пропускаем
+        if not (bright_n and mix_n):
+            continue
+        amb_n = nt.nodes.get("Prelight_Ambient")
+        pf1_n = nt.nodes.get("Prelight_PostFx1")
+        pf2_n = nt.nodes.get("Prelight_PostFx2")
+        bc_n = nt.nodes.get("Prelight_BrightContrast")
+        gm_n = nt.nodes.get("Prelight_Gamma")
+        # Find Principled BSDF for inserting post-fx/contrast/gamma nodes
+        principled = None
+        for n in nt.nodes:
+            if n.type == 'BSDF_PRINCIPLED':
+                principled = n
+                break
+
+        # Lazy upgrade: вставить Prelight_Ambient если отсутствует.
+        if amb_n is None:
+            amb_n = nt.nodes.new('ShaderNodeMix')
+            amb_n.name = "Prelight_Ambient"
+            amb_n.label = "Ambient (Modulate)"
+            amb_n.data_type = 'RGBA'
+            amb_n.blend_type = 'ADD'
+            amb_n.location = (mix_n.location.x - 80, mix_n.location.y - 100)
+            for lnk in list(mix_n.inputs['B'].links):
+                nt.links.remove(lnk)
+            nt.links.new(bright_n.outputs['Result'], amb_n.inputs['A'])
+            nt.links.new(amb_n.outputs['Result'], mix_n.inputs['B'])
+
+        # Lazy upgrade: вставить PostFx1+PostFx2+BrightContrast+Gamma
+        # после mix_n, перед Principled.Base Color если их нет.
+        need_chain = principled is not None and (
+            pf1_n is None or pf2_n is None or bc_n is None or gm_n is None)
+        if need_chain:
+            base_input = principled.inputs.get('Base Color')
+            if base_input is not None:
+                if pf1_n is None:
+                    pf1_n = nt.nodes.new('ShaderNodeMix')
+                    pf1_n.name = "Prelight_PostFx1"
+                    pf1_n.label = "PostFx1 (Add)"
+                    pf1_n.data_type = 'RGBA'
+                    pf1_n.blend_type = 'ADD'
+                    pf1_n.location = (
+                        principled.location.x - 200, principled.location.y - 50)
+                if pf2_n is None:
+                    pf2_n = nt.nodes.new('ShaderNodeMix')
+                    pf2_n.name = "Prelight_PostFx2"
+                    pf2_n.label = "PostFx2 (Add)"
+                    pf2_n.data_type = 'RGBA'
+                    pf2_n.blend_type = 'ADD'
+                    pf2_n.location = (
+                        principled.location.x - 150, principled.location.y - 50)
+                if bc_n is None:
+                    bc_n = nt.nodes.new('ShaderNodeBrightContrast')
+                    bc_n.name = "Prelight_BrightContrast"
+                    bc_n.label = "Contrast"
+                    bc_n.location = (
+                        principled.location.x - 100, principled.location.y - 50)
+                    bc_n.inputs['Bright'].default_value = 0.0
+                if gm_n is None:
+                    gm_n = nt.nodes.new('ShaderNodeGamma')
+                    gm_n.name = "Prelight_Gamma"
+                    gm_n.label = "Gamma"
+                    gm_n.location = (
+                        principled.location.x - 50, principled.location.y - 50)
+                # Перевязать: mix → pf1 → pf2 → bc → gm → Base Color
+                for lnk in list(base_input.links):
+                    nt.links.remove(lnk)
+                for lnk in list(pf1_n.inputs['A'].links):
+                    nt.links.remove(lnk)
+                for lnk in list(pf2_n.inputs['A'].links):
+                    nt.links.remove(lnk)
+                for lnk in list(bc_n.inputs['Color'].links):
+                    nt.links.remove(lnk)
+                for lnk in list(gm_n.inputs['Color'].links):
+                    nt.links.remove(lnk)
+                nt.links.new(mix_n.outputs['Result'], pf1_n.inputs['A'])
+                nt.links.new(pf1_n.outputs['Result'], pf2_n.inputs['A'])
+                nt.links.new(pf2_n.outputs['Result'], bc_n.inputs['Color'])
+                nt.links.new(bc_n.outputs['Color'], gm_n.inputs['Color'])
+                nt.links.new(gm_n.outputs['Color'], base_input)
+
+        try:
+            amb_n.inputs['Factor'].default_value = amb_factor
+            amb_n.inputs['B'].default_value = amb_b
+            if pf1_n is not None:
+                pf1_n.inputs['Factor'].default_value = pf1_f
+                pf1_n.inputs['B'].default_value = pf1_b
+            if pf2_n is not None:
+                pf2_n.inputs['Factor'].default_value = pf2_f
+                pf2_n.inputs['B'].default_value = pf2_b
+            if bc_n is not None:
+                bc_n.inputs['Contrast'].default_value = bc_contrast
+            if gm_n is not None:
+                gm_n.inputs['Gamma'].default_value = gm_gamma
+            count += 1
+        except (KeyError, AttributeError, RuntimeError):
+            continue
+    return count, amb_b[:3]
 
 
 def fill_selected_faces(obj, color):

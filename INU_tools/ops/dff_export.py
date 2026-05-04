@@ -397,20 +397,22 @@ def _process_mesh(obj, clump: DffClump, frame_index: int):
 
     # Convert FLOAT_COLOR attributes to BYTE_COLOR before export (Itera Tools compatibility)
     import bpy
+    import numpy as np
     orig_mesh = obj.data
     for ca in list(orig_mesh.color_attributes):
         ca_type = getattr(ca, 'data_type', None) or getattr(ca, 'type', None)
         if ca_type in ('FLOAT_COLOR', 'COLOR'):
             name = ca.name
             domain = ca.domain
-            # Read float data
-            float_data = [tuple(d.color) for d in ca.data]
-            # Remove float attr, create byte attr
+            n = len(ca.data)
+            # Bulk read float colors → bulk write byte colors. Поэлементный
+            # доступ через .data[i] медленный (RNA per-call), foreach_*
+            # для тысяч loops/vertices даёт ×50-100 ускорение.
+            flat = np.empty(n * 4, dtype=np.float32)
+            ca.data.foreach_get('color', flat)
             orig_mesh.color_attributes.remove(ca)
             new_attr = orig_mesh.color_attributes.new(name=name, type='BYTE_COLOR', domain=domain)
-            for i, color in enumerate(float_data):
-                new_attr.data[i].color = color
-            print(f"[DFF Export] Converted '{name}' FLOAT_COLOR → BYTE_COLOR")
+            new_attr.data.foreach_set('color', flat)
 
     # Get evaluated mesh with modifiers applied (disable ARMATURE first)
     arm_mods = []
@@ -427,16 +429,36 @@ def _process_mesh(obj, clump: DffClump, frame_index: int):
     for mod in arm_mods:
         mod.show_viewport = True
 
-    # Read alpha per vertex directly from ORIGINAL mesh color attributes
-    # (workaround: bmesh doesn't read alpha from byte color attrs in Blender 5.x)
-    _mesh_alpha = [{}, {}]  # [day_alpha_by_vert, night_alpha_by_vert]
+    # Resolve Day/Night color attributes by NAME, not by index.
+    # У пользователей могут быть промежуточные слои (vertex_lights_both
+    # из VC Layer System и т.п.) между Day и Night — индексный доступ
+    # [0]/[1] прихватит не тот слой. Fallback на индексы — для старых
+    # мешей без именованных атрибутов.
     orig_mesh = obj.data
-    for ci, ca in enumerate(orig_mesh.color_attributes[:2]):
-        for li, ld in enumerate(ca.data):
-            vi = orig_mesh.loops[li].vertex_index
-            a = int(ld.color[3] * 255)
-            _mesh_alpha[ci][vi] = a
-    print(f"[DFF Export] _mesh_alpha day samples: {list(_mesh_alpha[0].items())[:10]}")
+    day_attr = orig_mesh.color_attributes.get("Day")
+    night_attr = orig_mesh.color_attributes.get("Night")
+    all_attrs = list(orig_mesh.color_attributes)
+    if day_attr is None and len(all_attrs) >= 1:
+        day_attr = all_attrs[0]
+    if night_attr is None and len(all_attrs) >= 2 and all_attrs[1] is not day_attr:
+        night_attr = all_attrs[1]
+
+    # Read alpha per vertex from named Day/Night attributes
+    # (workaround: bmesh doesn't read alpha from byte color attrs in Blender 5.x).
+    # Bulk read через foreach_get + numpy — ×30-50 быстрее старого
+    # Python-цикла на каждый loop.
+    _mesh_alpha = [{}, {}]
+    n_loops = len(orig_mesh.loops)
+    if n_loops > 0:
+        loop_vidx = np.empty(n_loops, dtype=np.int32)
+        orig_mesh.loops.foreach_get('vertex_index', loop_vidx)
+        for ci, ca in enumerate([day_attr, night_attr]):
+            if ca is None or len(ca.data) != n_loops:
+                continue  # missing or POINT-domain — skip
+            flat = np.empty(n_loops * 4, dtype=np.float32)
+            ca.data.foreach_get('color', flat)
+            alphas = (flat[3::4] * 255.0).astype(np.int32)
+            _mesh_alpha[ci] = dict(zip(loop_vidx.tolist(), alphas.tolist()))
 
     # Triangulate with bmesh
     bm = bmesh.new()
@@ -461,9 +483,19 @@ def _process_mesh(obj, clump: DffClump, frame_index: int):
 
     uv_layers_bm = [bm.loops.layers.uv[i] for i in range(max_uv)]
 
+    # Pull bmesh color layers by NAME (Day/Night) — иначе при наличии
+    # промежуточных слоёв (vertex_lights_both и т.п.) индекс сместится
+    # и в night_colors уйдёт не то что надо.
     color_layers_bm = []
     if bm.loops.layers.color:
-        color_layers_bm = list(bm.loops.layers.color)
+        if day_attr is not None:
+            cl = bm.loops.layers.color.get(day_attr.name)
+            if cl is not None:
+                color_layers_bm.append(cl)
+        if night_attr is not None and night_attr is not day_attr:
+            cl = bm.loops.layers.color.get(night_attr.name)
+            if cl is not None:
+                color_layers_bm.append(cl)
 
     has_day = len(color_layers_bm) > 0 and flags['day_cols']
     has_night = len(color_layers_bm) > 1 and flags['night_cols']

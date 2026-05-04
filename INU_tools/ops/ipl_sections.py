@@ -483,11 +483,14 @@ def import_occls(occls: list, collection_name: str = "IPL_Occl") -> list:
         center = (o.mid_x, o.mid_y, o.bottom_z + o.height / 2)
         size = (o.width_x, o.width_y, max(o.height, 0.1))
         obj = _make_cube_mesh(name, center, size, col)
-        obj.rotation_euler.z = math.radians(o.rotation)
+        obj.rotation_euler.z = math.radians(o.rot_x)
         obj['ipl_type'] = 'occl'
-        obj['occl_unknown1'] = o.unknown1
-        obj['occl_unknown2'] = o.unknown2
-        obj['occl_unknown3'] = o.unknown3
+        # rot_x хранится в obj.rotation_euler.z (Blender transform);
+        # rot_y, rot_z, flags — в custom props (нет места в transform).
+        # Старые имена occl_unknown1/2/3 читаются как fallback в export.
+        obj['occl_rot_y'] = o.rot_y
+        obj['occl_rot_z'] = o.rot_z
+        obj['occl_flags'] = o.flags
         objects.append(obj)
     return objects
 
@@ -503,14 +506,23 @@ def export_occls(collection_name: str = "IPL_Occl") -> list:
             continue
         loc = obj.location
         dim = obj.dimensions
+        # Семантика как в старом коде, только имена custom-props:
+        #   rot_x — первичная Z-rotation объекта в Blender'е
+        #   rot_y, rot_z, flags — из custom props
+        # Backward compat: старые сцены имеют occl_unknown1/2/3.
+        rot_x = math.degrees(obj.rotation_euler.z)
+        rot_y = float(obj.get('occl_rot_y',
+                              obj.get('occl_unknown1', 0.0)))
+        rot_z = float(obj.get('occl_rot_z',
+                              obj.get('occl_unknown2', 0.0)))
+        flags = int(obj.get('occl_flags',
+                            obj.get('occl_unknown3', 0)))
         result.append(IplOccl(
             mid_x=loc.x, mid_y=loc.y,
             bottom_z=loc.z - dim.z / 2,
             width_x=dim.x, width_y=dim.y, height=dim.z,
-            rotation=math.degrees(obj.rotation_euler.z),
-            unknown1=obj.get('occl_unknown1', 0),
-            unknown2=obj.get('occl_unknown2', 0),
-            unknown3=obj.get('occl_unknown3', 0),
+            rot_x=rot_x, rot_y=rot_y, rot_z=rot_z,
+            flags=flags,
         ))
     return result
 

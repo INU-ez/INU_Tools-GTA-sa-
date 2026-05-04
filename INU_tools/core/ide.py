@@ -25,7 +25,16 @@ from typing import Optional
 
 @dataclass
 class IdeObject:
-    """Single object definition from IDE ``objs`` or ``tobj`` section."""
+    """Single object definition from IDE ``objs`` or ``tobj`` section.
+
+    SA поддерживает три формы OBJS-строки (см. CFileLoader::LoadObject
+    в gta-reversed-modern):
+      • Type 1 (5 полей):  id, name, txd, drawDist, flags
+      • Type 2 (7 полей):  id, name, txd, 2, dd1, dd2, flags  — 2 меша
+      • Type 3 (9 полей):  id, name, txd, 3, dd1, dd2, dd3, flags  — 3 меша
+    Multi-mesh используется в ваниле для LOD-цепочек крупных объектов
+    (мост в SF и т.п.). ``extra_draw_distances`` пуст для type 1.
+    """
     model_id: int
     model_name: str
     txd_name: str
@@ -34,10 +43,16 @@ class IdeObject:
     # tobj-only
     time_on: Optional[int] = None   # hour 0-23
     time_off: Optional[int] = None  # hour 0-23
+    # multi-mesh (type 2/3): дополнительные draw distances после первой
+    extra_draw_distances: list = field(default_factory=list)
 
     @property
     def is_timed(self) -> bool:
         return self.time_on is not None and self.time_off is not None
+
+    @property
+    def mesh_count(self) -> int:
+        return 1 + len(self.extra_draw_distances)
 
 
 @dataclass
@@ -147,7 +162,13 @@ class IdeFile:
 # ── Parsing helpers ───────────────────────────────────────────────────
 
 def _parse_obj_line(line: str, timed: bool = False) -> Optional[IdeObject]:
-    """Parse one comma-separated object line."""
+    """Parse one comma-separated OBJS/TOBJ line.
+
+    Поддерживает type 1 (single mesh), type 2 (2 mesh), type 3 (3 mesh)
+    форматы — определяет по количеству полей. Без этого type 2/3
+    раньше парсились молча неверно: meshCount читался как drawDist
+    и dd1 как flags.
+    """
     parts = [p.strip() for p in line.split(',')]
     try:
         if len(parts) < 4:
@@ -155,17 +176,58 @@ def _parse_obj_line(line: str, timed: bool = False) -> Optional[IdeObject]:
         model_id = int(parts[0])
         model_name = parts[1]
         txd_name = parts[2]
-        draw_dist = float(parts[3])
-        flags = int(parts[4]) if len(parts) > 4 else 0
+        n = len(parts)
         time_on = None
         time_off = None
-        if timed and len(parts) >= 7:
-            time_on = int(parts[5])
-            time_off = int(parts[6])
+
+        if not timed:
+            # OBJS forms (по канонике CFileLoader::LoadObject):
+            #   5 = type 1: id, name, txd, dd, flags
+            #   7 = type 2: id, name, txd, meshCount=2, dd1, dd2, flags
+            #   8 = type 3: id, name, txd, meshCount=3, dd1, dd2, dd3, flags
+            if n >= 8:
+                draw_dist = float(parts[4])
+                extras = [float(parts[5]), float(parts[6])]
+                flags = int(parts[7])
+            elif n >= 7:
+                draw_dist = float(parts[4])
+                extras = [float(parts[5])]
+                flags = int(parts[6])
+            else:
+                draw_dist = float(parts[3])
+                extras = []
+                flags = int(parts[4]) if n >= 5 else 0
+        else:
+            # TOBJ — те же 3 формы + 2 trailing int (timeOn, timeOff):
+            #   7  = type 1
+            #   9  = type 2 (2 mesh)
+            #   10 = type 3 (3 mesh)
+            if n >= 10:
+                draw_dist = float(parts[4])
+                extras = [float(parts[5]), float(parts[6])]
+                flags = int(parts[7])
+                time_on = int(parts[8])
+                time_off = int(parts[9])
+            elif n >= 9:
+                draw_dist = float(parts[4])
+                extras = [float(parts[5])]
+                flags = int(parts[6])
+                time_on = int(parts[7])
+                time_off = int(parts[8])
+            elif n >= 7:
+                draw_dist = float(parts[3])
+                extras = []
+                flags = int(parts[4])
+                time_on = int(parts[5])
+                time_off = int(parts[6])
+            else:
+                return None
+
         return IdeObject(
             model_id=model_id, model_name=model_name, txd_name=txd_name,
             draw_distance=draw_dist, flags=flags,
             time_on=time_on, time_off=time_off,
+            extra_draw_distances=extras,
         )
     except (ValueError, IndexError):
         return None
@@ -306,10 +368,18 @@ def _fmt_dd(val: float) -> str:
 
 
 def _format_obj_line(o: IdeObject) -> str:
+    if o.extra_draw_distances:
+        # type 2/3: id, name, txd, meshCount, dd1, dd2[, dd3], flags
+        dds = ', '.join(_fmt_dd(d) for d in (o.draw_distance, *o.extra_draw_distances))
+        return f'{o.model_id}, {o.model_name}, {o.txd_name}, {o.mesh_count}, {dds}, {o.flags}'
     return f'{o.model_id}, {o.model_name}, {o.txd_name}, {_fmt_dd(o.draw_distance)}, {o.flags}'
 
 
 def _format_tobj_line(o: IdeObject) -> str:
+    if o.extra_draw_distances:
+        dds = ', '.join(_fmt_dd(d) for d in (o.draw_distance, *o.extra_draw_distances))
+        return (f'{o.model_id}, {o.model_name}, {o.txd_name}, {o.mesh_count}, '
+                f'{dds}, {o.flags}, {o.time_on}, {o.time_off}')
     return f'{o.model_id}, {o.model_name}, {o.txd_name}, {_fmt_dd(o.draw_distance)}, {o.flags}, {o.time_on}, {o.time_off}'
 
 

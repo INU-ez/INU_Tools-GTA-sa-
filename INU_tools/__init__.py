@@ -4015,6 +4015,53 @@ def register():
         default=True
     )
 
+    # ── Modulate Color preview ──────────────────────────────────────
+    # Three-state preview: OFF (чистый prelight) / DAY / NIGHT.
+    # Каждый режим хардкодит пресет из ванильного timecyc.dat
+    # (EXTRASUNNY_LA Midday / Midnight): ambient_obj + два аддитивных
+    # post-fx тинта. Имитирует ванильную формулу (см. euryopa
+    # pcBuildingVS.hlsl + CPostEffects::ColourFilter из
+    # gta-reversed-modern).
+    def _on_modulate_preview_update(self, context):
+        from .tools.prelight import apply_modulate_preview
+        apply_modulate_preview(context.scene)
+
+    bpy.types.Scene.gtatools_modulate_mode = EnumProperty(
+        name="Modulate Color",
+        description=T("Preview-режим: OFF — чистый prelight, Day/Night — добавить ambient как игра при Modulate Color = ON. Vcols и DFF-флаги не трогаются"),
+        items=[
+            ('OFF',   "Off",   T("Без ambient — только prelight")),
+            ('DAY',   "Day",   T("EXTRASUNNY_LA Midday из timecyc.dat")),
+            ('NIGHT', "Night", T("EXTRASUNNY_LA Midnight из timecyc.dat")),
+        ],
+        default='OFF',
+        update=_on_modulate_preview_update,
+    )
+    bpy.types.Scene.gtatools_modulate_mix = FloatProperty(
+        name="Прозрачность",
+        description=T("Сколько ambient добавлять к prelight: 0 — без ambient (только prelight), 1 — полный ambient. Аналог surfAmbient материала из ванильного шейдера"),
+        default=0.002,
+        min=0.0, max=1.0,
+        precision=3,
+        subtype='FACTOR',
+        update=_on_modulate_preview_update,
+    )
+    bpy.types.Scene.gtatools_modulate_contrast = FloatProperty(
+        name="Контраст",
+        description=T("Контраст финального изображения. 0 — без изменений, отрицательные — мягче, положительные — резче"),
+        default=0.0,
+        min=-1.0, max=1.0,
+        subtype='FACTOR',
+        update=_on_modulate_preview_update,
+    )
+    bpy.types.Scene.gtatools_modulate_gamma = FloatProperty(
+        name="Гамма",
+        description=T("Гамма финального изображения. 1.0 — без изменений, <1 — светлее, >1 — темнее"),
+        default=0.8,
+        min=0.1, max=4.0,
+        update=_on_modulate_preview_update,
+    )
+
     bpy.types.Scene.gtatools_prelight_preset = EnumProperty(
         name="Prelight Preset",
         items=_get_preset_items,
@@ -4203,6 +4250,12 @@ def register():
     start_billboard_timer()
     bpy.app.handlers.load_post.append(_on_file_load_restart_timer)
     bpy.app.handlers.load_post.append(_on_file_load_restore_paths)
+    bpy.app.handlers.load_post.append(_on_file_load_migrate_modulate)
+    # Run migration once at register too — для уже открытой сцены.
+    try:
+        _on_file_load_migrate_modulate(None)
+    except Exception:
+        pass
 
     # Deferred load paths (context.scene not available during register)
     def _deferred_load_paths():
@@ -4298,6 +4351,30 @@ def _on_file_load_restore_paths(dummy):
     _load_paths(bpy.context.scene)
 
 
+# ── Migrate stale Modulate Color defaults ────────────────────────
+# Property defaults применяются только к новым сценам. Если в .blend
+# было сохранено значение со старым дефолтом, оно останется. Этот
+# хендлер один раз поднимает старые значения до новых.
+_MODULATE_DEFAULT_MIGRATIONS = {
+    'gtatools_modulate_gamma': [(0.7, 0.8)],  # old → new
+}
+
+
+@persistent
+def _on_file_load_migrate_modulate(dummy):
+    """Bump scene's Modulate Color values from stale old defaults to new."""
+    for scn in bpy.data.scenes:
+        for prop_name, pairs in _MODULATE_DEFAULT_MIGRATIONS.items():
+            try:
+                cur = float(getattr(scn, prop_name))
+            except (AttributeError, TypeError):
+                continue
+            for old, new in pairs:
+                if abs(cur - old) < 1e-6:
+                    setattr(scn, prop_name, new)
+                    break
+
+
 @persistent
 def _on_file_load_restart_timer(dummy):
     """Restart billboard timer after loading a new .blend file."""
@@ -4377,6 +4454,8 @@ def unregister():
         bpy.app.handlers.load_post.remove(_on_file_load_restart_timer)
     if _on_file_load_restore_paths in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(_on_file_load_restore_paths)
+    if _on_file_load_migrate_modulate in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_on_file_load_migrate_modulate)
 
     # File > Export / Import menus
     bpy.types.TOPBAR_MT_file_export.remove(menu_func_export)
@@ -4538,6 +4617,24 @@ def unregister():
     del bpy.types.Scene.gtatools_vc_brightness
     del bpy.types.Scene.gtatools_vc_gamma
     del bpy.types.Scene.gtatools_bake_shadows
+    for _attr in (
+        'gtatools_modulate_mode',
+        'gtatools_modulate_mix',
+        'gtatools_modulate_contrast',
+        'gtatools_modulate_gamma',
+        # legacy props (предыдущие версии аддона) — снять чтобы не
+        # висели «фантомами» в .blend сохранённых старой версией.
+        'gtatools_modulate_preview',
+        'gtatools_modulate_color',
+        'gtatools_modulate_postfx1_color',
+        'gtatools_modulate_postfx1_alpha',
+        'gtatools_modulate_postfx2_color',
+        'gtatools_modulate_postfx2_alpha',
+    ):
+        try:
+            delattr(bpy.types.Scene, _attr)
+        except (AttributeError, RuntimeError):
+            pass
     del bpy.types.Scene.gtatools_prelight_preset
     del bpy.types.Scene.gtatools_bake_gamma
     del bpy.types.Scene.gtatools_bake_intensity

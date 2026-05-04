@@ -186,17 +186,22 @@ class IplJump:
 
 @dataclass
 class IplOccl:
-    """Occlusion zone from IPL ``occl`` section (10 fields)."""
+    """Occlusion zone from IPL ``occl`` section (10 fields).
+
+    Поля соответствуют каноничной сигнатуре движка
+    (CFileLoader::LoadOcclusionVolume): centerX, centerY, bottomZ,
+    width, length, height, rotX, rotY, rotZ, flags.
+    """
     mid_x: float = 0.0
     mid_y: float = 0.0
     bottom_z: float = 0.0
-    width_x: float = 0.0
-    width_y: float = 0.0
+    width_x: float = 0.0  # width
+    width_y: float = 0.0  # length
     height: float = 0.0
-    rotation: float = 0.0
-    unknown1: float = 0.0
-    unknown2: float = 0.0
-    unknown3: int = 0
+    rot_x: float = 0.0
+    rot_y: float = 0.0
+    rot_z: float = 0.0
+    flags: int = 0
 
 
 @dataclass
@@ -436,10 +441,10 @@ def _parse_occl_line(line: str) -> Optional[IplOccl]:
             mid_x=float(parts[0]), mid_y=float(parts[1]),
             bottom_z=float(parts[2]),
             width_x=float(parts[3]), width_y=float(parts[4]),
-            height=float(parts[5]), rotation=float(parts[6]),
-            unknown1=_p(parts, 7, float, 0.0),
-            unknown2=_p(parts, 8, float, 0.0),
-            unknown3=_p(parts, 9, int, 0),
+            height=float(parts[5]), rot_x=float(parts[6]),
+            rot_y=_p(parts, 7, float, 0.0),
+            rot_z=_p(parts, 8, float, 0.0),
+            flags=_p(parts, 9, int, 0),
         )
     except (ValueError, IndexError):
         return None
@@ -555,7 +560,7 @@ def _format_jump_line(j: IplJump) -> str:
 def _format_occl_line(o: IplOccl) -> str:
     return (f'{_ff(o.mid_x)}, {_ff(o.mid_y)}, {_ff(o.bottom_z)}, '
             f'{_ff(o.width_x)}, {_ff(o.width_y)}, {_ff(o.height)}, '
-            f'{_ff(o.rotation)}, {o.unknown1}, {o.unknown2}, {o.unknown3}')
+            f'{_ff(o.rot_x)}, {_ff(o.rot_y)}, {_ff(o.rot_z)}, {o.flags}')
 
 
 def _format_tcyc_line(t: IplTcyc) -> str:

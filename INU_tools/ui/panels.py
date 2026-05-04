@@ -2094,6 +2094,11 @@ class GTATOOLS_PT_prelight_panel(bpy.types.Panel):
         layout.label(text=T("Запекание:"), icon='RENDER_STILL')
         layout.prop(scene, "gtatools_bake_shadows", text=T("Тени"),
                     icon='SHADING_RENDERED', toggle=True)
+        # Modulate Color — preview-only пресет: OFF / Day / Night.
+        # Хардкод значений из ванильного timecyc.dat (EXTRASUNNY_LA).
+        # Vcols и DFF-флаги не трогаются.
+        layout.label(text="Modulate Color:", icon='WORLD')
+        layout.prop(scene, "gtatools_modulate_mode", expand=True)
         row = layout.row(align=True)
         row.operator("gtatools.bake_vertex_colors_simple", text=T("Запечь"), icon='RENDER_STILL')
         row.operator("gtatools.bake_vertex_colors", text=T("С тенями"), icon='RENDER_RESULT')
