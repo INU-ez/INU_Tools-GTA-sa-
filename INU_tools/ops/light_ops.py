@@ -17,6 +17,20 @@ from bpy.props import (
 from mathutils import Vector
 
 from .. import T
+from ..tools.model_utils import find_selected_models
+from ..tools.prelight import (
+    average_colors_on_coplanar_faces,
+    create_prelight_scene_lights, remove_prelight_scene_lights,
+    bake_vertex_colors_from_lights, bake_vertex_colors_simple,
+    apply_brightness_offset, analyze_vertex_colors,
+    smooth_vertex_colors, adjust_vertex_colors_contrast,
+    adjust_vertex_colors_brightness, adjust_vertex_colors_gamma,
+    setup_prelight_preview,
+    add_scatter_layer, remove_scatter_layer, clear_scatter_layers,
+    remove_fill_color_by_index, get_selected_faces_color,
+    fill_selected_faces_with_backup, restore_filled_faces,
+    scatter_light_from_selected,
+)
 
 
 class GTATOOLS_OT_detect_models(bpy.types.Operator):

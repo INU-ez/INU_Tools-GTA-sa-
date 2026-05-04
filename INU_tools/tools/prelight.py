@@ -389,11 +389,16 @@ def remove_prelight_scene_lights():
 
 
 def bake_vertex_colors_from_lights(obj, use_shadows=True):
-    """Запечь освещение от Point источников в vertex colors"""
+    """Запечь освещение от Point источников в vertex colors.
+
+    Lambert per-corner (loop.normal сохраняет smooth shading), но
+    теневой raycast выполняется один раз на вершину — corner'ы одной
+    вершины делят результат. Запись цвета — пакетная через
+    foreach_set, без поэлементного RNA-доступа.
+    """
     if obj is None or obj.type != 'MESH':
         return False, "Select a mesh object!"
 
-    # Collect all point lights in scene (skip hidden, including collection visibility)
     lights = []
     for light_obj in bpy.data.objects:
         if light_obj.type == 'LIGHT' and light_obj.data.type == 'POINT':
@@ -407,96 +412,118 @@ def bake_vertex_colors_from_lights(obj, use_shadows=True):
         return False, "No visible Point lights in scene!"
 
     mesh = obj.data
+    n_verts = len(mesh.vertices)
+    n_loops = len(mesh.loops)
+    if n_loops == 0:
+        return False, "Mesh has no loops"
 
-    # Create or get vertex color layer
     color_name = "BakedLight"
     if color_name in mesh.color_attributes:
         mesh.color_attributes.remove(mesh.color_attributes[color_name])
-
-    color_attr = mesh.color_attributes.new(name=color_name, type='BYTE_COLOR', domain='CORNER')
+    color_attr = mesh.color_attributes.new(
+        name=color_name, type='BYTE_COLOR', domain='CORNER')
     mesh.color_attributes.active_color = color_attr
 
-    # Get world matrix
     world_matrix = obj.matrix_world
     normal_matrix = world_matrix.to_3x3().inverted().transposed()
 
-    # Ensure split normals are calculated for smooth/flat shading
     try:
         mesh.calc_normals_split()
     except Exception:
         pass
 
-    # Prepare depsgraph for raycasting
-    depsgraph = bpy.context.evaluated_depsgraph_get()
+    depsgraph = bpy.context.evaluated_depsgraph_get() if use_shadows else None
 
-    # Process each polygon
-    for poly in mesh.polygons:
-        for loop_idx in poly.loop_indices:
-            loop = mesh.loops[loop_idx]
-            vert = mesh.vertices[loop.vertex_index]
+    # ── Vectorized geometry pull ─────────────────────────────────
+    vert_co = np.empty(n_verts * 3, dtype=np.float32)
+    mesh.vertices.foreach_get('co', vert_co)
+    vert_co = vert_co.reshape(n_verts, 3)
+    M = np.array(world_matrix, dtype=np.float32)
+    homo = np.concatenate(
+        [vert_co, np.ones((n_verts, 1), dtype=np.float32)], axis=1)
+    world_pos = (homo @ M.T)[:, :3]
 
-            # World space position and normal (loop.normal respects smooth/flat shading)
-            world_pos = world_matrix @ vert.co
-            world_normal = (normal_matrix @ loop.normal).normalized()
+    NM = np.array(normal_matrix, dtype=np.float32)
 
-            # Calculate lighting from all lights
-            total_light = Vector((0.0, 0.0, 0.0))
+    vert_no = np.empty(n_verts * 3, dtype=np.float32)
+    mesh.vertices.foreach_get('normal', vert_no)
+    vert_no = vert_no.reshape(n_verts, 3)
+    vert_world_no = vert_no @ NM.T
+    norms = np.linalg.norm(vert_world_no, axis=1, keepdims=True)
+    norms[norms < 1e-6] = 1.0
+    vert_world_no /= norms
 
-            for light_obj in lights:
-                light = light_obj.data
-                light_pos = light_obj.location
+    loop_no = np.empty(n_loops * 3, dtype=np.float32)
+    mesh.loops.foreach_get('normal', loop_no)
+    loop_no = loop_no.reshape(n_loops, 3)
+    loop_world_no = loop_no @ NM.T
+    norms = np.linalg.norm(loop_world_no, axis=1, keepdims=True)
+    norms[norms < 1e-6] = 1.0
+    loop_world_no /= norms
 
-                # Direction from vertex to light
-                light_dir = light_pos - world_pos
-                distance = light_dir.length
+    loop_vidx = np.empty(n_loops, dtype=np.int32)
+    mesh.loops.foreach_get('vertex_index', loop_vidx)
+    loop_world_pos = world_pos[loop_vidx]
 
-                if distance < 0.001:
+    total = np.zeros((n_loops, 3), dtype=np.float32)
+
+    for light_obj in lights:
+        light = light_obj.data
+        light_pos = np.array(light_obj.location, dtype=np.float32)
+        light_color = np.array(light.color, dtype=np.float32) * light.energy
+
+        # ── Per-vertex shadow raycast (cached, reused by all corners)
+        shadow_per_vert = np.ones(n_verts, dtype=np.float32)
+        if use_shadows and depsgraph is not None:
+            for i in range(n_verts):
+                wp = world_pos[i]
+                ld = light_pos - wp
+                dist = float(np.linalg.norm(ld))
+                if dist < 1e-3:
                     continue
+                ld_n = ld / dist
+                ray_start = wp + vert_world_no[i] * 0.02
+                result = bpy.context.scene.ray_cast(
+                    depsgraph,
+                    Vector((float(ray_start[0]), float(ray_start[1]), float(ray_start[2]))),
+                    Vector((float(ld_n[0]), float(ld_n[1]), float(ld_n[2]))),
+                    distance=dist - 0.04,
+                )[0]
+                if result:
+                    shadow_per_vert[i] = 0.0
 
-                light_dir_normalized = light_dir / distance
+        # ── Per-loop Lambert (vectorized) ────────────────────────
+        ld = light_pos[None, :] - loop_world_pos
+        dist = np.linalg.norm(ld, axis=1)
+        valid = dist >= 1e-3
+        dist_safe = np.where(valid, dist, 1.0)
+        ld_n = ld / dist_safe[:, None]
+        n_dot_l = np.maximum(np.sum(loop_world_no * ld_n, axis=1), 0.0)
+        n_dot_l = np.where(valid, n_dot_l, 0.0)
+        atten = 1.0 / (1.0 + dist * 0.01 + dist * dist * 0.0001)
+        shadow_for_loop = shadow_per_vert[loop_vidx]
+        intensity = atten * n_dot_l * shadow_for_loop
+        total += intensity[:, None] * light_color[None, :]
 
-                # Lambertian diffuse
-                n_dot_l = max(0.0, world_normal.dot(light_dir_normalized))
-
-                if n_dot_l <= 0:
-                    continue
-
-                # Shadow check with raycast
-                shadow = 1.0
-                if use_shadows:
-                    # Offset start position slightly along normal to avoid self-intersection
-                    ray_start = world_pos + world_normal * 0.02
-                    result, location, normal_hit, index, hit_obj, matrix = bpy.context.scene.ray_cast(
-                        depsgraph, ray_start, light_dir_normalized, distance=distance - 0.04
-                    )
-                    if result:
-                        shadow = 0.0
-
-                # Light attenuation (inverse square with minimum)
-                attenuation = 1.0 / (1.0 + distance * 0.01 + distance * distance * 0.0001)
-
-                # Light intensity and color
-                intensity = light.energy * attenuation * n_dot_l * shadow
-                light_color = Vector(light.color) * intensity
-
-                total_light += light_color
-
-            # Clamp and set color
-            r = min(1.0, max(0.0, total_light.x))
-            g = min(1.0, max(0.0, total_light.y))
-            b = min(1.0, max(0.0, total_light.z))
-
-            color_attr.data[loop_idx].color = (r, g, b, 1.0)
+    np.clip(total, 0.0, 1.0, out=total)
+    flat = np.empty(n_loops * 4, dtype=np.float32)
+    flat[0::4] = total[:, 0]
+    flat[1::4] = total[:, 1]
+    flat[2::4] = total[:, 2]
+    flat[3::4] = 1.0
+    color_attr.data.foreach_set('color', flat)
 
     return True, f"Baked lighting from {len(lights)} lights"
 
 
 def bake_vertex_colors_simple(obj, ambient=0.05, intensity_mult=0.008, gamma=1.8, use_shadows=True):
-    """Быстрое запекание vertex colors от Point источников (без теней)"""
+    """Быстрое запекание vertex colors от Point источников.
+
+    Та же оптимизация что и в bake_vertex_colors_from_lights — Lambert
+    per-corner, теневой raycast per-vertex, batch foreach_set."""
     if obj is None or obj.type != 'MESH':
         return False, "Select a mesh object!"
 
-    # Collect all point lights (skip hidden, including collection visibility)
     lights = []
     for light_obj in bpy.data.objects:
         if light_obj.type == 'LIGHT' and light_obj.data.type == 'POINT':
@@ -510,81 +537,111 @@ def bake_vertex_colors_simple(obj, ambient=0.05, intensity_mult=0.008, gamma=1.8
         return False, "No visible Point lights in scene!"
 
     mesh = obj.data
+    n_verts = len(mesh.vertices)
+    n_loops = len(mesh.loops)
+    if n_loops == 0:
+        return False, "Mesh has no loops"
 
-    # Use active color attribute or create one if none exists
     color_attr = mesh.color_attributes.active_color
     if color_attr is None:
         if len(mesh.color_attributes) > 0:
             color_attr = mesh.color_attributes[0]
         else:
-            color_attr = mesh.color_attributes.new(name="Col", type='BYTE_COLOR', domain='CORNER')
+            color_attr = mesh.color_attributes.new(
+                name="Col", type='BYTE_COLOR', domain='CORNER')
         mesh.color_attributes.active_color = color_attr
-
     color_name = color_attr.name
 
     world_matrix = obj.matrix_world
     normal_matrix = world_matrix.to_3x3().inverted().transposed()
 
-    # Ensure split normals are calculated for smooth/flat shading
     try:
         mesh.calc_normals_split()
     except Exception:
         pass
 
-    # Prepare depsgraph for raycasting
     depsgraph = bpy.context.evaluated_depsgraph_get() if use_shadows else None
 
-    for poly in mesh.polygons:
-        for loop_idx in poly.loop_indices:
-            loop = mesh.loops[loop_idx]
-            vert = mesh.vertices[loop.vertex_index]
+    vert_co = np.empty(n_verts * 3, dtype=np.float32)
+    mesh.vertices.foreach_get('co', vert_co)
+    vert_co = vert_co.reshape(n_verts, 3)
+    M = np.array(world_matrix, dtype=np.float32)
+    homo = np.concatenate(
+        [vert_co, np.ones((n_verts, 1), dtype=np.float32)], axis=1)
+    world_pos = (homo @ M.T)[:, :3]
 
-            world_pos = world_matrix @ vert.co
-            # loop.normal respects smooth/flat shading and custom normals
-            world_normal = (normal_matrix @ loop.normal).normalized()
+    NM = np.array(normal_matrix, dtype=np.float32)
 
-            # Start with ambient
-            total_light = Vector((ambient, ambient, ambient))
+    vert_no = np.empty(n_verts * 3, dtype=np.float32)
+    mesh.vertices.foreach_get('normal', vert_no)
+    vert_no = vert_no.reshape(n_verts, 3)
+    vert_world_no = vert_no @ NM.T
+    norms = np.linalg.norm(vert_world_no, axis=1, keepdims=True)
+    norms[norms < 1e-6] = 1.0
+    vert_world_no /= norms
 
-            for light_obj in lights:
-                light = light_obj.data
-                light_pos = light_obj.location
+    loop_no = np.empty(n_loops * 3, dtype=np.float32)
+    mesh.loops.foreach_get('normal', loop_no)
+    loop_no = loop_no.reshape(n_loops, 3)
+    loop_world_no = loop_no @ NM.T
+    norms = np.linalg.norm(loop_world_no, axis=1, keepdims=True)
+    norms[norms < 1e-6] = 1.0
+    loop_world_no /= norms
 
-                light_dir = light_pos - world_pos
-                distance = light_dir.length
+    loop_vidx = np.empty(n_loops, dtype=np.int32)
+    mesh.loops.foreach_get('vertex_index', loop_vidx)
+    loop_world_pos = world_pos[loop_vidx]
 
-                if distance < 0.001:
+    total = np.full((n_loops, 3), ambient, dtype=np.float32)
+
+    for light_obj in lights:
+        light = light_obj.data
+        light_pos = np.array(light_obj.location, dtype=np.float32)
+        light_color = np.array(light.color, dtype=np.float32) * (
+            light.energy * intensity_mult)
+
+        shadow_per_vert = np.ones(n_verts, dtype=np.float32)
+        if use_shadows and depsgraph is not None:
+            for i in range(n_verts):
+                wp = world_pos[i]
+                ld = light_pos - wp
+                dist = float(np.linalg.norm(ld))
+                if dist < 1e-3:
                     continue
+                ld_n = ld / dist
+                ray_start = wp + vert_world_no[i] * 0.02
+                result = bpy.context.scene.ray_cast(
+                    depsgraph,
+                    Vector((float(ray_start[0]), float(ray_start[1]), float(ray_start[2]))),
+                    Vector((float(ld_n[0]), float(ld_n[1]), float(ld_n[2]))),
+                    distance=dist - 0.04,
+                )[0]
+                if result:
+                    shadow_per_vert[i] = 0.0
 
-                light_dir_normalized = light_dir / distance
-                n_dot_l = max(0.0, world_normal.dot(light_dir_normalized))
+        ld = light_pos[None, :] - loop_world_pos
+        dist = np.linalg.norm(ld, axis=1)
+        valid = dist >= 1e-3
+        dist_safe = np.where(valid, dist, 1.0)
+        ld_n = ld / dist_safe[:, None]
+        n_dot_l = np.maximum(np.sum(loop_world_no * ld_n, axis=1), 0.0)
+        n_dot_l = np.where(valid, n_dot_l, 0.0)
+        atten = 1.0 / (1.0 + dist * dist * 0.0001)
+        shadow_for_loop = shadow_per_vert[loop_vidx]
+        intensity = atten * n_dot_l * shadow_for_loop
+        total += intensity[:, None] * light_color[None, :]
 
-                if n_dot_l <= 0:
-                    continue
+    # Gamma + clamp (negatives clipped first so pow is well-defined)
+    np.clip(total, 0.0, None, out=total)
+    total = np.power(total, 1.0 / gamma, dtype=np.float32)
+    np.clip(total, 0.0, 1.0, out=total)
 
-                # Shadow check with raycast
-                shadow = 1.0
-                if use_shadows and depsgraph:
-                    ray_start = world_pos + world_normal * 0.02
-                    result, location, normal_hit, index, hit_obj, matrix = bpy.context.scene.ray_cast(
-                        depsgraph, ray_start, light_dir_normalized, distance=distance - 0.04
-                    )
-                    if result:
-                        shadow = 0.0
-
-                # 3Ds Max style attenuation (inverse square law)
-                attenuation = 1.0 / (1.0 + distance * distance * 0.0001)
-                intensity = light.energy * attenuation * n_dot_l * intensity_mult * shadow
-                light_color = Vector(light.color) * intensity
-
-                total_light += light_color
-
-            # Apply gamma correction for 3Ds Max-like result
-            r = min(1.0, max(0.0, pow(total_light.x, 1.0 / gamma)))
-            g = min(1.0, max(0.0, pow(total_light.y, 1.0 / gamma)))
-            b = min(1.0, max(0.0, pow(total_light.z, 1.0 / gamma)))
-
-            color_attr.data[loop_idx].color = (r, g, b, 1.0)
+    flat = np.empty(n_loops * 4, dtype=np.float32)
+    flat[0::4] = total[:, 0]
+    flat[1::4] = total[:, 1]
+    flat[2::4] = total[:, 2]
+    flat[3::4] = 1.0
+    color_attr.data.foreach_set('color', flat)
 
     return True, f"Baked to '{color_name}' from {len(lights)} lights"
 
