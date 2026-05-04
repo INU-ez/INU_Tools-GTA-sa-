@@ -554,12 +554,28 @@ def _write_basis_keyframes(armature, samples):
     ``matrix_basis`` setter — earlier visual-key code relied on the
     setter propagating values to the rotation/location properties,
     which silently failed on some Blender versions and made the
-    keyframes capture stale FK rotations."""
+    keyframes capture stale FK rotations.
+
+    Per-bone hemisphere continuity: ``matrix.decompose()`` returns a
+    valid quaternion but doesn't pick a hemisphere consistent with
+    the previous frame's sample. Without the dot-flip below, two
+    consecutive samples can land on opposite hemispheres (q vs -q,
+    same rotation) and the engine / Blender interpolates the long
+    way through 360°. Flipping `rot_q` sign when `dot(prev, cur) < 0`
+    keeps the chain on a single hemisphere — same fix as the
+    quaternion-sign-discontinuity script users had to run manually
+    after Bake & Clear."""
     for bone_name, sample_list in samples.items():
         pb = armature.pose.bones.get(bone_name)
         if pb is None:
             continue
+        prev_rot_q = None
         for f, loc, rot_q in sample_list:
+            if prev_rot_q is not None and rot_q.dot(prev_rot_q) < 0:
+                rot_q = mathutils.Quaternion(
+                    (-rot_q.w, -rot_q.x, -rot_q.y, -rot_q.z))
+            prev_rot_q = rot_q
+
             pb.location = loc
             if pb.rotation_mode == 'QUATERNION':
                 pb.rotation_quaternion = rot_q

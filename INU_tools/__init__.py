@@ -2384,6 +2384,7 @@ from .ops.ifp_ops import (
     GTATOOLS_OT_merge_ifp,
     GTATOOLS_OT_ifp_preview_toggle,
     GTATOOLS_OT_apply_ifp,
+    GTATOOLS_OT_fix_quat_signs,
     GTATOOLS_OT_delete_active_action,
 )
 from .ops.ik_rig import (
@@ -2545,6 +2546,7 @@ classes = (
     GTATOOLS_OT_ifp_roundtrip,
     GTATOOLS_OT_ifp_preview_toggle,
     GTATOOLS_OT_apply_ifp,
+    GTATOOLS_OT_fix_quat_signs,
     GTATOOLS_OT_delete_active_action,
     GTATOOLS_OT_add_ik_rig,
     GTATOOLS_OT_bake_ik_rig,
@@ -3744,6 +3746,23 @@ def register():
         default=False,
     )
 
+    bpy.types.Scene.gtatools_anim_tools_show = BoolProperty(
+        name=T("Настройка анимации"),
+        description=T("Утилиты для исправления sign-discontinuities, "
+                      "коррекций по диапазону кадров и т.п."),
+        default=False,
+    )
+    bpy.types.Scene.gtatools_anim_fix_start = IntProperty(
+        name=T("Старт"),
+        description=T("Первый кадр диапазона (включительно)"),
+        default=0, min=0,
+    )
+    bpy.types.Scene.gtatools_anim_fix_end = IntProperty(
+        name=T("Конец"),
+        description=T("Последний кадр диапазона (включительно)"),
+        default=10000, min=0,
+    )
+
     def _on_chain_offset_change(self, context):
         # Visual offset for chain (hand/foot) IK control cubes —
         # custom_shape_translation moves the rendered shape only,
@@ -4541,6 +4560,9 @@ def unregister():
         'gtatools_ik_show_root',
         'gtatools_ik_chain_offset',
         'gtatools_ik_root_motion',
+        'gtatools_anim_tools_show',
+        'gtatools_anim_fix_start',
+        'gtatools_anim_fix_end',
     ):
         try:
             delattr(bpy.types.Scene, _attr)

@@ -2820,6 +2820,27 @@ class GTATOOLS_PT_anim_panel(bpy.types.Panel):
                          text=T("Batch папка…"),
                          icon='FILE_FOLDER')
 
+        # ── Настройка анимации — sign-fix утилиты с диапазоном кадров
+        anim_row = layout.row(align=True)
+        anim_row.alignment = 'LEFT'
+        anim_row.prop(
+            scene, "gtatools_anim_tools_show",
+            text=T("Настройка анимации"),
+            icon=('TRIA_DOWN' if scene.gtatools_anim_tools_show
+                  else 'TRIA_RIGHT'),
+            emboss=False,
+        )
+        if scene.gtatools_anim_tools_show:
+            abox = layout.box()
+            acol = abox.column(align=True)
+            range_row = acol.row(align=True)
+            range_row.prop(scene, "gtatools_anim_fix_start", text=T("Старт"))
+            range_row.prop(scene, "gtatools_anim_fix_end", text=T("Конец"))
+            acol.operator(
+                "gtatools.fix_quat_signs",
+                text=T("Исправить кватернионы (sign-flip)"),
+                icon='ORIENTATION_GIMBAL')
+
 
 
 @apply_order

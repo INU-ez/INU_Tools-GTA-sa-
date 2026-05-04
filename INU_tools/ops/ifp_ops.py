@@ -420,6 +420,88 @@ class GTATOOLS_OT_apply_ifp(bpy.types.Operator):
             return {'CANCELLED'}
 
 
+class GTATOOLS_OT_fix_quat_signs(bpy.types.Operator):
+    """Исправить sign-discontinuities кватернионов на диапазоне кадров.
+    Между двумя соседними ключами с dot < 0 кость крутится длинной
+    дорогой через 360°. Скрипт находит такие пары и инвертирует знак
+    кватерниона на втором ключе — q и -q описывают одинаковую ротацию,
+    но интерполяция между ними после флипа идёт коротким путём.
+
+    Идемпотентный — повторный прогон не ухудшит, иногда нужен 2-й
+    проход чтобы вылезли ранее скрытые разрывы."""
+    bl_idname = "gtatools.fix_quat_signs"
+    bl_label = "INU: Fix Quaternion Sign Discontinuities"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj and obj.type == 'ARMATURE'
+                and obj.animation_data
+                and obj.animation_data.action is not None)
+
+    def execute(self, context):
+        from collections import defaultdict
+        arm = context.active_object
+        action = arm.animation_data.action
+        slot = arm.animation_data.action_slot
+        scene = context.scene
+        start = scene.gtatools_anim_fix_start
+        end = scene.gtatools_anim_fix_end
+
+        fcurves = []
+        for layer in action.layers:
+            for strip in layer.strips:
+                cb = strip.channelbag(slot) if slot else None
+                if cb:
+                    fcurves.extend(cb.fcurves)
+
+        quat_by_bone = defaultdict(dict)
+        for fc in fcurves:
+            if fc.data_path.endswith('rotation_quaternion'):
+                s = fc.data_path.find('"') + 1
+                e = fc.data_path.rfind('"')
+                bone_name = fc.data_path[s:e]
+                quat_by_bone[bone_name][fc.array_index] = fc
+
+        total_flipped = 0
+        for bone_name, axis_fcs in quat_by_bone.items():
+            if len(axis_fcs) != 4:
+                continue
+            frame_to_kp_idx = [
+                {int(kp.co.x): i for i, kp in enumerate(axis_fcs[j].keyframe_points)}
+                for j in range(4)
+            ]
+            all_frames = sorted(set().union(*frame_to_kp_idx))
+
+            prev_q = None
+            for f in all_frames:
+                if f < start or f > end:
+                    prev_q = None  # сбрасываем цепочку вне диапазона
+                    continue
+                q = [axis_fcs[j].evaluate(f) for j in range(4)]
+                if prev_q is not None:
+                    dot = sum(prev_q[j] * q[j] for j in range(4))
+                    if dot < 0:
+                        for j in range(4):
+                            if f in frame_to_kp_idx[j]:
+                                kp = axis_fcs[j].keyframe_points[frame_to_kp_idx[j][f]]
+                                kp.co.y = -kp.co.y
+                                kp.handle_left.y  = -kp.handle_left.y
+                                kp.handle_right.y = -kp.handle_right.y
+                                q[j] = -q[j]
+                        for j in range(4):
+                            axis_fcs[j].update()
+                        total_flipped += 1
+                prev_q = q
+
+        self.report(
+            {'INFO'},
+            f"{T('Перевёрнуто ключей')}: {total_flipped} "
+            f"({T('диапазон')} {start}–{end})")
+        return {'FINISHED'}
+
+
 class GTATOOLS_OT_delete_active_action(bpy.types.Operator):
     """Удалить активную Action арматуры из файла полностью.
     В отличие от кнопки X в Action Editor (которая только отвязывает),
@@ -456,5 +538,6 @@ classes = (
     GTATOOLS_OT_merge_ifp,
     GTATOOLS_OT_ifp_preview_toggle,
     GTATOOLS_OT_apply_ifp,
+    GTATOOLS_OT_fix_quat_signs,
     GTATOOLS_OT_delete_active_action,
 )

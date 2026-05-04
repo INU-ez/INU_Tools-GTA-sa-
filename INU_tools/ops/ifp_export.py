@@ -301,6 +301,48 @@ def _build_animation(action, armature, fps: float) -> Animation:
             if not loc_active:
                 has_loc = False
 
+        # Same logic for rotation: if every keyframe's bl_quat is
+        # essentially identity (or its sign-flipped twin -identity),
+        # the bone wasn't actually animated. Writing rotation keys
+        # for such a bone would leak the bone's rest_quat into the
+        # IFP — for Root with non-default Edit-Mode orientation
+        # (e.g. head→tail along +X instead of +Y), rest_quat is
+        # non-identity and the game would visibly rotate the
+        # character even though the user never animated Root.
+        # Mirrors the IK-aware path's rot_active check, so a Bake &
+        # Clear'd action exports the same rotation set as one with
+        # an active IK rig — without this, post-Bake Root suddenly
+        # gets a rest_quat-derived rotation key the IK path would
+        # have skipped. abs(|w|-1) treats q=identity and
+        # q=-identity (same rotation, opposite hemisphere) both as
+        # "no rotation".
+        if has_rot:
+            rot_active = False
+            sample_frames = set()
+            for fc in props['rotation_quaternion']:
+                for kp in fc.keyframe_points:
+                    sample_frames.add(kp.co[0])
+            for sf in sample_frames:
+                quat_w, quat_x, quat_y, quat_z = 1.0, 0.0, 0.0, 0.0
+                for fc in props['rotation_quaternion']:
+                    val = fc.evaluate(sf)
+                    if fc.array_index == 0:
+                        quat_w = val
+                    elif fc.array_index == 1:
+                        quat_x = val
+                    elif fc.array_index == 2:
+                        quat_y = val
+                    elif fc.array_index == 3:
+                        quat_z = val
+                if (abs(abs(quat_w) - 1.0) > 1e-4
+                        or abs(quat_x) > 1e-4
+                        or abs(quat_y) > 1e-4
+                        or abs(quat_z) > 1e-4):
+                    rot_active = True
+                    break
+            if not rot_active:
+                has_rot = False
+
         bone.key_type = 0
         if has_rot:
             bone.key_type |= HAS_ROT

@@ -14,6 +14,7 @@ from bpy.props import (
     StringProperty, BoolProperty, FloatProperty, FloatVectorProperty,
     IntProperty, EnumProperty, CollectionProperty,
 )
+from mathutils import Vector
 
 from .. import T
 
