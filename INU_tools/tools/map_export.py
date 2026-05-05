@@ -30,8 +30,12 @@ from typing import Dict, List, Optional, Set, Tuple
 class MapGroup:
     """One DFF → (LOD, COL) group inferred from object naming."""
     base: str
-    dff: bpy.types.Object
-    lod: Optional[bpy.types.Object] = None
+    # Forward-string refs — без future-import dataclass eager-eval'нул бы
+    # bpy.types.Object на class-creation, что роняет unit-тесты со
+    # стабленным bpy. Аннотации кокласса всё равно не используются как
+    # runtime-типы (dataclass только читает имена полей).
+    dff: "bpy.types.Object"
+    lod: 'Optional["bpy.types.Object"]' = None
     col_objects: list = None   # list of COL/SHA meshes
 
     def __post_init__(self):
