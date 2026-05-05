@@ -7,6 +7,7 @@ import numpy as np
 from mathutils import Vector
 
 from .. import T
+from . import compat
 
 
 # =============================================================================
@@ -145,12 +146,11 @@ class GTASAPrelight:
     def apply_vertex_colors(self):
         mesh = self.obj.data
 
-        if "Prelight" not in mesh.color_attributes:
-            color_layer = mesh.color_attributes.new(name="Prelight", type='BYTE_COLOR', domain='CORNER')
-        else:
-            color_layer = mesh.color_attributes["Prelight"]
+        color_layer = compat.vcol_get(mesh, "Prelight")
+        if color_layer is None:
+            color_layer = compat.vcol_new(mesh, "Prelight")
 
-        mesh.color_attributes.active_color = color_layer
+        compat.vcol_active(mesh, color_layer)
 
         bm = bmesh.new()
         bm.from_mesh(mesh)
@@ -216,12 +216,12 @@ def average_colors_on_coplanar_faces(obj, normal_threshold=0.01):
         return False
 
     mesh = obj.data
-    if not mesh.color_attributes:
+    if not compat.vcol_list(mesh):
         return False
 
-    color_layer = mesh.color_attributes.active_color
+    color_layer = compat.vcol_active(mesh)
     if color_layer is None:
-        color_layer = mesh.color_attributes[0]
+        color_layer = compat.vcol_list(mesh)[0]
 
     bm = bmesh.new()
     bm.from_mesh(mesh)
@@ -295,11 +295,12 @@ def encode_uv2_to_color_16bit(obj):
     uv_layer = mesh.uv_layers[1]
 
     color_name = "UV2_Color"
-    if color_name in mesh.color_attributes:
-        mesh.color_attributes.remove(mesh.color_attributes[color_name])
+    existing = compat.vcol_get(mesh, color_name)
+    if existing is not None:
+        compat.vcol_remove(mesh, existing)
 
-    color_attr = mesh.color_attributes.new(name=color_name, type='BYTE_COLOR', domain='CORNER')
-    mesh.color_attributes.active_color = color_attr
+    color_attr = compat.vcol_new(mesh, color_name)
+    compat.vcol_active(mesh, color_attr)
 
     for poly in mesh.polygons:
         for loop_idx in poly.loop_indices:
@@ -418,11 +419,11 @@ def bake_vertex_colors_from_lights(obj, use_shadows=True):
         return False, "Mesh has no loops"
 
     color_name = "BakedLight"
-    if color_name in mesh.color_attributes:
-        mesh.color_attributes.remove(mesh.color_attributes[color_name])
-    color_attr = mesh.color_attributes.new(
-        name=color_name, type='BYTE_COLOR', domain='CORNER')
-    mesh.color_attributes.active_color = color_attr
+    existing = compat.vcol_get(mesh, color_name)
+    if existing is not None:
+        compat.vcol_remove(mesh, existing)
+    color_attr = compat.vcol_new(mesh, color_name)
+    compat.vcol_active(mesh, color_attr)
 
     world_matrix = obj.matrix_world
     normal_matrix = world_matrix.to_3x3().inverted().transposed()
@@ -542,14 +543,14 @@ def bake_vertex_colors_simple(obj, ambient=0.05, intensity_mult=0.008, gamma=1.8
     if n_loops == 0:
         return False, "Mesh has no loops"
 
-    color_attr = mesh.color_attributes.active_color
+    color_attr = compat.vcol_active(mesh)
     if color_attr is None:
-        if len(mesh.color_attributes) > 0:
-            color_attr = mesh.color_attributes[0]
+        existing = compat.vcol_list(mesh)
+        if existing:
+            color_attr = existing[0]
         else:
-            color_attr = mesh.color_attributes.new(
-                name="Col", type='BYTE_COLOR', domain='CORNER')
-        mesh.color_attributes.active_color = color_attr
+            color_attr = compat.vcol_new(mesh, "Col")
+        compat.vcol_active(mesh, color_attr)
     color_name = color_attr.name
 
     world_matrix = obj.matrix_world
@@ -659,10 +660,10 @@ def apply_brightness_offset(obj, v_offset):
         return False, "Select a mesh object!"
 
     mesh = obj.data
-    if not mesh.color_attributes:
+    if not compat.vcol_list(mesh):
         return False, "No vertex colors found!"
 
-    color_attr = mesh.color_attributes.active_color
+    color_attr = compat.vcol_active(mesh)
     if color_attr is None:
         return False, "No active color layer!"
 
@@ -701,12 +702,14 @@ def analyze_vertex_colors(obj):
         return None
 
     mesh = obj.data
-    if not mesh.color_attributes:
+    if not compat.vcol_list(mesh):
         return None
 
-    color_attr = mesh.color_attributes.active_color
-    if color_attr is None and len(mesh.color_attributes) > 0:
-        color_attr = mesh.color_attributes[0]
+    color_attr = compat.vcol_active(mesh)
+    if color_attr is None:
+        existing = compat.vcol_list(mesh)
+        if existing:
+            color_attr = existing[0]
 
     if color_attr is None:
         return None
@@ -749,10 +752,10 @@ def smooth_vertex_colors(obj, iterations=1, factor=0.5):
         return False, "Select a mesh object!"
 
     mesh = obj.data
-    if not mesh.color_attributes:
+    if not compat.vcol_list(mesh):
         return False, "No vertex colors found!"
 
-    color_attr = mesh.color_attributes.active_color
+    color_attr = compat.vcol_active(mesh)
     if color_attr is None:
         return False, "No active color layer!"
 
@@ -832,7 +835,7 @@ def adjust_vertex_colors_contrast(obj, contrast=1.0):
         return False, "Select a mesh object!"
 
     mesh = obj.data
-    color_attr = mesh.color_attributes.active_color
+    color_attr = compat.vcol_active(mesh)
     if color_attr is None:
         return False, "No active color layer!"
 
@@ -868,7 +871,7 @@ def adjust_vertex_colors_brightness(obj, brightness=0.0):
         return False, "Select a mesh object!"
 
     mesh = obj.data
-    color_attr = mesh.color_attributes.active_color
+    color_attr = compat.vcol_active(mesh)
     if color_attr is None:
         return False, "No active color layer!"
 
@@ -890,7 +893,7 @@ def adjust_vertex_colors_gamma(obj, gamma=1.0):
         return False, "Select a mesh object!"
 
     mesh = obj.data
-    color_attr = mesh.color_attributes.active_color
+    color_attr = compat.vcol_active(mesh)
     if color_attr is None:
         return False, "No active color layer!"
 
@@ -957,13 +960,13 @@ def setup_prelight_preview(obj, enable=True):
         return False, "Select a mesh object!"
 
     mesh = obj.data
-    if not mesh.color_attributes:
+    if not compat.vcol_list(mesh):
         return False, "No vertex colors on object!"
 
     # Get active color attribute name
-    color_attr = mesh.color_attributes.active_color
+    color_attr = compat.vcol_active(mesh)
     if color_attr is None:
-        color_attr = mesh.color_attributes[0]
+        color_attr = compat.vcol_list(mesh)[0]
     color_name = color_attr.name
 
     # Read «Modulate Color» preview state from scene (если scene доступна)
@@ -1026,38 +1029,35 @@ def setup_prelight_preview(obj, enable=True):
                     vc_node.layer_name = color_name
                 elif hasattr(vc_node, 'attribute_name'):
                     vc_node.attribute_name = color_name
-                bright_node.inputs['B'].default_value = (0.0, 0.0, 0.0, 0.0)
+                bright_node.inputs[compat.MIX_INPUT_B].default_value = (0.0, 0.0, 0.0, 0.0)
                 # Insert Prelight_Ambient if missing (older preview without it)
                 if amb_node is None:
-                    amb_node = nodes.new('ShaderNodeMix')
+                    amb_node = nodes.new(compat.MIX_NODE_TYPE)
                     amb_node.name = "Prelight_Ambient"
                     amb_node.label = "Ambient (Modulate)"
-                    amb_node.data_type = 'RGBA'
-                    amb_node.blend_type = 'ADD'
+                    compat.setup_mix_rgba_node(amb_node, blend='ADD')
                     amb_node.location = (
                         principled.location.x - 280, principled.location.y - 100)
                     # Splice between bright_node and mix_node B
-                    for lnk in list(mix_node.inputs['B'].links):
+                    for lnk in list(mix_node.inputs[compat.MIX_INPUT_B].links):
                         links.remove(lnk)
-                    links.new(bright_node.outputs['Result'], amb_node.inputs['A'])
-                    links.new(amb_node.outputs['Result'], mix_node.inputs['B'])
-                amb_node.inputs['Factor'].default_value = amb_factor
-                amb_node.inputs['B'].default_value = amb_b
+                    links.new(bright_node.outputs[compat.MIX_OUTPUT_RESULT], amb_node.inputs[compat.MIX_INPUT_A])
+                    links.new(amb_node.outputs[compat.MIX_OUTPUT_RESULT], mix_node.inputs[compat.MIX_INPUT_B])
+                amb_node.inputs[compat.MIX_INPUT_FACTOR].default_value = amb_factor
+                amb_node.inputs[compat.MIX_INPUT_B].default_value = amb_b
                 # Создать недостающие ноды: PostFx1, PostFx2, BrightContrast, Gamma
                 if pf1_node is None:
-                    pf1_node = nodes.new('ShaderNodeMix')
+                    pf1_node = nodes.new(compat.MIX_NODE_TYPE)
                     pf1_node.name = "Prelight_PostFx1"
                     pf1_node.label = "PostFx1 (Add)"
-                    pf1_node.data_type = 'RGBA'
-                    pf1_node.blend_type = 'ADD'
+                    compat.setup_mix_rgba_node(pf1_node, blend='ADD')
                     pf1_node.location = (
                         principled.location.x - 200, principled.location.y - 50)
                 if pf2_node is None:
-                    pf2_node = nodes.new('ShaderNodeMix')
+                    pf2_node = nodes.new(compat.MIX_NODE_TYPE)
                     pf2_node.name = "Prelight_PostFx2"
                     pf2_node.label = "PostFx2 (Add)"
-                    pf2_node.data_type = 'RGBA'
-                    pf2_node.blend_type = 'ADD'
+                    compat.setup_mix_rgba_node(pf2_node, blend='ADD')
                     pf2_node.location = (
                         principled.location.x - 150, principled.location.y - 50)
                 if bc_node is None:
@@ -1076,23 +1076,23 @@ def setup_prelight_preview(obj, enable=True):
                 # Перевязать цепочку: Mix → PostFx1 → PostFx2 → BrightContrast → Gamma → Base Color
                 for lnk in list(base_color_input.links):
                     links.remove(lnk)
-                for lnk in list(pf1_node.inputs['A'].links):
+                for lnk in list(pf1_node.inputs[compat.MIX_INPUT_A].links):
                     links.remove(lnk)
-                for lnk in list(pf2_node.inputs['A'].links):
+                for lnk in list(pf2_node.inputs[compat.MIX_INPUT_A].links):
                     links.remove(lnk)
                 for lnk in list(bc_node.inputs['Color'].links):
                     links.remove(lnk)
                 for lnk in list(gm_node.inputs['Color'].links):
                     links.remove(lnk)
-                links.new(mix_node.outputs['Result'], pf1_node.inputs['A'])
-                links.new(pf1_node.outputs['Result'], pf2_node.inputs['A'])
-                links.new(pf2_node.outputs['Result'], bc_node.inputs['Color'])
+                links.new(mix_node.outputs[compat.MIX_OUTPUT_RESULT], pf1_node.inputs[compat.MIX_INPUT_A])
+                links.new(pf1_node.outputs[compat.MIX_OUTPUT_RESULT], pf2_node.inputs[compat.MIX_INPUT_A])
+                links.new(pf2_node.outputs[compat.MIX_OUTPUT_RESULT], bc_node.inputs['Color'])
                 links.new(bc_node.outputs['Color'], gm_node.inputs['Color'])
                 links.new(gm_node.outputs['Color'], base_color_input)
-                pf1_node.inputs['Factor'].default_value = pf1_f
-                pf1_node.inputs['B'].default_value = pf1_b
-                pf2_node.inputs['Factor'].default_value = pf2_f
-                pf2_node.inputs['B'].default_value = pf2_b
+                pf1_node.inputs[compat.MIX_INPUT_FACTOR].default_value = pf1_f
+                pf1_node.inputs[compat.MIX_INPUT_B].default_value = pf1_b
+                pf2_node.inputs[compat.MIX_INPUT_FACTOR].default_value = pf2_f
+                pf2_node.inputs[compat.MIX_INPUT_B].default_value = pf2_b
                 bc_node.inputs['Contrast'].default_value = bc_contrast
                 gm_node.inputs['Gamma'].default_value = gm_gamma
                 continue
@@ -1117,39 +1117,36 @@ def setup_prelight_preview(obj, enable=True):
 
             # Create Brightness node (+ brightness offset)
             if not bright_node:
-                bright_node = nodes.new('ShaderNodeMix')
+                bright_node = nodes.new(compat.MIX_NODE_TYPE)
                 bright_node.name = "Prelight_Bright"
                 bright_node.label = "Brightness"
-                bright_node.data_type = 'RGBA'
-                bright_node.blend_type = 'ADD'
+                compat.setup_mix_rgba_node(bright_node, blend='ADD')
                 bright_node.location = (principled.location.x - 350, principled.location.y - 200)
-                bright_node.inputs['Factor'].default_value = 1.0
-            bright_node.inputs['B'].default_value = (0.0, 0.0, 0.0, 0.0)
+                bright_node.inputs[compat.MIX_INPUT_FACTOR].default_value = 1.0
+            bright_node.inputs[compat.MIX_INPUT_B].default_value = (0.0, 0.0, 0.0, 0.0)
 
             # Create Ambient (Modulate) node — adds ambient_obj × surfAmb
             # to vertex color, mirroring ванильный SA-шейдер зданий
             # (см. euryopa pcBuildingVS.hlsl: Color.rgb += ambient*surfAmb).
             # B input управляется глобальной настройкой scene; default 0.
             if not amb_node:
-                amb_node = nodes.new('ShaderNodeMix')
+                amb_node = nodes.new(compat.MIX_NODE_TYPE)
                 amb_node.name = "Prelight_Ambient"
                 amb_node.label = "Ambient (Modulate)"
-                amb_node.data_type = 'RGBA'
-                amb_node.blend_type = 'ADD'
+                compat.setup_mix_rgba_node(amb_node, blend='ADD')
                 amb_node.location = (
                     principled.location.x - 280, principled.location.y - 100)
-            amb_node.inputs['Factor'].default_value = amb_factor
-            amb_node.inputs['B'].default_value = amb_b
+            amb_node.inputs[compat.MIX_INPUT_FACTOR].default_value = amb_factor
+            amb_node.inputs[compat.MIX_INPUT_B].default_value = amb_b
 
             # Create Mix node (Multiply with texture)
             if not mix_node:
-                mix_node = nodes.new('ShaderNodeMix')
+                mix_node = nodes.new(compat.MIX_NODE_TYPE)
                 mix_node.name = "Prelight_Mix"
                 mix_node.label = "Prelight Multiply"
-                mix_node.data_type = 'RGBA'
-                mix_node.blend_type = 'MULTIPLY'
+                compat.setup_mix_rgba_node(mix_node, blend='MULTIPLY')
                 mix_node.location = (principled.location.x - 200, principled.location.y)
-                mix_node.inputs['Factor'].default_value = 1.0
+                mix_node.inputs[compat.MIX_INPUT_FACTOR].default_value = 1.0
 
             # ── PostFx1 + PostFx2 — точная игровая формула из
             # CPostEffects::ColourFilter (gta-reversed-modern):
@@ -1159,24 +1156,22 @@ def setup_prelight_preview(obj, enable=True):
             # пересвечивает их), цветовое значение оставлено для
             # будущей точной настройки.
             if not pf1_node:
-                pf1_node = nodes.new('ShaderNodeMix')
+                pf1_node = nodes.new(compat.MIX_NODE_TYPE)
                 pf1_node.name = "Prelight_PostFx1"
                 pf1_node.label = "PostFx1 (Add)"
-                pf1_node.data_type = 'RGBA'
-                pf1_node.blend_type = 'ADD'
+                compat.setup_mix_rgba_node(pf1_node, blend='ADD')
                 pf1_node.location = (principled.location.x - 200, principled.location.y - 50)
-            pf1_node.inputs['Factor'].default_value = pf1_f
-            pf1_node.inputs['B'].default_value = pf1_b
+            pf1_node.inputs[compat.MIX_INPUT_FACTOR].default_value = pf1_f
+            pf1_node.inputs[compat.MIX_INPUT_B].default_value = pf1_b
 
             if not pf2_node:
-                pf2_node = nodes.new('ShaderNodeMix')
+                pf2_node = nodes.new(compat.MIX_NODE_TYPE)
                 pf2_node.name = "Prelight_PostFx2"
                 pf2_node.label = "PostFx2 (Add)"
-                pf2_node.data_type = 'RGBA'
-                pf2_node.blend_type = 'ADD'
+                compat.setup_mix_rgba_node(pf2_node, blend='ADD')
                 pf2_node.location = (principled.location.x - 150, principled.location.y - 50)
-            pf2_node.inputs['Factor'].default_value = pf2_f
-            pf2_node.inputs['B'].default_value = pf2_b
+            pf2_node.inputs[compat.MIX_INPUT_FACTOR].default_value = pf2_f
+            pf2_node.inputs[compat.MIX_INPUT_B].default_value = pf2_b
 
             # ── BrightContrast + Gamma — color-grading на финальный результат
             if not bc_node:
@@ -1197,32 +1192,32 @@ def setup_prelight_preview(obj, enable=True):
             # Connect nodes
             if tex_node and original_link:
                 # Texture -> Mix A
-                links.new(tex_output, mix_node.inputs['A'])
+                links.new(tex_output, mix_node.inputs[compat.MIX_INPUT_A])
             else:
                 # No texture - use white
-                mix_node.inputs['A'].default_value = (1, 1, 1, 1)
+                mix_node.inputs[compat.MIX_INPUT_A].default_value = (1, 1, 1, 1)
 
             # Vertex Color -> Bright A
-            links.new(vc_node.outputs['Color'], bright_node.inputs['A'])
+            links.new(vc_node.outputs['Color'], bright_node.inputs[compat.MIX_INPUT_A])
 
             # Bright Result -> Ambient A
-            links.new(bright_node.outputs['Result'], amb_node.inputs['A'])
+            links.new(bright_node.outputs[compat.MIX_OUTPUT_RESULT], amb_node.inputs[compat.MIX_INPUT_A])
 
             # Ambient Result -> Mix B
-            links.new(amb_node.outputs['Result'], mix_node.inputs['B'])
+            links.new(amb_node.outputs[compat.MIX_OUTPUT_RESULT], mix_node.inputs[compat.MIX_INPUT_B])
 
             # Mix -> PostFx1 -> PostFx2 -> BrightContrast -> Gamma -> Base Color
-            links.new(mix_node.outputs['Result'], pf1_node.inputs['A'])
-            links.new(pf1_node.outputs['Result'], pf2_node.inputs['A'])
-            links.new(pf2_node.outputs['Result'], bc_node.inputs['Color'])
+            links.new(mix_node.outputs[compat.MIX_OUTPUT_RESULT], pf1_node.inputs[compat.MIX_INPUT_A])
+            links.new(pf1_node.outputs[compat.MIX_OUTPUT_RESULT], pf2_node.inputs[compat.MIX_INPUT_A])
+            links.new(pf2_node.outputs[compat.MIX_OUTPUT_RESULT], bc_node.inputs['Color'])
             links.new(bc_node.outputs['Color'], gm_node.inputs['Color'])
             links.new(gm_node.outputs['Color'], base_color_input)
 
             # ── Alpha: vertex color alpha → Principled Alpha ──
             # Only if active color attribute actually has any alpha < 1.0 painted
             has_alpha_painted = False
-            active_attr = mesh.color_attributes.get(color_name)
-            if active_attr and active_attr.data_type in ('BYTE_COLOR', 'FLOAT_COLOR'):
+            active_attr = compat.vcol_get(mesh, color_name)
+            if active_attr and compat.vcol_data_type(active_attr) in ('BYTE_COLOR', 'FLOAT_COLOR'):
                 for d in active_attr.data:
                     if d.color[3] < 0.999:
                         has_alpha_painted = True
@@ -1401,16 +1396,15 @@ def apply_modulate_preview(scene=None):
 
         # Lazy upgrade: вставить Prelight_Ambient если отсутствует.
         if amb_n is None:
-            amb_n = nt.nodes.new('ShaderNodeMix')
+            amb_n = nt.nodes.new(compat.MIX_NODE_TYPE)
             amb_n.name = "Prelight_Ambient"
             amb_n.label = "Ambient (Modulate)"
-            amb_n.data_type = 'RGBA'
-            amb_n.blend_type = 'ADD'
+            compat.setup_mix_rgba_node(amb_n, blend='ADD')
             amb_n.location = (mix_n.location.x - 80, mix_n.location.y - 100)
-            for lnk in list(mix_n.inputs['B'].links):
+            for lnk in list(mix_n.inputs[compat.MIX_INPUT_B].links):
                 nt.links.remove(lnk)
-            nt.links.new(bright_n.outputs['Result'], amb_n.inputs['A'])
-            nt.links.new(amb_n.outputs['Result'], mix_n.inputs['B'])
+            nt.links.new(bright_n.outputs[compat.MIX_OUTPUT_RESULT], amb_n.inputs[compat.MIX_INPUT_A])
+            nt.links.new(amb_n.outputs[compat.MIX_OUTPUT_RESULT], mix_n.inputs[compat.MIX_INPUT_B])
 
         # Lazy upgrade: вставить PostFx1+PostFx2+BrightContrast+Gamma
         # после mix_n, перед Principled.Base Color если их нет.
@@ -1420,19 +1414,17 @@ def apply_modulate_preview(scene=None):
             base_input = principled.inputs.get('Base Color')
             if base_input is not None:
                 if pf1_n is None:
-                    pf1_n = nt.nodes.new('ShaderNodeMix')
+                    pf1_n = nt.nodes.new(compat.MIX_NODE_TYPE)
                     pf1_n.name = "Prelight_PostFx1"
                     pf1_n.label = "PostFx1 (Add)"
-                    pf1_n.data_type = 'RGBA'
-                    pf1_n.blend_type = 'ADD'
+                    compat.setup_mix_rgba_node(pf1_n, blend='ADD')
                     pf1_n.location = (
                         principled.location.x - 200, principled.location.y - 50)
                 if pf2_n is None:
-                    pf2_n = nt.nodes.new('ShaderNodeMix')
+                    pf2_n = nt.nodes.new(compat.MIX_NODE_TYPE)
                     pf2_n.name = "Prelight_PostFx2"
                     pf2_n.label = "PostFx2 (Add)"
-                    pf2_n.data_type = 'RGBA'
-                    pf2_n.blend_type = 'ADD'
+                    compat.setup_mix_rgba_node(pf2_n, blend='ADD')
                     pf2_n.location = (
                         principled.location.x - 150, principled.location.y - 50)
                 if bc_n is None:
@@ -1451,29 +1443,29 @@ def apply_modulate_preview(scene=None):
                 # Перевязать: mix → pf1 → pf2 → bc → gm → Base Color
                 for lnk in list(base_input.links):
                     nt.links.remove(lnk)
-                for lnk in list(pf1_n.inputs['A'].links):
+                for lnk in list(pf1_n.inputs[compat.MIX_INPUT_A].links):
                     nt.links.remove(lnk)
-                for lnk in list(pf2_n.inputs['A'].links):
+                for lnk in list(pf2_n.inputs[compat.MIX_INPUT_A].links):
                     nt.links.remove(lnk)
                 for lnk in list(bc_n.inputs['Color'].links):
                     nt.links.remove(lnk)
                 for lnk in list(gm_n.inputs['Color'].links):
                     nt.links.remove(lnk)
-                nt.links.new(mix_n.outputs['Result'], pf1_n.inputs['A'])
-                nt.links.new(pf1_n.outputs['Result'], pf2_n.inputs['A'])
-                nt.links.new(pf2_n.outputs['Result'], bc_n.inputs['Color'])
+                nt.links.new(mix_n.outputs[compat.MIX_OUTPUT_RESULT], pf1_n.inputs[compat.MIX_INPUT_A])
+                nt.links.new(pf1_n.outputs[compat.MIX_OUTPUT_RESULT], pf2_n.inputs[compat.MIX_INPUT_A])
+                nt.links.new(pf2_n.outputs[compat.MIX_OUTPUT_RESULT], bc_n.inputs['Color'])
                 nt.links.new(bc_n.outputs['Color'], gm_n.inputs['Color'])
                 nt.links.new(gm_n.outputs['Color'], base_input)
 
         try:
-            amb_n.inputs['Factor'].default_value = amb_factor
-            amb_n.inputs['B'].default_value = amb_b
+            amb_n.inputs[compat.MIX_INPUT_FACTOR].default_value = amb_factor
+            amb_n.inputs[compat.MIX_INPUT_B].default_value = amb_b
             if pf1_n is not None:
-                pf1_n.inputs['Factor'].default_value = pf1_f
-                pf1_n.inputs['B'].default_value = pf1_b
+                pf1_n.inputs[compat.MIX_INPUT_FACTOR].default_value = pf1_f
+                pf1_n.inputs[compat.MIX_INPUT_B].default_value = pf1_b
             if pf2_n is not None:
-                pf2_n.inputs['Factor'].default_value = pf2_f
-                pf2_n.inputs['B'].default_value = pf2_b
+                pf2_n.inputs[compat.MIX_INPUT_FACTOR].default_value = pf2_f
+                pf2_n.inputs[compat.MIX_INPUT_B].default_value = pf2_b
             if bc_n is not None:
                 bc_n.inputs['Contrast'].default_value = bc_contrast
             if gm_n is not None:
@@ -1490,10 +1482,10 @@ def fill_selected_faces(obj, color):
         return False, "Select a mesh object!"
 
     mesh = obj.data
-    if not mesh.color_attributes:
+    if not compat.vcol_list(mesh):
         return False, "No vertex colors found!"
 
-    color_attr = mesh.color_attributes.active_color
+    color_attr = compat.vcol_active(mesh)
     if color_attr is None:
         return False, "No active color layer!"
 
@@ -1556,10 +1548,10 @@ def ensure_base_colors(obj):
         return True  # Уже сохранены
 
     mesh = obj.data
-    if not mesh.color_attributes or not mesh.color_attributes.active_color:
+    if not compat.vcol_active(mesh):
         return False
 
-    color_attr = mesh.color_attributes.active_color
+    color_attr = compat.vcol_active(mesh)
 
     _base_colors[obj_key] = {}
     for loop_idx in range(len(color_attr.data)):
@@ -1612,10 +1604,10 @@ def recalculate_colors(obj, loop_indices=None):
     obj_key = obj.name
     mesh = obj.data
 
-    if not mesh.color_attributes or not mesh.color_attributes.active_color:
+    if not compat.vcol_active(mesh):
         return False
 
-    color_attr = mesh.color_attributes.active_color
+    color_attr = compat.vcol_active(mesh)
 
     # Если loops не указаны - пересчитать все
     if loop_indices is None:
@@ -1855,8 +1847,8 @@ def get_selected_faces_color(obj):
                 return (round(fill_color[0], 3), round(fill_color[1], 3), round(fill_color[2], 3))
 
     # Fallback: по текущему цвету
-    if mesh.color_attributes and mesh.color_attributes.active_color:
-        color_attr = mesh.color_attributes.active_color
+    color_attr = compat.vcol_active(mesh)
+    if color_attr is not None:
         first_loop = next(iter(selected_loops))
         c = color_attr.data[first_loop].color
         color_tuple = (round(c[0], 3), round(c[1], 3), round(c[2], 3))
@@ -1881,10 +1873,10 @@ def fill_selected_faces_with_backup(obj, color):
         bpy.ops.object.mode_set(mode='OBJECT')
 
     mesh = obj.data
-    if not mesh.color_attributes:
+    if not compat.vcol_list(mesh):
         return False, "No vertex colors found!"
 
-    color_attr = mesh.color_attributes.active_color
+    color_attr = compat.vcol_active(mesh)
     if color_attr is None:
         return False, "No active color layer!"
 
@@ -1942,10 +1934,10 @@ def restore_filled_faces(obj):
         bpy.ops.object.mode_set(mode='OBJECT')
 
     mesh = obj.data
-    if not mesh.color_attributes:
+    if not compat.vcol_list(mesh):
         return False, "No vertex colors found!"
 
-    color_attr = mesh.color_attributes.active_color
+    color_attr = compat.vcol_active(mesh)
     if color_attr is None:
         return False, "No active color layer!"
 
@@ -1990,12 +1982,12 @@ def scatter_light_from_selected(obj, intensity=1.0, falloff=2.0, iterations=3, r
         bpy.ops.object.mode_set(mode='OBJECT')
 
     mesh = obj.data
-    if not mesh.color_attributes:
+    if not compat.vcol_list(mesh):
         if original_mode == 'EDIT':
             bpy.ops.object.mode_set(mode='EDIT')
         return False, "No vertex colors found!", []
 
-    color_attr = mesh.color_attributes.active_color
+    color_attr = compat.vcol_active(mesh)
     if color_attr is None:
         if original_mode == 'EDIT':
             bpy.ops.object.mode_set(mode='EDIT')

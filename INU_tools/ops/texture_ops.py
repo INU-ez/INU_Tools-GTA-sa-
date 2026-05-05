@@ -12,6 +12,7 @@ from bpy.props import (
 from bpy_extras.io_utils import ImportHelper
 
 from .. import T
+from ..tools import compat
 
 
 class GTATOOLS_OT_load_textures(bpy.types.Operator):
@@ -724,18 +725,13 @@ class GTATOOLS_OT_apply_lightmap_uv2(bpy.types.Operator):
                 tex_node.label = "LightMap"
                 tex_node.image = lm_image
 
-                # Mix node (Multiply)
-                if bpy.app.version >= (4, 0, 0):
-                    mix = nodes.new('ShaderNodeMix')
-                    mix.data_type = 'RGBA'
-                    mix.blend_type = 'MULTIPLY'
-                    mix.inputs['Factor'].default_value = 1.0
-                    in_a, in_b, out_r = 'A', 'B', 'Result'
-                else:
-                    mix = nodes.new('ShaderNodeMixRGB')
-                    mix.blend_type = 'MULTIPLY'
-                    mix.inputs['Fac'].default_value = 1.0
-                    in_a, in_b, out_r = 'Color1', 'Color2', 'Color'
+                # Mix node (Multiply) — через compat (ShaderNodeMix на
+                # 3.4+ или ShaderNodeMixRGB на 2.80-3.3).
+                mix = nodes.new(compat.MIX_NODE_TYPE)
+                compat.setup_mix_rgba_node(mix, blend='MULTIPLY')
+                mix.inputs[compat.MIX_INPUT_FACTOR].default_value = 1.0
+                in_a, in_b, out_r = (
+                    compat.MIX_INPUT_A, compat.MIX_INPUT_B, compat.MIX_OUTPUT_RESULT)
                 mix.name = "LM_Mix"
                 mix.label = "LightMap Mix"
 

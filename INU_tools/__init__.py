@@ -24,7 +24,14 @@ bl_info = {
     "name": "INU_tools(gta_sa)",
     "author": "INU",
     "version": (1, 7, 0),
-    "blender": (4, 2, 0),
+    # Минимум 2.80 — поддержка через tools/compat.py:
+    # • bake / preview / DFF I/O работают через legacy mesh.vertex_colors
+    # • prelight preview shader использует ShaderNodeMixRGB на ≤3.3
+    # • VC Layers System требует 3.2+ (на старых показывает warning)
+    # • IK rig работает на pose.bones (без bone collections)
+    # blender_manifest.toml для extensions.blender.org остаётся 4.2+ —
+    # это второй канал distribution, для современного Blender'а.
+    "blender": (2, 80, 0),
     "location": "View3D > Sidebar (N) > GTA Tools",
     "description": "Toolset for GTA SA models",
     "category": "3D View",

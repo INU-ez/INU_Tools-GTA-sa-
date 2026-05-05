@@ -24,6 +24,7 @@ import bpy
 from bpy.props import StringProperty, CollectionProperty
 
 from .. import T
+from ..tools import compat
 from ..core.validate import (
     check_paintjobs,
     check_quaternions,
@@ -127,8 +128,7 @@ def _gather_modulate_color_meshes():
             continue
         mod_col = bool(getattr(inu, 'modulate_color', True))
         me = obj.data
-        has_vcol = bool(getattr(me, 'color_attributes', None)
-                        and len(me.color_attributes) > 0)
+        has_vcol = bool(compat.vcol_list(me))
         out.append(dict(name=obj.name,
                         modulate_color=mod_col,
                         has_vcol=has_vcol))

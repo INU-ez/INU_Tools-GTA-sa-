@@ -10,6 +10,7 @@ from gpu_extras.batch import batch_for_shader
 from bpy.props import *
 
 from .. import T
+from . import compat
 from ..data.surface_materials import get_col_surface_id, get_surface_name
 
 
@@ -57,14 +58,14 @@ def _col_light_invalidate_preview(self, context):
 def _col_light_get_preview_data(context):
     """Compute or return cached per-polygon night light values."""
     obj = context.active_object
-    if not obj or obj.type != 'MESH' or not obj.data.color_attributes:
+    if not obj or obj.type != 'MESH' or not compat.vcol_list(obj.data):
         return []
 
     scene = context.scene
     mesh = obj.data
 
     # Use active color attribute to determine Day or Night range
-    active_attr = mesh.color_attributes.active_color
+    active_attr = compat.vcol_active(mesh)
     if active_attr is None:
         return []
 
@@ -264,7 +265,7 @@ class GTATOOLS_OT_preview_col_light(bpy.types.Operator):
     @classmethod
     def poll(cls, context):
         obj = context.active_object
-        return obj and obj.type == 'MESH' and obj.data.color_attributes
+        return obj and obj.type == 'MESH' and bool(compat.vcol_list(obj.data))
 
     def execute(self, context):
         global _col_light_preview_active, _col_light_preview_handlers
@@ -310,7 +311,7 @@ class GTATOOLS_OT_bake_col_light(bpy.types.Operator):
     @classmethod
     def poll(cls, context):
         obj = context.active_object
-        return obj and obj.type == 'MESH' and obj.data.color_attributes
+        return obj and obj.type == 'MESH' and bool(compat.vcol_list(obj.data))
 
     def _read_brightness(self, color_attr):
         """Read per-loop brightness from a color attribute."""
@@ -369,13 +370,13 @@ class GTATOOLS_OT_bake_col_light(bpy.types.Operator):
             gamma = 1.0 + abs(edge) * 4.0
 
         # Day source: "Day" layer or active
-        day_attr = mesh.color_attributes.get("Day") or mesh.color_attributes.active_color
+        day_attr = compat.vcol_get(mesh, "Day") or compat.vcol_active(mesh)
         if day_attr is None:
             self.report({'ERROR'}, "No vertex color layer found")
             return {'CANCELLED'}
 
         # Night source: "Night" layer (optional, falls back to Day)
-        night_attr = mesh.color_attributes.get("Night") or day_attr
+        night_attr = compat.vcol_get(mesh, "Night") or day_attr
 
         day_brightness = self._read_brightness(day_attr)
         night_brightness = self._read_brightness(night_attr)

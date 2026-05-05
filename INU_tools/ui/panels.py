@@ -19,6 +19,7 @@ from bpy.props import (
 )
 
 from .. import T
+from ..tools import compat
 from ..ui.registry import apply_order
 
 
@@ -1990,14 +1991,14 @@ class GTATOOLS_PT_prelight_panel(bpy.types.Panel):
 
         if obj and obj.type == 'MESH':
             mesh = obj.data
-            active_attr = mesh.color_attributes.active_color if mesh.color_attributes else None
+            active_attr = compat.vcol_active(mesh)
 
             box = layout.box()
             box_col = box.column(align=True)
 
             # Day row
             row = box_col.row(align=True)
-            if "Day" in mesh.color_attributes:
+            if compat.vcol_get(mesh, "Day") is not None:
                 is_active = bool(active_attr and active_attr.name == "Day")
                 icon = 'RADIOBUT_ON' if is_active else 'RADIOBUT_OFF'
                 op = row.operator("gtatools.select_color_attribute", text="Day", icon=icon, depress=is_active)
@@ -2011,7 +2012,7 @@ class GTATOOLS_PT_prelight_panel(bpy.types.Panel):
 
             # Night row
             row = box_col.row(align=True)
-            if "Night" in mesh.color_attributes:
+            if compat.vcol_get(mesh, "Night") is not None:
                 is_active = bool(active_attr and active_attr.name == "Night")
                 icon = 'RADIOBUT_ON' if is_active else 'RADIOBUT_OFF'
                 op = row.operator("gtatools.select_color_attribute", text="Night", icon=icon, depress=is_active)
@@ -2273,10 +2274,11 @@ class GTATOOLS_PT_prelight_col_panel(bpy.types.Panel):
         scene = context.scene
 
         # Show source layers
-        if obj and obj.type == 'MESH' and obj.data.color_attributes:
+        if obj and obj.type == 'MESH' and compat.vcol_list(obj.data):
             mesh = obj.data
-            day_src = "Day" if "Day" in mesh.color_attributes else (mesh.color_attributes.active_color.name if mesh.color_attributes.active_color else "—")
-            night_src = "Night" if "Night" in mesh.color_attributes else day_src
+            _act = compat.vcol_active(mesh)
+            day_src = "Day" if compat.vcol_get(mesh, "Day") else (_act.name if _act else "—")
+            night_src = "Night" if compat.vcol_get(mesh, "Night") else day_src
             layout.label(text=f"Day: {day_src} | Night: {night_src}", icon='COLOR')
         else:
             layout.label(text=T("Нет vertex colors"), icon='INFO')

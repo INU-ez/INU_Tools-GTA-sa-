@@ -14,6 +14,7 @@ import bpy
 from dataclasses import dataclass, field
 from typing import Dict, List
 from mathutils import Vector
+from ..tools import compat
 
 
 MAX_PARTICLES_PER_EMITTER = 64
@@ -94,11 +95,8 @@ def _get_or_create_sim_mesh(empty):
         uv_data[i * 4 + 2].uv = (1.0, 1.0)
         uv_data[i * 4 + 3].uv = (0.0, 1.0)
 
-    # Vertex color layer (per-loop RGBA)
-    if hasattr(mesh, 'color_attributes'):
-        mesh.color_attributes.new(name='Col', type='FLOAT_COLOR', domain='CORNER')
-    else:
-        mesh.vertex_colors.new(name='Col')
+    # Vertex color layer (per-loop RGBA). На 2.80-3.1 будет BYTE_COLOR.
+    compat.vcol_new(mesh, 'Col', dtype='FLOAT_COLOR')
 
     obj = bpy.data.objects.new(mesh_name, mesh)
     obj.parent = empty
@@ -420,13 +418,11 @@ def _render(empty, mesh_obj, state: List[_Particle], right: Vector, up: Vector):
 
     mesh.vertices.foreach_set('co', vco)
 
-    # Write vertex color attribute (Blender 3.2+ uses color_attributes)
-    if hasattr(mesh, 'color_attributes') and mesh.color_attributes:
-        attr = mesh.color_attributes.get('Col')
-        if attr is not None:
-            attr.data.foreach_set('color', loop_col)
-    elif mesh.vertex_colors:
-        mesh.vertex_colors['Col'].data.foreach_set('color', loop_col)
+    # Write vertex color attribute через compat — на 2.80-3.1 это
+    # mesh.vertex_colors, на 3.2+ это mesh.color_attributes.
+    attr = compat.vcol_get(mesh, 'Col')
+    if attr is not None:
+        attr.data.foreach_set('color', loop_col)
 
     mesh.update()
 

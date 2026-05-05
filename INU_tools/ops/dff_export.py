@@ -395,24 +395,27 @@ def _process_mesh(obj, clump: DffClump, frame_index: int):
 
     flags = _get_obj_export_flags(obj)
 
-    # Convert FLOAT_COLOR attributes to BYTE_COLOR before export (Itera Tools compatibility)
+    # Convert FLOAT_COLOR attributes to BYTE_COLOR before export (Itera Tools compatibility).
+    # На 2.80-3.1 mesh.vertex_colors всегда BYTE_COLOR — конверсия не нужна, цикл no-op.
     import bpy
     import numpy as np
+    from ..tools.compat import (HAS_COLOR_ATTRIBUTES, vcol_list, vcol_remove,
+                                 vcol_new, vcol_get, vcol_data_type)
     orig_mesh = obj.data
-    for ca in list(orig_mesh.color_attributes):
-        ca_type = getattr(ca, 'data_type', None) or getattr(ca, 'type', None)
-        if ca_type in ('FLOAT_COLOR', 'COLOR'):
-            name = ca.name
-            domain = ca.domain
-            n = len(ca.data)
-            # Bulk read float colors → bulk write byte colors. Поэлементный
-            # доступ через .data[i] медленный (RNA per-call), foreach_*
-            # для тысяч loops/vertices даёт ×50-100 ускорение.
-            flat = np.empty(n * 4, dtype=np.float32)
-            ca.data.foreach_get('color', flat)
-            orig_mesh.color_attributes.remove(ca)
-            new_attr = orig_mesh.color_attributes.new(name=name, type='BYTE_COLOR', domain=domain)
-            new_attr.data.foreach_set('color', flat)
+    if HAS_COLOR_ATTRIBUTES:
+        for ca in vcol_list(orig_mesh):
+            if vcol_data_type(ca) in ('FLOAT_COLOR', 'COLOR'):
+                name = ca.name
+                domain = getattr(ca, 'domain', 'CORNER')
+                n = len(ca.data)
+                # Bulk read float colors → bulk write byte colors. Поэлементный
+                # доступ через .data[i] медленный (RNA per-call), foreach_*
+                # для тысяч loops/vertices даёт ×50-100 ускорение.
+                flat = np.empty(n * 4, dtype=np.float32)
+                ca.data.foreach_get('color', flat)
+                vcol_remove(orig_mesh, ca)
+                new_attr = vcol_new(orig_mesh, name, domain=domain)
+                new_attr.data.foreach_set('color', flat)
 
     # Get evaluated mesh with modifiers applied (disable ARMATURE first)
     arm_mods = []
@@ -435,9 +438,9 @@ def _process_mesh(obj, clump: DffClump, frame_index: int):
     # [0]/[1] прихватит не тот слой. Fallback на индексы — для старых
     # мешей без именованных атрибутов.
     orig_mesh = obj.data
-    day_attr = orig_mesh.color_attributes.get("Day")
-    night_attr = orig_mesh.color_attributes.get("Night")
-    all_attrs = list(orig_mesh.color_attributes)
+    day_attr = vcol_get(orig_mesh, "Day")
+    night_attr = vcol_get(orig_mesh, "Night")
+    all_attrs = vcol_list(orig_mesh)
     if day_attr is None and len(all_attrs) >= 1:
         day_attr = all_attrs[0]
     if night_attr is None and len(all_attrs) >= 2 and all_attrs[1] is not day_attr:

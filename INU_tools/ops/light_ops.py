@@ -17,6 +17,7 @@ from bpy.props import (
 from mathutils import Vector
 
 from .. import T
+from ..tools import compat
 from ..tools.model_utils import find_selected_models
 from ..tools.prelight import (
     average_colors_on_coplanar_faces,
@@ -247,8 +248,8 @@ class GTATOOLS_OT_bake_vertex_colors(bpy.types.Operator):
         for obj in mesh_objects:
             success, message = bake_vertex_colors_from_lights(obj, self.use_shadows)
             if success:
-                if obj.data.color_attributes.active_color:
-                    prop_name = f"v_offset_{obj.data.color_attributes.active_color.name}"
+                if compat.vcol_active(obj.data):
+                    prop_name = f"v_offset_{compat.vcol_active(obj.data).name}"
                     obj[prop_name] = 0.0
                 baked += 1
 
@@ -283,13 +284,14 @@ class GTATOOLS_OT_bake_vertex_colors_simple(bpy.types.Operator):
         for obj in mesh_objects:
             success, message = bake_vertex_colors_simple(obj, ambient, intensity, gamma, use_shadows)
             if success:
-                if obj.data.color_attributes.active_color:
-                    prop_name = f"v_offset_{obj.data.color_attributes.active_color.name}"
+                if compat.vcol_active(obj.data):
+                    prop_name = f"v_offset_{compat.vcol_active(obj.data).name}"
                     obj[prop_name] = 0.0
                 baked += 1
 
         if baked:
-            attr_name = mesh_objects[0].data.color_attributes.active_color.name if mesh_objects[0].data.color_attributes.active_color else "?"
+            _act = compat.vcol_active(mesh_objects[0].data)
+            attr_name = _act.name if _act else "?"
             self.report({'INFO'}, f"Baked to '{attr_name}' from {baked} objects")
             return {'FINISHED'}
         else:
@@ -486,7 +488,7 @@ class GTATOOLS_OT_vc_smooth_between(bpy.types.Operator):
 
         for oi, obj in enumerate(mesh_objects):
             mesh = obj.data
-            color_attr = mesh.color_attributes.active_color
+            color_attr = compat.vcol_active(mesh)
             if color_attr is None:
                 continue
 
@@ -675,18 +677,13 @@ class GTATOOLS_OT_load_lightmap(bpy.types.Operator):
             lm_tex.label = "Lightmap"
             lm_tex.image = lightmap_image
 
-            # Создаём ноду Mix (Multiply) — совместимость 4.4+
-            if bpy.app.version >= (4, 0, 0):
-                mix_node = nodes.new('ShaderNodeMix')
-                mix_node.data_type = 'RGBA'
-                mix_node.blend_type = 'MULTIPLY'
-                mix_node.inputs['Factor'].default_value = 1.0
-                _mix_in1, _mix_in2, _mix_out = 'A', 'B', 'Result'
-            else:
-                mix_node = nodes.new('ShaderNodeMixRGB')
-                mix_node.blend_type = 'MULTIPLY'
-                mix_node.inputs['Fac'].default_value = 1.0
-                _mix_in1, _mix_in2, _mix_out = 'Color1', 'Color2', 'Color'
+            # Создаём ноду Mix (Multiply) через compat — на 3.4+ это
+            # ShaderNodeMix(RGBA), на 2.80-3.3 — ShaderNodeMixRGB.
+            mix_node = nodes.new(compat.MIX_NODE_TYPE)
+            compat.setup_mix_rgba_node(mix_node, blend='MULTIPLY')
+            mix_node.inputs[compat.MIX_INPUT_FACTOR].default_value = 1.0
+            _mix_in1, _mix_in2, _mix_out = (
+                compat.MIX_INPUT_A, compat.MIX_INPUT_B, compat.MIX_OUTPUT_RESULT)
             mix_node.name = "Lightmap_Mix"
             mix_node.label = "Lightmap Mix"
 
@@ -824,22 +821,23 @@ class GTATOOLS_OT_create_day_night(bpy.types.Operator):
             mesh = obj.data
 
             # Create Day attribute if not exists
-            if "Day" not in mesh.color_attributes:
-                attr = mesh.color_attributes.new(name="Day", type='BYTE_COLOR', domain='CORNER')
+            if compat.vcol_get(mesh, "Day") is None:
+                attr = compat.vcol_new(mesh, "Day")
                 for i in range(len(attr.data)):
                     attr.data[i].color = (1.0, 1.0, 1.0, 1.0)
                 total_created += 1
 
             # Create Night attribute if not exists
-            if "Night" not in mesh.color_attributes:
-                attr = mesh.color_attributes.new(name="Night", type='BYTE_COLOR', domain='CORNER')
+            if compat.vcol_get(mesh, "Night") is None:
+                attr = compat.vcol_new(mesh, "Night")
                 for i in range(len(attr.data)):
                     attr.data[i].color = (1.0, 1.0, 1.0, 1.0)
                 total_created += 1
 
             # Set Day as active
-            if "Day" in mesh.color_attributes:
-                mesh.color_attributes.active_color = mesh.color_attributes["Day"]
+            day_attr = compat.vcol_get(mesh, "Day")
+            if day_attr is not None:
+                compat.vcol_active(mesh, day_attr)
 
         self.report({'INFO'}, f"Day/Night: {len(mesh_objects)} objects, {total_created} attributes created")
         return {'FINISHED'}
@@ -867,14 +865,13 @@ class GTATOOLS_OT_copy_color_attr(bpy.types.Operator):
         copied = 0
         for obj in mesh_objects:
             mesh = obj.data
-            src_attr = mesh.color_attributes.get(self.source)
+            src_attr = compat.vcol_get(mesh, self.source)
             if not src_attr:
                 continue
 
-            tgt_attr = mesh.color_attributes.get(self.target)
+            tgt_attr = compat.vcol_get(mesh, self.target)
             if not tgt_attr:
-                tgt_attr = mesh.color_attributes.new(
-                    name=self.target, type='BYTE_COLOR', domain='CORNER')
+                tgt_attr = compat.vcol_new(mesh, self.target)
 
             # Copy all colors
             n = min(len(src_attr.data), len(tgt_attr.data))
@@ -1361,11 +1358,11 @@ class GTATOOLS_OT_eyedropper_color(bpy.types.Operator):
             return False
 
         mesh = obj.data
-        if not mesh.color_attributes:
+        if not compat.vcol_list(mesh):
             self.report({'ERROR'}, "Object has no vertex colors!")
             return False
 
-        color_attr = mesh.color_attributes.active_color
+        color_attr = compat.vcol_active(mesh)
         if color_attr is None:
             self.report({'ERROR'}, "No active color layer!")
             return False
@@ -1492,13 +1489,13 @@ class GTATOOLS_OT_select_fill_color(bpy.types.Operator):
             bpy.ops.object.mode_set(mode='OBJECT')
 
         mesh = obj.data
-        if not mesh.color_attributes or not mesh.color_attributes.active_color:
+        if not compat.vcol_active(mesh):
             self.report({'ERROR'}, T("Нет vertex colors!"))
             if original_mode == 'EDIT':
                 bpy.ops.object.mode_set(mode='EDIT')
             return {'CANCELLED'}
 
-        color_attr = mesh.color_attributes.active_color
+        color_attr = compat.vcol_active(mesh)
 
         # Find polygons with this color
         selected_count = 0
@@ -1625,8 +1622,8 @@ class GTATOOLS_OT_scatter_light(bpy.types.Operator):
         # Сохраняем цвета ДО scatter для вычисления дельты
         pre_scatter_colors = {}
         mesh = obj.data
-        if mesh.color_attributes and mesh.color_attributes.active_color:
-            color_attr = mesh.color_attributes.active_color
+        if compat.vcol_active(mesh):
+            color_attr = compat.vcol_active(mesh)
             for loop_idx in range(len(color_attr.data)):
                 c = color_attr.data[loop_idx].color
                 pre_scatter_colors[loop_idx] = (c[0], c[1], c[2], c[3])
@@ -1643,7 +1640,7 @@ class GTATOOLS_OT_scatter_light(bpy.types.Operator):
         # Вычисляем дельты ДО переключения режима (пока данные mesh актуальны)
         if success and selected_color and affected_loops:
             deltas = {}
-            color_attr = mesh.color_attributes.active_color
+            color_attr = compat.vcol_active(mesh)
             for loop_idx in affected_loops:
                 if loop_idx in pre_scatter_colors and loop_idx < len(color_attr.data):
                     old = pre_scatter_colors[loop_idx]
@@ -1741,9 +1738,9 @@ class GTATOOLS_OT_select_color_attribute(bpy.types.Operator):
         switched = 0
         for obj in mesh_objects:
             mesh = obj.data
-            if self.attribute_name in mesh.color_attributes:
-                color_attr = mesh.color_attributes[self.attribute_name]
-                mesh.color_attributes.active_color = color_attr
+            color_attr = compat.vcol_get(mesh, self.attribute_name)
+            if color_attr is not None:
+                compat.vcol_active(mesh, color_attr)
                 self.update_prelight_preview(obj, self.attribute_name)
                 switched += 1
 
@@ -1785,12 +1782,12 @@ class GTATOOLS_OT_add_color_attribute(bpy.types.Operator):
         base_name = "Color"
         name = base_name
         counter = 1
-        while name in mesh.color_attributes:
+        while compat.vcol_get(mesh, name) is not None:
             name = f"{base_name}.{counter:03d}"
             counter += 1
 
-        color_attr = mesh.color_attributes.new(name=name, type='BYTE_COLOR', domain='CORNER')
-        mesh.color_attributes.active_color = color_attr
+        color_attr = compat.vcol_new(mesh, name)
+        compat.vcol_active(mesh, color_attr)
 
         self.report({'INFO'}, f"Created: {name}")
         return {'FINISHED'}
@@ -1809,14 +1806,14 @@ class GTATOOLS_OT_remove_color_attribute(bpy.types.Operator):
             return {'CANCELLED'}
 
         mesh = obj.data
-        if not mesh.color_attributes:
+        if not compat.vcol_list(mesh):
             self.report({'ERROR'}, "No color attributes!")
             return {'CANCELLED'}
 
-        active = mesh.color_attributes.active_color
+        active = compat.vcol_active(mesh)
         if active:
             name = active.name
-            mesh.color_attributes.remove(active)
+            compat.vcol_remove(mesh, active)
             self.report({'INFO'}, f"Removed: {name}")
         else:
             self.report({'ERROR'}, "No active color attribute!")
@@ -1841,18 +1838,18 @@ class GTATOOLS_OT_create_color_attr(bpy.types.Operator):
 
         mesh = obj.data
 
-        if self.attr_name in mesh.color_attributes:
+        if compat.vcol_get(mesh, self.attr_name) is not None:
             self.report({'INFO'}, f"{self.attr_name} already exists")
             return {'CANCELLED'}
 
         # Create attribute
-        attr = mesh.color_attributes.new(name=self.attr_name, type='BYTE_COLOR', domain='CORNER')
+        attr = compat.vcol_new(mesh, self.attr_name)
         # Fill with white
         for i in range(len(attr.data)):
             attr.data[i].color = (1.0, 1.0, 1.0, 1.0)
 
         # Set as active
-        mesh.color_attributes.active_color = attr
+        compat.vcol_active(mesh, attr)
 
         self.report({'INFO'}, f"Created: {self.attr_name}")
         return {'FINISHED'}
@@ -1880,9 +1877,9 @@ class GTATOOLS_OT_remove_color_attr(bpy.types.Operator):
         removed = 0
         for obj in mesh_objects:
             mesh = obj.data
-            if self.attr_name in mesh.color_attributes:
-                attr = mesh.color_attributes[self.attr_name]
-                mesh.color_attributes.remove(attr)
+            attr = compat.vcol_get(mesh, self.attr_name)
+            if attr is not None:
+                compat.vcol_remove(mesh, attr)
                 removed += 1
 
         if removed:

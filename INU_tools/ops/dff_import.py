@@ -377,11 +377,11 @@ def _build_mesh(geom: DffGeometry, name: str, materials: list,
             uv_layer.data.foreach_set('uv', loop_uvs.ravel())
 
         # ── Vertex color layers (Day / Night) ───────────────────────────
+        from ..tools.compat import vcol_new
         def _add_color_layer(layer_name: str, dff_colors):
             if not dff_colors:
                 return
-            attr = mesh.color_attributes.new(
-                name=layer_name, type='BYTE_COLOR', domain='CORNER')
+            attr = vcol_new(mesh, layer_name)  # 2.80 vertex_colors / 3.2+ color_attributes
             cols_np = np.empty((len(dff_colors), 4), dtype=np.float32)
             for k, c in enumerate(dff_colors):
                 cols_np[k, 0] = c.r / 255.0

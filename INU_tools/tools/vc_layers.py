@@ -1,5 +1,10 @@
 """Vertex Color Layer System — Phase 1 (data model + UI scaffold).
 
+**Минимальная версия Blender: 3.2.** Система требует
+``mesh.color_attributes`` API + FLOAT_COLOR + POINT/CORNER domain'ы,
+которых нет в 2.80-3.1. На старых версиях UI секция показывает
+warning-label, handler'ы не регистрируются, операторы не вызываются.
+
 Each VCL layer is backed by a ``BYTE_COLOR``/``CORNER`` color attribute
 on the mesh whose name encodes the scope:
 
@@ -25,6 +30,7 @@ from bpy.props import (
 )
 
 from .. import T
+from . import compat
 from ..core.vc_layers import (
     VCL_PREFIX_DAY, VCL_PREFIX_NIGHT,
     BASE_DAY_NAME, BASE_NIGHT_NAME,
@@ -1413,6 +1419,10 @@ def _draw_stack(layout, mesh, scope, header_text, icon):
 def draw_vc_layers_section(layout, context, mesh):
     """Draw the «Слои Vertex Color» collapsible section.
 
+    На Blender 2.80-3.1 показывает warning-label вместо контролов:
+    система требует mesh.color_attributes API (3.2+) + FLOAT_COLOR.
+    Полная реализация — только на 3.2+.
+
     Called inline from the prelight panel's draw, sandwiched between
     the LightMap row and the Запекание section. Lives outside the
     Panel-class machinery because Blender doesn't let sub-panels
@@ -1435,6 +1445,17 @@ def draw_vc_layers_section(layout, context, mesh):
         │ [Absolute|Relative] sliders + apply│
         └────────────────────────────────────┘
     """
+    # Version gate: на 2.80-3.1 секция отключена целиком.
+    if not compat.HAS_COLOR_ATTRIBUTES:
+        box = layout.box()
+        col = box.column(align=True)
+        col.label(text=T("VC Layers System"), icon='COLOR')
+        col.label(
+            text=compat.require_version_message(
+                "VC Layers", (3, 2, 0)),
+            icon='ERROR')
+        return
+
     scene = context.scene
     expanded = bool(getattr(scene, 'gtatools_vc_layers_expanded', False))
 
@@ -1611,7 +1632,12 @@ def vc_layers_register_handlers():
     flush function exists. Idempotent — the addon does
     register/unregister cycles on reload and re-adding a duplicate
     handler would fire it twice per stroke.
+
+    На Blender 2.80-3.1 — no-op, потому что вся система требует
+    mesh.color_attributes (3.2+) и при срабатывании handler'ы упадут.
     """
+    if not compat.HAS_COLOR_ATTRIBUTES:
+        return
     handlers = bpy.app.handlers.depsgraph_update_post
     if _on_depsgraph_paint not in handlers:
         handlers.append(_on_depsgraph_paint)
