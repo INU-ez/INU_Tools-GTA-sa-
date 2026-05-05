@@ -5,9 +5,6 @@ from __future__ import annotations
 import os
 import bpy
 
-from bpy.props import (
-    StringProperty,
-)
 from ..core.col import ColModel
 from ..core.cst import write_cst
 from .col_export import (

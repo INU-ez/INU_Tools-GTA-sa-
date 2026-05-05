@@ -6,7 +6,6 @@
 # user wondering where the manual lives.
 
 import bpy
-from bpy.props import StringProperty
 
 from .. import T, get_locale
 

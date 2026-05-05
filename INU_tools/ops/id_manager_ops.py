@@ -4,10 +4,8 @@
 
 import os
 import bpy
-import bmesh
 from bpy.props import (
-    StringProperty, BoolProperty, FloatProperty, FloatVectorProperty,
-    IntProperty, EnumProperty, CollectionProperty, PointerProperty,
+    StringProperty, BoolProperty, IntProperty, EnumProperty,
 )
 
 from .. import T
@@ -115,7 +113,6 @@ class GTATOOLS_OT_id_manager_auto_assign(bpy.types.Operator):
             else:
                 display_name = clean_name
 
-            from ..data.id_manager import allocate_id
             new_id = allocate_id(display_name)
             if new_id is None:
                 self.report({'ERROR'}, T("Нет свободных ID в активном пресете"))
@@ -216,7 +213,6 @@ class GTATOOLS_OT_batch_set_type(bpy.types.Operator):
                 continue
 
             # Get current base name
-            from ..tools.model_utils import get_model_type
             _, base = get_model_type(obj)
             if not base:
                 base = obj.name

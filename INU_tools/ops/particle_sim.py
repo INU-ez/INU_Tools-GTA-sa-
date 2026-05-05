@@ -112,7 +112,6 @@ def _get_or_create_sim_mesh(empty):
     obj.lock_scale = (True, True, True)
 
     # Material
-    from .fx_preview import _find_particle_image
     tex_name = (empty.inu.particle_texture or '').strip() if hasattr(empty, 'inu') else ''
     mat = _create_sim_material(empty.name, tex_name or None)
     mesh.materials.append(mat)

@@ -7,7 +7,6 @@ from ..core.paths import (
     TrackFile, TrackNode, write_track,
     NodesFile, PathNode, NaviNode, PathLink, write_nodes,
     PathIPLFile, PathIPLGroup, PathIPLNode, write_paths_ipl,
-    NODES_PER_GROUP,
 )
 
 

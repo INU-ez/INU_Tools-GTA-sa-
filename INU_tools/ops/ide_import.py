@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 import bpy
-from ..core.ide import read_ide, IdeFile
+from ..core.ide import read_ide
 
 
 def import_ide(filepath: str, context=None) -> list:

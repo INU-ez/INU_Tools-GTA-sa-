@@ -2,9 +2,7 @@
 
 import bpy
 import bmesh
-import os
 
-from .. import T
 
 
 def _get_suffixes():

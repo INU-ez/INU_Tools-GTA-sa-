@@ -5,14 +5,12 @@
 import math
 import bpy
 import bmesh
-import mathutils
 from bpy.props import StringProperty, BoolProperty
 from bpy_extras.io_utils import ExportHelper
 
 from .. import T
 from ..core.col import (
-    ColModel, ColFace, ColSphere, ColBox,
-    Bounds, Vec3, Surface,
+    ColModel, ColFace, ColSphere, Bounds, Vec3, Surface,
     write_col_file, write_col,
 )
 

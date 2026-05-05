@@ -6,7 +6,6 @@ import math
 import numpy as np
 from mathutils import Vector
 
-from .. import T
 from . import compat
 
 

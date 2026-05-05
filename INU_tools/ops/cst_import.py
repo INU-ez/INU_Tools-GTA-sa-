@@ -8,9 +8,6 @@ from .col_import import _create_mesh_from_col
 import bpy
 
 
-from bpy.props import (
-    StringProperty,
-)
 def import_cst(filepath: str):
     """Parse the CST file and create Blender objects for every MODEL block."""
     models = read_cst(filepath)

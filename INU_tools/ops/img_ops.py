@@ -806,7 +806,7 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
 
     def execute(self, context):
         from ..core.img import ImgWriter
-        from ..core.dff import write_dff, GTA_SA_VERSION
+        from ..core.dff import GTA_SA_VERSION
         from ..core.col import write_col
         from ..tools.model_utils import find_all_selected_model_groups
         from ..tools.txd_export import export_txd, check_nvtt_available

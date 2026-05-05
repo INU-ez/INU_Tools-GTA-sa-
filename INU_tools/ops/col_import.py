@@ -7,7 +7,7 @@ import os
 from bpy.props import StringProperty, CollectionProperty
 
 from .. import T
-from ..core.col import read_col_file, ColModel, Vec3
+from ..core.col import read_col_file, ColModel
 
 
 def _get_or_make_col_material(surface, material_cache):

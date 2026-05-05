@@ -26,18 +26,15 @@ from __future__ import annotations
 import bpy
 from bpy.props import (
     StringProperty, FloatProperty, FloatVectorProperty, BoolProperty,
-    EnumProperty, IntProperty, CollectionProperty,
+    EnumProperty,
 )
 
 from .. import T
 from . import compat
 from ..core.vc_layers import (
-    VCL_PREFIX_DAY, VCL_PREFIX_NIGHT,
     BASE_DAY_NAME, BASE_NIGHT_NAME,
     MAX_LAYERS_PER_STACK,
-    parse_vcl_attr_name, make_vcl_attr_name, classify_attribute,
-    auto_label, count_layers_per_scope, BLEND_MODES,
-    composite_stack_np,
+    parse_vcl_attr_name, make_vcl_attr_name, auto_label, count_layers_per_scope, composite_stack_np,
 )
 
 

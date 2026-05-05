@@ -10,13 +10,10 @@ import numpy as np
 
 from .. import T
 from bpy.props import (
-    EnumProperty, StringProperty, CollectionProperty,
+    StringProperty, CollectionProperty,
 )
 from ..core.dff import (
-    read_dff_file, DffClump, DffGeometry, DffFrame, DffAtomic,
-    RGBA, TexCoords, DffMaterial, DffTexture, UserData,
-    SkinData, HAnimData, HAnimBone,
-    GEOM_NORMALS, GEOM_PRELIT, GEOM_TEXTURED, GEOM_TEXTURED2,
+    read_dff_file, DffClump, DffGeometry, DffMaterial, UserData,
     USERDATA_INT, USERDATA_FLOAT, USERDATA_STRING,
     Extension2dfx, Light2dfx, Particle2dfx, PedAttractor2dfx, SunGlare2dfx,
 )

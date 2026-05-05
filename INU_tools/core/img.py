@@ -147,7 +147,6 @@ class ImgReader:
 
         Returns dict with counts: {'dff': N, 'col': N, 'txd': N, 'other': N, 'skipped': N}
         """
-        import os
         os.makedirs(output_dir, exist_ok=True)
 
         # Sort entries by offset for sequential disk read

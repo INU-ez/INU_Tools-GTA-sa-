@@ -3,7 +3,6 @@
 # Uses numpy for fast DXT decompression.
 
 import numpy as np
-from struct import unpack_from
 from .rwbinary import BinaryReader
 
 

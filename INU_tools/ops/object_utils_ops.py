@@ -2,12 +2,9 @@
 #
 # Phase 3 (2026-04-26): operators moved from __init__.py.
 
-import os
 import bpy
-import bmesh
 from bpy.props import (
-    StringProperty, BoolProperty, FloatProperty, FloatVectorProperty,
-    IntProperty, EnumProperty, CollectionProperty, PointerProperty,
+    StringProperty,
 )
 
 from .. import T
@@ -41,7 +38,6 @@ class GTATOOLS_OT_toggle_visibility(bpy.types.Operator):
         for obj in bpy.data.objects:
             if obj.type != 'MESH':
                 continue
-            from ..tools.model_utils import get_model_type
             mt, _ = get_model_type(obj)
             if mt == self.model_type:
                 obj.hide_viewport = hide
@@ -65,7 +61,6 @@ class GTATOOLS_OT_snap_to_dff(bpy.types.Operator):
         for obj in bpy.data.objects:
             if obj.type != 'MESH':
                 continue
-            from ..tools.model_utils import get_model_type
             mt, base = get_model_type(obj)
             if not base:
                 continue

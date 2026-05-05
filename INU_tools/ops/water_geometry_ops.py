@@ -2,12 +2,10 @@
 #
 # Phase 3 (2026-04-26): operators moved from __init__.py.
 
-import os
 import bpy
 import bmesh
 from bpy.props import (
-    StringProperty, BoolProperty, FloatProperty, FloatVectorProperty,
-    IntProperty, EnumProperty, CollectionProperty, PointerProperty,
+    FloatProperty, IntProperty, EnumProperty,
 )
 
 from .. import T
@@ -35,7 +33,6 @@ class GTATOOLS_OT_add_water(bpy.types.Operator):
     speed: FloatProperty(name="Speed", default=0.05, min=0.0, max=5.0)
 
     def execute(self, context):
-        import bmesh
 
         mesh = bpy.data.meshes.new("Water")
         bm = bmesh.new()
@@ -146,7 +143,6 @@ class GTATOOLS_OT_water_set_params(bpy.types.Operator):
         speed_z = scene.gtatools_water_speed_z
         wave = scene.gtatools_water_wave_height
 
-        import bmesh
         count = 0
         for obj in context.selected_objects:
             if obj.type != 'MESH':
@@ -184,7 +180,6 @@ class GTATOOLS_OT_water_stitch(bpy.types.Operator):
     threshold: FloatProperty(name="Threshold", default=1.0, min=0.01, max=50.0)
 
     def execute(self, context):
-        from mathutils import kdtree
 
         mesh_objects = [o for o in context.selected_objects if o.type == 'MESH']
         if len(mesh_objects) < 2:

@@ -12,11 +12,6 @@
 
 import ast
 import bpy
-import bmesh
-from bpy.props import (
-    StringProperty, BoolProperty, FloatProperty, IntProperty,
-    EnumProperty, CollectionProperty, PointerProperty,
-)
 
 from .. import T
 from ..tools import compat
@@ -236,8 +231,6 @@ class GTATOOLS_PT_material_panel(bpy.types.Panel):
         return context.material is not None
 
     def draw(self, context):
-        from .. import _draw_label_with_info
-        from .. import _draw_suffix_prefix
         layout = self.layout
         mat = context.material
 
@@ -365,8 +358,6 @@ class GTATOOLS_PT_ide_ipl_panel(bpy.types.Panel):
 
     def draw(self, context):
         import os
-        from .. import _draw_label_with_info
-        from .. import _draw_suffix_prefix
         layout = self.layout
         scn = context.scene
 
@@ -610,7 +601,6 @@ class GTATOOLS_PT_export_panel(bpy.types.Panel):
             find_selected_models, find_all_selected_model_groups,
         )
         from ..tools.txd_export import check_nvtt_available
-        from .. import _draw_label_with_info
         from .. import _draw_suffix_prefix
         layout = self.layout
 
@@ -885,8 +875,6 @@ class GTATOOLS_PT_check_panel(bpy.types.Panel):
         from .. import _hide_dff
         from .. import _hide_lod
         from .. import _hide_col
-        from .. import _draw_label_with_info
-        from .. import _draw_suffix_prefix
         from ..ops.map_ops import _links_active
         layout = self.layout
 
@@ -955,8 +943,6 @@ class GTATOOLS_PT_vehicle_panel(bpy.types.Panel):
     def draw_header(self, context):
         self.layout.label(text="", icon='AUTO')
     def draw(self, context):
-        from .. import _draw_label_with_info
-        from .. import _draw_suffix_prefix
         layout = self.layout
 
         # Hierarchy scale
@@ -1102,7 +1088,6 @@ class GTATOOLS_PT_2dfx_panel(bpy.types.Panel):
     def draw(self, context):
         from .. import _get_effect_emitter_count
         from .. import _draw_label_with_info
-        from .. import _draw_suffix_prefix
         layout = self.layout
         obj = context.active_object
         is_active = self._is_2dfx(context)
@@ -1455,8 +1440,6 @@ class GTATOOLS_PT_object_ide_ipl_panel(bpy.types.Panel):
         return obj is not None and obj.type == 'MESH'
 
     def draw(self, context):
-        from .. import _draw_label_with_info
-        from .. import _draw_suffix_prefix
         layout = self.layout
         scn = context.scene
         obj = context.active_object
@@ -1552,8 +1535,6 @@ class GTATOOLS_PT_object_inu_tools(bpy.types.Panel):
         return obj is not None and obj.type in ('MESH', 'EMPTY')
 
     def draw(self, context):
-        from .. import _draw_label_with_info
-        from .. import _draw_suffix_prefix
         from ..tools.model_utils import get_model_type
         layout = self.layout
         scn = context.scene
@@ -1563,7 +1544,6 @@ class GTATOOLS_PT_object_inu_tools(bpy.types.Panel):
         # ── Тип (по имени + manual) ──
         box = layout.box()
         box.label(text=T("Тип:"), icon='OBJECT_DATA')
-        from ..tools.model_utils import get_model_type
         detected, _ = get_model_type(obj)
         name_row = box.row(align=True)
         name_row.enabled = False
@@ -1690,9 +1670,6 @@ class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
     def draw(self, context):
         from ..tools.txd_export import check_nvtt_available
         from ..ops.map_ops import _bbox_mode_active
-        from ..ops.map_ops import _links_active
-        from .. import _draw_label_with_info
-        from .. import _draw_suffix_prefix
         layout = self.layout
         scene = context.scene
 
@@ -1923,8 +1900,6 @@ class GTATOOLS_PT_id_manager_panel(bpy.types.Panel):
 
     def draw(self, context):
         from .. import _draw_id_manager
-        from .. import _draw_label_with_info
-        from .. import _draw_suffix_prefix
         layout = self.layout
         scene = context.scene
         _draw_id_manager(layout, scene, context)
@@ -1949,8 +1924,6 @@ class GTATOOLS_PT_light_master(bpy.types.Panel):
         self.layout.label(text="", icon='LIGHT')
 
     def draw(self, context):
-        from .. import _draw_label_with_info
-        from .. import _draw_suffix_prefix
         # Container only — actual content lives in subpanels below.
         # A short hint helps when all children are collapsed.
         col = self.layout.column()
@@ -1973,8 +1946,6 @@ class GTATOOLS_PT_prelight_panel(bpy.types.Panel):
         self.layout.label(text="", icon='COLOR')
 
     def draw(self, context):
-        from .. import _draw_label_with_info
-        from .. import _draw_suffix_prefix
         layout = self.layout
         obj = context.active_object
         scene = context.scene
@@ -2123,8 +2094,6 @@ class GTATOOLS_PT_bake_settings_subpanel(bpy.types.Panel):
     bl_options = {'DEFAULT_CLOSED'}
 
     def draw(self, context):
-        from .. import _draw_label_with_info
-        from .. import _draw_suffix_prefix
         layout = self.layout
         scene = context.scene
 
@@ -2158,7 +2127,6 @@ class GTATOOLS_PT_vc_postprocess_panel(bpy.types.Panel):
 
     def draw(self, context):
         from .. import _draw_label_with_info
-        from .. import _draw_suffix_prefix
         layout = self.layout
         scene = context.scene
 
@@ -2220,8 +2188,6 @@ class GTATOOLS_PT_itera_panel(bpy.types.Panel):
 
     def draw(self, context):
         from ..ops.light_ops import _find_itera_blend_path
-        from .. import _draw_label_with_info
-        from .. import _draw_suffix_prefix
         layout = self.layout
         obj = context.active_object
 
@@ -2268,7 +2234,6 @@ class GTATOOLS_PT_prelight_col_panel(bpy.types.Panel):
     def draw(self, context):
         from .. import _col_light_mod
         from .. import _draw_label_with_info
-        from .. import _draw_suffix_prefix
         layout = self.layout
         obj = context.active_object
         scene = context.scene
@@ -2349,8 +2314,6 @@ class GTATOOLS_PT_vertex_paint_panel(bpy.types.Panel):
 
     def draw(self, context):
         from ..tools.prelight import get_scatter_levels
-        from .. import _draw_label_with_info
-        from .. import _draw_suffix_prefix
         layout = self.layout
         scene = context.scene
         obj = context.active_object
@@ -2453,8 +2416,6 @@ class GTATOOLS_PT_lightmap_panel(bpy.types.Panel):
         return False  # Hidden — code kept for future use
 
     def draw(self, context):
-        from .. import _draw_label_with_info
-        from .. import _draw_suffix_prefix
         layout = self.layout
         scene = context.scene
 
@@ -2502,8 +2463,6 @@ class GTATOOLS_PT_water_panel(bpy.types.Panel):
         self.layout.label(text="", icon='MOD_FLUIDSIM')
 
     def draw(self, context):
-        from .. import _draw_label_with_info
-        from .. import _draw_suffix_prefix
         layout = self.layout
         scene = context.scene
 
@@ -2865,8 +2824,6 @@ class GTATOOLS_PT_radar_panel(bpy.types.Panel):
         self.layout.label(text="", icon='TRACKER')
 
     def draw(self, context):
-        from .. import _draw_label_with_info
-        from .. import _draw_suffix_prefix
         layout = self.layout
         scn = context.scene
 
@@ -2904,8 +2861,6 @@ class GTATOOLS_PT_paths_panel(bpy.types.Panel):
         self.layout.label(text="", icon='TRACKING')
 
     def draw(self, context):
-        from .. import _draw_label_with_info
-        from .. import _draw_suffix_prefix
         layout = self.layout
 
         # Convert to path button (top)

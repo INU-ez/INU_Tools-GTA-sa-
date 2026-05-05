@@ -4,10 +4,8 @@
 
 import os
 import bpy
-import bmesh
 from bpy.props import (
-    StringProperty, BoolProperty, FloatProperty, FloatVectorProperty,
-    IntProperty, EnumProperty, CollectionProperty, PointerProperty,
+    StringProperty,
 )
 
 from .. import T

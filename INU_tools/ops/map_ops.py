@@ -9,7 +9,7 @@
 import os
 import bpy
 from bpy.props import (
-    BoolProperty, PointerProperty, StringProperty,
+    BoolProperty, StringProperty,
 )
 from bpy.props import CollectionProperty
 from bpy_extras.io_utils import ImportHelper
@@ -1381,7 +1381,6 @@ class GTATOOLS_OT_replace_fake_with_dff(bpy.types.Operator):
 
     def execute(self, context):
         from .dff_import import import_dff as inu_import_dff
-        from .txd_import import import_txd as inu_import_txd
 
         scene = context.scene
         game_root = bpy.path.abspath(scene.gtatools_game_root)

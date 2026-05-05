@@ -4,10 +4,9 @@ import bpy
 import bmesh
 import random
 import gpu
-import math
 import os
 from gpu_extras.batch import batch_for_shader
-from bpy.props import StringProperty, BoolProperty, FloatProperty, IntProperty, EnumProperty
+from bpy.props import EnumProperty
 from .. import T
 
 
@@ -318,8 +317,6 @@ class GTATOOLS_OT_randomize_uv_grid(bpy.types.Operator):
         return context.active_object and context.active_object.type == 'MESH' and context.mode == 'EDIT_MESH'
 
     def execute(self, context):
-        import bmesh
-        import random
 
         obj = context.active_object
         scene = context.scene
@@ -432,7 +429,6 @@ class GTATOOLS_OT_snap_uv_to_grid(bpy.types.Operator):
         return context.active_object and context.active_object.type == 'MESH' and context.mode == 'EDIT_MESH'
 
     def execute(self, context):
-        import bmesh
 
         obj = context.active_object
         scene = context.scene

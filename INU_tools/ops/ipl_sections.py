@@ -9,7 +9,6 @@ custom properties for round-trip export.
 from __future__ import annotations
 import bpy
 import math
-from mathutils import Vector, Matrix
 
 
 # ── Collection helpers ────────────────────────────────────────────────

@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from struct import pack, unpack_from, calcsize
+from struct import pack
 from dataclasses import dataclass, field
 from typing import Optional
 

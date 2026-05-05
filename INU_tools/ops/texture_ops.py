@@ -4,12 +4,9 @@
 
 import os
 import bpy
-import bmesh
 from bpy.props import (
-    StringProperty, BoolProperty, FloatProperty, FloatVectorProperty,
-    IntProperty, EnumProperty, CollectionProperty, PointerProperty,
+    StringProperty, BoolProperty, CollectionProperty,
 )
-from bpy_extras.io_utils import ImportHelper
 
 from .. import T
 from ..tools import compat

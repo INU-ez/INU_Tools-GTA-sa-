@@ -2,9 +2,6 @@
 
 import ast
 import bpy
-from bpy.props import (
-    EnumProperty, FloatProperty, IntProperty, StringProperty,
-)
 import mathutils
 from ..core.ifp import read_ifp, HAS_ROT, HAS_TRANS
 from .. import T

@@ -2,12 +2,9 @@
 #
 # Phase 3 (2026-04-26): operators moved from __init__.py.
 
-import os
 import bpy
-import bmesh
 from bpy.props import (
-    StringProperty, BoolProperty, FloatProperty, FloatVectorProperty,
-    IntProperty, EnumProperty, CollectionProperty, PointerProperty,
+    StringProperty, BoolProperty, FloatProperty, EnumProperty,
 )
 
 from .. import T
@@ -92,7 +89,7 @@ class GTATOOLS_OT_export_ifp(bpy.types.Operator):
             box.prop(self, "decimate_tol_trans")
 
     def execute(self, context):
-        from .ifp_export import export_ifp, validate_action_bones
+        from .ifp_export import validate_action_bones
 
         # Bone-name validator — warn (not block) when Action fcurves
         # reference bones the target armature doesn't have. Those rows
@@ -277,7 +274,7 @@ class GTATOOLS_OT_merge_ifp(bpy.types.Operator):
         return {'RUNNING_MODAL'}
 
     def execute(self, context):
-        from .ifp_export import merge_actions_into_ifp, validate_action_bones
+        from .ifp_export import validate_action_bones
 
         armature = context.active_object
         if not armature or armature.type != 'ARMATURE':

@@ -1788,7 +1788,6 @@ def _ipl_entry_from_obj(obj):
 
 
 def _clean_model_name_ide(name):
-    from .tools.model_utils import get_model_type
     # Strip Blender duplicate suffix FIRST (.001, .002, etc.)
     if '.' in name:
         b, s = name.rsplit('.', 1)
@@ -1875,7 +1874,6 @@ from .ops.ide_ipl import (
 
 
 def _clean_name_typed_ipl(name):
-    from .tools.model_utils import get_model_type
     class _Mock:
         def __init__(self, n):
             self.name = n
@@ -2714,7 +2712,6 @@ def _write_png(path: str, pixels: bytes, width: int, height: int):
     """
     import zlib
     import struct as _st
-    import numpy as np
 
     def _chunk(chunk_type: bytes, data: bytes) -> bytes:
         c = chunk_type + data
@@ -2989,7 +2986,6 @@ def _get_cache_dir():
         os.makedirs(d, exist_ok=True)
         return d
     # Unsaved file — use temp
-    import tempfile
     return tempfile.mkdtemp(prefix='inu_')
 
 
@@ -3193,12 +3189,7 @@ def register():
     bpy.types.Object.inu_animobj_props = bpy.props.PointerProperty(
         type=INUAnimObjProps)
 
-    # Sort materials button in material context menu (clean old entries on reload)
-    if hasattr(bpy.types.MATERIAL_MT_context_menu.draw, '_draw_funcs'):
-        draw_funcs = bpy.types.MATERIAL_MT_context_menu.draw._draw_funcs
-        bpy.types.MATERIAL_MT_context_menu.draw._draw_funcs = [
-            f for f in draw_funcs if getattr(f, '__name__', '') != '_draw_sort_materials_menu'
-        ]
+    # Sort materials button in material context menu
     bpy.types.MATERIAL_MT_context_menu.append(_draw_sort_materials_menu)
 
     bpy.types.Scene.gtatools_lightmap_result = StringProperty(name="Result", default="")

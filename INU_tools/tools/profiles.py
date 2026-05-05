@@ -288,7 +288,6 @@ def apply_profile_order(profile_id: str) -> None:
     sorted panel list per Space and only invalidates it on register
     events. The cheapest reliable way to force a re-sort is to
     re-register every affected class — that's what this does."""
-    import bpy as _bpy
     classes = _classes_by_idname()
 
     # First-call snapshot: remember where each panel started so ALL

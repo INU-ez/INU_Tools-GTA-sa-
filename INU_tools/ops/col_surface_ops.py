@@ -2,12 +2,9 @@
 #
 # Phase 3 (2026-04-26): operators moved from __init__.py.
 
-import os
 import bpy
-import bmesh
 from bpy.props import (
-    StringProperty, BoolProperty, FloatProperty, FloatVectorProperty,
-    IntProperty, EnumProperty, CollectionProperty, PointerProperty,
+    StringProperty, BoolProperty, FloatProperty, IntProperty,
 )
 
 from .. import T

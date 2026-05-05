@@ -1,9 +1,6 @@
 # INU_tools.tools.col_light — COL Light preview and baking
 
 import bpy
-import bmesh
-import math
-import numpy as np
 import gpu
 import blf
 from gpu_extras.batch import batch_for_shader
@@ -11,7 +8,6 @@ from bpy.props import *
 
 from .. import T
 from . import compat
-from ..data.surface_materials import get_col_surface_id, get_surface_name
 
 
 # =============================================================================
@@ -184,8 +180,6 @@ def _draw_col_light_faces():
     if not faces:
         return
 
-    import gpu
-    from gpu_extras.batch import batch_for_shader
 
     positions = []
     colors = []
@@ -219,7 +213,6 @@ def _draw_col_light_text():
     if not getattr(context.scene, 'gtatools_col_light_show_numbers', True):
         return
 
-    import blf
     from bpy_extras.view3d_utils import location_3d_to_region_2d
     from mathutils import Vector
 

@@ -4,12 +4,7 @@ DFF → glTF Binary (.glb) converter.
 Converts GTA SA DFF models to glTF format for fast import into Blender.
 Blender's glTF importer is written in C and is 10-50x faster than Python mesh creation.
 
-Can be used standalone:
-    python dff2gltf.py input.dff output.glb
-    python dff2gltf.py --batch cache_dir/   (convert all .dff in directory)
-
-Or as a module:
-    from INU_tools.tools.dff2gltf import convert_dff_to_glb
+    from ..tools.dff2gltf import convert_dff_to_glb
     convert_dff_to_glb("model.dff", "model.glb")
 """
 
@@ -17,16 +12,6 @@ from __future__ import annotations
 import struct
 import json
 import os
-import sys
-
-# Add parent dirs to path for standalone use
-_this_dir = os.path.dirname(os.path.abspath(__file__))
-_addon_dir = os.path.dirname(_this_dir)
-_root_dir = os.path.dirname(_addon_dir)
-if _addon_dir not in sys.path:
-    sys.path.insert(0, _addon_dir)
-if _root_dir not in sys.path:
-    sys.path.insert(0, _root_dir)
 
 
 def convert_dff_to_glb(dff_path: str, glb_path: str, tex_dir: str = "") -> bool:
@@ -39,7 +24,7 @@ def convert_dff_to_glb(dff_path: str, glb_path: str, tex_dir: str = "") -> bool:
 
     Returns True on success.
     """
-    from INU_tools.core.dff import read_dff
+    from ..core.dff import read_dff
 
     try:
         with open(dff_path, 'rb') as f:
@@ -432,9 +417,8 @@ def build_map_glb(cache_dir: str, instances: list, ide_models: dict,
 
     Returns dict with counts.
     """
-    import math
-    from INU_tools.core.dff import read_dff
-    from INU_tools.core.ipl import is_lod_name, lod_instance_indices
+    from ..core.dff import read_dff
+    from ..core.ipl import is_lod_name, lod_instance_indices
 
     gltf = _GltfBuilder()
     mesh_cache = {}  # model_name → mesh_idx (for instancing)
@@ -590,28 +574,3 @@ def build_map_glb(cache_dir: str, instances: list, ide_models: dict,
         return {'placed': 0, 'skipped': skipped, 'meshes': len(mesh_cache)}
 
     return {'placed': placed, 'skipped': skipped, 'meshes': len(mesh_cache)}
-
-
-# ── CLI ───────────────────────────────────────────────────────────────
-
-if __name__ == '__main__':
-    import argparse
-    parser = argparse.ArgumentParser(description='DFF → glTF converter')
-    parser.add_argument('input', help='.dff file or directory for --batch')
-    parser.add_argument('output', nargs='?', help='.glb output file')
-    parser.add_argument('--batch', action='store_true', help='Convert all .dff in directory')
-    parser.add_argument('--texdir', default='', help='Directory with PNG textures')
-    args = parser.parse_args()
-
-    if args.batch:
-        tex_dir = args.texdir or os.path.join(args.input, 'textures')
-        result = batch_convert(args.input, tex_dir,
-                               lambda c, t: print(f'\r{c}/{t}', end=''))
-        print(f"\nConverted: {result['converted']}, Skipped: {result['skipped']}")
-    else:
-        out = args.output or os.path.splitext(args.input)[0] + '.glb'
-        if convert_dff_to_glb(args.input, out, args.texdir):
-            print(f"OK: {out}")
-        else:
-            print("FAILED")
-            sys.exit(1)

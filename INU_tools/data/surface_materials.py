@@ -2,7 +2,6 @@
 
 import bpy
 
-from .. import T
 
 
 # GTA SA surface material IDs (0-178)

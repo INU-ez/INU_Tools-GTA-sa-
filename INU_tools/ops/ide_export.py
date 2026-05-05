@@ -1,7 +1,6 @@
 """Export Blender objects → IDE file (object definitions)."""
 
 from __future__ import annotations
-import os
 from ..core.ide import IdeFile, IdeObject, write_ide
 
 

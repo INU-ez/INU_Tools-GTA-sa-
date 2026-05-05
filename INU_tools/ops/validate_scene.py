@@ -21,7 +21,7 @@
 from __future__ import annotations
 
 import bpy
-from bpy.props import StringProperty, CollectionProperty
+from bpy.props import StringProperty
 
 from .. import T
 from ..tools import compat

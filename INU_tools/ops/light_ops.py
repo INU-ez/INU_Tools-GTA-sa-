@@ -9,10 +9,8 @@
 
 import os
 import bpy
-import bmesh
 from bpy.props import (
-    StringProperty, BoolProperty, FloatProperty, FloatVectorProperty,
-    IntProperty, EnumProperty, CollectionProperty,
+    StringProperty, BoolProperty, FloatProperty, EnumProperty,
 )
 from mathutils import Vector
 
@@ -452,7 +450,6 @@ class GTATOOLS_OT_vc_gamma(bpy.types.Operator):
 
         count = 0
         for obj in mesh_objects:
-            from ..tools.prelight import adjust_vertex_colors_gamma
             success, _ = adjust_vertex_colors_gamma(obj, gamma)
             if success:
                 count += 1
@@ -906,7 +903,6 @@ class GTATOOLS_OT_prelight_preview(bpy.types.Operator):
 
         count = 0
         for obj in mesh_objects:
-            from ..tools.prelight import setup_prelight_preview
             success, message = setup_prelight_preview(obj, self.enable)
             if success:
                 count += 1

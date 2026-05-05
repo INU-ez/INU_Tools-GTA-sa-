@@ -11,7 +11,6 @@
 # loading order makes top-level `from .. import _foo` racy.
 
 import os
-import time
 import bpy
 from bpy.props import (
     BoolProperty, CollectionProperty, EnumProperty, StringProperty,
@@ -483,7 +482,6 @@ class GTATOOLS_OT_inu_export(bpy.types.Operator, ExportHelper):
         col = box.column(align=True)
         col.prop(self, "export_dff")
         col.prop(self, "export_col")
-        from ..tools.txd_export import export_txd
         col.prop(self, "export_txd")
         col.prop(self, "export_ide")
         col.prop(self, "export_ipl")
