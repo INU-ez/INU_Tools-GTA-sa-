@@ -26,7 +26,7 @@ class GTATOOLS_OT_discover_game(bpy.types.Operator):
     def execute(self, context):
         from ..core.gta_dat import find_all_resources
         scene = context.scene
-        game_root = bpy.path.abspath(scene.gtatools_game_root)
+        game_root = bpy.path.abspath(scene.inu_settings.gtatools_game_root)
         if not game_root or not os.path.isdir(game_root):
             self.report({'ERROR'}, T("Укажите корневую папку GTA SA"))
             return {'CANCELLED'}
@@ -44,10 +44,10 @@ class GTATOOLS_OT_discover_game(bpy.types.Operator):
 
         # Auto-set main IMG path on first discover so the user doesn't
         # have to navigate to gta3.img by hand.
-        if not scene.gtatools_img_path:
+        if not scene.inu_settings.gtatools_img_path:
             for p in info.img_paths:
                 if os.path.isfile(p) and 'gta3.img' in p.lower():
-                    scene.gtatools_img_path = p
+                    scene.inu_settings.gtatools_img_path = p
                     break
 
         self.report({'INFO'},
@@ -64,7 +64,7 @@ class GTATOOLS_OT_binary_ipl_toggle_all(bpy.types.Operator):
     enable: BoolProperty(default=True)
 
     def execute(self, context):
-        for item in context.scene.gtatools_binary_ipls:
+        for item in context.scene.inu_settings.gtatools_binary_ipls:
             item.enabled = self.enable
         return {'FINISHED'}
 
@@ -80,12 +80,12 @@ class GTATOOLS_OT_scan_binary_ipls(bpy.types.Operator):
         from ..core.img import read_directory
         scene = context.scene
 
-        game_root = bpy.path.abspath(getattr(scene, 'gtatools_game_root', ''))
+        game_root = bpy.path.abspath(getattr(scene.inu_settings, 'gtatools_game_root', ''))
         if not game_root or not os.path.isdir(game_root):
             self.report({'ERROR'}, T("Укажите корневую папку GTA SA"))
             return {'CANCELLED'}
 
-        region = getattr(scene, 'gtatools_map_region', 'ALL')
+        region = getattr(scene.inu_settings, 'gtatools_map_region', 'ALL')
         region_u = region.upper() if region != 'ALL' else 'ALL'
 
         info = find_all_resources(game_root)
@@ -99,9 +99,9 @@ class GTATOOLS_OT_scan_binary_ipls(bpy.types.Operator):
 
         # Remember previously enabled entries so rescans don't lose user picks
         prev_state = {i.name.lower(): i.enabled
-                      for i in scene.gtatools_binary_ipls}
+                      for i in scene.inu_settings.gtatools_binary_ipls}
 
-        scene.gtatools_binary_ipls.clear()
+        scene.inu_settings.gtatools_binary_ipls.clear()
         total_checked = 0
         for ip in img_paths:
             try:
@@ -121,7 +121,7 @@ class GTATOOLS_OT_scan_binary_ipls(bpy.types.Operator):
                         continue
                     if region_u != 'ALL' and not e.name.upper().startswith(region_u):
                         continue
-                    item = scene.gtatools_binary_ipls.add()
+                    item = scene.inu_settings.gtatools_binary_ipls.add()
                     item.name = e.name
                     item.img_source = ip
                     item.enabled = prev_state.get(nm, True)
@@ -130,7 +130,7 @@ class GTATOOLS_OT_scan_binary_ipls(bpy.types.Operator):
 
         scene['gtatools_binary_ipls_region'] = region
         self.report({'INFO'},
-                    f"{len(scene.gtatools_binary_ipls)} binary IPL(s) for region '{region}' "
+                    f"{len(scene.inu_settings.gtatools_binary_ipls)} binary IPL(s) for region '{region}' "
                     f"(scanned {total_checked} .ipl entries)")
         return {'FINISHED'}
 
@@ -386,7 +386,7 @@ class GTATOOLS_OT_load_map_glb(bpy.types.Operator, ImportHelper):
         scene = context.scene
 
         # Read IDE for properties
-        game_root = bpy.path.abspath(scene.gtatools_game_root)
+        game_root = bpy.path.abspath(scene.inu_settings.gtatools_game_root)
         ide_models = {}
         if game_root and os.path.isdir(game_root):
             info = find_all_resources(game_root)
@@ -429,7 +429,6 @@ class GTATOOLS_OT_load_map_glb(bpy.types.Operator, ImportHelper):
     def _work(self, context):
         for idx, glb_path in enumerate(self._glb_files):
             self._file_idx = idx
-            fname = os.path.basename(glb_path)
             yield  # let UI update before blocking import
 
             before = set(context.scene.objects)
@@ -490,12 +489,12 @@ class GTATOOLS_OT_build_map_glb(bpy.types.Operator):
         from ..tools.dff2gltf import build_map_glb
 
         scene = context.scene
-        game_root = bpy.path.abspath(scene.gtatools_game_root)
+        game_root = bpy.path.abspath(scene.inu_settings.gtatools_game_root)
         from .. import _get_cache_dir
         cache_dir = _get_cache_dir()
         tex_dir = os.path.join(cache_dir, 'textures')
-        skip_lod = getattr(scene, 'gtatools_img_skip_lod', False)
-        region = getattr(scene, 'gtatools_map_region', 'ALL')
+        skip_lod = getattr(scene.inu_settings, 'gtatools_img_skip_lod', False)
+        region = getattr(scene.inu_settings, 'gtatools_map_region', 'ALL')
 
         if not game_root or not os.path.isdir(game_root):
             self.report({'ERROR'}, T("Укажите корневую папку GTA SA"))
@@ -554,7 +553,7 @@ class GTATOOLS_OT_build_map_glb(bpy.types.Operator):
         # Binary IPL selection — if the scene collection has entries, honour
         # the user's explicit enabled/disabled picks; otherwise fall back to
         # the region-based auto-match.
-        bi_entries = scene.gtatools_binary_ipls
+        bi_entries = scene.inu_settings.gtatools_binary_ipls
         bi_enabled = {i.name.lower() for i in bi_entries if i.enabled}
         bi_use_selection = len(bi_entries) > 0
 
@@ -592,95 +591,54 @@ class GTATOOLS_OT_build_map_glb(bpy.types.Operator):
             except Exception:
                 pass
 
-        # Store state
-        self._out_path = out_path
-        self._ide_models = ide_models
-        self._instance_count = len(instances)
-        self._pg_current = 0
-        self._pg_name = ''
-        self._result = None
-        self._error = None
-
-        # Progress callback (called from thread — GIL-safe)
-        def _progress_cb(current, total, name):
-            self._pg_current = current
-            self._pg_name = name
-
-        # Start build in background thread
-        import threading
-
-        def _thread_fn():
-            try:
-                self._result = build_map_glb(
-                    cache_dir=cache_dir,
-                    instances=instances,
-                    ide_models=ide_models,
-                    output_path=out_path,
-                    tex_dir=tex_dir,
-                    skip_lod=skip_lod,
-                    callback=_progress_cb,
-                )
-            except Exception as e:
-                self._error = str(e)
-
-        self._thread = threading.Thread(target=_thread_fn, daemon=True)
-        self._thread.start()
-
+        # Build the map synchronously. Blender's UI will block for the
+        # duration (typically 30 sec - 2 min on a full SA map) — this is
+        # the trade-off for staying ToS-compliant on extensions.blender.org
+        # (no threading.Thread). A future version can convert build_map_glb
+        # into a generator that yields progress so a modal pattern can
+        # drive it without blocking, but that's a separate refactor.
         wm = context.window_manager
         wm.progress_begin(0, len(instances))
-        self._timer = wm.event_timer_add(0.1, window=context.window)
-        wm.modal_handler_add(self)
-        context.workspace.status_text_set(T("Сборка карты..."))
-        return {'RUNNING_MODAL'}
+        context.workspace.status_text_set(T("Сборка карты (UI заблокирован)..."))
 
-    def modal(self, context, event):
-        if event.type == 'ESC':
-            self._cleanup(context)
-            self.report({'WARNING'}, T("Отменено"))
+        result = None
+        error = None
+
+        def _progress_cb(current, total, name):
+            try:
+                wm.progress_update(current)
+            except Exception:
+                pass
+
+        try:
+            result = build_map_glb(
+                cache_dir=cache_dir,
+                instances=instances,
+                ide_models=ide_models,
+                output_path=out_path,
+                tex_dir=tex_dir,
+                skip_lod=skip_lod,
+                callback=_progress_cb,
+            )
+        except Exception as e:
+            error = str(e)
+
+        wm.progress_end()
+        context.workspace.status_text_set(None)
+
+        if error:
+            self.report({'ERROR'}, f"Build error: {error}")
             return {'CANCELLED'}
 
-        if event.type != 'TIMER':
-            return {'PASS_THROUGH'}
-
-        wm = context.window_manager
-        wm.progress_update(self._pg_current)
-        context.workspace.status_text_set(
-            f"{T('Сборка карты:')} {self._pg_current}/{self._instance_count} {self._pg_name}")
-
-        if self._thread.is_alive():
-            return {'RUNNING_MODAL'}
-
-        # Thread finished
-        self._thread.join()
-        self._thread = None
-
-        if self._error:
-            self._cleanup(context)
-            self.report({'ERROR'}, f"Build error: {self._error}")
-            return {'CANCELLED'}
-
-        result = self._result
         if result and result['placed'] > 0:
-            # Build-only operator — gltf import is a separate step triggered
-            # by the "Импорт .glb" button in the panel. Importing it here
-            # would freeze the UI for minutes on big maps with no feedback.
-            self._cleanup(context)
             self.report({'INFO'},
                         f"{T('Собрано:')} {result['placed']} {T('инстансов')}, "
                         f"{result['meshes']} {T('уникальных моделей')} → "
-                        f"{os.path.basename(self._out_path)}")
-        else:
-            self._cleanup(context)
-            self.report({'WARNING'}, T("Нет моделей для импорта"))
+                        f"{os.path.basename(out_path)}")
+            return {'FINISHED'}
 
-        return {'FINISHED'}
-
-    def _cleanup(self, context):
-        if self._timer:
-            context.window_manager.event_timer_remove(self._timer)
-            self._timer = None
-        context.window_manager.progress_end()
-        context.workspace.status_text_set(None)
+        self.report({'WARNING'}, T("Нет моделей для импорта"))
+        return {'CANCELLED'}
 
 
 class GTATOOLS_OT_import_map(bpy.types.Operator):
@@ -700,8 +658,8 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
         from .ipl_sections import import_ipl_sections
 
         scene = context.scene
-        game_root = bpy.path.abspath(scene.gtatools_game_root)
-        skip_lod = getattr(scene, 'gtatools_img_skip_lod', False)
+        game_root = bpy.path.abspath(scene.inu_settings.gtatools_game_root)
+        skip_lod = getattr(scene.inu_settings, 'gtatools_img_skip_lod', False)
 
         if not game_root or not os.path.isdir(game_root):
             self.report({'ERROR'}, T("Укажите корневую папку GTA SA"))
@@ -753,7 +711,7 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
                     pass
 
         # Region filter
-        region = getattr(scene, 'gtatools_map_region', 'ALL')
+        region = getattr(scene.inu_settings, 'gtatools_map_region', 'ALL')
         def _ipl_matches_region(path: str) -> bool:
             if region == 'ALL':
                 return True
@@ -802,7 +760,7 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
         # at invoke (NOT in the hot loop) to pull out their instance
         # lists. This doesn't count as "hitting IMG during import": it's
         # metadata gathering before the actual model import begins.
-        bi_entries = scene.gtatools_binary_ipls
+        bi_entries = scene.inu_settings.gtatools_binary_ipls
         bi_enabled = {i.name.lower() for i in bi_entries if i.enabled}
         bi_use_selection = len(bi_entries) > 0
 
@@ -813,7 +771,7 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
         std = os.path.join(game_root, 'models', 'gta3.img')
         if os.path.isfile(std) and std not in img_paths:
             img_paths.insert(0, std)
-        fallback = bpy.path.abspath(scene.gtatools_img_path)
+        fallback = bpy.path.abspath(scene.inu_settings.gtatools_img_path)
         if fallback and os.path.isfile(fallback) and fallback not in img_paths:
             img_paths.append(fallback)
 
@@ -868,7 +826,7 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
         # (Map_LAn / Map_LAs / Map_SF / …). Per-IPL collections are
         # created lazily as instances are bucketed in _work — empty
         # IPLs never produce empty collections.
-        group_by_ipl = bool(getattr(scene, 'gtatools_map_group_by_ipl', False))
+        group_by_ipl = bool(getattr(scene.inu_settings, 'gtatools_map_group_by_ipl', False))
 
         if group_by_ipl:
             dff_far = dff_mid = dff_near = lod_col = None
@@ -912,7 +870,7 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
         from ..tools.profiler import Profiler
         self._profiler = Profiler(
             f"Import Map ({region})",
-            enabled=bool(getattr(scene, 'gtatools_profile_enabled', False)),
+            enabled=bool(getattr(scene.inu_settings, 'gtatools_profile_enabled', False)),
         )
 
         self._gen = self._work(context)
@@ -1012,14 +970,13 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
         from .dff_import import import_dff_from_clump
         from .col_import import import_col_from_models
         from mathutils import Quaternion
-        from concurrent.futures import ThreadPoolExecutor
 
         instances = self._instances
         ide_models = self._ide_models
         skip_lod = self._skip_lod
         scene = self._scene
         prof = self._profiler
-        load_col = bool(getattr(scene, 'gtatools_map_load_col', True))
+        load_col = bool(getattr(scene.inu_settings, 'gtatools_map_load_col', True))
         # LOD detection by name only. ``is_lod_name`` already handles
         # all 4 vanilla naming patterns (LODfoo / foo_LOD / foo1LOD /
         # modeLODlaett). The IPL ``lod_index`` cross-reference used to
@@ -1043,23 +1000,19 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
         tmpdir = _get_cache_dir()
         tex_cache = os.path.join(tmpdir, 'textures')
         tex_cache_exists = os.path.isdir(tex_cache)
-        load_txd = getattr(scene, 'gtatools_img_load_txd', True)
+        load_txd = getattr(scene.inu_settings, 'gtatools_img_load_txd', True)
 
         # Shared material cache — dedupes materials across DFFs by
         # (texture_name, rgba). Same texture used by 500 different
         # buildings ⇒ one Blender material, not 500.
         material_cache: dict = {}
 
-        # ── Parallel DFF parse pipeline ────────────────────────────
-        # numpy's zero-copy frombuffer + zlib decompress inside
-        # read_dff both release the GIL, so N worker threads can
-        # actually parse DFF binaries in parallel while the main
-        # thread is busy creating bpy objects for the previous one.
-        # We pre-submit all unique models' parse jobs; the pool
-        # scheduler fans them out to up to 4 workers. Main loop
-        # below fetches results via .result() which blocks only
-        # if the worker hasn't finished yet — usually it's already
-        # done by the time we reach it.
+        # ── DFF parse pipeline ────────────────────────────────────
+        # Sequential — Blender extensions ToS prefers no threading.
+        # DFF parsing happens lazily inside the main loop when each
+        # unique model is first needed, then cached in
+        # `imported_models`. This matches the modal yield cadence so
+        # the UI keeps ticking between parses.
         seen = set()
         unique_models = []
         for inst in instances:
@@ -1068,24 +1021,13 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
                 seen.add(mn)
                 unique_models.append(mn)
 
-        def _parse_dff_path(path):
-            with open(path, 'rb') as f:
-                return read_dff(f.read())
-
-        self._parse_pool = ThreadPoolExecutor(
-            max_workers=min(os.cpu_count() or 4, 4))
-        parse_pool = self._parse_pool
-        parse_futures: dict = {}
-        # COL map: model_name → ColModel. Populated from parallel
-        # parse of every .col file in cache. A single .col file often
-        # contains many ColModel entries (Rockstar ships district-wide
-        # lib-COLs like LAs.col with hundreds of entries), so we key
-        # by the inner model_name rather than by filename.
+        # COL map: model_name → ColModel. Sequential pre-parse of
+        # every .col file in cache. .col files are fewer (~50 for SA),
+        # so the upfront cost is bounded; a single file often contains
+        # many ColModel entries (Rockstar ships district-wide lib-COLs
+        # like LAs.col with hundreds), keyed by inner model_name.
         col_by_name: dict = {}
-        with prof.stage('submit parse jobs'):
-            # Build cache-file set in one syscall instead of 3000+
-            # os.path.isfile() probes. Set membership check is then
-            # a dict lookup per model.
+        with prof.stage('list cache'):
             try:
                 cache_listing = os.listdir(tmpdir)
             except OSError:
@@ -1098,31 +1040,14 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
                 n for n in cache_listing
                 if n.lower().endswith('.col')
             ]
-            for name in unique_models:
-                dff_key = (name + '.dff').lower()
-                if dff_key in cached_dffs:
-                    path = os.path.join(tmpdir, name + '.dff')
-                    parse_futures[name] = parse_pool.submit(
-                        _parse_dff_path, path)
 
-            # Submit COL parse jobs and collect results into
-            # col_by_name. Parsing happens in workers, aggregation on
-            # the main thread after all futures are done — .col files
-            # are fewer (~50 for SA) so we can afford to wait for
-            # all of them before entering the main loop.
             if load_col and cached_cols:
-                def _parse_col_path(path):
-                    with open(path, 'rb') as f:
-                        return read_col(f.read())
-                col_futs = [
-                    parse_pool.submit(_parse_col_path,
-                                      os.path.join(tmpdir, n))
-                    for n in cached_cols
-                ]
                 with prof.stage('parse COL files'):
-                    for fut in col_futs:
+                    for n in cached_cols:
+                        path = os.path.join(tmpdir, n)
                         try:
-                            models = fut.result()
+                            with open(path, 'rb') as f:
+                                models = read_col(f.read())
                         except Exception:
                             continue
                         for m in models:
@@ -1169,18 +1094,18 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
                                     target.objects.link(o)
                                     new_objs.append(o)
                         else:
-                            fut = parse_futures.pop(model_name, None)
-                            if fut is None:
-                                # No parse future = either DFF not in
-                                # cache, or we already consumed it
-                                # (happens when imported_models check
-                                # above misses due to exception path).
+                            dff_key = (model_name + '.dff').lower()
+                            if dff_key not in cached_dffs:
+                                # DFF not in cache (Extract Resources
+                                # didn't pull it / model name mismatch).
                                 self._skipped += 1
                             else:
                                 clump = None
+                                dff_path = os.path.join(tmpdir, model_name + '.dff')
                                 try:
-                                    with prof.stage('parse wait', note=model_name):
-                                        clump = fut.result()
+                                    with prof.stage('parse dff', note=model_name):
+                                        with open(dff_path, 'rb') as f:
+                                            clump = read_dff(f.read())
                                 except Exception:
                                     self._skipped += 1
 
@@ -1298,10 +1223,6 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
                         except Exception:
                             pass
 
-        # Shut the parse pool down — at this point all consumed futures
-        # have been popped; any leftovers belong to models we skipped.
-        parse_pool.shutdown(wait=False, cancel_futures=True)
-
         # Report — saved to .inu_cache/_profile.log when enabled, plus stdout.
         if prof.enabled:
             prof.print_report()
@@ -1345,16 +1266,6 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
         context.window_manager.progress_end()
         context.workspace.status_text_set(None)
 
-        # Always shut the parse pool down, even on cancel — otherwise
-        # ESC leaves worker threads alive until Blender GC runs.
-        pool = getattr(self, '_parse_pool', None)
-        if pool is not None:
-            try:
-                pool.shutdown(wait=False, cancel_futures=True)
-            except Exception:
-                pass
-            self._parse_pool = None
-
         # Re-enable viewport
         buckets: list = []
         if getattr(self, '_group_by_ipl', False):
@@ -1383,7 +1294,7 @@ class GTATOOLS_OT_replace_fake_with_dff(bpy.types.Operator):
         from .dff_import import import_dff as inu_import_dff
 
         scene = context.scene
-        game_root = bpy.path.abspath(scene.gtatools_game_root)
+        game_root = bpy.path.abspath(scene.inu_settings.gtatools_game_root)
         from .. import _get_cache_dir
         cache_dir = _get_cache_dir()
         tex_dir = os.path.join(cache_dir, 'textures')
@@ -1397,7 +1308,7 @@ class GTATOOLS_OT_replace_fake_with_dff(bpy.types.Operator):
 
         # Build IMG reader only if needed (lazy)
         img_reader = None
-        load_txd = getattr(scene, 'gtatools_img_load_txd', True)
+        load_txd = getattr(scene.inu_settings, 'gtatools_img_load_txd', True)
 
         wm = context.window_manager
         wm.progress_begin(0, len(fakes))
@@ -1503,7 +1414,7 @@ class GTATOOLS_OT_replace_fake_with_dff(bpy.types.Operator):
     def _open_img(scene, game_root):
         """Open ImgReader from settings or game root."""
         from ..core.img import ImgReader
-        img_path = bpy.path.abspath(scene.gtatools_img_path)
+        img_path = bpy.path.abspath(scene.inu_settings.gtatools_img_path)
         if not img_path or not os.path.isfile(img_path):
             if game_root:
                 std = os.path.join(game_root, 'models', 'gta3.img')

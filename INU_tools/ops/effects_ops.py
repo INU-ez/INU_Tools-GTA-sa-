@@ -29,11 +29,11 @@ class GTATOOLS_OT_apply_2dfx_preset(bpy.types.Operator):
 
         inu.color_2dfx = (p['color'][0] / 255.0, p['color'][1] / 255.0,
                           p['color'][2] / 255.0, p['color'][3] / 255.0)
-        obj['2dfx_corona_size'] = p['corona_size']
+        inu.corona_size_2dfx = p['corona_size']
+        inu.shadow_size_2dfx = p['shadow_size']
         obj['2dfx_corona_far_clip'] = p['corona_far_clip']
         obj['2dfx_pointlight_range'] = p['pointlight_range']
         obj['2dfx_corona_enable_reflection'] = p['corona_enable_reflection']
-        obj['2dfx_shadow_size'] = p['shadow_size']
         obj['2dfx_shadow_z_distance'] = p['shadow_z_distance']
         obj['2dfx_shadow_color_multiplier'] = p['shadow_color_multiplier']
         obj['2dfx_flags1'] = p['flags1']
@@ -87,10 +87,10 @@ class GTATOOLS_OT_create_2dfx(bpy.types.Operator):
         # Создаём дефолтные custom properties
         if self.effect_type == 'LIGHT':
             obj.inu.color_2dfx = (1.0, 1.0, 1.0, 1.0)  # white
+            obj.inu.corona_size_2dfx = 1.0
+            obj.inu.shadow_size_2dfx = 8.0
             obj['2dfx_corona_far_clip'] = 100.0
             obj['2dfx_pointlight_range'] = 18.0
-            obj['2dfx_corona_size'] = 1.0
-            obj['2dfx_shadow_size'] = 8.0
             obj['2dfx_corona_enable_reflection'] = 0
             obj['2dfx_shadow_color_multiplier'] = 40
             obj['2dfx_flags1'] = 96  # AT_DAY + AT_NIGHT
@@ -100,8 +100,7 @@ class GTATOOLS_OT_create_2dfx(bpy.types.Operator):
             # `id_properties_ui` added in Blender 3.0 — на 2.83–2.93 просто
             # пропускаем (precision дефолтный, в UI значит больше знаков).
             if hasattr(obj, 'id_properties_ui'):
-                for key in ('2dfx_corona_far_clip', '2dfx_pointlight_range',
-                            '2dfx_corona_size', '2dfx_shadow_size'):
+                for key in ('2dfx_corona_far_clip', '2dfx_pointlight_range'):
                     obj.id_properties_ui(key).update(precision=1)
         elif self.effect_type == 'PARTICLE':
             obj['2dfx_effect_name'] = ""
@@ -185,8 +184,8 @@ class GTATOOLS_OT_remove_2dfx_preview(bpy.types.Operator):
 
 def _particle_effect_items(self, context):
     """Enum items callback — lazily loads effects.fxp from the game root."""
-    from .core import fxp as _fxp
-    game_root = bpy.path.abspath(getattr(context.scene, 'gtatools_game_root', '') or '')
+    from ..core import fxp as _fxp
+    game_root = bpy.path.abspath(getattr(context.scene.inu_settings, 'gtatools_game_root', '') or '')
     if not game_root or not os.path.isdir(game_root):
         return [('', T("<Game Root не задан>"), "")]
     path = os.path.join(game_root, 'models', 'effects.fxp')
@@ -239,14 +238,14 @@ def _get_current_emitter(obj):
     if not effect_name:
         return None
     game_root = bpy.path.abspath(
-        getattr(bpy.context.scene, 'gtatools_game_root', '') or ''
+        getattr(bpy.context.scene.inu_settings, 'gtatools_game_root', '') or ''
     )
     if not game_root:
         return None
     fxp_path = os.path.join(game_root, 'models', 'effects.fxp')
     if not os.path.isfile(fxp_path):
         return None
-    from .core import fxp as _fxp
+    from ..core import fxp as _fxp
     fxf = _fxp.load_cached(fxp_path)
     system = fxf.find(effect_name)
     if not system or not system.emitters:
@@ -440,7 +439,7 @@ class GTATOOLS_OT_particle_effect_new(bpy.types.Operator):
             self.report({'ERROR'}, T("Имя пустое"))
             return {'CANCELLED'}
 
-        game_root = bpy.path.abspath(context.scene.gtatools_game_root or '')
+        game_root = bpy.path.abspath(context.scene.inu_settings.gtatools_game_root or '')
         if not game_root:
             self.report({'ERROR'}, "Game Root не задан")
             return {'CANCELLED'}
@@ -460,7 +459,7 @@ class GTATOOLS_OT_particle_effect_new(bpy.types.Operator):
                 self.report({'ERROR'}, f"Не удалось создать бэкап: {e}")
                 return {'CANCELLED'}
 
-        from .core import fxp as _fxp
+        from ..core import fxp as _fxp
         try:
             fxf = _fxp.read_fxp(fxp_path)
         except Exception as e:
@@ -562,7 +561,7 @@ class GTATOOLS_OT_particle_effect_delete(bpy.types.Operator):
             self.report({'ERROR'}, T("Имя эффекта пустое"))
             return {'CANCELLED'}
 
-        game_root = bpy.path.abspath(context.scene.gtatools_game_root or '')
+        game_root = bpy.path.abspath(context.scene.inu_settings.gtatools_game_root or '')
         if not game_root:
             self.report({'ERROR'}, "Game Root не задан")
             return {'CANCELLED'}
@@ -581,7 +580,7 @@ class GTATOOLS_OT_particle_effect_delete(bpy.types.Operator):
                 self.report({'ERROR'}, f"Не удалось создать бэкап: {e}")
                 return {'CANCELLED'}
 
-        from .core import fxp as _fxp
+        from ..core import fxp as _fxp
         try:
             fxf = _fxp.read_fxp(fxp_path)
         except Exception as e:
@@ -738,7 +737,7 @@ class GTATOOLS_OT_particle_curve_write(bpy.types.Operator):
             return {'CANCELLED'}
         info_type, field_name = curve_key.split('.', 1)
 
-        game_root = bpy.path.abspath(context.scene.gtatools_game_root or '')
+        game_root = bpy.path.abspath(context.scene.inu_settings.gtatools_game_root or '')
         if not game_root:
             self.report({'ERROR'}, "Game Root не задан")
             return {'CANCELLED'}
@@ -763,7 +762,7 @@ class GTATOOLS_OT_particle_curve_write(bpy.types.Operator):
                 self.report({'ERROR'}, f"Не удалось создать бэкап: {e}")
                 return {'CANCELLED'}
 
-        from .core import fxp as _fxp
+        from ..core import fxp as _fxp
         from ..core.fxp import FXCurve, FXKeyframe, FXInfoBlock
         try:
             fxf = _fxp.read_fxp(fxp_path)
@@ -869,7 +868,7 @@ class GTATOOLS_OT_reload_effects_fxp(bpy.types.Operator):
     bl_options = {'REGISTER'}
 
     def execute(self, context):
-        from .core import fxp as _fxp
+        from ..core import fxp as _fxp
         _fxp.clear_cache()
         self.report({'INFO'}, "effects.fxp cache cleared")
         return {'FINISHED'}
@@ -1256,7 +1255,7 @@ class GTATOOLS_OT_save_particle_effect(bpy.types.Operator):
 
     def execute(self, context):
         obj = context.active_object
-        game_root = bpy.path.abspath(context.scene.gtatools_game_root or '')
+        game_root = bpy.path.abspath(context.scene.inu_settings.gtatools_game_root or '')
         if not game_root:
             self.report({'ERROR'}, "Game Root не задан")
             return {'CANCELLED'}
@@ -1272,7 +1271,7 @@ class GTATOOLS_OT_save_particle_effect(bpy.types.Operator):
             return {'CANCELLED'}
 
         # Read fresh (don't mutate cached object)
-        from .core import fxp as _fxp
+        from ..core import fxp as _fxp
         try:
             fxf = _fxp.read_fxp(fxp_path)
         except Exception as e:

@@ -137,11 +137,11 @@ class GTATOOLS_OT_water_set_params(bpy.types.Operator):
 
     def execute(self, context):
         scene = context.scene
-        flag = int(scene.gtatools_water_flag)
-        speed_x = scene.gtatools_water_speed_x
-        speed_y = scene.gtatools_water_speed_y
-        speed_z = scene.gtatools_water_speed_z
-        wave = scene.gtatools_water_wave_height
+        flag = int(scene.inu_settings.gtatools_water_flag)
+        speed_x = scene.inu_settings.gtatools_water_speed_x
+        speed_y = scene.inu_settings.gtatools_water_speed_y
+        speed_z = scene.inu_settings.gtatools_water_speed_z
+        wave = scene.inu_settings.gtatools_water_wave_height
 
         count = 0
         for obj in context.selected_objects:

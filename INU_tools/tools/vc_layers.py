@@ -185,7 +185,7 @@ def recompose_stack(mesh, scope: str) -> bool:
     don't recompose and Day/Night show whatever they already hold.
     """
     try:
-        import numpy as np
+        import numpy as np  # noqa: F401 — availability guard, helpers downstream require numpy
     except ImportError:
         return False
 
@@ -284,7 +284,7 @@ def _flatten_into_base(mesh, scope: str):
     is exactly what the user wants in hijack mode anyway.
     """
     try:
-        import numpy as np
+        import numpy as np  # noqa: F401 — availability guard, helpers downstream require numpy
     except ImportError:
         return None
 
@@ -1206,7 +1206,7 @@ class GTATOOLS_OT_vcl_recolor_selected(bpy.types.Operator):
             return {'CANCELLED'}
 
         try:
-            import numpy as np
+            import numpy as np  # noqa: F401 — availability guard, helpers downstream require numpy
         except ImportError:
             self.report({'ERROR'}, "numpy required")
             return {'CANCELLED'}
@@ -1453,14 +1453,14 @@ def draw_vc_layers_section(layout, context, mesh):
         return
 
     scene = context.scene
-    expanded = bool(getattr(scene, 'gtatools_vc_layers_expanded', False))
+    expanded = bool(getattr(scene.inu_settings, 'gtatools_vc_layers_expanded', False))
 
     # Header row — TRIA toggle + section label with inline BETA tag.
     # «BETA» is part of the bl_label-style text (not a separate stamp
     # icon), so it survives across Blender versions that may lack the
     # EXPERIMENTAL icon and reads natively in localised UIs.
     head_row = layout.row(align=True)
-    head_row.prop(scene, "gtatools_vc_layers_expanded",
+    head_row.prop(scene.inu_settings, "gtatools_vc_layers_expanded",
                   icon=safe_icon('TRIA_DOWN') if expanded else 'TRIA_RIGHT',
                   text=T("Слои Vertex Color (BETA)"),
                   emboss=False)

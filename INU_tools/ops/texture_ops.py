@@ -126,8 +126,8 @@ class GTATOOLS_OT_load_textures(bpy.types.Operator):
         scene = context.scene
 
         # Get search paths
-        path1 = scene.gtatools_texture_path1
-        path2 = scene.gtatools_texture_path2
+        path1 = scene.inu_settings.gtatools_texture_path1
+        path2 = scene.inu_settings.gtatools_texture_path2
 
         # If path2 is empty, try to get blend file directory
         if not path2 and bpy.data.filepath:
@@ -193,7 +193,7 @@ class GTATOOLS_OT_set_blend_folder(bpy.types.Operator):
 
     def execute(self, context):
         if bpy.data.filepath:
-            context.scene.gtatools_texture_path2 = os.path.dirname(bpy.data.filepath)
+            context.scene.inu_settings.gtatools_texture_path2 = os.path.dirname(bpy.data.filepath)
             self.report({'INFO'}, T("Путь установлен"))
         else:
             self.report({'WARNING'}, T("Сначала сохраните .blend файл!"))

@@ -40,7 +40,7 @@ class GTATOOLS_OT_export_txd(bpy.types.Operator, ExportHelper):
 
     def invoke(self, context, event):
         # Pre-fill shared name from scene preset so the user only types it once
-        preset = getattr(context.scene, 'gtatools_shared_txd_name', '').strip()
+        preset = getattr(context.scene.inu_settings, 'gtatools_shared_txd_name', '').strip()
         if preset and not self.shared_name:
             self.shared_name = preset
         return super().invoke(context, event)
@@ -57,7 +57,7 @@ class GTATOOLS_OT_export_txd(bpy.types.Operator, ExportHelper):
                 name += '.txd'
             target = os.path.join(os.path.dirname(target), name)
 
-        use_gpu = check_nvtt_available(getattr(context.scene, 'gtatools_nvtt_path', ''))[0]
+        use_gpu = check_nvtt_available(getattr(context.scene.inu_settings, 'gtatools_nvtt_path', ''))[0]
         result, message, transparent_list = export_txd(target, context, sel_only, use_gpu)
         self.report({'INFO'} if result == {'FINISHED'} else {'ERROR'}, message)
         return result
@@ -83,7 +83,7 @@ class GTATOOLS_OT_export_shared_txd(bpy.types.Operator, ExportHelper):
 
     def invoke(self, context, event):
         # Pre-fill filename from scene property
-        txd_name = getattr(context.scene, 'gtatools_shared_txd_name', '').strip()
+        txd_name = getattr(context.scene.inu_settings, 'gtatools_shared_txd_name', '').strip()
         if txd_name:
             if not txd_name.lower().endswith('.txd'):
                 txd_name += '.txd'
@@ -96,7 +96,7 @@ class GTATOOLS_OT_export_shared_txd(bpy.types.Operator, ExportHelper):
             self.report({'ERROR'}, T("Выделите меш объекты"))
             return {'CANCELLED'}
 
-        use_gpu = check_nvtt_available(getattr(context.scene, 'gtatools_nvtt_path', ''))[0]
+        use_gpu = check_nvtt_available(getattr(context.scene.inu_settings, 'gtatools_nvtt_path', ''))[0]
         # Force selected_only=True for shared TXD (collects from all selected DFFs)
         result, message, transparent_list = export_txd(self.filepath, context, True, use_gpu)
         self.report({'INFO'} if result == {'FINISHED'} else {'ERROR'}, message)

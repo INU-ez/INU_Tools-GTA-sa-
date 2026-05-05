@@ -512,7 +512,7 @@ def batch_apply_sequential(armature, anims: List[Tuple[str, str]],
         # Ensure the action exists (import_ifp creates empty stubs per anim)
         action = bpy.data.actions.get(anim_name)
         if not action:
-            created = import_ifp(path)
+            import_ifp(path)
             action = bpy.data.actions.get(anim_name)
             if not action:
                 continue

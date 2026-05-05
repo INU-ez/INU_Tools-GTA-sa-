@@ -463,8 +463,8 @@ def _import_2dfx(ext_2dfx: Extension2dfx, collection, base_name: str) -> list:
                                    entry.color.b / 255.0, entry.color.a / 255.0)
             obj['2dfx_corona_far_clip'] = entry.corona_far_clip
             obj['2dfx_pointlight_range'] = entry.pointlight_range
-            obj['2dfx_corona_size'] = entry.corona_size
-            obj['2dfx_shadow_size'] = entry.shadow_size
+            obj.inu.corona_size_2dfx = entry.corona_size
+            obj.inu.shadow_size_2dfx = entry.shadow_size
             obj['2dfx_corona_enable_reflection'] = entry.corona_enable_reflection
             obj['2dfx_shadow_color_multiplier'] = entry.shadow_color_multiplier
             obj['2dfx_flags1'] = entry.flags1
@@ -492,8 +492,7 @@ def _import_2dfx(ext_2dfx: Extension2dfx, collection, base_name: str) -> list:
             # Display precision — `id_properties_ui` added in Blender 3.0,
             # на 2.83–2.93 пропускаем (косметика).
             if hasattr(obj, 'id_properties_ui'):
-                for key in ('2dfx_corona_far_clip', '2dfx_pointlight_range',
-                            '2dfx_corona_size', '2dfx_shadow_size'):
+                for key in ('2dfx_corona_far_clip', '2dfx_pointlight_range'):
                     obj.id_properties_ui(key).update(precision=1)
 
         elif isinstance(entry, Particle2dfx):
@@ -770,7 +769,7 @@ def import_dff(filepath: str, context=None, *, skip_2dfx=None,
         filepath: Путь к .dff файлу.
         context: Blender context (опционально).
         skip_2dfx: пропустить импорт 2DFX-эффектов (лампы, частицы, ped attractors).
-                   None → читать scene.gtatools_map_skip_2dfx.
+                   None → читать scene.inu_settings.gtatools_map_skip_2dfx.
         bulk_mode: при True пропускаются тяжёлые per-model операции —
                    ``view_layer.update()`` и ``select_all(DESELECT)``.
                    Для bulk-импорта карты их достаточно сделать один раз
@@ -1138,9 +1137,9 @@ class GTATOOLS_OT_import_dff(bpy.types.Operator):
         layout = self.layout
         scene = context.scene
 
-        layout.prop(scene, "gtatools_txd_auto_import", text=T("Авто TXD"))
+        layout.prop(scene.inu_settings, "gtatools_txd_auto_import", text=T("Авто TXD"))
 
-        if not getattr(scene, 'gtatools_txd_auto_import', True):
+        if not getattr(scene.inu_settings, 'gtatools_txd_auto_import', True):
             layout.label(text=T("TXD не будет загружаться автоматически"),
                          icon=safe_icon('INFO'))
             return
@@ -1156,7 +1155,7 @@ class GTATOOLS_OT_import_dff(bpy.types.Operator):
         col.label(text=T("3. Единственный .txd в папке"))
         col.label(text=T("Иначе — warning, ничего не грузится"))
 
-        custom_dir = getattr(scene, 'gtatools_txd_import_path', '')
+        custom_dir = getattr(scene.inu_settings, 'gtatools_txd_import_path', '')
         if custom_dir:
             box.label(text=f"+ {T('доп. папка')}: {custom_dir}",
                       icon=safe_icon('FILE_FOLDER'))
@@ -1171,10 +1170,10 @@ class GTATOOLS_OT_import_dff(bpy.types.Operator):
             return {'CANCELLED'}
 
         # Auto-import matching .txd from same folder (or user-set search path)
-        if not getattr(context.scene, 'gtatools_txd_auto_import', True):
+        if not getattr(context.scene.inu_settings, 'gtatools_txd_auto_import', True):
             return {'FINISHED'}
         dff_name = os.path.splitext(os.path.basename(self.filepath))[0]
-        custom_dir = getattr(context.scene, 'gtatools_txd_import_path', '')
+        custom_dir = getattr(context.scene.inu_settings, 'gtatools_txd_import_path', '')
         if custom_dir:
             custom_dir = bpy.path.abspath(custom_dir)
 

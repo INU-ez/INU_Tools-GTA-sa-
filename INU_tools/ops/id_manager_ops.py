@@ -351,7 +351,7 @@ class GTATOOLS_OT_id_manager_from_game(bpy.types.Operator):
         from .. import _id_preset_sync
         _id_preset_sync(context)
         from ..data.id_manager import populate_from_game
-        game_root = bpy.path.abspath(context.scene.gtatools_game_root)
+        game_root = bpy.path.abspath(context.scene.inu_settings.gtatools_game_root)
         if not game_root or not os.path.isdir(game_root):
             self.report({'ERROR'}, T("Укажите корневую папку GTA SA"))
             return {'CANCELLED'}
@@ -399,7 +399,6 @@ class GTATOOLS_OT_id_manager_sync_scene(bpy.types.Operator):
                 continue
             mid = obj.inu.model_id
             if mid > 0 and mid not in existing:
-                from ..tools.model_utils import get_model_type
                 _, base = get_model_type(obj)
                 entries.append((mid, base or obj.name))
                 existing.add(mid)
@@ -462,7 +461,7 @@ class GTATOOLS_OT_id_preset_new(bpy.types.Operator):
             return {'CANCELLED'}
         # Switch to the newly created preset
         try:
-            context.scene.gtatools_id_preset = name
+            context.scene.inu_settings.gtatools_id_preset = name
         except Exception:
             pass
         self.report({'INFO'}, f"{T('Создан пресет:')} {name}")
@@ -480,7 +479,7 @@ class GTATOOLS_OT_id_preset_delete(bpy.types.Operator):
 
     def execute(self, context):
         from ..data.id_manager import delete_preset, list_presets
-        current = getattr(context.scene, 'gtatools_id_preset', 'default')
+        current = getattr(context.scene.inu_settings, 'gtatools_id_preset', 'default')
         if current == 'default':
             self.report({'ERROR'}, T("Пресет 'default' удалить нельзя"))
             return {'CANCELLED'}
@@ -490,7 +489,7 @@ class GTATOOLS_OT_id_preset_delete(bpy.types.Operator):
         # Fall back to the first remaining preset
         remaining = list_presets()
         try:
-            context.scene.gtatools_id_preset = remaining[0] if remaining else 'default'
+            context.scene.inu_settings.gtatools_id_preset = remaining[0] if remaining else 'default'
         except Exception:
             pass
         self.report({'INFO'}, f"{T('Удалён пресет:')} {current}")
@@ -509,7 +508,7 @@ class GTATOOLS_OT_id_preset_rename(bpy.types.Operator):
     )
 
     def invoke(self, context, event):
-        self.new_name = getattr(context.scene, 'gtatools_id_preset', '') or ''
+        self.new_name = getattr(context.scene.inu_settings, 'gtatools_id_preset', '') or ''
         return context.window_manager.invoke_props_dialog(self, width=320)
 
     def draw(self, context):
@@ -517,7 +516,7 @@ class GTATOOLS_OT_id_preset_rename(bpy.types.Operator):
 
     def execute(self, context):
         from ..data.id_manager import rename_preset
-        current = getattr(context.scene, 'gtatools_id_preset', 'default')
+        current = getattr(context.scene.inu_settings, 'gtatools_id_preset', 'default')
         new = (self.new_name or '').strip()
         if not new or new == current:
             self.report({'ERROR'}, T("Введите новое название"))
@@ -526,7 +525,7 @@ class GTATOOLS_OT_id_preset_rename(bpy.types.Operator):
             self.report({'ERROR'}, T("Не удалось переименовать (имя занято или ошибка)"))
             return {'CANCELLED'}
         try:
-            context.scene.gtatools_id_preset = new
+            context.scene.inu_settings.gtatools_id_preset = new
         except Exception:
             pass
         self.report({'INFO'}, f"{T('Переименован:')} {current} → {new}")

@@ -1,9 +1,8 @@
 # INU_tools.tools.profiler
 #
-# Lightweight thread-safe profiler for long-running operator work. Use
-# via the `Profiler.stage(name)` context manager — it records wall time,
-# per-stage call count, and per-thread breakdown (useful for spotting
-# false-parallelism where one worker does all the real work).
+# Lightweight profiler for long-running operator work. Use via the
+# `Profiler.stage(name)` context manager — it records wall time and
+# per-stage call count.
 #
 # Example:
 #     p = Profiler("Extract Resources")
@@ -20,29 +19,27 @@
 
 from __future__ import annotations
 
-import threading
 import time
 from collections import defaultdict
 from contextlib import contextmanager
 
 
-class Profiler:
-    """Single-session profiler for one long-running task.
+# Single-thread workflow — see Step 7 of the extensions.blender.org
+# review fixes (no `threading` per ToS). Kept as a constant so the
+# `_per_thread` data shape stays identical for `format_report`.
+_SINGLE_TID = 0
 
-    Safe to share across threads — each `stage()` invocation takes the
-    internal lock briefly to update aggregates. Workers may call
-    `stage()` concurrently; the per-thread breakdown uses
-    `threading.get_ident()` to distinguish them.
-    """
+
+class Profiler:
+    """Single-session profiler for one long-running task."""
 
     def __init__(self, title: str, enabled: bool = True):
         self.title = title
         self.enabled = enabled
-        self._lock = threading.Lock()
         self._start = time.perf_counter() if enabled else 0.0
         # {stage_name: {'time': total_seconds, 'count': call_count}}
         self._stages: dict[str, dict] = defaultdict(lambda: {'time': 0.0, 'count': 0})
-        # {stage_name: {thread_id: (total_seconds, call_count)}}
+        # {stage_name: {thread_id: [total_seconds, call_count]}}
         self._per_thread: dict[str, dict] = defaultdict(
             lambda: defaultdict(lambda: [0.0, 0]))
         # Up to N slowest individual stage calls: list of (seconds, stage, note)
@@ -60,41 +57,37 @@ class Profiler:
             yield
         finally:
             dt = time.perf_counter() - t0
-            tid = threading.get_ident()
-            with self._lock:
-                s = self._stages[name]
-                s['time'] += dt
-                s['count'] += 1
-                pt = self._per_thread[name][tid]
-                pt[0] += dt
-                pt[1] += 1
-                # Track slowest individual invocations for hotspot hunting.
-                if len(self._slow) < self._slow_max:
-                    self._slow.append((dt, name, note))
-                    self._slow.sort(reverse=True)
-                elif dt > self._slow[-1][0]:
-                    self._slow[-1] = (dt, name, note)
-                    self._slow.sort(reverse=True)
+            s = self._stages[name]
+            s['time'] += dt
+            s['count'] += 1
+            pt = self._per_thread[name][_SINGLE_TID]
+            pt[0] += dt
+            pt[1] += 1
+            # Track slowest individual invocations for hotspot hunting.
+            if len(self._slow) < self._slow_max:
+                self._slow.append((dt, name, note))
+                self._slow.sort(reverse=True)
+            elif dt > self._slow[-1][0]:
+                self._slow[-1] = (dt, name, note)
+                self._slow.sort(reverse=True)
 
     def add(self, name: str, seconds: float, count: int = 1, note: str = ""):
         """Manually add a timing entry — useful when the work happened
         inside a C library call you can't easily wrap in a `with` block."""
         if not self.enabled:
             return
-        tid = threading.get_ident()
-        with self._lock:
-            s = self._stages[name]
-            s['time'] += seconds
-            s['count'] += count
-            pt = self._per_thread[name][tid]
-            pt[0] += seconds
-            pt[1] += count
-            if len(self._slow) < self._slow_max:
-                self._slow.append((seconds, name, note))
-                self._slow.sort(reverse=True)
-            elif seconds > self._slow[-1][0]:
-                self._slow[-1] = (seconds, name, note)
-                self._slow.sort(reverse=True)
+        s = self._stages[name]
+        s['time'] += seconds
+        s['count'] += count
+        pt = self._per_thread[name][_SINGLE_TID]
+        pt[0] += seconds
+        pt[1] += count
+        if len(self._slow) < self._slow_max:
+            self._slow.append((seconds, name, note))
+            self._slow.sort(reverse=True)
+        elif seconds > self._slow[-1][0]:
+            self._slow[-1] = (seconds, name, note)
+            self._slow.sort(reverse=True)
 
     def wall(self) -> float:
         """Elapsed seconds since profiler creation."""

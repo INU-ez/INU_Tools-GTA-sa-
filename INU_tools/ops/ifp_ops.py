@@ -374,7 +374,7 @@ class GTATOOLS_OT_ifp_preview_toggle(bpy.types.Operator):
             self.report({'INFO'}, msg)
             return {'FINISHED'} if ok else {'CANCELLED'}
 
-        name = context.scene.gtatools_ifp_action
+        name = context.scene.inu_settings.gtatools_ifp_action
         if not name:
             self.report({'ERROR'}, T("Выберите анимацию в списке"))
             return {'CANCELLED'}
@@ -397,11 +397,11 @@ class GTATOOLS_OT_apply_ifp(bpy.types.Operator):
     def poll(cls, context):
         obj = context.active_object
         return (obj and obj.type == 'ARMATURE' and
-                context.scene.gtatools_ifp_action != '')
+                context.scene.inu_settings.gtatools_ifp_action != '')
 
     def execute(self, context):
         from .ifp_import import apply_ifp_action
-        name = context.scene.gtatools_ifp_action
+        name = context.scene.inu_settings.gtatools_ifp_action
         armature = context.active_object
 
         if not armature or armature.type != 'ARMATURE':
@@ -443,8 +443,8 @@ class GTATOOLS_OT_fix_quat_signs(bpy.types.Operator):
         action = arm.animation_data.action
         slot = arm.animation_data.action_slot
         scene = context.scene
-        start = scene.gtatools_anim_fix_start
-        end = scene.gtatools_anim_fix_end
+        start = scene.inu_settings.gtatools_anim_fix_start
+        end = scene.inu_settings.gtatools_anim_fix_end
 
         fcurves = []
         for layer in action.layers:

@@ -28,7 +28,7 @@
 bl_info = {
     "name": "INU_tools(gta_sa)",
     "author": "INU",
-    "version": (1, 7, 0),
+    "version": (1, 8, 0),
     # Минимум 2.83 LTS — поддержка через tools/compat.py:
     # • bake / preview / DFF I/O работают через legacy mesh.vertex_colors
     # • prelight preview shader использует ShaderNodeMixRGB на ≤3.3
@@ -321,21 +321,14 @@ bl_info = {
 # v1.0.0 - Начальная версия
 
 import bpy
-import bmesh
-import math
-import re as _re
-import struct
 import os
 import time
 import tempfile
 import numpy as np
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from mathutils import Vector
 from bpy.props import StringProperty, BoolProperty, FloatProperty, FloatVectorProperty, IntProperty, CollectionProperty, EnumProperty, PointerProperty
 from bpy.app.handlers import persistent
 
 from .tools.compat import safe_icon
-from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 
 # =============================================================================
@@ -354,7 +347,6 @@ def get_locale():
 
 # Translation dictionary: Russian -> English
 from .locale import get_translation
-from .ui.registry import apply_order
 
 
 def T(text):
@@ -383,38 +375,11 @@ def T(text):
 # EXTRACTED MODULES
 # =============================================================================
 
-from .tools.txd_export import (
-    export_txd, check_nvtt_available, write_rw_section_header,
-)
-from .tools.model_utils import (
-    get_model_type, find_related_models, find_selected_models,
-    find_all_selected_model_groups, get_base_name_from_selected,
-    fix_col_model_name, check_loose_geometry, get_model_textures,
-)
-from .data.surface_materials import (
-    GTA_SA_SURFACE_MATERIALS, COL_SURFACE_ENUM_ITEMS, COL_SURFACE_CATEGORIES,
-    _surface_id_to_category, get_col_surface_id, get_surface_name,
-    get_base_name_from_selection,
-)
-from .tools.prelight import (
-    average_colors_on_coplanar_faces,
-    encode_uv2_to_color_16bit, create_prelight_scene_lights,
-    remove_prelight_scene_lights, bake_vertex_colors_from_lights,
-    bake_vertex_colors_simple, apply_brightness_offset,
-    analyze_vertex_colors, smooth_vertex_colors,
-    adjust_vertex_colors_contrast, adjust_vertex_colors_brightness,
-    adjust_vertex_colors_gamma, setup_prelight_preview,
-    fill_selected_faces, ensure_base_colors, recalculate_colors,
-    add_fill_layer, add_scatter_layer, get_scatter_levels,
-    remove_scatter_layer, clear_scatter_layers, remove_fill_color,
-    remove_fill_color_by_index, get_selected_faces_color,
-    fill_selected_faces_with_backup, restore_filled_faces,
-    scatter_light_from_selected,
-)
+from .tools.model_utils import get_model_type
+from .data.surface_materials import get_surface_name  # noqa: F401 — re-exported for `from .. import get_surface_name`
 # COL Light: import module for mutable globals, classes separately
 from .tools import col_light as _col_light_mod
 from .tools.col_light import (
-    _col_light_invalidate_preview, _col_light_watch_transform,
     GTATOOLS_OT_preview_col_light, GTATOOLS_OT_bake_col_light,
     GTATOOLS_OT_clear_col_light_mats,
 )
@@ -486,6 +451,12 @@ from .ui.panels import (  # noqa: E501
 )
 # Material context-menu hook — register/unregister append/remove it.
 from .ui.panels import _draw_sort_materials_menu
+from .scene_settings import (
+    INUSceneSettings,
+    INUValidateIssue,
+    GTATOOLS_BinaryIplEntry,
+    GTATOOLS_ImgFileEntry,
+)
 from .ops.ifp_import import (
     GTATOOLS_OT_ifp_batch_import,
     GTATOOLS_OT_refresh_station_markers,
@@ -501,7 +472,6 @@ from .ops.onboarding_ops import (
     GTATOOLS_OT_whats_new,
 )
 from .ops.validate_scene import (
-    INUValidateIssue,
     GTATOOLS_OT_validate_run,
     GTATOOLS_OT_validate_clear,
     GTATOOLS_OT_validate_goto,
@@ -577,7 +547,7 @@ def _particle_effect_enum_items(self, context):
     global _particle_enum_items_cache, _particle_enum_cache_key
     try:
         game_root = bpy.path.abspath(
-            getattr(context.scene, 'gtatools_game_root', '') or ''
+            getattr(context.scene.inu_settings, 'gtatools_game_root', '') or ''
         )
         if not game_root or not os.path.isdir(game_root):
             _particle_enum_items_cache = [('', T('<Game Root не задан>'), '')]
@@ -758,7 +728,7 @@ def _get_effect_emitter_count(effect_name: str) -> int:
     """Return number of emitters in a named system, or 0 on any failure."""
     try:
         game_root = bpy.path.abspath(
-            getattr(bpy.context.scene, 'gtatools_game_root', '') or ''
+            getattr(bpy.context.scene.inu_settings, 'gtatools_game_root', '') or ''
         )
         if not game_root:
             return 0
@@ -776,7 +746,7 @@ def _get_effect_emitter_count(effect_name: str) -> int:
 def _populate_particle_props_from_fxp(obj, effect_name: str, emitter_index: int = 0) -> bool:
     """Copy the Nth emitter's parameters from effects.fxp onto obj.inu."""
     game_root = bpy.path.abspath(
-        getattr(bpy.context.scene, 'gtatools_game_root', '') or ''
+        getattr(bpy.context.scene.inu_settings, 'gtatools_game_root', '') or ''
     )
     if not game_root:
         return False
@@ -1192,6 +1162,20 @@ class INUObjectProps(bpy.types.PropertyGroup):
         min=0.0, max=1.0,
         default=(1.0, 1.0, 0.784, 1.0),
         description=T("Цвет короны и света"),
+        update=_update_2dfx_preview,
+    )
+
+    corona_size_2dfx : FloatProperty(
+        name="Corona Size",
+        description=T("Размер короны"),
+        default=1.0, min=0.0, soft_max=10.0, precision=3,
+        update=_update_2dfx_preview,
+    )
+
+    shadow_size_2dfx : FloatProperty(
+        name="Shadow Size",
+        description=T("Размер тени / интенсивность света"),
+        default=8.0, min=0.0, soft_max=50.0, precision=3,
         update=_update_2dfx_preview,
     )
 
@@ -1649,21 +1633,8 @@ class INUMaterialProps(bpy.types.PropertyGroup):
     )
 
 
-class GTATOOLS_ImgFileEntry(bpy.types.PropertyGroup):
-    """One file entry in IMG archive list."""
-    name: StringProperty()
-
-
-class GTATOOLS_BinaryIplEntry(bpy.types.PropertyGroup):
-    """One binary IPL file found inside an IMG archive — user-selectable
-    for inclusion in Build Map / Import Map."""
-    name: StringProperty()
-    enabled: BoolProperty(
-        name="",
-        default=True,
-        description=T("Включить этот бинарный IPL в сборку карты"),
-    )
-    img_source: StringProperty()
+# GTATOOLS_ImgFileEntry, GTATOOLS_BinaryIplEntry — moved to scene_settings.py
+# (referenced by CollectionProperty fields inside INUSceneSettings).
 
 
 class GTATOOLS_TxdExportEntry(bpy.types.PropertyGroup):
@@ -1716,7 +1687,6 @@ class GTATOOLS_FillColorItem(bpy.types.PropertyGroup):
 from .ops.check import (
     GTATOOLS_OT_check_geometry,
     GTATOOLS_OT_check_ngons,
-    GTATOOLS_OT_clean_geometry,
     GTATOOLS_OT_clear_raw_dff,
 )
 
@@ -1826,10 +1796,7 @@ from .ops.map_ops import (
 from .ops.map_ops import (
     GTATOOLS_OT_toggle_links,
     GTATOOLS_OT_toggle_bbox,
-    GTATOOLS_OT_load_map_glb,
-    GTATOOLS_OT_build_map_glb,
     GTATOOLS_OT_import_map,
-    GTATOOLS_OT_replace_fake_with_dff,
 )
 
 
@@ -2016,8 +1983,6 @@ if hasattr(bpy.types, 'FileHandler'):
 from .ops.world_ops import (
     GTATOOLS_OT_import_water,
     GTATOOLS_OT_export_water,
-    GTATOOLS_OT_import_flight,
-    GTATOOLS_OT_export_flight,
     GTATOOLS_OT_import_track,
     GTATOOLS_OT_export_track,
     GTATOOLS_OT_import_nodes,
@@ -2031,11 +1996,6 @@ from .ops.world_ops import (
     GTATOOLS_OT_add_ped_path,
     GTATOOLS_OT_mark_station,
 )
-_hide_dff = False
-_hide_lod = False
-_hide_col = False
-
-
 # Operators moved to ops/object_utils_ops.py in Phase 3.
 from .ops.object_utils_ops import (
     GTATOOLS_OT_toggle_visibility,
@@ -2152,13 +2112,13 @@ def _draw_suffix_prefix(layout, scene):
         row = layout.row(align=True)
         pfx = row.row(align=True)
         pfx.scale_x = 0.7
-        pfx.prop(scene, _pfx, text="")
+        pfx.prop(scene.inu_settings, _pfx, text="")
         sub_lbl = row.row(align=True)
         sub_lbl.scale_x = 0.6
         sub_lbl.label(text="Model")
         sfx = row.row(align=True)
         sfx.scale_x = 0.7
-        sfx.prop(scene, _sfx, text="")
+        sfx.prop(scene.inu_settings, _sfx, text="")
         pad = row.row(align=True)
         pad.label(text=" ")
         pad.label(text=" ")
@@ -2180,7 +2140,7 @@ def _draw_id_manager(layout, scene, context):
 
     # ── 1. Preset row ──────────────────────────────────
     preset_row = layout.row(align=True)
-    preset_row.prop(scene, "gtatools_id_preset", text="")
+    preset_row.prop(scene.inu_settings, "gtatools_id_preset", text="")
     preset_row.operator("gtatools.id_preset_new", text="", icon=safe_icon('ADD'))
     preset_row.operator("gtatools.id_preset_rename", text="", icon=safe_icon('GREASEPENCIL'))
     preset_row.operator("gtatools.id_preset_delete", text="", icon=safe_icon('REMOVE'))
@@ -2203,9 +2163,9 @@ def _draw_id_manager(layout, scene, context):
             text=f"{T('Следующий свободный:')} {free[0]}",
             icon=safe_icon('FORWARD'))
 
-    layout.prop(scene, "gtatools_id_search", text="", icon=safe_icon('VIEWZOOM'))
-    search = getattr(scene, 'gtatools_id_search', '').strip()
-    page = getattr(scene, 'gtatools_id_page', 0)
+    layout.prop(scene.inu_settings, "gtatools_id_search", text="", icon=safe_icon('VIEWZOOM'))
+    search = getattr(scene.inu_settings, 'gtatools_id_search', '').strip()
+    page = getattr(scene.inu_settings, 'gtatools_id_page', 0)
     per_page = 20
 
     if used:
@@ -2271,7 +2231,7 @@ def _draw_id_manager(layout, scene, context):
             if total > per_page:
                 nav = sub.row(align=True)
                 nav.prop(
-                    scene, "gtatools_id_page",
+                    scene.inu_settings, "gtatools_id_page",
                     text=f"{start+1}-{min(start+per_page, total)} / {total}")
 
     if free:
@@ -2945,7 +2905,7 @@ def _get_map_region_items(self, context):
 
     items = [('ALL', T("Вся карта"), T("Импорт всей карты"))]
 
-    game_root = bpy.path.abspath(getattr(context.scene, 'gtatools_game_root', ''))
+    game_root = bpy.path.abspath(getattr(context.scene.inu_settings, 'gtatools_game_root', ''))
     if not game_root or not os.path.isdir(game_root):
         return items
 
@@ -2997,7 +2957,7 @@ def _id_preset_sync(context):
     """Push the scene's current preset name into id_manager's module state."""
     try:
         from .data.id_manager import set_active_preset
-        name = getattr(context.scene, 'gtatools_id_preset', 'default') or 'default'
+        name = getattr(context.scene.inu_settings, 'gtatools_id_preset', 'default') or 'default'
         set_active_preset(name)
     except Exception:
         pass
@@ -3015,12 +2975,15 @@ def _get_cache_dir():
 
 
 def _get_user_config_dir():
-    """Get INU_Preset folder next to the addon folder (not inside it)."""
-    addon_dir = os.path.dirname(os.path.abspath(__file__))  # .../addons/INU_tools
-    addons_dir = os.path.dirname(addon_dir)                  # .../addons/
-    d = os.path.join(addons_dir, 'INU_Preset')
-    os.makedirs(d, exist_ok=True)
-    return d
+    """Return the user-writable data directory for INU Tools.
+
+    Per Blender ToS, addons must not write files inside their own
+    folder. See ``tools/user_data.py`` for the full resolver — it
+    uses ``bpy.utils.extension_path_user`` (Blender 4.2+) with a
+    fallback to ``bpy.utils.user_resource('CONFIG')``.
+    """
+    from .tools.user_data import get_user_data_dir
+    return get_user_data_dir()
 
 
 def _get_paths_file():
@@ -3217,1027 +3180,22 @@ def register():
     # Sort materials button in material context menu
     bpy.types.MATERIAL_MT_context_menu.append(_draw_sort_materials_menu)
 
-    bpy.types.Scene.gtatools_lightmap_result = StringProperty(name="Result", default="")
-    bpy.types.Scene.gtatools_lightmap_path = StringProperty(name="Lightmap Path", default="lightmaps/lightmap.png")
+    # Scene properties — consolidated in INUSceneSettings PropertyGroup.
+    # See scene_settings.py for the full field list.
+    bpy.utils.register_class(INUSceneSettings)
+    bpy.types.Scene.inu_settings = bpy.props.PointerProperty(type=INUSceneSettings)
 
-    # Pre-export validation results — refilled by GTATOOLS_OT_validate_run
-    # and consumed by GTATOOLS_PT_validate_scene panel.
-    bpy.types.Scene.inu_validate_issues = bpy.props.CollectionProperty(
-        type=INUValidateIssue)
-
-    # Collapsible-section state for the PARTICLE 2DFX editor panel
-    # All Particle expert sections start collapsed for a clean panel.
-    # The create_2dfx operator opens «Спрайт и смешивание» right after
-    # creating a Particle effect so the user lands on the texture
-    # picker without an extra click.
-    bpy.types.Scene.gtatools_pfx_exp_texture = BoolProperty(default=False)
-    bpy.types.Scene.gtatools_pfx_exp_color = BoolProperty(default=False)
-    bpy.types.Scene.gtatools_pfx_exp_size = BoolProperty(default=False)
-    bpy.types.Scene.gtatools_pfx_exp_emission = BoolProperty(default=False)
-    bpy.types.Scene.gtatools_pfx_exp_physics = BoolProperty(default=False)
-    bpy.types.Scene.gtatools_pfx_exp_system = BoolProperty(default=False)
-    bpy.types.Scene.gtatools_pfx_exp_curves = BoolProperty(default=False)
-
-    def _update_particle_sim(self, context):
-        from .ops import particle_sim
-        if self.gtatools_particle_sim:
-            particle_sim.start_simulation()
-        else:
-            particle_sim.stop_simulation()
-
-    bpy.types.Scene.gtatools_particle_sim = BoolProperty(
-        name="Particle Simulation",
-        description=T("Анимировать 2DFX частицы в viewport"),
-        default=False,
-        update=_update_particle_sim,
-    )
-    bpy.types.Scene.gtatools_model_id = StringProperty(name="Model ID", default="0")
-    bpy.types.Scene.gtatools_vc_analysis = StringProperty(name="VC Analysis", default="")
-
-    # Fill colors history on Object
+    # CollectionProperty fields on non-Scene types stay outside the PG:
+    #   - Object.gtatools_fill_colors      — per-object fill history
+    #   - WindowManager.gtatools_txd_export_plan{,_index} — transient UI state
+    # The 3 Scene-side CollectionProperties (inu_validate_issues,
+    # gtatools_binary_ipls, gtatools_img_entries) live inside
+    # INUSceneSettings now — see scene_settings.py.
     bpy.types.Object.gtatools_fill_colors = CollectionProperty(type=GTATOOLS_FillColorItem)
-
-    # UV Grid Randomizer settings
-    def update_uv_grid(self, context):
-        # Force redraw UV editor
-        for area in context.screen.areas:
-            if area.type == 'IMAGE_EDITOR':
-                area.tag_redraw()
-
-    bpy.types.Scene.gtatools_uv_grid_cols = IntProperty(
-        name="Columns",
-        description=T("Количество колонок в сетке текстуры"),
-        default=3,
-        min=1,
-        max=16,
-        update=update_uv_grid
-    )
-    bpy.types.Scene.gtatools_uv_grid_rows = IntProperty(
-        name="Rows",
-        description=T("Количество рядов в сетке текстуры"),
-        default=2,
-        min=1,
-        max=16,
-        update=update_uv_grid
-    )
-
-    from bpy.props import EnumProperty
-    bpy.types.Scene.gtatools_uv_grid_align = EnumProperty(
-        name="Alignment",
-        description=T("Позиция UV в ячейке"),
-        items=[
-            ('CENTER', "Center", "Center of cell"),
-            ('TOP_LEFT', "Top Left", "Top left corner"),
-            ('TOP_CENTER', "Top", "Top center"),
-            ('TOP_RIGHT', "Top Right", "Top right corner"),
-            ('LEFT_CENTER', "Left", "Left center"),
-            ('RIGHT_CENTER', "Right", "Right center"),
-            ('BOTTOM_LEFT', "Bottom Left", "Bottom left corner"),
-            ('BOTTOM_CENTER', "Bottom", "Bottom center"),
-            ('BOTTOM_RIGHT', "Bottom Right", "Bottom right corner"),
-        ],
-        default='CENTER'
-    )
-
-    bpy.types.Scene.gtatools_uv_link_islands = BoolProperty(
-        name="Link Polygons",
-        description=T("Полигоны с пересекающимися UV перемещаются вместе"),
-        default=False
-    )
-
-    # COL Light settings
-    bpy.types.Scene.gtatools_col_day_min = IntProperty(
-        name="Day Min", description=T("Минимальное значение дневного света (тень)"), default=10, min=0, max=15)
-    bpy.types.Scene.gtatools_col_day_max = IntProperty(
-        name="Day Max", description=T("Максимальное значение дневного света (свет)"), default=15, min=0, max=15)
-    bpy.types.Scene.gtatools_col_night_min = IntProperty(
-        name="Night Min", description=T("Минимальное значение ночного света (тень)"), default=0, min=0, max=15,
-        update=_col_light_invalidate_preview)
-    bpy.types.Scene.gtatools_col_night_max = IntProperty(
-        name="Night Max", description=T("Максимальное значение ночного света (свет)"), default=5, min=0, max=15,
-        update=_col_light_invalidate_preview)
-
-    bpy.types.Scene.gtatools_col_light_edge = FloatProperty(
-        name="Edge",
-        description=T("Сдвиг границы COL освещения: + расширяет зелёную зону, — сужает"),
-        default=0.0, min=-5.0, max=5.0, soft_min=-1.0, soft_max=1.0, step=1,
-        update=_col_light_invalidate_preview)
-    bpy.types.Scene.gtatools_col_light_threshold = IntProperty(
-        name="Threshold",
-        description=T("Порог яркости: 0 = без порога, 100 = максимальная отсечка"),
-        default=0, min=0, max=100,
-        update=_col_light_invalidate_preview)
-    bpy.types.Scene.gtatools_col_light_contrast = FloatProperty(
-        name="Contrast",
-        description=T("Контраст: резкость перехода между тёмными и светлыми зонами"),
-        default=0.0, min=0.0, max=5.0, soft_min=0.0, soft_max=1.0, step=1,
-        update=_col_light_invalidate_preview)
-    bpy.types.Scene.gtatools_col_light_font_size = IntProperty(
-        name="Font Size",
-        description=T("Размер цифр на полигонах"),
-        default=13, min=6, max=36,
-        update=_col_light_invalidate_preview)
-    bpy.types.Scene.gtatools_col_light_show_numbers = BoolProperty(
-        name="Show Numbers",
-        description=T("Показать цифры на полигонах"),
-        default=True)
-
-    # IMG archive path
-    bpy.types.Scene.gtatools_img_path = StringProperty(
-        name="IMG Archive",
-        description=T("Путь к .img архиву GTA SA для экспорта моделей"),
-        default="",
-        subtype='FILE_PATH',
-        update=_save_paths,
-    )
-    bpy.types.Scene.gtatools_map_region = EnumProperty(
-        name="Region",
-        description=T("Район карты для импорта"),
-        items=_get_map_region_items,
-    )
-    bpy.types.Scene.gtatools_profile_enabled = BoolProperty(
-        name=T("Профайлер"),
-        description=T("Замерять время операций и записывать отчёт в .inu_cache/_profile.log. Включай только для отладки — добавляет небольшой overhead на каждый шаг"),
-        default=False,
-    )
-    bpy.types.Scene.gtatools_binary_ipls = CollectionProperty(
-        type=GTATOOLS_BinaryIplEntry,
-    )
     bpy.types.WindowManager.gtatools_txd_export_plan = CollectionProperty(
-        type=GTATOOLS_TxdExportEntry,
-    )
+        type=GTATOOLS_TxdExportEntry)
     bpy.types.WindowManager.gtatools_txd_export_plan_index = IntProperty(
-        default=0,
-    )
-    bpy.types.Scene.gtatools_show_binary_ipls = BoolProperty(
-        name="Show binary IPLs",
-        description=T("Развернуть список бинарных IPL для галочек"),
-        default=False,
-    )
-    bpy.types.Scene.gtatools_map_skip_2dfx = BoolProperty(
-        name="Skip 2DFX",
-        description=T("Не импортировать 2DFX-эффекты (лампы, частицы, ped attractors, sun glare) при импорте карты и DFF"),
-        default=True,
-    )
-    bpy.types.Scene.gtatools_img_use_gta_dat = BoolProperty(
-        name="Use gta.dat",
-        description=T("Искать все IDE/IPL через gta.dat (нужна корневая папка игры)"),
-        default=False,
-    )
-    bpy.types.Scene.gtatools_img_skip_lod = BoolProperty(
-        name="Skip LOD",
-        description=T("Пропустить LOD модели при импорте"),
-        default=True,
-    )
-    bpy.types.Scene.gtatools_img_load_txd = BoolProperty(
-        name="Load TXD",
-        description=T("Загружать TXD текстуры вместе с DFF"),
-        default=False,
-    )
-    bpy.types.Scene.gtatools_map_load_col = BoolProperty(
-        name="Load COL",
-        description=T("Загружать коллизии из кеша при импорте карты. Нужно для round-trip (импорт части карты → редактирование → экспорт в IMG другой сборки). При выключенном — только DFF геометрия, сцена легче"),
-        default=False,
-    )
-    bpy.types.Scene.gtatools_map_group_by_ipl = BoolProperty(
-        name="Group by IPL",
-        description=T("Создавать отдельную коллекцию на каждый IPL-файл (Map_LAn, Map_LAs, Map_SF…) вместо одиночных Map_DFF_Far/Mid/Near. Удобно для скрытия районов целиком и для совместного редактирования карты. LOD-меши идут в коллекцию своего IPL вместе с обычными мешами"),
-        default=True,
-    )
-
-    # Game root path (for gta.dat auto-discovery)
-    bpy.types.Scene.gtatools_game_root = StringProperty(
-        name="Game Root",
-        description=T("Корневая папка GTA SA для автопоиска IDE/IPL/IMG"),
-        default="",
-        subtype='DIR_PATH',
-        update=_save_paths,
-    )
-
-    # IDE / IPL paths
-    bpy.types.Scene.gtatools_ide_path = StringProperty(
-        name="IDE File",
-        description=T("Путь к IDE файлу GTA SA для добавления/обновления записей"),
-        default="",
-        subtype='FILE_PATH',
-        update=_save_paths,
-    )
-    bpy.types.Scene.gtatools_ipl_path = StringProperty(
-        name="IPL File",
-        description=T("Путь к IPL файлу GTA SA для добавления/обновления записей"),
-        default="",
-        subtype='FILE_PATH',
-        update=_save_paths,
-    )
-
-    # NVIDIA Texture Tools settings
-    bpy.types.Scene.gtatools_txd_auto_import = BoolProperty(
-        name="Import TXD",
-        description=T("Автоимпорт TXD текстур при импорте DFF"),
-        default=True,
-    )
-
-    # Shared TXD — single TXD for multiple DFF models
-    bpy.types.Scene.gtatools_shared_txd_name = StringProperty(
-        name="Shared TXD Name",
-        description=T("Имя общего TXD файла для нескольких DFF моделей"),
-        default="",
-    )
-
-    bpy.types.Scene.gtatools_txd_import_path = StringProperty(
-        name="TXD Import Folder",
-        description=T("Папка для поиска TXD при импорте DFF (пусто = автопоиск в папке DFF)"),
-        default="",
-        subtype='DIR_PATH'
-    )
-
-    bpy.types.Scene.gtatools_nvtt_path = StringProperty(
-        name="NVTT Path",
-        description=T("Путь к папке NVIDIA Texture Tools (для GPU сжатия)"),
-        default="",
-        subtype='DIR_PATH',
-        update=_save_paths,
-    )
-
-    bpy.types.Scene.gtatools_txd_use_gpu = BoolProperty(
-        name="Use GPU",
-        description=T("Использовать GPU (NVTT) для сжатия текстур"),
-        default=False
-    )
-
-    bpy.types.Scene.gtatools_show_nvtt_settings = BoolProperty(
-        name="Show NVTT Settings",
-        description=T("Показать настройки NVTT"),
-        default=False
-    )
-
-    bpy.types.Scene.gtatools_show_texture_settings = BoolProperty(
-        name="Show Texture Settings",
-        description=T("Показать настройки текстур"),
-        default=False
-    )
-
-    bpy.types.Scene.gtatools_show_paths_settings = BoolProperty(
-        name="Show Paths Settings",
-        description=T("Показать пути IDE/IPL/IMG"),
-        default=False
-    )
-
-    # Suffix settings
-    bpy.types.Scene.gtatools_show_suffix_settings = BoolProperty(
-        name="Show Suffix Settings",
-        description=T("Показать настройки суффиксов"),
-        default=False
-    )
-
-    bpy.types.Scene.gtatools_show_dff_flags = BoolProperty(
-        name="Show DFF Flags",
-        default=False
-    )
-    # 2DFX Light section collapse-state. All sections start closed
-    # for a clean panel — the create_2dfx operator opens «Свойства»
-    # right after creating a fresh Light effect so the user sees the
-    # editable fields immediately without an extra click.
-    bpy.types.Scene.gtatools_2dfx_show_props = BoolProperty(
-        name="Show 2DFX Light Props", default=False)
-    bpy.types.Scene.gtatools_2dfx_show_behavior = BoolProperty(
-        name="Show 2DFX Behavior", default=False)
-    bpy.types.Scene.gtatools_2dfx_show_shadow = BoolProperty(
-        name="Show 2DFX Shadow", default=False)
-    bpy.types.Scene.gtatools_2dfx_show_flags = BoolProperty(
-        name="Show 2DFX Flags", default=False)
-    bpy.types.Scene.gtatools_anim_tab = EnumProperty(
-        name="Animation Tab",
-        description=T("Раздел панели Анимации"),
-        items=[
-            ('CHAR', T("Персонажи"),
-             T("IFP импорт/экспорт, применение анимации к скелету, IK Rig")),
-            ('OBJ',  T("Объекты"),
-             T("Animated Map Object — мельницы, краны, флюгеры")),
-        ],
-        default='CHAR',
-    )
-    # Active addon profile — controls which top-level panels appear in
-    # the N-sidebar AND in what order. ALL = no filter, default zone
-    # ordering. User profiles are JSON in INU_Preset/profiles/ with an
-    # ordered `panels` list — position drives bl_order on activation.
-    from .tools.profiles import (
-        profile_enum_items, _on_profile_changed,
-    )
-    bpy.types.Scene.gtatools_profile = EnumProperty(
-        name=T("Профиль"),
-        description=T(
-            "Какие панели показывать в N-sidebar и в каком порядке.\n"
-            "Свои профили — INU_Preset/profiles/<name>.json"),
-        items=profile_enum_items,
-        update=_on_profile_changed,
-    )
-    # Click-to-pick / click-to-place state for the profile editor.
-    # Empty = nothing picked; non-empty = bl_idname of the panel
-    # currently «held» by the user, waiting for a place click.
-    bpy.types.Scene.gtatools_profile_picked = StringProperty(
-        name="Profile Picked Panel",
-        default="",
-    )
-    bpy.types.Scene.gtatools_show_ide_flags = BoolProperty(
-        name="Show IDE Flags",
-        description=T("Показать флаги IDE"),
-        default=False
-    )
-    bpy.types.Scene.gtatools_suffix_dff = StringProperty(
-        name="DFF Suffix", default="_DFF", update=_upd_suffix_dff,
-        description=T("Суффикс для DFF моделей"),
-    )
-    bpy.types.Scene.gtatools_suffix_lod = StringProperty(
-        name="LOD Suffix", default="_LOD", update=_upd_suffix_lod,
-        description=T("Суффикс для LOD моделей"),
-    )
-    bpy.types.Scene.gtatools_suffix_col = StringProperty(
-        name="COL Suffix", default="_COL", update=_upd_suffix_col,
-        description=T("Суффикс для COL моделей"),
-    )
-    bpy.types.Scene.gtatools_prefix_dff = StringProperty(
-        name="DFF Prefix", default="", update=_upd_prefix_dff,
-        description=T("Префикс для DFF моделей"),
-    )
-    bpy.types.Scene.gtatools_prefix_lod = StringProperty(
-        name="LOD Prefix", default="", update=_upd_prefix_lod,
-        description=T("Префикс для LOD моделей"),
-    )
-    bpy.types.Scene.gtatools_prefix_col = StringProperty(
-        name="COL Prefix", default="", update=_upd_prefix_col,
-        description=T("Префикс для COL моделей"),
-    )
-
-    # ID Manager
-    # X Radar Maker
-    bpy.types.Scene.gtatools_radar_output = StringProperty(
-        name="Radar Output",
-        subtype='DIR_PATH',
-        default="",
-        description=T("Папка для сохранения тайлов радара"),
-    )
-    bpy.types.Scene.gtatools_radar_grid = IntProperty(
-        name="Radar Grid",
-        default=8,
-        min=1, max=16,
-        description=T("Размер сетки (8 = 64 тайла)"),
-    )
-    bpy.types.Scene.gtatools_radar_size = IntProperty(
-        name="Radar Tile Size",
-        default=256,
-        min=64, max=4096,
-        description=T("Размер тайла в пикселях"),
-    )
-    bpy.types.Scene.gtatools_radar_height = FloatProperty(
-        name="Radar Height",
-        default=3000.0,
-        min=100.0,
-        description=T("Высота камеры"),
-    )
-    bpy.types.Scene.gtatools_radar_gamma = FloatProperty(
-        name="Radar Gamma",
-        default=1.0,
-        min=0.1, max=5.0,
-    )
-    bpy.types.Scene.gtatools_radar_specific = StringProperty(
-        name="Radar Specific",
-        default="",
-        description=T("Индексы тайлов через запятую (0,1,5,63)"),
-    )
-
-    bpy.types.Scene.gtatools_show_img_list = BoolProperty(
-        name="Show IMG List",
-        default=False
-    )
-    bpy.types.Scene.gtatools_img_entries = CollectionProperty(type=GTATOOLS_ImgFileEntry)
-    bpy.types.Scene.gtatools_img_entries_index = IntProperty(default=0)
-    bpy.types.Scene.gtatools_show_id_manager = BoolProperty(
-        name="Show ID Manager",
-        description=T("Показать менеджер ID"),
-        default=False
-    )
-    bpy.types.Scene.gtatools_id_search = StringProperty(
-        name="ID Search",
-        description=T("Поиск по ID или имени модели"),
-        default=""
-    )
-    bpy.types.Scene.gtatools_id_page = IntProperty(
-        name="ID Page",
-        default=0,
-        min=0,
-        soft_max=1000,
-    )
-    bpy.types.Scene.gtatools_id_preset = EnumProperty(
-        name=T("Пресет ID"),
-        description=T("Активный файл со списком ID. Каждый пресет — отдельный .txt в папке data/id_presets/"),
-        items=_get_id_preset_items,
-        update=_id_preset_update,
-    )
-    bpy.types.Scene.gtatools_id_show_service = BoolProperty(
-        name=T("Показать сервисные кнопки"),
-        description=T(
-            "Развернуть редкие операции: импорт ID из игры, "
-            "расширение FLA, очистка фантомов, открыть файл ID"),
-        default=False,
-    )
-    # Texture loader paths
-    bpy.types.Scene.gtatools_texture_path1 = StringProperty(
-        name="System Textures Path",
-        description=T("Путь к папке с системными текстурами GTA"),
-        default="",
-        subtype='DIR_PATH',
-        update=_save_paths,
-    )
-    bpy.types.Scene.gtatools_texture_path2 = StringProperty(
-        name="Blend Folder Path",
-        description=T("Путь к папке где находится .blend файл"),
-        default="",
-        subtype='DIR_PATH',
-        update=_save_paths,
-    )
-
-    # IFP action selector — update callback re-binds the live preview
-    # to the new selection so users don't have to click Preview again
-    # for every animation while browsing 294 vanilla anims.
-    def _ifp_action_changed(self, context):
-        try:
-            from .ops.ifp_import import preview_is_active, preview_start
-        except Exception:
-            return
-        if not preview_is_active():
-            return
-        arm = context.active_object
-        if not arm or arm.type != 'ARMATURE':
-            return
-        name = self.gtatools_ifp_action
-        if not name:
-            return
-        # Restart the handler against the new animation. preview_start
-        # keeps the saved_action stash because saved_action is only set
-        # on first enable (see preview_start guard).
-        preview_start(arm, name)
-
-    # IK rig display preferences — read by ops.ik_rig.add_ik_rig when
-    # creating empties. Changing them later doesn't update existing
-    # empties; user re-runs Add IK Rig (idempotent for same skeleton).
-    from .ops.ik_rig import EMPTY_TYPES as _IK_EMPTY_TYPES
-    bpy.types.Scene.gtatools_ik_display = EnumProperty(
-        name=T("Форма IK-эмпти"),
-        description=T("Какой примитив рисовать на IK-target и pole"),
-        items=_IK_EMPTY_TYPES,
-        default='SPHERE',
-    )
-    def _on_ik_color_change(self, context):
-        # Repaint every existing IK control bone in every rigged
-        # armature. Custom palette must be set for ``custom`` to
-        # be writable on the BoneColor object.
-        rgb = tuple(self.gtatools_ik_color)[:3]
-        for arm in bpy.data.objects:
-            if arm.type != 'ARMATURE' or not arm.get('inu_ik_rigged'):
-                continue
-            for pb in arm.pose.bones:
-                db = arm.data.bones.get(pb.name)
-                if db is None or not db.get('inu_ik_control'):
-                    continue
-                try:
-                    pb.color.palette = 'CUSTOM'
-                    pb.color.custom.normal = rgb
-                    pb.color.custom.select = rgb
-                    pb.color.custom.active = rgb
-                except Exception:
-                    pass
-
-    bpy.types.Scene.gtatools_ik_color = FloatVectorProperty(
-        name=T("Цвет IK-контроллов"),
-        description=T(
-            "Цвет всех IK-контрольных костей (запястья, ступни, "
-            "локти, колени, голова, корень). Применяется через "
-            "Bone Color → CUSTOM. Изменение применяется ко всем "
-            "существующим ригам сразу"),
-        subtype='COLOR',
-        size=4,
-        min=0.0, max=1.0,
-        default=(0.2, 1.0, 0.2, 1.0),
-        update=_on_ik_color_change,
-    )
-
-    def _on_floor_offset_change(self, context):
-        # Push the new value to every live foot Floor constraint so
-        # the slider feels like a global "raise the collision plane"
-        # control rather than a "next time" preference.
-        for arm in bpy.data.objects:
-            if arm.type != 'ARMATURE' or not arm.get('inu_ik_rigged'):
-                continue
-            for pb in arm.pose.bones:
-                for c in pb.constraints:
-                    if (c.type == 'FLOOR'
-                            and c.name.startswith('INU_IK_')):
-                        c.offset = float(self.gtatools_floor_offset)
-
-    bpy.types.Scene.gtatools_floor_offset = FloatProperty(
-        name=T("Коллизия"),
-        description=T(
-            "Высота виртуальной коллизии над плоскостью-полом. "
-            "Стопы IK-рига упираются на эту высоту ВЫШЕ плоскости "
-            "— компенсирует толщину подошвы. Изменение применяется "
-            "к существующим ригам сразу"),
-        default=0.05,
-        min=0.0,
-        max=1.0,
-        step=1,        # 0.01 per arrow click
-        precision=3,
-        subtype='DISTANCE',
-        update=_on_floor_offset_change,
-    )
-
-    bpy.types.Scene.gtatools_ik_extras_show = BoolProperty(
-        name=T("Дополнительно"),
-        description=T("Настройки пола, коллизии, цвета IK, плюс "
-                      "редкие утилиты (round-trip, batch-импорт)"),
-        default=False,
-    )
-
-    bpy.types.Scene.gtatools_ik_root_motion = BoolProperty(
-        name=T("Root motion"),
-        description=T("Включить для анимаций которые двигают "
-                      "персонажа по миру (walk/run/jump): IK_root "
-                      "цепляется на топ-кость скелета. По умолчанию "
-                      "выключено — IK_root сидит на Pelvis, что "
-                      "удобнее для idle/crouch/aim/static, где root "
-                      "должен оставаться в (0,0,0)"),
-        default=False,
-    )
-
-    bpy.types.Scene.gtatools_anim_tools_show = BoolProperty(
-        name=T("Настройка анимации"),
-        description=T("Утилиты для исправления sign-discontinuities, "
-                      "коррекций по диапазону кадров и т.п."),
-        default=False,
-    )
-    bpy.types.Scene.gtatools_anim_fix_start = IntProperty(
-        name=T("Старт"),
-        description=T("Первый кадр диапазона (включительно)"),
-        default=0, min=0,
-    )
-    bpy.types.Scene.gtatools_anim_fix_end = IntProperty(
-        name=T("Конец"),
-        description=T("Последний кадр диапазона (включительно)"),
-        default=10000, min=0,
-    )
-
-    def _on_chain_offset_change(self, context):
-        # Visual offset for chain (hand/foot) IK control cubes —
-        # custom_shape_translation moves the rendered shape only,
-        # bone math (IK target position) stays put. Lets the user
-        # align the cube with the actual mesh hand/foot when SA
-        # skinning offsets the mesh from the bone.
-        offset = tuple(self.gtatools_ik_chain_offset)
-        for arm in bpy.data.objects:
-            if arm.type != 'ARMATURE' or not arm.get('inu_ik_rigged'):
-                continue
-            for pb in arm.pose.bones:
-                db = arm.data.bones.get(pb.name)
-                if db is None or not db.get('inu_ik_control'):
-                    continue
-                ct = db.get('inu_ik_ctrl_type')
-                if ct != 'chain':
-                    continue
-                try:
-                    pb.custom_shape_translation = offset
-                except Exception:
-                    pass
-
-    bpy.types.Scene.gtatools_ik_chain_offset = FloatVectorProperty(
-        name=T("Смещение куба руки/ноги"),
-        description=T(
-            "Визуальный сдвиг кубов IK для рук и ног (X, Y, Z). "
-            "Двигает только отображение — позиция самой кости и "
-            "цели IK не меняется. Тюнится через Python: "
-            "``bpy.context.scene.gtatools_ik_chain_offset = "
-            "(x, y, z)``"),
-        size=3,
-        subtype='TRANSLATION',
-        default=(0.0, 0.0, 0.0),
-        precision=3,
-        update=_on_chain_offset_change,
-    )
-
-    # ── IK control size + visibility ────────────────────────────
-    _IK_BASE_SIZES = {
-        'chain': 0.08, 'head': 0.08, 'rot': 0.08,
-        'pole':  0.04, 'root': 0.16,
-    }
-
-    def _derive_ik_type(name):
-        # Fallback when ``inu_ik_ctrl_type`` custom prop is missing
-        # (rigs created before that prop was introduced). Names follow
-        # the ``INU_IK_<short>[_pole]`` convention so the type is
-        # derivable: hand/foot chains, elbow/knee poles, head/spine1/
-        # shoulder rotation controls, single root.
-        if not name.startswith('INU_IK_'):
-            return None
-        if name.endswith('_pole'):
-            return 'pole'
-        suffix = name[len('INU_IK_'):]
-        if suffix in {'R_arm', 'L_arm', 'R_leg', 'L_leg'}:
-            return 'chain'
-        if suffix == 'root':
-            return 'root'
-        return 'rot'
-
-    def _ctrl_type_of(db):
-        return db.get('inu_ik_ctrl_type') or _derive_ik_type(db.name)
-
-    def _on_ik_size_change(self, context):
-        # Live-resize every IK control widget across every rigged
-        # armature. ``custom_shape_scale_xyz`` is the only knob —
-        # ``use_custom_shape_bone_size`` is already False so the
-        # scalar applies directly without bone-length coupling.
-        mult = float(self.gtatools_ik_size)
-        for arm in bpy.data.objects:
-            if arm.type != 'ARMATURE' or not arm.get('inu_ik_rigged'):
-                continue
-            for pb in arm.pose.bones:
-                db = arm.data.bones.get(pb.name)
-                if db is None or not db.get('inu_ik_control'):
-                    continue
-                ct = _ctrl_type_of(db) or 'chain'
-                base = _IK_BASE_SIZES.get(ct, 0.08)
-                size = base * mult
-                try:
-                    pb.custom_shape_scale_xyz = (size, size, size)
-                except Exception:
-                    pass
-
-    bpy.types.Scene.gtatools_ik_size = FloatProperty(
-        name=T("Размер"),
-        description=T("Множитель размера всех IK-контролов "
-                      "(кубов). 1.0 = по умолчанию, 0.5 = вдвое "
-                      "меньше. Применяется к существующим ригам "
-                      "сразу"),
-        default=1.0,
-        min=0.1,
-        max=5.0,
-        step=10,        # 0.1 per arrow click
-        precision=2,
-        update=_on_ik_size_change,
-    )
-
-    # Map type → bone collection name. Stays in sync with
-    # ops.ik_rig._IK_COLL_* constants.
-    _IK_TYPE_TO_COLL = {
-        'chain': 'INU_IK_Chain',
-        'pole':  'INU_IK_Pole',
-        'rot':   'INU_IK_Rot',
-        'head':  'INU_IK_Rot',  # legacy alias
-        'root':  'INU_IK_Root',
-    }
-
-    def _make_visibility_setter(ctrl_types):
-        # Build an update callback that toggles bone-collection
-        # visibility for every rigged armature. Falls back to
-        # ``Bone.hide`` per-bone if the rig was created before
-        # collections were introduced. Both paths force a viewport
-        # redraw via tag_redraw / update_tag so the change is
-        # immediately visible.
-        def _setter(self, context):
-            attr = ctrl_types[1]
-            visible = bool(getattr(self, attr))
-            type_set = ctrl_types[0]
-            coll_names = {_IK_TYPE_TO_COLL[t] for t in type_set
-                          if t in _IK_TYPE_TO_COLL}
-
-            for arm in bpy.data.objects:
-                if (arm.type != 'ARMATURE'
-                        or not arm.get('inu_ik_rigged')):
-                    continue
-
-                bone_colls = getattr(arm.data, 'collections', None)
-                touched_via_collection = set()
-                if bone_colls is not None:
-                    for cname in coll_names:
-                        coll = bone_colls.get(cname)
-                        if coll is None:
-                            continue
-                        coll.is_visible = visible
-                        try:
-                            for bone in coll.bones:
-                                touched_via_collection.add(bone.name)
-                        except Exception:
-                            pass
-
-                # Fallback for bones not yet in any IK collection
-                # (e.g. rig saved with an earlier addon version):
-                # toggle Bone.hide directly.
-                for db in arm.data.bones:
-                    if db.name in touched_via_collection:
-                        continue
-                    if not db.get('inu_ik_control'):
-                        continue
-                    if _ctrl_type_of(db) in type_set:
-                        db.hide = not visible
-
-                arm.data.update_tag()
-
-            if context.area is not None:
-                context.area.tag_redraw()
-        return _setter
-
-    bpy.types.Scene.gtatools_ik_show_chain = BoolProperty(
-        name=T("Руки/ноги"),
-        description=T("Показывать кубы запястий и ступней "
-                      "(IK target'ы)"),
-        default=True,
-        update=_make_visibility_setter(
-            (frozenset({'chain'}), 'gtatools_ik_show_chain')),
-    )
-    bpy.types.Scene.gtatools_ik_show_pole = BoolProperty(
-        name=T("Локти/колени"),
-        description=T("Показывать кубы-маркеры на локтях и "
-                      "коленях (pole_target'ы)"),
-        default=True,
-        update=_make_visibility_setter(
-            (frozenset({'pole'}), 'gtatools_ik_show_pole')),
-    )
-    bpy.types.Scene.gtatools_ik_show_rot = BoolProperty(
-        name=T("Голова/торс/плечи"),
-        description=T("Показывать кубы головы, верхнего торса "
-                      "(Spine1) и ключиц"),
-        default=True,
-        update=_make_visibility_setter(
-            (frozenset({'rot', 'head'}), 'gtatools_ik_show_rot')),
-    )
-    bpy.types.Scene.gtatools_ik_show_root = BoolProperty(
-        name=T("Корень"),
-        description=T("Показывать корневой куб (мастер-контроль "
-                      "всего скелета)"),
-        default=True,
-        update=_make_visibility_setter(
-            (frozenset({'root'}), 'gtatools_ik_show_root')),
-    )
-
-    bpy.types.Scene.gtatools_ifp_action = StringProperty(
-        name="IFP Action",
-        description="Select IFP animation to apply",
-        update=_ifp_action_changed,
-    )
-
-
-    # Water settings
-    bpy.types.Scene.gtatools_water_flag = EnumProperty(
-        name="Water Type",
-        description="Water polygon visibility and depth type",
-        items=[
-            ('0', T("Обычная / Невидимая"), T("Глубокая вода, не отображается (подводные зоны)")),
-            ('1', T("Обычная / Видимая"), T("Глубокая вода с волнами (океан, реки)")),
-            ('2', T("Мелкая / Невидимая"), T("Мелкая вода, не отображается (анимация хождения по воде)")),
-            ('3', T("Мелкая / Видимая"), T("Мелкая вода, отображается (лужи, пруды)")),
-        ],
-        default='1',
-    )
-    bpy.types.Scene.gtatools_water_speed_x = FloatProperty(
-        name="Speed X", default=0.0, min=-5.0, max=5.0
-    )
-    bpy.types.Scene.gtatools_water_speed_y = FloatProperty(
-        name="Speed Y", default=0.0, min=-5.0, max=5.0
-    )
-    bpy.types.Scene.gtatools_water_speed_z = FloatProperty(
-        name="Speed Z", default=0.05, min=-5.0, max=5.0
-    )
-    bpy.types.Scene.gtatools_water_wave_height = FloatProperty(
-        name="Wave Height", default=0.1, min=0.0, max=10.0
-    )
-
-    # Bake settings (calibrated for 3Ds Max-like output)
-    bpy.types.Scene.gtatools_bake_ambient = FloatProperty(
-        name="Ambient",
-        description=T("Базовый рассеянный свет (ниже = темнее тени)"),
-        default=0.10,
-        min=0.0,
-        max=0.5
-    )
-    bpy.types.Scene.gtatools_bake_intensity = FloatProperty(
-        name="Intensity",
-        description=T("Множитель интенсивности света (ниже = темнее)"),
-        default=0.05,
-        min=0.0001,
-        max=0.5
-    )
-    bpy.types.Scene.gtatools_bake_gamma = FloatProperty(
-        name="Gamma",
-        description=T("Гамма-коррекция (ниже = темнее)"),
-        default=0.50,
-        min=0.1,
-        max=3.0
-    )
-
-    bpy.types.Scene.gtatools_bake_shadows = BoolProperty(
-        name="Shadows",
-        description=T("Включить тени при запекании (raycast проверка перекрытий)"),
-        default=True
-    )
-
-    # ── Modulate Color preview ──────────────────────────────────────
-    # Three-state preview: OFF (чистый prelight) / DAY / NIGHT.
-    # Каждый режим хардкодит пресет из ванильного timecyc.dat
-    # (EXTRASUNNY_LA Midday / Midnight): ambient_obj + два аддитивных
-    # post-fx тинта. Имитирует ванильную формулу (см. euryopa
-    # pcBuildingVS.hlsl + CPostEffects::ColourFilter из
-    # gta-reversed-modern).
-    def _on_modulate_preview_update(self, context):
-        from .tools.prelight import apply_modulate_preview
-        apply_modulate_preview(context.scene)
-
-    bpy.types.Scene.gtatools_modulate_mode = EnumProperty(
-        name="Modulate Color",
-        description=T("Preview-режим: OFF — чистый prelight, Day/Night — добавить ambient как игра при Modulate Color = ON. Vcols и DFF-флаги не трогаются"),
-        items=[
-            ('OFF',   "Off",   T("Без ambient — только prelight")),
-            ('DAY',   "Day",   T("EXTRASUNNY_LA Midday из timecyc.dat")),
-            ('NIGHT', "Night", T("EXTRASUNNY_LA Midnight из timecyc.dat")),
-        ],
-        default='OFF',
-        update=_on_modulate_preview_update,
-    )
-    bpy.types.Scene.gtatools_modulate_mix = FloatProperty(
-        name="Прозрачность",
-        description=T("Сколько ambient добавлять к prelight: 0 — без ambient (только prelight), 1 — полный ambient. Аналог surfAmbient материала из ванильного шейдера"),
-        default=0.002,
-        min=0.0, max=1.0,
-        precision=3,
-        subtype='FACTOR',
-        update=_on_modulate_preview_update,
-    )
-    bpy.types.Scene.gtatools_modulate_contrast = FloatProperty(
-        name="Контраст",
-        description=T("Контраст финального изображения. 0 — без изменений, отрицательные — мягче, положительные — резче"),
-        default=0.0,
-        min=-1.0, max=1.0,
-        subtype='FACTOR',
-        update=_on_modulate_preview_update,
-    )
-    bpy.types.Scene.gtatools_modulate_gamma = FloatProperty(
-        name="Гамма",
-        description=T("Гамма финального изображения. 1.0 — без изменений, <1 — светлее, >1 — темнее"),
-        default=0.8,
-        min=0.1, max=4.0,
-        update=_on_modulate_preview_update,
-    )
-
-    bpy.types.Scene.gtatools_prelight_preset = EnumProperty(
-        name="Prelight Preset",
-        items=_get_preset_items,
-        description=T("Выбрать пресет настроек прелайта"),
-    )
-
-    # V offset for night prelight
-    bpy.types.Scene.gtatools_v_offset = FloatProperty(
-        name="V Offset",
-        description=T("Смещение яркости как в 3Ds Max Adjust Color V (-80 для ночи)"),
-        default=0.0,
-        min=-100.0,
-        max=100.0
-    )
-
-    # Post-processing vertex colors
-    bpy.types.Scene.gtatools_vc_smooth_iterations = IntProperty(
-        name="Iterations",
-        description=T("Количество итераций сглаживания"),
-        default=1,
-        min=1,
-        max=50
-    )
-    bpy.types.Scene.gtatools_vc_smooth_factor = FloatProperty(
-        name="Factor",
-        description=T("Сила сглаживания (0 = без изменений, 1 = полное усреднение)"),
-        default=0.5,
-        min=0.0,
-        max=1.0
-    )
-    bpy.types.Scene.gtatools_vc_contrast = FloatProperty(
-        name="Contrast",
-        description=T("Контраст (1 = без изменений, <1 = меньше, >1 = больше)"),
-        default=1.0,
-        min=0.0,
-        max=3.0
-    )
-    bpy.types.Scene.gtatools_vc_brightness = FloatProperty(
-        name="Brightness",
-        description=T("Яркость смещение (-1..+1)"),
-        default=0.0,
-        min=-1.0,
-        max=1.0
-    )
-    bpy.types.Scene.gtatools_vc_gamma = FloatProperty(
-        name="Gamma",
-        description=T("Гамма-коррекция (1 = без изменений, <1 = светлее, >1 = темнее)"),
-        default=1.0,
-        min=0.1,
-        max=3.0
-    )
-
-    # Vertex paint - fill color
-    bpy.types.Scene.gtatools_fill_color = FloatVectorProperty(
-        name="Fill Color",
-        subtype='COLOR',
-        default=(1.0, 1.0, 1.0),
-        min=0.0,
-        max=1.0
-    )
-
-    # Vertex paint - scatter light settings
-    bpy.types.Scene.gtatools_scatter_intensity = FloatProperty(
-        name="Intensity",
-        description=T("Интенсивность рассеивания света"),
-        default=1.0,
-        min=0.1,
-        max=5.0
-    )
-    bpy.types.Scene.gtatools_scatter_falloff = FloatProperty(
-        name="Falloff",
-        description=T("Скорость затухания света (выше = быстрее)"),
-        default=1.5,
-        min=0.5,
-        max=5.0
-    )
-    bpy.types.Scene.gtatools_scatter_iterations = IntProperty(
-        name="Iterations",
-        description=T("Количество слоёв соседних граней"),
-        default=3,
-        min=1,
-        max=10
-    )
-    bpy.types.Scene.gtatools_scatter_radius = FloatProperty(
-        name="Radius",
-        description=T("Радиус поиска соседних граней (0 = авто по размеру грани)"),
-        default=0.0,
-    )
-
-    # Pipeline selector for export
-    bpy.types.Scene.gtatools_export_pipeline = EnumProperty(
-        items=[
-            ('NONE', 'None',
-             T("Без указания pipeline — использовать стандартный рендер RenderWare. Подходит для простых объектов, которым не нужны специальные эффекты движка")),
-            ('0x53F2009A', 'Vehicle',
-             T("Pipeline кузова машины (RSPIPE_PC_CustomCarEnvMap). Добавляет env-map отражения неба/облаков/улицы. Используется совместно с текстурами vehicleenv128 + vehiclespecdot64 на материале")),
-            ('0x53F20098', 'Day/Night',
-             T("Pipeline здания с day/night vertex colors (RSPIPE_PC_CustomBuildingDN). Движок плавно смешивает дневной и ночной слои vertex colors по игровому времени. Требует ДВА Color Attribute слоя (Day + Night) на меше. Mesh-флаги Day/Night здесь не нужны — переход делает pipeline через VC")),
-            ('0x53F2009C', 'Building',
-             T("Простой pipeline здания (RSPIPE_PC_CustomBuilding). Статическое освещение через один слой vertex colors. Работает быстрее чем Day/Night, но нет смены по времени суток")),
-        ],
-        name="Pipeline",
-        description=T("Рендер-пайплайн для экспорта DFF"),
-        default='NONE',
-    )
-
-    from .tools.gta_material_panel import preset_items as _mat_preset_items
-    bpy.types.Scene.gtatools_material_preset = EnumProperty(
-        items=_mat_preset_items,
-        name="GTA Material Preset",
-    )
-
-    # Export settings
-    bpy.types.Scene.gtatools_export_all_dff = BoolProperty(
-        name="Export DFF",
-        description=T("Экспортировать DFF при Export All"),
-        default=True
-    )
-    bpy.types.Scene.gtatools_export_all_col = BoolProperty(
-        name="Export COL",
-        description=T("Экспортировать COL при Export All"),
-        default=True
-    )
-    bpy.types.Scene.gtatools_export_all_lod = BoolProperty(
-        name="Export LOD",
-        description=T("Экспортировать LOD при Export All"),
-        default=True
-    )
-    bpy.types.Scene.gtatools_export_all_txd = BoolProperty(
-        name="Export TXD",
-        description=T("Экспортировать TXD при Export All"),
-        default=True
-    )
-    bpy.types.Scene.gtatools_export_all_col_library = BoolProperty(
-        name=T("COL Library"),
-        description=T("Писать все коллизии в один .col файл (multi-entry library). Каждая запись в файле — отдельная коллизия со своим model_id, сопоставляется с DFF по ID"),
-        default=False,
-    )
-    bpy.types.Scene.gtatools_export_all_col_library_name = StringProperty(
-        name=T("Имя library .col"),
-        description=T("Имя общего .col файла без расширения (например 'district' → district.col)"),
-        default="collision",
-    )
-    bpy.types.Scene.gtatools_export_all_txd_shared = BoolProperty(
-        name=T("Shared TXD"),
-        description=T("Писать все текстуры в один общий .txd файл вместо отдельного .txd на каждую модель. Полезно для районов и сборок где множество моделей делят одни и те же текстуры"),
-        default=False,
-    )
-    bpy.types.Scene.gtatools_export_all_txd_shared_name = StringProperty(
-        name=T("Имя общего .txd"),
-        description=T("Имя общего .txd файла без расширения (например 'district' → district.txd)"),
-        default="textures",
-    )
+        default=0)
 
     # Keymap: Shift+T — toggle UV Editor
     wm = bpy.context.window_manager
@@ -4265,20 +3223,39 @@ def register():
     bpy.app.timers.register(_prewarm_dff_subsystem,
                             first_interval=2.0)
 
-    # 2DFX real-time preview handler
-    bpy.app.handlers.depsgraph_update_post.append(_on_depsgraph_update_2dfx)
-
     # 2DFX billboard rotation timer — start now and restart on file load
     from .ops.fx_preview import start_billboard_timer
     start_billboard_timer()
     bpy.app.handlers.load_post.append(_on_file_load_restart_timer)
     bpy.app.handlers.load_post.append(_on_file_load_restore_paths)
     bpy.app.handlers.load_post.append(_on_file_load_migrate_modulate)
+    bpy.app.handlers.load_post.append(_on_file_load_migrate_2dfx_size)
+    bpy.app.handlers.load_post.append(_on_file_load_migrate_scene_settings)
     # Run migration once at register too — для уже открытой сцены.
     try:
         _on_file_load_migrate_modulate(None)
     except Exception:
         pass
+
+    # One-time migration of user data from the legacy <addons>/INU_Preset/
+    # location to bpy.utils.extension_path_user. Idempotent — drops a
+    # marker file in the new dir on first success.
+    try:
+        from .tools.user_data import migrate_legacy_inu_preset, get_user_data_dir
+        migrate_legacy_inu_preset()
+    except Exception as e:
+        print(f"[INU] legacy INU_Preset migration failed: {e}")
+
+    # Register the addon's user data dir with Blender's preset path
+    # registry. JSON-based profiles / material / id presets live there;
+    # this declares the location through the official API per
+    # extensions.blender.org review feedback.
+    try:
+        _user_data_root = get_user_data_dir()
+        if hasattr(bpy.utils, 'register_preset_path'):
+            bpy.utils.register_preset_path(_user_data_root)
+    except Exception as e:
+        print(f"[INU] register_preset_path failed: {e}")
 
     # Deferred load paths (context.scene not available during register)
     def _deferred_load_paths():
@@ -4351,14 +3328,8 @@ def register():
         bpy.types.Mesh.gtatools_vc_multi_contrast = FloatProperty(
             name="Multi Contrast", default=1.0, min=0.0, max=3.0)
         # Section-expanded toggle for the inline «Слои Vertex Color»
-        # block in the prelight panel. Stored on Scene (not Mesh) so
-        # the user's collapsed/expanded preference persists across
-        # the active object — switching meshes shouldn't fold the
-        # section every time.
-        bpy.types.Scene.gtatools_vc_layers_expanded = BoolProperty(
-            name="VC Layers Section Expanded",
-            default=False,
-        )
+        # block in the prelight panel — moved to INUSceneSettings.
+        # gtatools_vc_layers_expanded is part of scene_settings.py.
         vc_layers_register_handlers()
     except Exception as _e:
         import traceback
@@ -4399,6 +3370,73 @@ def _on_file_load_migrate_modulate(dummy):
 
 
 @persistent
+def _on_file_load_migrate_scene_settings(dummy):
+    """Migrate Scene-level ``gtatools_*`` properties saved in .blend files
+    (pre-Step 9) into the new ``scene.inu_settings`` PropertyGroup.
+
+    Old saves had each setting registered directly on Scene; new code
+    expects them under ``scene.inu_settings.<name>``. Without this
+    handler, opening an old .blend would silently lose every saved path,
+    UI toggle, and slider value.
+    """
+    # CollectionProperty fields can't be migrated by attribute copy —
+    # each item would need to be re-added one-by-one. Users can rescan
+    # binary IPLs / refresh IMG list / re-validate to repopulate.
+    SKIP = {'gtatools_binary_ipls', 'gtatools_img_entries', 'inu_validate_issues'}
+    for scene in bpy.data.scenes:
+        settings = getattr(scene, 'inu_settings', None)
+        if settings is None:
+            continue
+        for key in list(scene.keys()):
+            if not key.startswith('gtatools_'):
+                continue
+            if key in SKIP:
+                continue
+            if not hasattr(settings, key):
+                continue
+            try:
+                value = scene[key]
+                # IDProperty arrays come back as IDPropertyArray — coerce
+                # to plain list so the PropertyGroup setter accepts.
+                if hasattr(value, 'to_list'):
+                    value = value.to_list()
+                setattr(settings, key, value)
+                del scene[key]
+            except Exception:
+                pass
+
+
+@persistent
+def _on_file_load_migrate_2dfx_size(dummy):
+    """Migrate legacy ``obj['2dfx_corona_size']`` and ``obj['2dfx_shadow_size']``
+    custom IDProperties to the new ``inu.corona_size_2dfx`` /
+    ``inu.shadow_size_2dfx`` PropertyGroup fields.
+
+    Custom props can't have ``update=`` callbacks, which forced a depsgraph
+    handler for live preview. Migrating to PropertyGroup fields lets the
+    update fire only on the property itself.
+    """
+    for obj in bpy.data.objects:
+        if obj.type != 'EMPTY':
+            continue
+        inu = getattr(obj, 'inu', None)
+        if not inu or inu.type != '2DFX':
+            continue
+        if '2dfx_corona_size' in obj:
+            try:
+                inu.corona_size_2dfx = float(obj['2dfx_corona_size'])
+                del obj['2dfx_corona_size']
+            except (TypeError, ValueError):
+                pass
+        if '2dfx_shadow_size' in obj:
+            try:
+                inu.shadow_size_2dfx = float(obj['2dfx_shadow_size'])
+                del obj['2dfx_shadow_size']
+            except (TypeError, ValueError):
+                pass
+
+
+@persistent
 def _on_file_load_restart_timer(dummy):
     """Restart billboard timer after loading a new .blend file."""
     print("[2DFX] load_post handler fired — scheduling timer restart in 1s...")
@@ -4410,53 +3448,19 @@ def _on_file_load_restart_timer(dummy):
     bpy.app.timers.register(_delayed_start, first_interval=1.0)
 
 
-_2dfx_sync_busy = False
-
-def _on_depsgraph_update_2dfx(scene, depsgraph):
-    """Auto-sync 2DFX preview when properties change in UI."""
-    global _2dfx_sync_busy
-
-    # Ensure billboard timer is alive (restart after scene switch etc.)
-    try:
-        from .ops.fx_preview import _update_billboard_rotations, start_billboard_timer
-        import bpy as _bpy
-        if not _bpy.app.timers.is_registered(_update_billboard_rotations):
-            start_billboard_timer()
-    except Exception:
-        pass
-
-    if _2dfx_sync_busy:
-        return
-    try:
-        obj = bpy.context.active_object
-    except Exception:
-        return
-    if not obj or obj.type != 'EMPTY':
-        return
-    inu = getattr(obj, 'inu', None)
-    if not inu or inu.type != '2DFX' or inu.effect_2dfx != 'LIGHT':
-        return
-    # Only run if this object has preview children
-    has_children = any(
-        getattr(c, 'inu', None) and c.inu.type == 'NON'
-        for c in obj.children
-    )
-    if not has_children:
-        return
-    _2dfx_sync_busy = True
-    try:
-        from .ops.fx_preview import sync_preview_from_props
-        sync_preview_from_props(obj)
-    except Exception:
-        pass
-    finally:
-        _2dfx_sync_busy = False
-
-
 def unregister():
     # Drop our locale dict before any classes go away — keeps Blender's
     # translation table clean across addon reloads.
     _unregister_blender_translations()
+
+    # Unregister the addon's user data dir from Blender's preset path
+    # registry (paired with register_preset_path call in register()).
+    try:
+        from .tools.user_data import get_user_data_dir
+        if hasattr(bpy.utils, 'unregister_preset_path'):
+            bpy.utils.unregister_preset_path(get_user_data_dir())
+    except Exception as e:
+        print(f"[INU] unregister_preset_path failed: {e}")
 
     # 2DFX billboard timer
     from .ops.fx_preview import stop_billboard_timer
@@ -4471,14 +3475,16 @@ def unregister():
         pass
 
     # 2DFX handlers
-    if _on_depsgraph_update_2dfx in bpy.app.handlers.depsgraph_update_post:
-        bpy.app.handlers.depsgraph_update_post.remove(_on_depsgraph_update_2dfx)
     if _on_file_load_restart_timer in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(_on_file_load_restart_timer)
     if _on_file_load_restore_paths in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(_on_file_load_restore_paths)
     if _on_file_load_migrate_modulate in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(_on_file_load_migrate_modulate)
+    if _on_file_load_migrate_2dfx_size in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_on_file_load_migrate_2dfx_size)
+    if _on_file_load_migrate_scene_settings in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_on_file_load_migrate_scene_settings)
 
     # File > Export / Import menus
     bpy.types.TOPBAR_MT_file_export.remove(menu_func_export)
@@ -4505,12 +3511,15 @@ def unregister():
     _col_light_mod._col_light_preview_handlers.clear()
     _col_light_mod._col_light_preview_active = False
 
-    # Remove model links draw handler
-    global _links_draw_handler, _links_active
-    if _links_draw_handler is not None:
-        bpy.types.SpaceView3D.draw_handler_remove(_links_draw_handler, 'WINDOW')
-        _links_draw_handler = None
-    _links_active = False
+    # Remove model links draw handler — state lives in ops/map_ops.py
+    # (a `global` declaration here would point at a non-existent
+    # __init__.py-level binding and crash with NameError on unregister).
+    from .ops import map_ops as _map_ops_mod
+    if _map_ops_mod._links_draw_handler is not None:
+        bpy.types.SpaceView3D.draw_handler_remove(
+            _map_ops_mod._links_draw_handler, 'WINDOW')
+        _map_ops_mod._links_draw_handler = None
+    _map_ops_mod._links_active = False
 
     # Remove UV grid draw handler
     if _uv._uv_grid_draw_handler is not None:
@@ -4518,101 +3527,35 @@ def unregister():
         _uv._uv_grid_draw_handler = None
     _uv._uv_grid_visible = False
 
-    del bpy.types.Scene.gtatools_uv_grid_cols
-    del bpy.types.Scene.gtatools_uv_grid_rows
-    del bpy.types.Scene.gtatools_uv_grid_align
-    del bpy.types.Scene.gtatools_uv_link_islands
-    del bpy.types.Scene.gtatools_col_day_min
-    del bpy.types.Scene.gtatools_col_day_max
-    del bpy.types.Scene.gtatools_col_night_min
-    del bpy.types.Scene.gtatools_col_night_max
-    del bpy.types.Scene.gtatools_col_light_edge
-    del bpy.types.Scene.gtatools_col_light_threshold
-    del bpy.types.Scene.gtatools_col_light_contrast
-    del bpy.types.Scene.gtatools_col_light_font_size
-    del bpy.types.Scene.gtatools_col_light_show_numbers
-    del bpy.types.Scene.gtatools_img_path
-    del bpy.types.Scene.gtatools_game_root
-    del bpy.types.Scene.gtatools_map_region
-    del bpy.types.Scene.gtatools_profile_enabled
-    del bpy.types.Scene.gtatools_binary_ipls
+    # Scene properties — single PointerProperty + PropertyGroup class.
+    try:
+        del bpy.types.Scene.inu_settings
+    except (AttributeError, RuntimeError):
+        pass
+    try:
+        bpy.utils.unregister_class(INUSceneSettings)
+    except (RuntimeError, ValueError):
+        pass
+
+    # CollectionProperty fields outside the PG (Object / WindowManager).
     try:
         del bpy.types.WindowManager.gtatools_txd_export_plan
         del bpy.types.WindowManager.gtatools_txd_export_plan_index
     except Exception:
         pass
-    del bpy.types.Scene.gtatools_show_binary_ipls
-    del bpy.types.Scene.gtatools_map_skip_2dfx
-    del bpy.types.Scene.gtatools_img_use_gta_dat
-    del bpy.types.Scene.gtatools_img_skip_lod
-    del bpy.types.Scene.gtatools_img_load_txd
-    del bpy.types.Scene.gtatools_map_load_col
     try:
-        del bpy.types.Scene.gtatools_map_group_by_ipl
+        del bpy.types.Object.gtatools_fill_colors
+    except (AttributeError, RuntimeError):
+        pass
+
+    # Stop particle sim timer and drop meshes (the property itself lives
+    # in INUSceneSettings now, but the timer needs explicit shutdown).
+    try:
+        from .ops import particle_sim
+        particle_sim.stop_simulation()
     except Exception:
         pass
-    del bpy.types.Scene.gtatools_ide_path
-    del bpy.types.Scene.gtatools_ipl_path
-    del bpy.types.Scene.gtatools_txd_auto_import
-    del bpy.types.Scene.gtatools_shared_txd_name
-    del bpy.types.Scene.gtatools_txd_import_path
-    del bpy.types.Scene.gtatools_nvtt_path
-    del bpy.types.Scene.gtatools_txd_use_gpu
-    del bpy.types.Scene.gtatools_show_nvtt_settings
-    del bpy.types.Scene.gtatools_show_texture_settings
-    del bpy.types.Scene.gtatools_show_paths_settings
-    del bpy.types.Scene.gtatools_show_suffix_settings
-    del bpy.types.Scene.gtatools_show_dff_flags
-    for _p in ('gtatools_2dfx_show_props', 'gtatools_2dfx_show_behavior',
-               'gtatools_2dfx_show_shadow', 'gtatools_2dfx_show_flags'):
-        if hasattr(bpy.types.Scene, _p):
-            delattr(bpy.types.Scene, _p)
-    if hasattr(bpy.types.Scene, 'gtatools_anim_tab'):
-        del bpy.types.Scene.gtatools_anim_tab
-    if hasattr(bpy.types.Scene, 'gtatools_profile'):
-        del bpy.types.Scene.gtatools_profile
-    if hasattr(bpy.types.Scene, 'gtatools_profile_picked'):
-        del bpy.types.Scene.gtatools_profile_picked
-    del bpy.types.Scene.gtatools_show_ide_flags
-    del bpy.types.Scene.gtatools_suffix_dff
-    del bpy.types.Scene.gtatools_suffix_lod
-    del bpy.types.Scene.gtatools_suffix_col
-    del bpy.types.Scene.gtatools_prefix_dff
-    del bpy.types.Scene.gtatools_prefix_lod
-    del bpy.types.Scene.gtatools_prefix_col
-    del bpy.types.Scene.gtatools_radar_output
-    del bpy.types.Scene.gtatools_radar_grid
-    del bpy.types.Scene.gtatools_radar_size
-    del bpy.types.Scene.gtatools_radar_height
-    del bpy.types.Scene.gtatools_radar_gamma
-    del bpy.types.Scene.gtatools_radar_specific
-    del bpy.types.Scene.gtatools_show_img_list
-    del bpy.types.Scene.gtatools_img_entries
-    del bpy.types.Scene.gtatools_img_entries_index
-    del bpy.types.Scene.gtatools_show_id_manager
-    del bpy.types.Scene.gtatools_id_search
-    del bpy.types.Scene.gtatools_id_page
-    del bpy.types.Scene.gtatools_id_preset
-    if hasattr(bpy.types.Scene, 'gtatools_id_show_service'):
-        del bpy.types.Scene.gtatools_id_show_service
-    del bpy.types.Scene.gtatools_texture_path2
-    del bpy.types.Scene.gtatools_texture_path1
-    del bpy.types.Scene.gtatools_export_pipeline
-    del bpy.types.Scene.gtatools_material_preset
-    del bpy.types.Scene.gtatools_export_all_dff
-    del bpy.types.Scene.gtatools_export_all_col
-    del bpy.types.Scene.gtatools_export_all_lod
-    del bpy.types.Scene.gtatools_export_all_txd
-    del bpy.types.Scene.gtatools_export_all_col_library
-    del bpy.types.Scene.gtatools_export_all_col_library_name
-    del bpy.types.Scene.gtatools_export_all_txd_shared
-    del bpy.types.Scene.gtatools_export_all_txd_shared_name
-    del bpy.types.Scene.gtatools_scatter_radius
-    del bpy.types.Scene.gtatools_scatter_iterations
-    del bpy.types.Scene.gtatools_scatter_falloff
-    del bpy.types.Scene.gtatools_scatter_intensity
-    del bpy.types.Scene.gtatools_fill_color
-    del bpy.types.Object.gtatools_fill_colors
+
     # VC Layer System — guarded delete so cleanup never blocks unregister.
     try:
         vc_layers_unregister_handlers()
@@ -4629,24 +3572,10 @@ def unregister():
             delattr(bpy.types.Mesh, _attr)
         except (AttributeError, RuntimeError):
             pass
-    try:
-        delattr(bpy.types.Scene, 'gtatools_vc_layers_expanded')
-    except (AttributeError, RuntimeError):
-        pass
-    del bpy.types.Scene.gtatools_v_offset
-    del bpy.types.Scene.gtatools_vc_smooth_iterations
-    del bpy.types.Scene.gtatools_vc_smooth_factor
-    del bpy.types.Scene.gtatools_vc_contrast
-    del bpy.types.Scene.gtatools_vc_brightness
-    del bpy.types.Scene.gtatools_vc_gamma
-    del bpy.types.Scene.gtatools_bake_shadows
+
+    # Drop legacy phantom props from .blend files saved by old addon
+    # versions (kept to keep updates clean across saves).
     for _attr in (
-        'gtatools_modulate_mode',
-        'gtatools_modulate_mix',
-        'gtatools_modulate_contrast',
-        'gtatools_modulate_gamma',
-        # legacy props (предыдущие версии аддона) — снять чтобы не
-        # висели «фантомами» в .blend сохранённых старой версией.
         'gtatools_modulate_preview',
         'gtatools_modulate_color',
         'gtatools_modulate_postfx1_color',
@@ -4658,73 +3587,8 @@ def unregister():
             delattr(bpy.types.Scene, _attr)
         except (AttributeError, RuntimeError):
             pass
-    del bpy.types.Scene.gtatools_prelight_preset
-    del bpy.types.Scene.gtatools_bake_gamma
-    del bpy.types.Scene.gtatools_bake_intensity
-    del bpy.types.Scene.gtatools_ifp_action
-    del bpy.types.Scene.gtatools_ik_display
-    del bpy.types.Scene.gtatools_ik_color
-    try:
-        del bpy.types.Scene.gtatools_floor_offset
-    except (AttributeError, RuntimeError):
-        pass
-    try:
-        del bpy.types.Scene.gtatools_ik_extras_show
-    except (AttributeError, RuntimeError):
-        pass
-    for _attr in (
-        'gtatools_ik_size',
-        'gtatools_ik_show_chain',
-        'gtatools_ik_show_pole',
-        'gtatools_ik_show_rot',
-        'gtatools_ik_show_root',
-        'gtatools_ik_chain_offset',
-        'gtatools_ik_root_motion',
-        'gtatools_anim_tools_show',
-        'gtatools_anim_fix_start',
-        'gtatools_anim_fix_end',
-    ):
-        try:
-            delattr(bpy.types.Scene, _attr)
-        except (AttributeError, RuntimeError):
-            pass
-    del bpy.types.Scene.gtatools_water_flag
-    del bpy.types.Scene.gtatools_water_speed_x
-    del bpy.types.Scene.gtatools_water_speed_y
-    del bpy.types.Scene.gtatools_water_speed_z
-    del bpy.types.Scene.gtatools_water_wave_height
-    del bpy.types.Scene.gtatools_bake_ambient
-    del bpy.types.Scene.gtatools_vc_analysis
-    del bpy.types.Scene.gtatools_lightmap_result
-    del bpy.types.Scene.gtatools_lightmap_path
-    if hasattr(bpy.types.Scene, 'inu_validate_issues'):
-        del bpy.types.Scene.inu_validate_issues
-    del bpy.types.Scene.gtatools_model_id
-
-    # Stop particle sim timer and drop meshes
-    try:
-        from .ops import particle_sim
-        particle_sim.stop_simulation()
-    except Exception:
-        pass
-    try:
-        del bpy.types.Scene.gtatools_particle_sim
-    except Exception:
-        pass
-    for k in ('gtatools_pfx_exp_texture', 'gtatools_pfx_exp_color',
-              'gtatools_pfx_exp_size', 'gtatools_pfx_exp_emission',
-              'gtatools_pfx_exp_physics', 'gtatools_pfx_exp_system',
-              'gtatools_pfx_exp_curves'):
-        try:
-            delattr(bpy.types.Scene, k)
-        except Exception:
-            pass
 
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
 
     print("[GTA Tools Panel] Addon unregistered!")
-
-
-if __name__ == "__main__":
-    register()

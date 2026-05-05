@@ -18,15 +18,15 @@ class GTATOOLS_OT_prelight_preset_load(bpy.types.Operator):
 
     def execute(self, context):
         scene = context.scene
-        name = scene.gtatools_prelight_preset
+        name = scene.inu_settings.gtatools_prelight_preset
         from .. import _load_prelight_presets
         presets = _load_prelight_presets()
         for p in presets:
             if p['name'] == name:
-                scene.gtatools_bake_ambient = p.get('ambient', 0.10)
-                scene.gtatools_bake_intensity = p.get('intensity', 0.05)
-                scene.gtatools_bake_gamma = p.get('gamma', 0.50)
-                scene.gtatools_bake_shadows = p.get('shadows', True)
+                scene.inu_settings.gtatools_bake_ambient = p.get('ambient', 0.10)
+                scene.inu_settings.gtatools_bake_intensity = p.get('intensity', 0.05)
+                scene.inu_settings.gtatools_bake_gamma = p.get('gamma', 0.50)
+                scene.inu_settings.gtatools_bake_shadows = p.get('shadows', True)
                 self.report({'INFO'}, f"{T('Пресет загружен:')} {name}")
                 return {'FINISHED'}
         self.report({'ERROR'}, T("Пресет не найден"))
@@ -49,10 +49,10 @@ class GTATOOLS_OT_prelight_preset_save(bpy.types.Operator):
 
         new_preset = {
             "name": self.preset_name,
-            "ambient": scene.gtatools_bake_ambient,
-            "intensity": scene.gtatools_bake_intensity,
-            "gamma": scene.gtatools_bake_gamma,
-            "shadows": scene.gtatools_bake_shadows,
+            "ambient": scene.inu_settings.gtatools_bake_ambient,
+            "intensity": scene.inu_settings.gtatools_bake_intensity,
+            "gamma": scene.inu_settings.gtatools_bake_gamma,
+            "shadows": scene.inu_settings.gtatools_bake_shadows,
         }
 
         from .. import _save_preset_file
@@ -68,7 +68,7 @@ class GTATOOLS_OT_prelight_preset_delete(bpy.types.Operator):
     bl_options = {'REGISTER'}
 
     def execute(self, context):
-        name = context.scene.gtatools_prelight_preset
+        name = context.scene.inu_settings.gtatools_prelight_preset
         from .. import _delete_preset_file
         _delete_preset_file(name)
         self.report({'INFO'}, f"{T('Пресет удалён:')} {name}")

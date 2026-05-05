@@ -276,7 +276,6 @@ class _GltfBuilder:
         }
 
         # Add texture reference if PNG exists
-        tex_has_alpha = False
         if tex_name and tex_dir:
             png_path = os.path.join(tex_dir, tex_name + '.png')
             if os.path.isfile(png_path):
@@ -285,7 +284,6 @@ class _GltfBuilder:
                 tex_idx = len(self._textures)
                 self._textures.append({'source': img_idx})
                 mat['pbrMetallicRoughness']['baseColorTexture'] = {'index': tex_idx}
-                tex_has_alpha = True  # PNG always has alpha channel
 
         mat['doubleSided'] = True
 
@@ -506,7 +504,6 @@ def build_map_glb(cache_dir: str, instances: list, ide_models: dict,
             # Build primitives
             primitives = []
             positions = geom.vertices
-            normals = geom.normals if geom.normals else None
             uvs = geom.uv_layers[0] if geom.uv_layers else None
             colors = geom.prelit_colors if geom.prelit_colors else None
 

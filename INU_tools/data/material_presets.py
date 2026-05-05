@@ -1,8 +1,9 @@
 # INU_tools.data.material_presets
 #
-# JSON-based preset storage for GTA Material panel. Presets live in
-# <addons dir>/INU_Preset/material_presets/*.json — same INU_Preset root
-# folder as id_presets/, so they survive addon updates and re-installs.
+# JSON-based preset storage for GTA Material panel. Presets live under
+# the user data directory's ``material_presets/*.json`` (see
+# ``tools/user_data.py``) so they survive addon updates and re-installs
+# and stay outside the addon folder (extensions ToS).
 #
 # Each preset file is a dict:
 #     {
@@ -22,12 +23,16 @@ import os
 import re
 import json
 
+from ..tools.user_data import get_user_data_dir
 
-_DATA_DIR = os.path.dirname(__file__)
-_ADDON_DIR = os.path.dirname(_DATA_DIR)
-_ADDONS_DIR = os.path.dirname(_ADDON_DIR)
-_INU_PRESET_DIR = os.path.join(_ADDONS_DIR, 'INU_Preset')
-_PRESETS_DIR = os.path.join(_INU_PRESET_DIR, 'material_presets')
+
+def _presets_dir() -> str:
+    return get_user_data_dir('material_presets')
+
+
+# Backwards-compat module attribute — some callers may import this.
+# Resolved lazily on first access via the function above.
+_PRESETS_DIR = None  # populated lazily by _ensure_dir()
 
 
 # Fields from INUMaterialProps that a preset may capture. Collision-surface
@@ -54,15 +59,13 @@ def _sanitize(name: str) -> str:
 
 
 def _ensure_dir():
-    try:
-        os.makedirs(_PRESETS_DIR, exist_ok=True)
-    except Exception:
-        pass
+    global _PRESETS_DIR
+    _PRESETS_DIR = _presets_dir()
 
 
 def presets_dir() -> str:
-    """Return the INU_Preset/material_presets/ path (may not exist yet)."""
-    return _PRESETS_DIR
+    """Return the material_presets/ path under the user data directory."""
+    return _presets_dir()
 
 
 def list_presets() -> list:

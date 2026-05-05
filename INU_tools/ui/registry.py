@@ -95,7 +95,7 @@ def apply_order(cls):
     def _profile_aware_poll(_cls, context):
         try:
             from ..tools.profiles import is_panel_visible
-            profile = getattr(context.scene, 'gtatools_profile', 'ALL')
+            profile = getattr(context.scene.inu_settings, 'gtatools_profile', 'ALL')
             if not is_panel_visible(idname, profile):
                 return False
         except Exception:

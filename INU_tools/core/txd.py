@@ -356,9 +356,9 @@ def _read_texture_native(r, size):
     ct, cs, cl = _read_chunk_header(r)
     struct_end = r.pos + cs
 
-    # Platform header
-    platform_id = r.read_one('<I')
-    filter_flags = r.read_one('<I')  # filterMode + uvAddressing combined
+    # Platform header — platform_id + filter_flags consumed but unused
+    r.read_one('<I')
+    r.read_one('<I')
 
     tex.name = _read_str32(r)
     tex.mask = _read_str32(r)
@@ -370,7 +370,7 @@ def _read_texture_native(r, size):
     tex.height = r.read_one('<H')
     tex.depth = r.read_one('<B')
     tex.num_levels = r.read_one('<B')
-    raster_type = r.read_one('<B')
+    r.read_one('<B')                 # raster_type (unused)
     compression_flag = r.read_one('<B')
 
     # Palette (PAL8 = 256 colors, PAL4 = 16 colors)
@@ -446,12 +446,10 @@ def read_txd(data: bytes) -> list:
     if ct != CHUNK_TEX_DICTIONARY:
         raise ValueError(f"Expected Texture Dictionary (0x16), got 0x{ct:X}")
 
-    txd_end = r.pos + cs
-
     # Struct: texture count
     ct, cs, cl = _read_chunk_header(r)
     tex_count = r.read_one('<H')
-    device_id = r.read_one('<H')
+    r.read_one('<H')                  # device_id (unused)
     r.seek(r.pos + cs - 4)  # skip rest of struct
 
     # Read textures

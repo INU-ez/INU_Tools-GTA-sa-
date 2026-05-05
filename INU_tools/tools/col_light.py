@@ -4,7 +4,6 @@ import bpy
 import gpu
 import blf
 from gpu_extras.batch import batch_for_shader
-from bpy.props import *
 
 from .. import T
 from . import compat
@@ -66,16 +65,16 @@ def _col_light_get_preview_data(context):
         return []
 
     if active_attr.name == "Night":
-        val_min = scene.gtatools_col_night_min
-        val_max = scene.gtatools_col_night_max
+        val_min = scene.inu_settings.gtatools_col_night_min
+        val_max = scene.inu_settings.gtatools_col_night_max
     else:
-        val_min = scene.gtatools_col_day_min
-        val_max = scene.gtatools_col_day_max
+        val_min = scene.inu_settings.gtatools_col_day_min
+        val_max = scene.inu_settings.gtatools_col_day_max
 
-    edge = getattr(scene, 'gtatools_col_light_edge', 0.0)
-    contrast = getattr(scene, 'gtatools_col_light_contrast', 0.0)
+    edge = getattr(scene.inu_settings, 'gtatools_col_light_edge', 0.0)
+    contrast = getattr(scene.inu_settings, 'gtatools_col_light_contrast', 0.0)
     # Threshold slider: 0=max cutoff, 100=no cutoff. Real threshold = (100 - slider) / 10000
-    _thr_slider = getattr(scene, 'gtatools_col_light_threshold', 0)
+    _thr_slider = getattr(scene.inu_settings, 'gtatools_col_light_threshold', 0)
     threshold = (100 - _thr_slider) / 10000.0 if _thr_slider < 100 else 0.0
 
     cache = _col_light_preview_cache
@@ -210,7 +209,7 @@ def _draw_col_light_text():
         return
 
     context = bpy.context
-    if not getattr(context.scene, 'gtatools_col_light_show_numbers', True):
+    if not getattr(context.scene.inu_settings, 'gtatools_col_light_show_numbers', True):
         return
 
     from bpy_extras.view3d_utils import location_3d_to_region_2d
@@ -227,7 +226,7 @@ def _draw_col_light_text():
         return
 
     font_id = 0
-    font_size = getattr(context.scene, 'gtatools_col_light_font_size', 13)
+    font_size = getattr(context.scene.inu_settings, 'gtatools_col_light_font_size', 13)
     blf.size(font_id, font_size)
 
     for night_val, center, tris, show in faces:
@@ -349,14 +348,14 @@ class GTATOOLS_OT_bake_col_light(bpy.types.Operator):
         mesh = obj.data
         scene = context.scene
 
-        day_min = scene.gtatools_col_day_min
-        day_max = scene.gtatools_col_day_max
-        night_min = scene.gtatools_col_night_min
-        night_max = scene.gtatools_col_night_max
+        day_min = scene.inu_settings.gtatools_col_day_min
+        day_max = scene.inu_settings.gtatools_col_day_max
+        night_min = scene.inu_settings.gtatools_col_night_min
+        night_max = scene.inu_settings.gtatools_col_night_max
 
         # Edge/contrast settings
-        edge = getattr(scene, 'gtatools_col_light_edge', 0.0)
-        contrast = getattr(scene, 'gtatools_col_light_contrast', 0.0)
+        edge = getattr(scene.inu_settings, 'gtatools_col_light_edge', 0.0)
+        contrast = getattr(scene.inu_settings, 'gtatools_col_light_contrast', 0.0)
         if edge >= 0:
             gamma = 1.0 / (1.0 + edge * 4.0)
         else:

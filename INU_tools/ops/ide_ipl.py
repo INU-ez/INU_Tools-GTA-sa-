@@ -21,7 +21,7 @@ class GTATOOLS_OT_upsert_ide(bpy.types.Operator):
 
     def execute(self, context):
         from ..core.ide import upsert_ide
-        filepath = bpy.path.abspath(context.scene.gtatools_ide_path)
+        filepath = bpy.path.abspath(context.scene.inu_settings.gtatools_ide_path)
         if not filepath:
             self.report({'ERROR'}, T("Укажите путь к IDE файлу"))
             return {'CANCELLED'}
@@ -93,7 +93,7 @@ class GTATOOLS_OT_upsert_ipl(bpy.types.Operator):
 
     def execute(self, context):
         from ..core.ipl import upsert_ipl, read_ipl
-        filepath = bpy.path.abspath(context.scene.gtatools_ipl_path)
+        filepath = bpy.path.abspath(context.scene.inu_settings.gtatools_ipl_path)
         if not filepath:
             self.report({'ERROR'}, T("Укажите путь к IPL файлу"))
             return {'CANCELLED'}
@@ -143,7 +143,6 @@ class GTATOOLS_OT_upsert_ipl(bpy.types.Operator):
             if pair['DFF']:
                 from .. import _ipl_entry_from_obj
                 dff_entry = _ipl_entry_from_obj(pair['DFF'])
-                dff_idx = entry_index
                 entry_index += 1
 
             if pair['LOD']:
@@ -200,7 +199,7 @@ class GTATOOLS_OT_remove_ide(bpy.types.Operator):
 
     def execute(self, context):
         from ..core.ide import remove_ide
-        filepath = bpy.path.abspath(context.scene.gtatools_ide_path)
+        filepath = bpy.path.abspath(context.scene.inu_settings.gtatools_ide_path)
         if not filepath:
             self.report({'ERROR'}, T("Укажите путь к IDE файлу"))
             return {'CANCELLED'}
@@ -234,7 +233,7 @@ class GTATOOLS_OT_remove_ipl(bpy.types.Operator):
 
     def execute(self, context):
         from ..core.ipl import remove_ipl
-        filepath = bpy.path.abspath(context.scene.gtatools_ipl_path)
+        filepath = bpy.path.abspath(context.scene.inu_settings.gtatools_ipl_path)
         if not filepath:
             self.report({'ERROR'}, T("Укажите путь к IPL файлу"))
             return {'CANCELLED'}

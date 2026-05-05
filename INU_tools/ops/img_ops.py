@@ -9,7 +9,6 @@ import os
 import time
 import tempfile
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
 
 import bpy
 from bpy.props import BoolProperty, StringProperty
@@ -27,14 +26,14 @@ from ..tools.compat import safe_icon
 
 def _refresh_img_entries(scn, img_path):
     """Directly refresh IMG entries list."""
-    scn.gtatools_img_entries.clear()
+    scn.inu_settings.gtatools_img_entries.clear()
     try:
         from ..core.img import read_directory
         entries = read_directory(img_path)
         for entry in entries:
-            item = scn.gtatools_img_entries.add()
+            item = scn.inu_settings.gtatools_img_entries.add()
             item.name = entry.name
-        scn.gtatools_img_entries_index = max(0, len(entries) - 1)
+        scn.inu_settings.gtatools_img_entries_index = max(0, len(entries) - 1)
     except Exception:
         pass
 
@@ -50,19 +49,19 @@ class GTATOOLS_OT_refresh_img_list(bpy.types.Operator):
     def execute(self, context):
         from ..core.img import read_directory
         scn = context.scene
-        img_path = bpy.path.abspath(scn.gtatools_img_path)
+        img_path = bpy.path.abspath(scn.inu_settings.gtatools_img_path)
         if not img_path or not os.path.isfile(img_path):
             self.report({'WARNING'}, T("Укажите путь к IMG"))
             return {'CANCELLED'}
 
-        scn.gtatools_img_entries.clear()
+        scn.inu_settings.gtatools_img_entries.clear()
         try:
             entries = read_directory(img_path)
             for entry in entries:
-                item = scn.gtatools_img_entries.add()
+                item = scn.inu_settings.gtatools_img_entries.add()
                 item.name = entry.name
-            scn.gtatools_img_entries_index = max(0, len(entries) - 1)
-            self.report({'INFO'}, f"{T('Файлов:')} {len(scn.gtatools_img_entries)}")
+            scn.inu_settings.gtatools_img_entries_index = max(0, len(entries) - 1)
+            self.report({'INFO'}, f"{T('Файлов:')} {len(scn.inu_settings.gtatools_img_entries)}")
         except Exception as e:
             self.report({'ERROR'}, str(e))
         return {'FINISHED'}
@@ -91,7 +90,7 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
                 "во временную папку и пропадёт"))
             return {'CANCELLED'}
 
-        game_root = bpy.path.abspath(scene.gtatools_game_root)
+        game_root = bpy.path.abspath(scene.inu_settings.gtatools_game_root)
 
         if not game_root or not os.path.isdir(game_root):
             self.report({'ERROR'}, T("Укажите корневую папку GTA SA"))
@@ -113,7 +112,7 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
         for p in info.img_paths:
             if os.path.isfile(p) and p not in img_paths:
                 img_paths.append(p)
-        fallback = bpy.path.abspath(scene.gtatools_img_path)
+        fallback = bpy.path.abspath(scene.inu_settings.gtatools_img_path)
         if fallback and os.path.isfile(fallback) and fallback not in img_paths:
             img_paths.append(fallback)
 
@@ -124,7 +123,7 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
         # Region filter — when picked, walk matching IPLs to gather used
         # model_ids, look those up in IDE files to get TXD names, then
         # only extract those TXDs. Saves minutes on large extracts.
-        region = getattr(scene, 'gtatools_map_region', 'ALL')
+        region = getattr(scene.inu_settings, 'gtatools_map_region', 'ALL')
         needed_txds = None  # None = "extract everything"
         if region != 'ALL':
             def _ipl_matches_region(path: str) -> bool:
@@ -198,7 +197,7 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
         from ..tools.profiler import Profiler
         self._profiler = Profiler(
             f"Extract Resources ({region})",
-            enabled=bool(getattr(scene, 'gtatools_profile_enabled', False)),
+            enabled=bool(getattr(scene.inu_settings, 'gtatools_profile_enabled', False)),
         )
 
         self._gen = self._work(context)
@@ -213,24 +212,16 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
         from ..core.img import ImgReader
         from ..core.txd import read_txd
         from .. import _write_png
-        import threading
 
         cache_dir = self._cache_dir
         tex_dir = self._tex_dir
         needed_txds = self._needed_txds
         prof = self._profiler
 
-        # Counters lock protects self._tex_count / self._skipped updates
-        # from worker threads.
-        counters_lock = threading.Lock()
-
         def _process_txd(entry_name: str, txd_data: bytes):
-            """Worker: parse TXD bytes and write PNG for each texture.
-
-            numpy DXT decompress (in read_txd) and zlib.compress (in
-            _write_png) both release the GIL — so N workers do real
-            parallel work on multi-core CPUs.
-            """
+            """Parse TXD bytes and write a PNG per texture. Sequential —
+            yields control back to the modal loop between TXDs so the
+            UI keeps ticking."""
             try:
                 with prof.stage('read_txd (numpy DXT)', note=entry_name):
                     textures = read_txd(txd_data)
@@ -252,15 +243,13 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
                     existing_size = os.path.getsize(png_path)
                     new_size = tex.width * tex.height * 4
                     if new_size <= existing_size:
-                        with counters_lock:
-                            self._skipped += 1
+                        self._skipped += 1
                         continue
 
                 try:
                     with prof.stage('_write_png'):
                         _write_png(png_path, tex.pixels, tex.width, tex.height)
-                    with counters_lock:
-                        self._tex_count += 1
+                    self._tex_count += 1
                 except Exception as e:
                     try:
                         with open(os.path.join(cache_dir, '_txd_errors.log'),
@@ -268,10 +257,6 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
                             lf.write(f"{entry_name}/{name}: {e}\n")
                     except Exception:
                         pass
-
-        # Worker count — start conservative (4). Bumping to 8 is safe too
-        # but diminishing returns above that since IMG reads are serial.
-        workers = min(os.cpu_count() or 4, 4)
 
         for ip in self._img_paths:
             try:
@@ -285,52 +270,24 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
                     self._col_count += counts['col']
                     self._skipped += counts['skipped']
 
-                    # TXD processing — main thread reads bytes, pool crunches.
-                    # ThreadPoolExecutor's __exit__ would block the generator
-                    # until every worker finishes which freezes the UI; manage
-                    # the pool manually and yield during drain so modal ticks
-                    # fire and the progress bar keeps updating.
-                    done_count = [0]
-                    done_lock = threading.Lock()
+                    # TXD processing — sequential, yields to the modal
+                    # loop between each TXD so UI keeps updating every
+                    # ~50 ms via the modal timer.
+                    for entry in img.entries:
+                        low = entry.name.lower()
+                        if not low.endswith('.txd'):
+                            continue
+                        if needed_txds is not None and low[:-4] not in needed_txds:
+                            continue
 
-                    def _on_done(_fut, _d=done_count, _l=done_lock,
-                                 _self=self):
-                        with _l:
-                            _d[0] += 1
-                            _self._txd_progress += 1
+                        with prof.stage('img.read (TXD bytes)'):
+                            txd_data = img.read(entry.name)
+                        if not txd_data:
+                            continue
 
-                    pool = ThreadPoolExecutor(max_workers=workers)
-                    submitted = 0
-                    try:
-                        for entry in img.entries:
-                            low = entry.name.lower()
-                            if not low.endswith('.txd'):
-                                continue
-                            if needed_txds is not None and low[:-4] not in needed_txds:
-                                continue
-
-                            with prof.stage('img.read (TXD bytes)'):
-                                txd_data = img.read(entry.name)
-                            if not txd_data:
-                                continue
-
-                            fut = pool.submit(_process_txd, entry.name, txd_data)
-                            fut.add_done_callback(_on_done)
-                            submitted += 1
-                            yield  # let modal tick between submits
-
-                        # Drain — wait for every submitted future while
-                        # yielding so UI keeps updating every ~50 ms.
-                        import time as _t
-                        while True:
-                            with done_lock:
-                                done = done_count[0]
-                            if done >= submitted:
-                                break
-                            _t.sleep(0.01)
-                            yield
-                    finally:
-                        pool.shutdown(wait=False)
+                        _process_txd(entry.name, txd_data)
+                        self._txd_progress += 1
+                        yield  # let modal tick between TXDs
             except Exception:
                 pass
 
@@ -391,10 +348,10 @@ class GTATOOLS_OT_import_from_img(bpy.types.Operator):
         from mathutils import Quaternion
 
         scene = context.scene
-        img_path = bpy.path.abspath(scene.gtatools_img_path)
-        ide_path = bpy.path.abspath(scene.gtatools_ide_path)
-        ipl_path = bpy.path.abspath(scene.gtatools_ipl_path)
-        game_root = bpy.path.abspath(scene.gtatools_game_root)
+        img_path = bpy.path.abspath(scene.inu_settings.gtatools_img_path)
+        ide_path = bpy.path.abspath(scene.inu_settings.gtatools_ide_path)
+        ipl_path = bpy.path.abspath(scene.inu_settings.gtatools_ipl_path)
+        game_root = bpy.path.abspath(scene.inu_settings.gtatools_game_root)
 
         if not img_path or not os.path.isfile(img_path):
             self.report({'ERROR'}, T("Укажите путь к IMG архиву в INU Tools"))
@@ -403,9 +360,9 @@ class GTATOOLS_OT_import_from_img(bpy.types.Operator):
         ide_models = {}
         instances = []
 
-        use_gta_dat = getattr(scene, 'gtatools_img_use_gta_dat', False)
-        skip_lod = getattr(scene, 'gtatools_img_skip_lod', False)
-        load_txd = getattr(scene, 'gtatools_img_load_txd', True)
+        use_gta_dat = getattr(scene.inu_settings, 'gtatools_img_use_gta_dat', False)
+        skip_lod = getattr(scene.inu_settings, 'gtatools_img_skip_lod', False)
+        load_txd = getattr(scene.inu_settings, 'gtatools_img_load_txd', True)
 
         if use_gta_dat and game_root and os.path.isdir(game_root):
             from ..core.gta_dat import find_all_resources
@@ -565,8 +522,8 @@ class GTATOOLS_OT_import_from_img(bpy.types.Operator):
                                     col_objects = list(after_col - before_col)
                                     col_pos = (inst.pos_x, inst.pos_y, inst.pos_z)
                                     col_rot = Quaternion((inst.rot_w, inst.rot_x, inst.rot_y, inst.rot_z)).conjugated()
-                                    _sfx_col = getattr(scene, 'gtatools_suffix_col', '_COL')
-                                    _pfx_col = getattr(scene, 'gtatools_prefix_col', '')
+                                    _sfx_col = getattr(scene.inu_settings, 'gtatools_suffix_col', '_COL')
+                                    _pfx_col = getattr(scene.inu_settings, 'gtatools_prefix_col', '')
                                     for co in col_objects:
                                         for c in list(co.users_collection):
                                             c.objects.unlink(co)
@@ -588,10 +545,10 @@ class GTATOOLS_OT_import_from_img(bpy.types.Operator):
                         errors.append(f"{model_name}: {str(e)}")
                         continue
 
-                _sfx_dff = getattr(scene, 'gtatools_suffix_dff', '_DFF')
-                _sfx_lod = getattr(scene, 'gtatools_suffix_lod', '_LOD')
-                _pfx_dff = getattr(scene, 'gtatools_prefix_dff', '')
-                _pfx_lod = getattr(scene, 'gtatools_prefix_lod', '')
+                _sfx_dff = getattr(scene.inu_settings, 'gtatools_suffix_dff', '_DFF')
+                _sfx_lod = getattr(scene.inu_settings, 'gtatools_suffix_lod', '_LOD')
+                _pfx_dff = getattr(scene.inu_settings, 'gtatools_prefix_dff', '')
+                _pfx_lod = getattr(scene.inu_settings, 'gtatools_prefix_lod', '')
                 for obj in new_objects:
                     if obj.type == 'MESH':
                         base = obj.name
@@ -662,7 +619,7 @@ class GTATOOLS_OT_remove_from_img(bpy.types.Operator):
         from ..core.img import remove_file
         from ..tools.model_utils import get_model_type
 
-        img_path = bpy.path.abspath(context.scene.gtatools_img_path)
+        img_path = bpy.path.abspath(context.scene.inu_settings.gtatools_img_path)
         if not img_path or not os.path.isfile(img_path):
             self.report({'ERROR'}, T("Укажите путь к .img архиву"))
             return {'CANCELLED'}
@@ -725,7 +682,7 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
     def invoke(self, context, event):
         from ..tools.model_utils import find_all_selected_model_groups
 
-        img_path = bpy.path.abspath(context.scene.gtatools_img_path)
+        img_path = bpy.path.abspath(context.scene.inu_settings.gtatools_img_path)
         if not img_path or not os.path.isfile(img_path):
             self.report({'ERROR'}, T("Укажите путь к .img архиву"))
             return {'CANCELLED'}
@@ -767,7 +724,7 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
         scn = context.scene
 
         info = layout.box()
-        info.label(text=f"{T('IMG:')} {os.path.basename(bpy.path.abspath(scn.gtatools_img_path))}",
+        info.label(text=f"{T('IMG:')} {os.path.basename(bpy.path.abspath(scn.inu_settings.gtatools_img_path))}",
                    icon=safe_icon('PACKAGE'))
         info.label(text=f"{T('Моделей:')} {len(wm.gtatools_txd_export_plan)}", icon=safe_icon('INFO'))
 
@@ -776,15 +733,15 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
         # affects the next folder export and vice-versa.
         layout.label(text=T("Что экспортировать:"))
         row = layout.row(align=True)
-        row.prop(scn, "gtatools_export_all_dff", text="DFF")
-        row.prop(scn, "gtatools_export_all_col", text="COL")
-        row.prop(scn, "gtatools_export_all_lod", text="LOD")
-        row.prop(scn, "gtatools_export_all_txd", text="TXD")
-        if scn.gtatools_export_all_col:
+        row.prop(scn.inu_settings, "gtatools_export_all_dff", text="DFF")
+        row.prop(scn.inu_settings, "gtatools_export_all_col", text="COL")
+        row.prop(scn.inu_settings, "gtatools_export_all_lod", text="LOD")
+        row.prop(scn.inu_settings, "gtatools_export_all_txd", text="TXD")
+        if scn.inu_settings.gtatools_export_all_col:
             row = layout.row(align=True)
-            row.prop(scn, "gtatools_export_all_col_library",
+            row.prop(scn.inu_settings, "gtatools_export_all_col_library",
                      text="", icon=safe_icon('PACKAGE'))
-            row.prop(scn, "gtatools_export_all_col_library_name",
+            row.prop(scn.inu_settings, "gtatools_export_all_col_library_name",
                      text="", placeholder="collision")
 
         row = layout.row(align=True)
@@ -814,7 +771,7 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
         from .dff_export import build_dff_clump
         from .col_export import build_col_model, export_col_library
 
-        img_path = bpy.path.abspath(context.scene.gtatools_img_path)
+        img_path = bpy.path.abspath(context.scene.inu_settings.gtatools_img_path)
         if not img_path or not os.path.isfile(img_path):
             self.report({'ERROR'}, T("Укажите путь к .img архиву"))
             return {'CANCELLED'}
@@ -830,13 +787,13 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
         # separate ``gtatools_img_export_*`` set, which led to the
         # «only COL exports» surprise when users had DFF/TXD toggled off
         # somewhere out of sight.
-        export_dff_flag = getattr(context.scene, 'gtatools_export_all_dff', True)
-        export_col_flag = getattr(context.scene, 'gtatools_export_all_col', True)
-        export_lod_flag = getattr(context.scene, 'gtatools_export_all_lod', True)
-        export_txd_flag = getattr(context.scene, 'gtatools_export_all_txd', True)
-        col_library = bool(getattr(context.scene, 'gtatools_export_all_col_library', False))
-        col_library_name = getattr(context.scene, 'gtatools_export_all_col_library_name', '') or 'collision'
-        use_gpu = check_nvtt_available(getattr(context.scene, 'gtatools_nvtt_path', ''))[0]
+        export_dff_flag = getattr(context.scene.inu_settings, 'gtatools_export_all_dff', True)
+        export_col_flag = getattr(context.scene.inu_settings, 'gtatools_export_all_col', True)
+        export_lod_flag = getattr(context.scene.inu_settings, 'gtatools_export_all_lod', True)
+        export_txd_flag = getattr(context.scene.inu_settings, 'gtatools_export_all_txd', True)
+        col_library = bool(getattr(context.scene.inu_settings, 'gtatools_export_all_col_library', False))
+        col_library_name = getattr(context.scene.inu_settings, 'gtatools_export_all_col_library_name', '') or 'collision'
+        use_gpu = check_nvtt_available(getattr(context.scene.inu_settings, 'gtatools_nvtt_path', ''))[0]
 
         wm = context.window_manager
         plan_by_name = {}
@@ -958,17 +915,14 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
                                 txd_buckets[bucket_name].append(models[mt])
 
                 if encode_jobs:
-                    enc_workers = min(os.cpu_count() or 4, 4)
-                    with ThreadPoolExecutor(max_workers=enc_workers) as enc_pool:
-                        futures = [(filename, label, enc_pool.submit(encoder)) for filename, encoder, label in encode_jobs]
-                        for filename, label, fut in futures:
-                            try:
-                                data = fut.result()
-                                status = writer.add(filename, data)
-                                results.append(f"{filename} {status}")
-                            except Exception as e:
-                                results.append(f"{filename} error: {e}")
-                            _tick(label)
+                    for filename, encoder, label in encode_jobs:
+                        try:
+                            data = encoder()
+                            status = writer.add(filename, data)
+                            results.append(f"{filename} {status}")
+                        except Exception as e:
+                            results.append(f"{filename} error: {e}")
+                        _tick(label)
 
                 if export_txd_flag:
                     for txd_name, sources in txd_buckets.items():

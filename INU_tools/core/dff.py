@@ -1364,7 +1364,6 @@ def _read_geometry_chunk(r: BinaryReader, size: int, rw_version: int) -> DffGeom
 
     # ── Struct ──
     ct, cs, cl = _read_chunk_header(r)
-    struct_start = r.pos
     struct_end = r.pos + cs
 
     flags, num_tris, num_verts, morph_count = r.read('<IIII')
@@ -1547,10 +1546,15 @@ def _read_userdata_plugin(r: BinaryReader, size: int) -> UserData:
 
 def _read_bin_mesh_plg(r: BinaryReader, size: int, geom: 'DffGeometry'):
     """Read Binary Mesh PLG and update triangle material indices."""
+    # Capture position BEFORE reading anything — `r.seek(start + size)`
+    # at the bottom of this function uses it to advance past any padding
+    # the source DFF left after the indices. An autofixer once removed
+    # this line as "unused" because the use site is far below; that
+    # broke every DFF import. Don't re-trigger it: the variable IS used.
     start = r.pos
     flags = r.read_one('<I')       # 0 = trilist, 1 = tristrip
     num_splits = r.read_one('<I')
-    total_indices = r.read_one('<I')
+    r.read_one('<I')               # total_indices (unused)
 
     # Build vertex→triangle lookup for material assignment
     # Map (v0,v1,v2) → triangle index for fast lookup
@@ -1601,7 +1605,6 @@ def _read_bin_mesh_plg(r: BinaryReader, size: int, geom: 'DffGeometry'):
 def _read_skin_plugin(r: BinaryReader, size: int, num_verts: int) -> SkinData:
     """Read Skin PLG (matching DragonFF format)."""
     skin = SkinData()
-    start = r.pos
 
     # Header: num_bones, num_used_bones, max_weights_per_vertex, padding
     skin.num_bones, skin.num_used, skin.max_weights = r.read('<3B')
@@ -1841,8 +1844,7 @@ def read_dff(data: bytes) -> DffClump:
     # Clump struct
     ct, cs, cl = _read_chunk_header(r)
     if ct == CHUNK_STRUCT:
-        num_atomics = r.read_one('<I')
-        r.skip(cs - 4)  # lights, cameras
+        r.skip(cs)  # num_atomics + lights + cameras (unused)
     else:
         r.skip(cs)
 

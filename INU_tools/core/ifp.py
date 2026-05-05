@@ -120,8 +120,7 @@ def _read_anp3_animations(data: bytes, offset: int, num_anims: int) -> List[Anim
             anim = Animation()
             anim.name = _read_string(data, offset, 24)
             num_bones = struct.unpack_from('<I', data, offset + 24)[0]
-            data_size = struct.unpack_from('<I', data, offset + 28)[0]
-            anim_flag = struct.unpack_from('<I', data, offset + 32)[0]
+            # offset+28: data_size (unused), offset+32: anim_flag (unused)
             offset += 36
 
             for _b in range(num_bones):
@@ -198,7 +197,7 @@ def read_ifp(filepath: str) -> IFPFile:
         # ANLF container — skip to ANPK
         result.source_format = 'ANLF'
         rounded = _roundsize(size)
-        num_packages = struct.unpack_from('<I', data, offset)[0]
+        # num_packages at offset (unused — caller iterates ANPK chunks)
         offset += rounded
 
         # Read first ANPK

@@ -10,6 +10,14 @@ from bpy.props import (
 from .. import T
 
 
+# Module-level visibility state for «скрыть/показать» toggles. Lives here
+# (not __init__.py) so the operator's ``global`` declaration resolves —
+# Python's ``global`` only sees the function's own module namespace.
+_hide_dff = False
+_hide_lod = False
+_hide_col = False
+
+
 class GTATOOLS_OT_toggle_visibility(bpy.types.Operator):
     """Скрыть/показать DFF, LOD или COL объекты во всей сцене"""
     bl_idname = "gtatools.toggle_visibility"

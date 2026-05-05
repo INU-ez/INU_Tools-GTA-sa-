@@ -24,19 +24,38 @@ class _DummyClass:
 
 
 def _ensure_bpy_stubs():
-    if 'bpy' in sys.modules:
-        return
-    bpy_mod = types.ModuleType('bpy')
-    bpy_mod.types = types.SimpleNamespace(
-        Operator=_DummyClass, PropertyGroup=_DummyClass)
-    bpy_mod.props = types.SimpleNamespace(
-        StringProperty=lambda **kw: None,
-        EnumProperty=lambda **kw: None,
-        BoolProperty=lambda **kw: None,
-    )
-    sys.modules['bpy'] = bpy_mod
-    sys.modules['bpy.types'] = bpy_mod.types
-    sys.modules['bpy.props'] = bpy_mod.props
+    """Idempotent — top up missing attributes even if a previously
+    loaded test (e.g. test_map_export_split.py) already installed
+    a partial bpy stub. Without this, alphabetical test order
+    matters and `bpy.utils` ends up missing whenever another stub
+    runs first."""
+    bpy_mod = sys.modules.get('bpy')
+    if bpy_mod is None:
+        bpy_mod = types.ModuleType('bpy')
+        sys.modules['bpy'] = bpy_mod
+
+    if not hasattr(bpy_mod, 'types'):
+        bpy_mod.types = types.SimpleNamespace(
+            Operator=_DummyClass, PropertyGroup=_DummyClass)
+        sys.modules['bpy.types'] = bpy_mod.types
+    if not hasattr(bpy_mod, 'props'):
+        bpy_mod.props = types.SimpleNamespace(
+            StringProperty=lambda **kw: None,
+            EnumProperty=lambda **kw: None,
+            BoolProperty=lambda **kw: None,
+        )
+        sys.modules['bpy.props'] = bpy_mod.props
+    # bpy.utils — needed by tools/user_data.py when resolving the
+    # user-profile directory. Tests that monkeypatch _profiles_dir
+    # bypass this; tests that exercise the real lookup (e.g. unknown-
+    # profile fallback) need it. A real Blender always has bpy.utils,
+    # so the stub only matters for pure-Python CI.
+    if not hasattr(bpy_mod, 'utils'):
+        bpy_mod.utils = types.SimpleNamespace(
+            extension_path_user=lambda *args, **kw: tempfile.mkdtemp(prefix="inu_stub_"),
+            user_resource=lambda *args, **kw: tempfile.mkdtemp(prefix="inu_stub_"),
+        )
+        sys.modules['bpy.utils'] = bpy_mod.utils
 
 
 _ensure_bpy_stubs()

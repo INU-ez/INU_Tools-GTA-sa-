@@ -731,7 +731,7 @@ class GTATOOLS_OT_add_ik_rig(bpy.types.Operator):
 
         root_target = None
         ik_root_lookup = (_SA_ROOT_BONES
-                          if getattr(scene, 'gtatools_ik_root_motion', False)
+                          if getattr(scene.inu_settings, 'gtatools_ik_root_motion', False)
                           else _SA_PELVIS_BONES)
         for ctrl_name, candidates in ik_root_lookup:
             pb = _resolve_bone_alt(armature, candidates)
@@ -1089,7 +1089,7 @@ class GTATOOLS_OT_add_ik_rig(bpy.types.Operator):
         #   * pole         — 4 cm cube (smaller, sub-control)
         #   * root         — 16 cm cube (master, biggest)
         widget_mesh = _ensure_widget_mesh()
-        size_mult = float(getattr(scene, 'gtatools_ik_size', 1.0))
+        size_mult = float(getattr(scene.inu_settings, 'gtatools_ik_size', 1.0))
         size_by_type = {
             'chain': 0.08 * size_mult,
             'head':  0.08 * size_mult,

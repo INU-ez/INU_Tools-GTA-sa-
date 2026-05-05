@@ -2,7 +2,7 @@ schema_version = "1.0.0"
 
 # Unique extension ID — reverse-DNS-style. Must not change between versions.
 id = "inu_tools_gta_sa"
-version = "1.7.0"
+version = "1.8.0"
 name = "INU Tools (GTA SA)"
 tagline = "Full-pipeline Blender addon for GTA San Andreas modding"
 maintainer = "INU <discord:1.n.u>"

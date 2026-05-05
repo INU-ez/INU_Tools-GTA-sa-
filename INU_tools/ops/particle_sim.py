@@ -431,7 +431,7 @@ def _tick():
     global _sim_timer_running
     try:
         scene = bpy.context.scene
-        if scene is None or not getattr(scene, 'gtatools_particle_sim', False):
+        if scene is None or not getattr(scene.inu_settings, 'gtatools_particle_sim', False):
             _sim_timer_running = False
             return None  # unregister
 

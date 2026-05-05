@@ -21,15 +21,14 @@ class GTATOOLS_OT_radar_generate(bpy.types.Operator):
 
     def execute(self, context):
         scn = context.scene
-        output_dir = bpy.path.abspath(scn.gtatools_radar_output)
+        output_dir = bpy.path.abspath(scn.inu_settings.gtatools_radar_output)
         if not output_dir:
             self.report({'ERROR'}, T("Укажите папку для сохранения"))
             return {'CANCELLED'}
         os.makedirs(output_dir, exist_ok=True)
 
-        height = scn.gtatools_radar_height
-        size = scn.gtatools_radar_size
-        gamma = scn.gtatools_radar_gamma
+        height = scn.inu_settings.gtatools_radar_height
+        size = scn.inu_settings.gtatools_radar_size
 
         # GTA SA map: -3000 to 3000
         map_half = 3000.0
@@ -105,10 +104,10 @@ class GTATOOLS_OT_radar_generate(bpy.types.Operator):
 
         elif self.mode == 'SPECIFIC':
             # Specific tiles by index
-            grid = scn.gtatools_radar_grid
+            grid = scn.inu_settings.gtatools_radar_grid
             sect_size = map_half * 2 / grid
             cam_data.ortho_scale = sect_size
-            indices_str = scn.gtatools_radar_specific.strip()
+            indices_str = scn.inu_settings.gtatools_radar_specific.strip()
             if not indices_str:
                 self.report({'WARNING'}, T("Укажите индексы тайлов (например 0,1,8,9)"))
                 bpy.data.objects.remove(cam_obj, do_unlink=True)
@@ -143,7 +142,7 @@ class GTATOOLS_OT_radar_generate(bpy.types.Operator):
 
         else:
             # ALL: full grid
-            grid = scn.gtatools_radar_grid
+            grid = scn.inu_settings.gtatools_radar_grid
             sect_size = map_half * 2 / grid
             cam_data.ortho_scale = sect_size
             total = grid * grid
@@ -182,14 +181,14 @@ class GTATOOLS_OT_radar_pack_txd(bpy.types.Operator):
 
     def execute(self, context):
         scn = context.scene
-        output_dir = bpy.path.abspath(scn.gtatools_radar_output)
+        output_dir = bpy.path.abspath(scn.inu_settings.gtatools_radar_output)
         if not output_dir:
             self.report({'ERROR'}, T("Укажите папку для сохранения"))
             return {'CANCELLED'}
 
-        grid = scn.gtatools_radar_grid
+        grid = scn.inu_settings.gtatools_radar_grid
         from ..tools.txd_export import check_nvtt_available
-        use_gpu = check_nvtt_available(getattr(scn, 'gtatools_nvtt_path', ''))[0]
+        use_gpu = check_nvtt_available(getattr(scn.inu_settings, 'gtatools_nvtt_path', ''))[0]
 
         txd_dir = os.path.join(output_dir, "txd")
         os.makedirs(txd_dir, exist_ok=True)

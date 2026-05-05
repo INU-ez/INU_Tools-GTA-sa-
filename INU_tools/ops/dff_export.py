@@ -927,8 +927,6 @@ def _export_armature(arm_obj, clump: DffClump, parent_frame: int):
 
         # HAnimPLG
         bone_id_int = bone.get('bone_id', 0)
-        bone_type = bone.get('bone_type', 0)
-        bone_index = orig.get('index', i) if orig else bone.get('bone_index', i)
 
         if i == 0:
             # Root bone gets full bone list
@@ -990,9 +988,14 @@ def _collect_2dfx(objects) -> Extension2dfx:
                                    int(color_raw[2]), int(color_raw[3]))
             light.corona_far_clip = obj.get('2dfx_corona_far_clip', 0.0)
             light.pointlight_range = obj.get('2dfx_pointlight_range', 0.0)
-            light.corona_size = obj.get('2dfx_corona_size', 0.0)
-            light.shadow_size = obj.get('2dfx_shadow_size', 0.0)
             inu = getattr(obj, 'inu', None)
+            if inu:
+                light.corona_size = inu.corona_size_2dfx
+                light.shadow_size = inu.shadow_size_2dfx
+            else:
+                # Legacy fallback for objects without INUObjectProps
+                light.corona_size = obj.get('2dfx_corona_size', 0.0)
+                light.shadow_size = obj.get('2dfx_shadow_size', 0.0)
             light.corona_show_mode = int(inu.show_mode_2dfx) if inu else obj.get('2dfx_corona_show_mode', 0)
             light.corona_enable_reflection = obj.get('2dfx_corona_enable_reflection', 0)
             light.corona_flare_type = int(inu.flare_type_2dfx) if inu else obj.get('2dfx_corona_flare_type', 0)

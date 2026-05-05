@@ -26,8 +26,8 @@ def draw_uv_grid_callback():
     context = bpy.context
     scene = context.scene
 
-    cols = scene.gtatools_uv_grid_cols
-    rows = scene.gtatools_uv_grid_rows
+    cols = scene.inu_settings.gtatools_uv_grid_cols
+    rows = scene.inu_settings.gtatools_uv_grid_rows
 
     if cols < 1 or rows < 1:
         return
@@ -323,10 +323,10 @@ class GTATOOLS_OT_randomize_uv_grid(bpy.types.Operator):
         scene = context.scene
 
         # Get grid settings
-        cols = scene.gtatools_uv_grid_cols
-        rows = scene.gtatools_uv_grid_rows
-        alignment = scene.gtatools_uv_grid_align
-        link_islands = scene.gtatools_uv_link_islands
+        cols = scene.inu_settings.gtatools_uv_grid_cols
+        rows = scene.inu_settings.gtatools_uv_grid_rows
+        alignment = scene.inu_settings.gtatools_uv_grid_align
+        link_islands = scene.inu_settings.gtatools_uv_link_islands
 
         if cols < 1 or rows < 1:
             self.report({'ERROR'}, T("Укажите количество колонок и рядов!"))
@@ -434,10 +434,10 @@ class GTATOOLS_OT_snap_uv_to_grid(bpy.types.Operator):
         obj = context.active_object
         scene = context.scene
 
-        cols = scene.gtatools_uv_grid_cols
-        rows = scene.gtatools_uv_grid_rows
-        alignment = scene.gtatools_uv_grid_align
-        link_islands = scene.gtatools_uv_link_islands
+        cols = scene.inu_settings.gtatools_uv_grid_cols
+        rows = scene.inu_settings.gtatools_uv_grid_rows
+        alignment = scene.inu_settings.gtatools_uv_grid_align
+        link_islands = scene.inu_settings.gtatools_uv_link_islands
 
         if cols < 1 or rows < 1:
             self.report({'ERROR'}, T("Укажите количество колонок и рядов!"))
@@ -550,7 +550,7 @@ class GTATOOLS_OT_set_uv_align(bpy.types.Operator):
     alignment: bpy.props.StringProperty()
 
     def execute(self, context):
-        context.scene.gtatools_uv_grid_align = self.alignment
+        context.scene.inu_settings.gtatools_uv_grid_align = self.alignment
         return {'FINISHED'}
 
 
@@ -577,7 +577,7 @@ class GTATOOLS_PT_uv_tools_panel(bpy.types.Panel):
         box.operator("gtatools.toggle_uv_grid", text=text, icon=icon)
 
         # Cols/Rows + Alignment visual grid side by side
-        current = scene.gtatools_uv_grid_align
+        current = scene.inu_settings.gtatools_uv_grid_align
         grid = [
             ['TOP_LEFT', 'TOP_CENTER', 'TOP_RIGHT'],
             ['LEFT_CENTER', 'CENTER', 'RIGHT_CENTER'],
@@ -594,12 +594,12 @@ class GTATOOLS_PT_uv_tools_panel(bpy.types.Panel):
                 op.alignment = pos
         # Right: Cols and Rows stacked
         right = split.column(align=True)
-        right.prop(scene, "gtatools_uv_grid_cols", text=T("Колонки"))
-        right.prop(scene, "gtatools_uv_grid_rows", text=T("Ряды"))
+        right.prop(scene.inu_settings, "gtatools_uv_grid_cols", text=T("Колонки"))
+        right.prop(scene.inu_settings, "gtatools_uv_grid_rows", text=T("Ряды"))
 
         # Link islands toggle
         row = box.row(align=True)
-        row.prop(scene, "gtatools_uv_link_islands", text=T("Связать полигоны"), icon=safe_icon('LINKED'), toggle=True)
+        row.prop(scene.inu_settings, "gtatools_uv_link_islands", text=T("Связать полигоны"), icon=safe_icon('LINKED'), toggle=True)
 
         row = box.row(align=True)
         row.operator("gtatools.randomize_uv_grid", text=T("Рандом"), icon=safe_icon('MOD_UVPROJECT'))

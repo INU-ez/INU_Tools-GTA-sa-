@@ -17,18 +17,26 @@ import os
 import re
 import shutil
 
-# Presets now live alongside paths.json in the user config folder:
-#     <blender addons dir>/INU_Preset/id_presets/<name>.txt
-# The old `INU_tools/data/id_presets/` and `INU_tools/data/model_ids.txt`
-# locations are still honoured for auto-migration on first access.
+# Presets live in the addon's user data directory:
+#     <user data>/id_presets/<name>.txt   (see tools/user_data.py)
+#
+# Two legacy layouts are auto-migrated on first access:
+#   * INU_tools/data/model_ids.txt        — single-file store from the
+#     very first preset release (→ id_presets/default.txt)
+#   * INU_tools/data/id_presets/*.txt     — intermediate layout that
+#     lived inside the addon folder
+# The newer ``<addons>/INU_Preset/id_presets/`` layout is migrated by
+# ``tools/user_data.migrate_legacy_inu_preset()`` at register time.
+from ..tools.user_data import get_user_data_dir
+
 _DATA_DIR = os.path.dirname(__file__)              # .../INU_tools/data/
-_ADDON_DIR = os.path.dirname(_DATA_DIR)            # .../INU_tools/
-_ADDONS_DIR = os.path.dirname(_ADDON_DIR)          # .../addons/
-_INU_PRESET_DIR = os.path.join(_ADDONS_DIR, 'INU_Preset')
-_PRESETS_DIR = os.path.join(_INU_PRESET_DIR, 'id_presets')
 
 _LEGACY_FILE = os.path.join(_DATA_DIR, 'model_ids.txt')
 _LEGACY_PRESETS_DIR = os.path.join(_DATA_DIR, 'id_presets')
+
+
+def _presets_dir() -> str:
+    return get_user_data_dir('id_presets')
 
 _DEFAULT_PRESET = 'default'
 _active_preset = _DEFAULT_PRESET
@@ -44,21 +52,19 @@ def _sanitize(name: str) -> str:
 
 
 def _ensure_presets_dir():
-    """Create the presets directory and migrate any legacy locations.
+    """Create the presets directory and migrate legacy locations.
 
-    Legacy layouts that get auto-imported on first access:
+    Legacy layouts auto-imported on first access:
 
-    * ``INU_tools/data/model_ids.txt`` → ``INU_Preset/id_presets/default.txt``
+    * ``INU_tools/data/model_ids.txt`` → ``<user data>/id_presets/default.txt``
       (single-file store from the very first preset release)
-    * ``INU_tools/data/id_presets/*.txt`` → ``INU_Preset/id_presets/*.txt``
-      (intermediate layout that lived inside the addon folder — moved out
-      so presets survive addon reinstalls and updates)
+    * ``INU_tools/data/id_presets/*.txt`` → ``<user data>/id_presets/*.txt``
+      (intermediate layout that lived inside the addon folder)
+
+    The newer ``<addons>/INU_Preset/id_presets/`` layout is migrated by
+    ``tools/user_data.migrate_legacy_inu_preset()`` at register time.
     """
-    try:
-        os.makedirs(_INU_PRESET_DIR, exist_ok=True)
-        os.makedirs(_PRESETS_DIR, exist_ok=True)
-    except Exception:
-        return
+    presets_dir = _presets_dir()  # always created by helper
 
     # Migration 1: bring presets from the intermediate data/id_presets/
     if os.path.isdir(_LEGACY_PRESETS_DIR):
@@ -67,7 +73,7 @@ def _ensure_presets_dir():
                 if not fn.lower().endswith('.txt'):
                     continue
                 src = os.path.join(_LEGACY_PRESETS_DIR, fn)
-                dst = os.path.join(_PRESETS_DIR, fn)
+                dst = os.path.join(presets_dir, fn)
                 if os.path.isfile(src) and not os.path.isfile(dst):
                     try:
                         shutil.copy2(src, dst)
@@ -77,7 +83,7 @@ def _ensure_presets_dir():
             pass
 
     # Migration 2: original single-file model_ids.txt → default.txt
-    default_path = os.path.join(_PRESETS_DIR, _DEFAULT_PRESET + '.txt')
+    default_path = os.path.join(presets_dir, _DEFAULT_PRESET + '.txt')
     if os.path.isfile(_LEGACY_FILE) and not os.path.isfile(default_path):
         try:
             shutil.copy2(_LEGACY_FILE, default_path)
@@ -99,7 +105,7 @@ def list_presets() -> list:
     """Return the sorted list of preset names (without .txt extension)."""
     _ensure_presets_dir()
     try:
-        files = os.listdir(_PRESETS_DIR)
+        files = os.listdir(_presets_dir())
     except Exception:
         return []
     names = []
@@ -118,7 +124,7 @@ def list_presets() -> list:
 def _preset_path(name: str = None) -> str:
     _ensure_presets_dir()
     safe = _sanitize(name if name is not None else _active_preset)
-    return os.path.join(_PRESETS_DIR, safe + '.txt')
+    return os.path.join(_presets_dir(), safe + '.txt')
 
 
 def create_preset(name: str, copy_from: str = None) -> bool:
@@ -127,12 +133,12 @@ def create_preset(name: str, copy_from: str = None) -> bool:
     safe = _sanitize(name)
     if not safe:
         return False
-    dst = os.path.join(_PRESETS_DIR, safe + '.txt')
+    dst = os.path.join(_presets_dir(), safe + '.txt')
     if os.path.isfile(dst):
         return False
     try:
         if copy_from:
-            src = os.path.join(_PRESETS_DIR, _sanitize(copy_from) + '.txt')
+            src = os.path.join(_presets_dir(), _sanitize(copy_from) + '.txt')
             if os.path.isfile(src):
                 shutil.copy2(src, dst)
                 return True
@@ -148,7 +154,7 @@ def delete_preset(name: str) -> bool:
     safe = _sanitize(name)
     if safe == _DEFAULT_PRESET:
         return False
-    path = os.path.join(_PRESETS_DIR, safe + '.txt')
+    path = os.path.join(_presets_dir(), safe + '.txt')
     if not os.path.isfile(path):
         return False
     try:
@@ -163,8 +169,8 @@ def rename_preset(old: str, new: str) -> bool:
     new_safe = _sanitize(new)
     if old_safe == new_safe:
         return False
-    src = os.path.join(_PRESETS_DIR, old_safe + '.txt')
-    dst = os.path.join(_PRESETS_DIR, new_safe + '.txt')
+    src = os.path.join(_presets_dir(), old_safe + '.txt')
+    dst = os.path.join(_presets_dir(), new_safe + '.txt')
     if not os.path.isfile(src) or os.path.isfile(dst):
         return False
     try:

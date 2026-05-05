@@ -10,7 +10,8 @@
 #   - 'ALL' — the only built-in: empty list = «show every panel in the
 #     addon's natural zone order». Always available, can't be edited
 #     or deleted.
-#   - User profiles — JSON files in INU_Preset/profiles/<name>.json.
+#   - User profiles — JSON files under the user data directory's
+#     ``profiles/<name>.json`` (see ``tools/user_data.py``).
 #     `panels` is an ordered list; the position drives bl_order so the
 #     user controls both visibility and order.
 
@@ -21,6 +22,7 @@ import re
 import bpy
 
 from .compat import safe_icon
+from .user_data import get_user_data_dir
 from typing import Dict, List, Optional
 
 
@@ -37,12 +39,9 @@ _ALL_PROFILE = {
 # ── On-disk storage helpers ──────────────────────────────────────
 
 def _profiles_dir() -> str:
-    """`INU_Preset/profiles/` next to the addon — same root used by
-    material_presets and others. Created lazily."""
-    addon_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    base = os.path.join(os.path.dirname(addon_dir), "INU_Preset", "profiles")
-    os.makedirs(base, exist_ok=True)
-    return base
+    """User-isolated ``profiles/`` directory inside the addon's user
+    data folder. Created lazily."""
+    return get_user_data_dir('profiles')
 
 
 _NAME_RE = re.compile(r"^[A-Za-zА-Яа-я0-9_\- ]+$")
@@ -452,7 +451,7 @@ def _force_sidebar_refresh():
 
 
 def _on_profile_changed(self, context):
-    """Scene.gtatools_profile update callback — invoked by Blender
+    """scene.inu_settings.gtatools_profile update callback — invoked by Blender
     whenever the dropdown switches. Reapplies ordering and forces a
     sidebar redraw so the rearrangement appears immediately."""
     profile_id = getattr(self, 'gtatools_profile', 'ALL')
@@ -511,7 +510,7 @@ class GTATOOLS_OT_profile_save(bpy.types.Operator):
         if save_user_profile(self.profile_name, order,
                              self.description, hidden=[]):
             try:
-                context.scene.gtatools_profile = self.profile_name
+                context.scene.inu_settings.gtatools_profile = self.profile_name
             except Exception:
                 pass
             self.report({'INFO'},
@@ -530,19 +529,19 @@ class GTATOOLS_OT_profile_delete(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        active = getattr(context.scene, 'gtatools_profile', 'ALL')
+        active = getattr(context.scene.inu_settings, 'gtatools_profile', 'ALL')
         return active and active != 'ALL'
 
     def invoke(self, context, event):
         return context.window_manager.invoke_confirm(self, event)
 
     def execute(self, context):
-        active = context.scene.gtatools_profile
+        active = context.scene.inu_settings.gtatools_profile
         if active == 'ALL':
             self.report({'ERROR'}, "ALL удалить нельзя")
             return {'CANCELLED'}
         if delete_user_profile(active):
-            context.scene.gtatools_profile = 'ALL'
+            context.scene.inu_settings.gtatools_profile = 'ALL'
             self.report({'INFO'}, f"Удалён: {active}")
             return {'FINISHED'}
         else:
@@ -571,29 +570,29 @@ class GTATOOLS_OT_profile_pick_panel(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        active = getattr(context.scene, 'gtatools_profile', 'ALL')
+        active = getattr(context.scene.inu_settings, 'gtatools_profile', 'ALL')
         return active and active != 'ALL'
 
     def execute(self, context):
         scene = context.scene
-        active = scene.gtatools_profile
+        active = scene.inu_settings.gtatools_profile
         if active == 'ALL':
             return {'CANCELLED'}
         prof = load_user_profile(active)
         if prof is None:
             return {'CANCELLED'}
 
-        picked = scene.gtatools_profile_picked
+        picked = scene.inu_settings.gtatools_profile_picked
         target = self.panel_idname
 
         if not picked:
             # First click — pick this panel up.
-            scene.gtatools_profile_picked = target
+            scene.inu_settings.gtatools_profile_picked = target
             return {'FINISHED'}
 
         if picked == target:
             # Click on the picked panel = cancel pick.
-            scene.gtatools_profile_picked = ""
+            scene.inu_settings.gtatools_profile_picked = ""
             return {'FINISHED'}
 
         # Insert picked at target's position (drag semantics).
@@ -602,7 +601,7 @@ class GTATOOLS_OT_profile_pick_panel(bpy.types.Operator):
             pi = order.index(picked)
             ti = order.index(target)
         except ValueError:
-            scene.gtatools_profile_picked = ""
+            scene.inu_settings.gtatools_profile_picked = ""
             return {'CANCELLED'}
 
         order.pop(pi)
@@ -626,7 +625,7 @@ class GTATOOLS_OT_profile_pick_panel(bpy.types.Operator):
             self.report({'ERROR'}, "Ошибка сохранения")
             return {'CANCELLED'}
 
-        scene.gtatools_profile_picked = ""
+        scene.inu_settings.gtatools_profile_picked = ""
 
         # Re-uses the eye-toggle path that the user observed works:
         # tick 1 hides `picked` (visibility change → invalidation
@@ -640,8 +639,8 @@ class GTATOOLS_OT_profile_pick_panel(bpy.types.Operator):
             sc = bpy.context.scene
             save_user_profile(active, order, desc, hidden=bumped_hidden)
             try:
-                sc.gtatools_profile = 'ALL'
-                sc.gtatools_profile = active
+                sc.inu_settings.gtatools_profile = 'ALL'
+                sc.inu_settings.gtatools_profile = active
             except Exception:
                 pass
             return None
@@ -650,8 +649,8 @@ class GTATOOLS_OT_profile_pick_panel(bpy.types.Operator):
             sc = bpy.context.scene
             save_user_profile(active, order, desc, hidden=original_hidden)
             try:
-                sc.gtatools_profile = 'ALL'
-                sc.gtatools_profile = active
+                sc.inu_settings.gtatools_profile = 'ALL'
+                sc.inu_settings.gtatools_profile = active
             except Exception:
                 pass
             return None
@@ -688,11 +687,11 @@ class GTATOOLS_OT_profile_toggle_panel(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        active = getattr(context.scene, 'gtatools_profile', 'ALL')
+        active = getattr(context.scene.inu_settings, 'gtatools_profile', 'ALL')
         return active and active != 'ALL'
 
     def execute(self, context):
-        active = context.scene.gtatools_profile
+        active = context.scene.inu_settings.gtatools_profile
         if active == 'ALL':
             return {'CANCELLED'}
         prof = load_user_profile(active)
@@ -712,8 +711,8 @@ class GTATOOLS_OT_profile_toggle_panel(bpy.types.Operator):
         # to ALL and back to fire Blender's RNA notification, which
         # drives the only UI path that reliably re-evaluates poll().
         # update= callback handles the apply_profile_order + redraw.
-        context.scene.gtatools_profile = 'ALL'
-        context.scene.gtatools_profile = active
+        context.scene.inu_settings.gtatools_profile = 'ALL'
+        context.scene.inu_settings.gtatools_profile = active
         return {'FINISHED'}
 
 
@@ -727,7 +726,7 @@ class GTATOOLS_OT_profile_edit(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        active = getattr(context.scene, 'gtatools_profile', 'ALL')
+        active = getattr(context.scene.inu_settings, 'gtatools_profile', 'ALL')
         return active and active != 'ALL'
 
     def invoke(self, context, event):
@@ -742,7 +741,7 @@ class GTATOOLS_OT_profile_edit(bpy.types.Operator):
     def draw(self, context):
         layout = self.layout
         scene = context.scene
-        active = scene.gtatools_profile
+        active = scene.inu_settings.gtatools_profile
         prof = load_user_profile(active)
         if prof is None:
             layout.label(text=f"Профиль не найден: {active}", icon=safe_icon('ERROR'))
@@ -756,7 +755,7 @@ class GTATOOLS_OT_profile_edit(bpy.types.Operator):
         # slot if something is already picked).
         order = list(prof.get('order') or [])
         hidden = set(prof.get('hidden') or [])
-        picked = scene.gtatools_profile_picked
+        picked = scene.inu_settings.gtatools_profile_picked
 
         # Hint row — always visible, switches to red (alert) when a
         # panel is picked. Keeps layout height stable so the rest of

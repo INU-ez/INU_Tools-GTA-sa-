@@ -9,9 +9,9 @@ def _get_suffixes():
     """Get custom suffixes from scene settings or use defaults."""
     scene = bpy.context.scene
     return {
-        'DFF': getattr(scene, 'gtatools_suffix_dff', '_DFF'),
-        'LOD': getattr(scene, 'gtatools_suffix_lod', '_LOD'),
-        'COL': getattr(scene, 'gtatools_suffix_col', '_COL'),
+        'DFF': getattr(scene.inu_settings, 'gtatools_suffix_dff', '_DFF'),
+        'LOD': getattr(scene.inu_settings, 'gtatools_suffix_lod', '_LOD'),
+        'COL': getattr(scene.inu_settings, 'gtatools_suffix_col', '_COL'),
     }
 
 
@@ -19,9 +19,9 @@ def _get_prefixes():
     """Get custom prefixes from scene settings or use defaults."""
     scene = bpy.context.scene
     return {
-        'DFF': getattr(scene, 'gtatools_prefix_dff', ''),
-        'LOD': getattr(scene, 'gtatools_prefix_lod', 'LOD'),
-        'COL': getattr(scene, 'gtatools_prefix_col', ''),
+        'DFF': getattr(scene.inu_settings, 'gtatools_prefix_dff', ''),
+        'LOD': getattr(scene.inu_settings, 'gtatools_prefix_lod', 'LOD'),
+        'COL': getattr(scene.inu_settings, 'gtatools_prefix_col', ''),
     }
 
 

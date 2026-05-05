@@ -720,7 +720,7 @@ class GTATOOLS_OT_animobj_export(bpy.types.Operator):
 
         col.prop(self, "write_ide")
         if self.write_ide:
-            ide_path = getattr(context.scene, 'gtatools_ide_path', '')
+            ide_path = getattr(context.scene.inu_settings, 'gtatools_ide_path', '')
             if ide_path:
                 col.label(text=f"IDE: {ide_path}", icon=safe_icon('TEXT'))
             else:
@@ -813,7 +813,6 @@ class GTATOOLS_OT_animobj_export(bpy.types.Operator):
                         existing = IFPFile(name=ifp_basename)
 
                     by_name = {a.name: a for a in existing.animations}
-                    new_names = {a.name for a in new_ifp.animations}
 
                     if self.ifp_mode == 'APPEND':
                         # Replace anims with same name + add new ones
@@ -852,7 +851,7 @@ class GTATOOLS_OT_animobj_export(bpy.types.Operator):
             self.report({'WARNING'},
                         T("Model ID = 0 — IDE entry пропущена"))
         elif self.write_ide:
-            ide_path = getattr(context.scene, 'gtatools_ide_path', '')
+            ide_path = getattr(context.scene.inu_settings, 'gtatools_ide_path', '')
             ide_path = bpy.path.abspath(ide_path) if ide_path else ""
             if ide_path and os.path.isfile(ide_path):
                 try:

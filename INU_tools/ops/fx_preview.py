@@ -231,8 +231,8 @@ def create_light_preview(parent_obj):
         g = min(color[1], 255) / 255.0
         b = min(color[2], 255) / 255.0
     corona_tex = inu.corona_tex_2dfx if inu else parent_obj.get('2dfx_corona_tex', 'coronastar')
-    corona_size = parent_obj.get('2dfx_corona_size', 1.0)
-    shadow_size = parent_obj.get('2dfx_shadow_size', 8.0)
+    corona_size = inu.corona_size_2dfx if inu else parent_obj.get('2dfx_corona_size', 1.0)
+    shadow_size = inu.shadow_size_2dfx if inu else parent_obj.get('2dfx_shadow_size', 8.0)
 
     collection = parent_obj.users_collection[0] if parent_obj.users_collection else bpy.context.collection
 
@@ -293,7 +293,7 @@ def _ensure_particle_txd_loaded() -> int:
     global _particle_txd_loaded_for
     try:
         game_root = bpy.path.abspath(
-            getattr(bpy.context.scene, 'gtatools_game_root', '') or ''
+            getattr(bpy.context.scene.inu_settings, 'gtatools_game_root', '') or ''
         )
         if not game_root or not os.path.isdir(game_root):
             print(f"[2DFX Particle] auto-load: game_root invalid ({game_root!r})")
@@ -552,7 +552,8 @@ def update_particle_preview(parent_obj):
 def create_shadow_preview(parent_obj):
     """Create shadow projection plane below a Light2dfx Empty."""
     shadow_tex = parent_obj.get('2dfx_shadow_tex', 'shad_exp')
-    shadow_size = parent_obj.get('2dfx_shadow_size', 4.0)
+    inu = getattr(parent_obj, 'inu', None)
+    shadow_size = inu.shadow_size_2dfx if inu else parent_obj.get('2dfx_shadow_size', 4.0)
 
     if not shadow_tex or shadow_size <= 0:
         return None
@@ -615,8 +616,8 @@ def sync_preview_from_props(parent_obj):
         r = min(color[0], 255) / 255.0
         g = min(color[1], 255) / 255.0
         b = min(color[2], 255) / 255.0
-    corona_size = parent_obj.get('2dfx_corona_size', 1.0)
-    shadow_size = parent_obj.get('2dfx_shadow_size', 8.0)
+    corona_size = inu.corona_size_2dfx if inu else parent_obj.get('2dfx_corona_size', 1.0)
+    shadow_size = inu.shadow_size_2dfx if inu else parent_obj.get('2dfx_shadow_size', 8.0)
 
     for child in parent_obj.children:
         inu_c = getattr(child, 'inu', None)

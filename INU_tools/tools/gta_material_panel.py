@@ -207,7 +207,7 @@ class GTATOOLS_OT_material_preset_save(bpy.types.Operator):
         invalidate_cache()
         # Select the newly saved preset
         try:
-            context.scene.gtatools_material_preset = f'USER:{name}'
+            context.scene.inu_settings.gtatools_material_preset = f'USER:{name}'
         except Exception:
             pass
         self.report({'INFO'}, f"сохранён: {name}")
@@ -232,7 +232,7 @@ class GTATOOLS_OT_material_preset_delete(bpy.types.Operator):
         invalidate_cache()
         # Reset dropdown to a built-in
         try:
-            context.scene.gtatools_material_preset = 'GENERIC'
+            context.scene.inu_settings.gtatools_material_preset = 'GENERIC'
         except Exception:
             pass
         self.report({'INFO'}, f"удалён: {self.preset_name}")
@@ -257,13 +257,13 @@ def draw_pipeline_tab(layout, context):
         return
 
     scene = context.scene
-    current = getattr(scene, 'gtatools_material_preset', 'GENERIC') or 'GENERIC'
+    current = getattr(scene.inu_settings, 'gtatools_material_preset', 'GENERIC') or 'GENERIC'
     is_user = current.startswith('USER:')
 
     box = layout.box()
     box.label(text="Preset", icon=safe_icon('PRESET'))
     row = box.row(align=True)
-    row.prop(scene, 'gtatools_material_preset', text="")
+    row.prop(scene.inu_settings, 'gtatools_material_preset', text="")
     from .compat import ICON_CHECK
     op = row.operator("gtatools.material_preset", text="", icon=ICON_CHECK)
     op.preset = current

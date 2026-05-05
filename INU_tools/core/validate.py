@@ -356,7 +356,7 @@ def check_suffix_consistency(names, configured_suffixes):
         names: iterable of object names (strings)
         configured_suffixes: dict {'DFF': '_DFF', 'LOD': '_LOD',
             'COL': '_COL'} — values come from
-            scene.gtatools_suffix_dff / _lod / _col.
+            scene.inu_settings.gtatools_suffix_dff / _lod / _col.
 
     Catches:
       • body_LOD_DFF — adjacent type-suffix pair

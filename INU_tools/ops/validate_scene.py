@@ -270,9 +270,9 @@ def _gather_materials_with_texture_status():
 def _gather_configured_suffixes():
     scene = bpy.context.scene
     return {
-        'DFF': getattr(scene, 'gtatools_suffix_dff', '_DFF'),
-        'LOD': getattr(scene, 'gtatools_suffix_lod', '_LOD'),
-        'COL': getattr(scene, 'gtatools_suffix_col', '_COL'),
+        'DFF': getattr(scene.inu_settings, 'gtatools_suffix_dff', '_DFF'),
+        'LOD': getattr(scene.inu_settings, 'gtatools_suffix_lod', '_LOD'),
+        'COL': getattr(scene.inu_settings, 'gtatools_suffix_col', '_COL'),
     }
 
 
@@ -308,7 +308,7 @@ def _sa_light_asi_present():
     Empty/missing root → False (so the check stays silent rather than
     raising spurious INFO entries when the user hasn't set the path)."""
     import os
-    root = getattr(bpy.context.scene, 'gtatools_game_root', '') or ''
+    root = getattr(bpy.context.scene.inu_settings, 'gtatools_game_root', '') or ''
     if not root:
         # If user hasn't set game root, we can't tell — assume it's
         # there to avoid false-positive INFO noise. Power users who
@@ -346,26 +346,9 @@ def collect_all_issues():
 
 
 # ── Scene-stored result rows ────────────────────────────────────────
-
-
-class INUValidateIssue(bpy.types.PropertyGroup):
-    """One line in the Validate Scene panel. Backed by Scene
-    CollectionProperty so it survives between draws and across the
-    Run → Goto/Fix interaction."""
-    severity: StringProperty(default='WARNING')
-    category: StringProperty(default='')
-    message: StringProperty(default='')
-    # Translation template + JSON-encoded args for interpolated
-    # messages. When non-empty the panel does
-    # ``T(template).format(**json.loads(args))`` so the user-facing
-    # text follows the active locale. Empty when the message is
-    # static and ``message`` itself is the displayed string.
-    message_template: StringProperty(default='')
-    message_args: StringProperty(default='')
-    target_kind: StringProperty(default='')
-    target_name: StringProperty(default='')
-    fix_op_id: StringProperty(default='')
-    fix_arg: StringProperty(default='')
+# INUValidateIssue moved to scene_settings.py — referenced by the
+# ``inu_validate_issues`` CollectionProperty inside INUSceneSettings.
+from ..scene_settings import INUValidateIssue  # noqa: F401 — re-export for register
 
 
 # ── Operators ───────────────────────────────────────────────────────
@@ -383,7 +366,7 @@ class GTATOOLS_OT_validate_run(bpy.types.Operator):
     def execute(self, context):
         issues = collect_all_issues()
 
-        coll = context.scene.inu_validate_issues
+        coll = context.scene.inu_settings.inu_validate_issues
         coll.clear()
         for d in issues:
             row = coll.add()
@@ -423,7 +406,7 @@ class GTATOOLS_OT_validate_clear(bpy.types.Operator):
     bl_options = {'REGISTER'}
 
     def execute(self, context):
-        context.scene.inu_validate_issues.clear()
+        context.scene.inu_settings.inu_validate_issues.clear()
         return {'FINISHED'}
 
 
@@ -587,9 +570,9 @@ class GTATOOLS_OT_validate_fix_suffix(bpy.types.Operator):
 
         scene = context.scene
         configured = {
-            'DFF': getattr(scene, 'gtatools_suffix_dff', '_DFF'),
-            'LOD': getattr(scene, 'gtatools_suffix_lod', '_LOD'),
-            'COL': getattr(scene, 'gtatools_suffix_col', '_COL'),
+            'DFF': getattr(scene.inu_settings, 'gtatools_suffix_dff', '_DFF'),
+            'LOD': getattr(scene.inu_settings, 'gtatools_suffix_lod', '_LOD'),
+            'COL': getattr(scene.inu_settings, 'gtatools_suffix_col', '_COL'),
         }
         upper = obj.name.upper()
         for kind, sfx in configured.items():

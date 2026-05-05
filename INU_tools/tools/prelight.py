@@ -973,10 +973,10 @@ def setup_prelight_preview(obj, enable=True):
     # формулу из ванильного шейдера зданий SA (см. euryopa
     # pcBuildingVS.hlsl: OUT.Color.rgb += ambient * surfAmb).
     scene = getattr(bpy.context, 'scene', None)
-    mode = getattr(scene, 'gtatools_modulate_mode', 'OFF') if scene else 'OFF'
-    mix = float(getattr(scene, 'gtatools_modulate_mix', 0.15)) if scene else 0.15
-    contrast = float(getattr(scene, 'gtatools_modulate_contrast', 0.0)) if scene else 0.0
-    gamma = float(getattr(scene, 'gtatools_modulate_gamma', 1.0)) if scene else 1.0
+    mode = getattr(scene.inu_settings, 'gtatools_modulate_mode', 'OFF') if scene else 'OFF'
+    mix = float(getattr(scene.inu_settings, 'gtatools_modulate_mix', 0.15)) if scene else 0.15
+    contrast = float(getattr(scene.inu_settings, 'gtatools_modulate_contrast', 0.0)) if scene else 0.0
+    gamma = float(getattr(scene.inu_settings, 'gtatools_modulate_gamma', 1.0)) if scene else 1.0
     (amb_b, amb_factor, pf1_b, pf1_f, pf2_b, pf2_f,
      bc_contrast, gm_gamma) = _modulate_preset_values(mode, mix, contrast, gamma)
 
@@ -1362,10 +1362,10 @@ def apply_modulate_preview(scene=None):
     if scene is None:
         return 0, (0.0, 0.0, 0.0)
 
-    mode = getattr(scene, 'gtatools_modulate_mode', 'OFF')
-    mix = float(getattr(scene, 'gtatools_modulate_mix', 0.15))
-    contrast = float(getattr(scene, 'gtatools_modulate_contrast', 0.0))
-    gamma = float(getattr(scene, 'gtatools_modulate_gamma', 1.0))
+    mode = getattr(scene.inu_settings, 'gtatools_modulate_mode', 'OFF')
+    mix = float(getattr(scene.inu_settings, 'gtatools_modulate_mix', 0.15))
+    contrast = float(getattr(scene.inu_settings, 'gtatools_modulate_contrast', 0.0))
+    gamma = float(getattr(scene.inu_settings, 'gtatools_modulate_gamma', 1.0))
     (amb_b, amb_factor, pf1_b, pf1_f, pf2_b, pf2_f,
      bc_contrast, gm_gamma) = _modulate_preset_values(mode, mix, contrast, gamma)
 

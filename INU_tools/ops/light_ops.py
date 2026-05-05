@@ -107,21 +107,21 @@ class GTATOOLS_OT_lightmap_generate(bpy.types.Operator):
 
         if not obj:
             self.report({'WARNING'}, "No object selected")
-            scene.gtatools_lightmap_result = "Error: no object selected"
+            scene.inu_settings.gtatools_lightmap_result = "Error: no object selected"
             return {'CANCELLED'}
 
         textures = self.get_textures_from_object(obj)
 
         if not textures:
             self.report({'WARNING'}, "No textures found")
-            scene.gtatools_lightmap_result = "Error: no textures found"
+            scene.inu_settings.gtatools_lightmap_result = "Error: no textures found"
             return {'CANCELLED'}
 
-        lightmap_path = scene.gtatools_lightmap_path if scene.gtatools_lightmap_path else "lightmaps/lightmap.png"
-        model_id = scene.gtatools_model_id if scene.gtatools_model_id else "0"
+        lightmap_path = scene.inu_settings.gtatools_lightmap_path if scene.inu_settings.gtatools_lightmap_path else "lightmaps/lightmap.png"
+        model_id = scene.inu_settings.gtatools_model_id if scene.inu_settings.gtatools_model_id else "0"
 
         code = self.generate_code(textures, lightmap_path, model_id)
-        scene.gtatools_lightmap_result = code
+        scene.inu_settings.gtatools_lightmap_result = code
 
         self.report({'INFO'}, f"Found {len(textures)} textures")
         return {'FINISHED'}
@@ -164,8 +164,8 @@ class GTATOOLS_OT_lightmap_copy(bpy.types.Operator):
 
     def execute(self, context):
         scene = context.scene
-        if scene.gtatools_lightmap_result:
-            context.window_manager.clipboard = scene.gtatools_lightmap_result
+        if scene.inu_settings.gtatools_lightmap_result:
+            context.window_manager.clipboard = scene.inu_settings.gtatools_lightmap_result
             self.report({'INFO'}, "Copied to clipboard")
         return {'FINISHED'}
 
@@ -176,7 +176,7 @@ class GTATOOLS_OT_lightmap_clear(bpy.types.Operator):
     bl_label = "INU: Clear"
 
     def execute(self, context):
-        context.scene.gtatools_lightmap_result = ""
+        context.scene.inu_settings.gtatools_lightmap_result = ""
         self.report({'INFO'}, T("Код очищен"))
         return {'FINISHED'}
 
@@ -233,7 +233,7 @@ class GTATOOLS_OT_bake_vertex_colors(bpy.types.Operator):
     use_shadows: BoolProperty(
         name="Use Shadows",
         description=T("Рассчитать тени (медленнее, но точнее)"),
-        default=False
+        default=True
     )
 
     def execute(self, context):
@@ -272,11 +272,12 @@ class GTATOOLS_OT_bake_vertex_colors_simple(bpy.types.Operator):
             self.report({'ERROR'}, T("Выделите меш объекты"))
             return {'CANCELLED'}
 
-        # Get settings from panel
-        ambient = scene.gtatools_bake_ambient
-        intensity = scene.gtatools_bake_intensity
-        gamma = scene.gtatools_bake_gamma
-        use_shadows = scene.gtatools_bake_shadows
+        # Get settings from panel. "Запечь" — быстрый режим без теней;
+        # для теней нужно жать кнопку «С тенями» рядом.
+        ambient = scene.inu_settings.gtatools_bake_ambient
+        intensity = scene.inu_settings.gtatools_bake_intensity
+        gamma = scene.inu_settings.gtatools_bake_gamma
+        use_shadows = False
 
         baked = 0
         for obj in mesh_objects:
@@ -305,9 +306,9 @@ class GTATOOLS_OT_reset_bake_settings(bpy.types.Operator):
 
     def execute(self, context):
         scene = context.scene
-        scene.gtatools_bake_ambient = 0.10
-        scene.gtatools_bake_intensity = 0.05
-        scene.gtatools_bake_gamma = 0.50
+        scene.inu_settings.gtatools_bake_ambient = 0.10
+        scene.inu_settings.gtatools_bake_intensity = 0.05
+        scene.inu_settings.gtatools_bake_gamma = 0.50
         self.report({'INFO'}, T("Настройки сброшены по умолчанию"))
         return {'FINISHED'}
 
@@ -320,10 +321,10 @@ class GTATOOLS_OT_reset_scatter_settings(bpy.types.Operator):
 
     def execute(self, context):
         scene = context.scene
-        scene.gtatools_scatter_intensity = 1.0
-        scene.gtatools_scatter_falloff = 1.5
-        scene.gtatools_scatter_iterations = 3
-        scene.gtatools_scatter_radius = 0.0
+        scene.inu_settings.gtatools_scatter_intensity = 1.0
+        scene.inu_settings.gtatools_scatter_falloff = 1.5
+        scene.inu_settings.gtatools_scatter_iterations = 3
+        scene.inu_settings.gtatools_scatter_radius = 0.0
         self.report({'INFO'}, "Scatter settings reset")
         return {'FINISHED'}
 
@@ -343,7 +344,7 @@ class GTATOOLS_OT_analyze_vertex_colors(bpy.types.Operator):
 
         # Store result in scene for display
         scene = context.scene
-        scene.gtatools_vc_analysis = (
+        scene.inu_settings.gtatools_vc_analysis = (
             f"Layer: {result['layer_name']}\n"
             f"Vertices: {result['count']}\n"
             f"Min: {result['min_brightness']:.3f}\n"
@@ -365,7 +366,7 @@ class GTATOOLS_OT_apply_v_offset(bpy.types.Operator):
         mesh_objects = [o for o in context.selected_objects if o.type == 'MESH']
         if not mesh_objects:
             mesh_objects = [context.active_object] if context.active_object and context.active_object.type == 'MESH' else []
-        v_offset = context.scene.gtatools_v_offset
+        v_offset = context.scene.inu_settings.gtatools_v_offset
         count = 0
         for obj in mesh_objects:
             success, _ = apply_brightness_offset(obj, v_offset)
@@ -385,8 +386,8 @@ class GTATOOLS_OT_vc_smooth(bpy.types.Operator):
         mesh_objects = [o for o in context.selected_objects if o.type == 'MESH']
         if not mesh_objects:
             mesh_objects = [context.active_object] if context.active_object and context.active_object.type == 'MESH' else []
-        iterations = context.scene.gtatools_vc_smooth_iterations
-        factor = context.scene.gtatools_vc_smooth_factor
+        iterations = context.scene.inu_settings.gtatools_vc_smooth_iterations
+        factor = context.scene.inu_settings.gtatools_vc_smooth_factor
         count = 0
         for obj in mesh_objects:
             success, _ = smooth_vertex_colors(obj, iterations, factor)
@@ -406,7 +407,7 @@ class GTATOOLS_OT_vc_contrast(bpy.types.Operator):
         mesh_objects = [o for o in context.selected_objects if o.type == 'MESH']
         if not mesh_objects:
             mesh_objects = [context.active_object] if context.active_object and context.active_object.type == 'MESH' else []
-        contrast = context.scene.gtatools_vc_contrast
+        contrast = context.scene.inu_settings.gtatools_vc_contrast
         count = 0
         for obj in mesh_objects:
             success, _ = adjust_vertex_colors_contrast(obj, contrast)
@@ -426,7 +427,7 @@ class GTATOOLS_OT_vc_brightness(bpy.types.Operator):
         mesh_objects = [o for o in context.selected_objects if o.type == 'MESH']
         if not mesh_objects:
             mesh_objects = [context.active_object] if context.active_object and context.active_object.type == 'MESH' else []
-        brightness = context.scene.gtatools_vc_brightness
+        brightness = context.scene.inu_settings.gtatools_vc_brightness
         count = 0
         for obj in mesh_objects:
             success, _ = adjust_vertex_colors_brightness(obj, brightness)
@@ -446,7 +447,7 @@ class GTATOOLS_OT_vc_gamma(bpy.types.Operator):
         mesh_objects = [o for o in context.selected_objects if o.type == 'MESH']
         if not mesh_objects:
             mesh_objects = [context.active_object] if context.active_object and context.active_object.type == 'MESH' else []
-        gamma = context.scene.gtatools_vc_gamma
+        gamma = context.scene.inu_settings.gtatools_vc_gamma
 
         count = 0
         for obj in mesh_objects:
@@ -1379,7 +1380,7 @@ class GTATOOLS_OT_eyedropper_color(bpy.types.Operator):
             avg_g = sum(c[1] for c in colors) / len(colors)
             avg_b = sum(c[2] for c in colors) / len(colors)
 
-            context.scene.gtatools_fill_color = (avg_r, avg_g, avg_b)
+            context.scene.inu_settings.gtatools_fill_color = (avg_r, avg_g, avg_b)
             self.report({'INFO'}, f"Color picked: RGB({int(avg_r*255)}, {int(avg_g*255)}, {int(avg_b*255)})")
             return True
 
@@ -1395,7 +1396,7 @@ class GTATOOLS_OT_fill_faces(bpy.types.Operator):
     def execute(self, context):
         obj = context.active_object
         scene = context.scene
-        color = scene.gtatools_fill_color
+        color = scene.inu_settings.gtatools_fill_color
 
         success, message = fill_selected_faces_with_backup(obj, color)
 
@@ -1624,10 +1625,10 @@ class GTATOOLS_OT_scatter_light(bpy.types.Operator):
                 c = color_attr.data[loop_idx].color
                 pre_scatter_colors[loop_idx] = (c[0], c[1], c[2], c[3])
 
-        intensity = scene.gtatools_scatter_intensity
-        falloff = scene.gtatools_scatter_falloff
-        iterations = scene.gtatools_scatter_iterations
-        radius = scene.gtatools_scatter_radius
+        intensity = scene.inu_settings.gtatools_scatter_intensity
+        falloff = scene.inu_settings.gtatools_scatter_falloff
+        iterations = scene.inu_settings.gtatools_scatter_iterations
+        radius = scene.inu_settings.gtatools_scatter_radius
 
         success, message, affected_loops = scatter_light_from_selected(obj, intensity, falloff, iterations, radius)
 

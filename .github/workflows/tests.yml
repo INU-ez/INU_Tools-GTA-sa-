@@ -5,6 +5,9 @@ on:
   pull_request:
 
 jobs:
+  # ── Lane 1: pure-Python tests + static compliance checks. ────────
+  # Runs without Blender. Catches the cheap stuff fast: parser/writer
+  # unit tests, manifest validity, eval/exec ban, subprocess audit.
   pytest:
     runs-on: ubuntu-latest
     steps:
@@ -19,5 +22,92 @@ jobs:
       - name: Install test dependencies
         run: python -m pip install --upgrade pip pytest numpy
 
-      - name: Run core tests
-        run: pytest -q dev/tests/
+      # Skip packaging (needs Blender) and e2e (needs Blender + assets).
+      # Both have their own lanes below or run locally.
+      - name: Run core + compliance tests
+        run: pytest -q dev/tests/ --ignore=dev/tests/test_packaging.py --ignore=dev/tests/e2e
+
+  # ── Lane 2: build store / full zips and validate them. ──────────
+  # Per matrix value: pre-configure NVTT presence, run the matrix-
+  # filtered packaging tests (which build + `extension validate` the
+  # zip), then build the release artifact one final time and upload.
+  build-and-validate:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # store: NVTT excluded — uploaded to extensions.blender.org
+        # full:  NVTT included — attached to the GitHub release
+        build: [store, full]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install pytest
+        run: python -m pip install --upgrade pip pytest
+
+      # Cache Blender across runs — the tarball is ~200 MB and downloading
+      # it every push wastes ~30 s of CI time. The cache key pins the
+      # exact version so a Blender bump invalidates correctly.
+      - name: Cache Blender
+        id: cache-blender
+        uses: actions/cache@v4
+        with:
+          path: ~/blender
+          key: blender-4.2.20-linux-x64
+
+      - name: Download Blender 4.2 LTS
+        if: steps.cache-blender.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          mkdir -p ~/blender
+          # 4.2 LTS is the floor declared in blender_manifest.toml
+          # (blender_version_min = "4.2.0"). Building against the floor
+          # version exercises the same API surface we ship against.
+          url="https://download.blender.org/release/Blender4.2/blender-4.2.20-linux-x64.tar.xz"
+          curl -fsSL "$url" -o /tmp/blender.tar.xz
+          tar -xf /tmp/blender.tar.xz -C ~/blender --strip-components=1
+
+      - name: Configure NVTT presence for ${{ matrix.build }} build
+        run: |
+          set -e
+          if [ "${{ matrix.build }}" = "full" ]; then
+            cp extras/nvtt_compress.py INU_tools/tools/nvtt_compress.py
+            echo "NVTT copied into addon (full build)"
+          else
+            rm -f INU_tools/tools/nvtt_compress.py
+            echo "NVTT removed from addon (store build)"
+          fi
+
+      - name: Run packaging tests for ${{ matrix.build }}
+        run: |
+          export BLENDER="$HOME/blender/blender"
+          test -x "$BLENDER" || { echo "Blender not at $BLENDER"; exit 1; }
+          # -k filters tests by name. test names embed `store` or `full`
+          # so this picks up the relevant subset for the matrix value.
+          pytest -q dev/tests/test_packaging.py -k "${{ matrix.build }}" -v
+
+      - name: Build release artifact for ${{ matrix.build }}
+        run: |
+          set -e
+          # Pytest fixtures save+restore NVTT state, so the source tree
+          # is back to what we configured above. Now build the final zip
+          # for upload. Output goes to repo root by default.
+          "$HOME/blender/blender" --command extension build \
+            --source-dir INU_tools \
+            --output-dir .
+          ls -la inu_tools_gta_sa-*.zip
+
+      - name: Upload ${{ matrix.build }} zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: inu-tools-${{ matrix.build }}
+          path: inu_tools_gta_sa-*.zip
+          if-no-files-found: error
+          retention-days: 30

@@ -61,9 +61,9 @@ class GTATOOLS_OT_inu_import(bpy.types.Operator, ImportHelper):
                     inu_import_dff(filepath=fpath, context=context)
                     imported.append(fname)
                     # Auto-import TXD if enabled and not already imported
-                    if getattr(context.scene, 'gtatools_txd_auto_import', True):
+                    if getattr(context.scene.inu_settings, 'gtatools_txd_auto_import', True):
                         dff_name = os.path.splitext(fname)[0]
-                        custom_dir = getattr(context.scene, 'gtatools_txd_import_path', '')
+                        custom_dir = getattr(context.scene.inu_settings, 'gtatools_txd_import_path', '')
                         if custom_dir:
                             custom_dir = bpy.path.abspath(custom_dir)
                         search_dirs = []
@@ -139,21 +139,21 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
         scn = context.scene
         layout.label(text=T("Что экспортировать:"))
         row = layout.row(align=True)
-        row.prop(scn, "gtatools_export_all_dff", text="DFF")
-        row.prop(scn, "gtatools_export_all_col", text="COL")
-        row.prop(scn, "gtatools_export_all_lod", text="LOD")
-        row.prop(scn, "gtatools_export_all_txd", text="TXD")
-        if scn.gtatools_export_all_col:
+        row.prop(scn.inu_settings, "gtatools_export_all_dff", text="DFF")
+        row.prop(scn.inu_settings, "gtatools_export_all_col", text="COL")
+        row.prop(scn.inu_settings, "gtatools_export_all_lod", text="LOD")
+        row.prop(scn.inu_settings, "gtatools_export_all_txd", text="TXD")
+        if scn.inu_settings.gtatools_export_all_col:
             row = layout.row(align=True)
-            row.prop(scn, "gtatools_export_all_col_library",
+            row.prop(scn.inu_settings, "gtatools_export_all_col_library",
                      text="", icon=safe_icon('PACKAGE'))
-            row.prop(scn, "gtatools_export_all_col_library_name",
+            row.prop(scn.inu_settings, "gtatools_export_all_col_library_name",
                      text="", placeholder="collision")
-        if scn.gtatools_export_all_txd:
+        if scn.inu_settings.gtatools_export_all_txd:
             row = layout.row(align=True)
-            row.prop(scn, "gtatools_export_all_txd_shared",
+            row.prop(scn.inu_settings, "gtatools_export_all_txd_shared",
                      text="", icon=safe_icon('PACKAGE'))
-            row.prop(scn, "gtatools_export_all_txd_shared_name",
+            row.prop(scn.inu_settings, "gtatools_export_all_txd_shared_name",
                      text="", placeholder="textures")
 
     def export_model_group(self, context, base_name, models, skip_dff, skip_col, skip_lod, skip_txd, use_gpu):
@@ -277,16 +277,16 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
         wm = context.window_manager
 
         # Настройки экспорта
-        skip_dff = not context.scene.gtatools_export_all_dff
-        skip_col = not context.scene.gtatools_export_all_col
-        skip_lod = not context.scene.gtatools_export_all_lod
-        skip_txd = not context.scene.gtatools_export_all_txd
-        col_library = bool(getattr(context.scene, 'gtatools_export_all_col_library', False))
-        col_library_name = getattr(context.scene, 'gtatools_export_all_col_library_name', '') or 'collision'
-        txd_shared = bool(getattr(context.scene, 'gtatools_export_all_txd_shared', False))
-        txd_shared_name = getattr(context.scene, 'gtatools_export_all_txd_shared_name', '') or 'textures'
+        skip_dff = not context.scene.inu_settings.gtatools_export_all_dff
+        skip_col = not context.scene.inu_settings.gtatools_export_all_col
+        skip_lod = not context.scene.inu_settings.gtatools_export_all_lod
+        skip_txd = not context.scene.inu_settings.gtatools_export_all_txd
+        col_library = bool(getattr(context.scene.inu_settings, 'gtatools_export_all_col_library', False))
+        col_library_name = getattr(context.scene.inu_settings, 'gtatools_export_all_col_library_name', '') or 'collision'
+        txd_shared = bool(getattr(context.scene.inu_settings, 'gtatools_export_all_txd_shared', False))
+        txd_shared_name = getattr(context.scene.inu_settings, 'gtatools_export_all_txd_shared_name', '') or 'textures'
         from ..tools.txd_export import check_nvtt_available
-        use_gpu = check_nvtt_available(getattr(context.scene, 'gtatools_nvtt_path', ''))[0]
+        use_gpu = check_nvtt_available(getattr(context.scene.inu_settings, 'gtatools_nvtt_path', ''))[0]
 
         # Library mode: skip the per-group COL write path and collect all
         # COL objects instead. A single combined .col file is written after
@@ -499,7 +499,7 @@ class GTATOOLS_OT_inu_export(bpy.types.Operator, ExportHelper):
             box.prop(self, "dff_include_2dfx")
             box.prop(self, "dff_auto_lod")
             # Pipeline
-            box.prop(context.scene, "gtatools_export_pipeline", text="Pipeline")
+            box.prop(context.scene.inu_settings, "gtatools_export_pipeline", text="Pipeline")
 
         # COL settings
         if self.export_col:
@@ -514,7 +514,7 @@ class GTATOOLS_OT_inu_export(bpy.types.Operator, ExportHelper):
             box = layout.box()
             box.label(text="TXD:", icon=safe_icon('IMAGE_DATA'))
             box.prop(self, "txd_selected_only")
-            nvtt_path = getattr(context.scene, 'gtatools_nvtt_path', '')
+            nvtt_path = getattr(context.scene.inu_settings, 'gtatools_nvtt_path', '')
             from ..tools.txd_export import check_nvtt_available
             available, _ = check_nvtt_available(nvtt_path)
             if available:
@@ -591,7 +591,7 @@ class GTATOOLS_OT_inu_export(bpy.types.Operator, ExportHelper):
         all_exported = []
         all_errors = []
         from ..tools.txd_export import check_nvtt_available
-        use_gpu = check_nvtt_available(getattr(context.scene, 'gtatools_nvtt_path', ''))[0]
+        use_gpu = check_nvtt_available(getattr(context.scene.inu_settings, 'gtatools_nvtt_path', ''))[0]
 
         # Library COL bypasses the per-group loop — collect once and emit
         # a single multi-entry .col after all groups finish.
