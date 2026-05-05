@@ -8,6 +8,7 @@ from bpy.props import (
 )
 
 from .. import T
+from ..tools.compat import safe_icon
 
 
 class GTATOOLS_OT_set_col_surface(bpy.types.Operator):
@@ -78,7 +79,7 @@ class GTATOOLS_OT_col_surface_menu(bpy.types.Operator):
 
     def draw(self, context):
         layout = self.layout
-        layout.prop(self, "search", text="", icon='VIEWZOOM')
+        layout.prop(self, "search", text="", icon=safe_icon('VIEWZOOM'))
 
         search_lower = self.search.lower()
         name_lookup = {sid: name for sid, name, desc in GTA_SA_SURFACE_MATERIALS}
@@ -98,7 +99,7 @@ class GTATOOLS_OT_col_surface_menu(bpy.types.Operator):
 
                 box = layout.box()
                 row = box.row()
-                icon = 'DISCLOSURE_TRI_DOWN' if is_open else 'DISCLOSURE_TRI_RIGHT'
+                icon=safe_icon('DISCLOSURE_TRI_DOWN') if is_open else 'DISCLOSURE_TRI_RIGHT'
                 row.prop(self, prop_name, text=f"{cat_name} ({len(cat_ids)})", icon=icon, emboss=False)
 
                 if is_open:
@@ -179,7 +180,7 @@ class GTATOOLS_OT_batch_set_distance(bpy.types.Operator):
         sub.prop(self, "lod_draw_distance")
 
         n = sum(1 for o in context.selected_objects if o.type == 'MESH')
-        layout.label(text=f"{n} {T('объектов будет изменено')}", icon='INFO')
+        layout.label(text=f"{n} {T('объектов будет изменено')}", icon=safe_icon('INFO'))
 
     def execute(self, context):
         if not self.apply_draw and not self.apply_lod:

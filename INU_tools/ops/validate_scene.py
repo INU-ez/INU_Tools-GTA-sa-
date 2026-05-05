@@ -18,10 +18,10 @@
 # This module only owns the bpy.data adapters and the operator/panel
 # plumbing.
 
-from __future__ import annotations
-
 import bpy
 from bpy.props import StringProperty
+
+from typing import Dict
 
 from .. import T
 from ..tools import compat
@@ -528,7 +528,7 @@ class GTATOOLS_OT_validate_fix_quaternions(bpy.types.Operator):
 
         # Bucket fcurves by data_path so we can reassemble (w,x,y,z) at
         # each keyframe and write back the normalised component values.
-        groups: dict[str, dict[int, bpy.types.FCurve]] = {}
+        groups: Dict[str, Dict[int, bpy.types.FCurve]] = {}
         for fc in _iter_action_fcurves(act):
             dp = fc.data_path or ''
             if not dp.endswith('rotation_quaternion'):

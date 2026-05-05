@@ -9,6 +9,7 @@ from bpy.props import (
 )
 
 from .. import T
+from ..tools.compat import safe_icon
 
 
 class GTATOOLS_OT_apply_2dfx_preset(bpy.types.Operator):
@@ -95,11 +96,13 @@ class GTATOOLS_OT_create_2dfx(bpy.types.Operator):
             obj['2dfx_flags1'] = 96  # AT_DAY + AT_NIGHT
             obj['2dfx_shadow_z_distance'] = 0
             obj['2dfx_flags2'] = 0
-            # Set display precision for float properties
-            for key in ('2dfx_corona_far_clip', '2dfx_pointlight_range',
-                        '2dfx_corona_size', '2dfx_shadow_size'):
-                ui = obj.id_properties_ui(key)
-                ui.update(precision=1)
+            # Set display precision for float properties.
+            # `id_properties_ui` added in Blender 3.0 — на 2.83–2.93 просто
+            # пропускаем (precision дефолтный, в UI значит больше знаков).
+            if hasattr(obj, 'id_properties_ui'):
+                for key in ('2dfx_corona_far_clip', '2dfx_pointlight_range',
+                            '2dfx_corona_size', '2dfx_shadow_size'):
+                    obj.id_properties_ui(key).update(precision=1)
         elif self.effect_type == 'PARTICLE':
             obj['2dfx_effect_name'] = ""
         elif self.effect_type == 'PED_ATTRACTOR':
@@ -427,7 +430,7 @@ class GTATOOLS_OT_particle_effect_new(bpy.types.Operator):
     def draw(self, context):
         layout = self.layout
         layout.prop(self, 'effect_name')
-        layout.label(text=T("Создастся пустая система с одним эмиттером"), icon='INFO')
+        layout.label(text=T("Создастся пустая система с одним эмиттером"), icon=safe_icon('INFO'))
         layout.label(text=T("Текстура: sphere. Жизнь 1с, rate 10/с, цвет белый"))
 
     def execute(self, context):
@@ -527,8 +530,8 @@ class GTATOOLS_OT_particle_effect_delete(bpy.types.Operator):
         layout = self.layout
         obj = context.active_object
         name = obj.get('2dfx_effect_name', '') or ''
-        layout.label(text=T(f"Удалить '{name}' из effects.fxp?"), icon='ERROR')
-        layout.label(text=T("Действие необратимо (хотя есть .bak)"), icon='INFO')
+        layout.label(text=T(f"Удалить '{name}' из effects.fxp?"), icon=safe_icon('ERROR'))
+        layout.label(text=T("Действие необратимо (хотя есть .bak)"), icon=safe_icon('INFO'))
 
         # Warn if other scene objects reference the same effect
         count = 0
@@ -543,7 +546,7 @@ class GTATOOLS_OT_particle_effect_delete(bpy.types.Operator):
         if count > 1:
             layout.label(
                 text=T(f"⚠ {count} объектов в сцене используют этот эффект"),
-                icon='ERROR',
+                icon=safe_icon('ERROR'),
             )
 
         layout.prop(self, 'confirm')
@@ -1249,7 +1252,7 @@ class GTATOOLS_OT_save_particle_effect(bpy.types.Operator):
         layout = self.layout
         layout.prop(self, 'effect_name')
         layout.prop(self, 'overwrite')
-        layout.label(text=T("При первой записи создастся effects.fxp.bak"), icon='INFO')
+        layout.label(text=T("При первой записи создастся effects.fxp.bak"), icon=safe_icon('INFO'))
 
     def execute(self, context):
         obj = context.active_object

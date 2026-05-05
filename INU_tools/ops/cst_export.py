@@ -1,7 +1,5 @@
 # INU_tools.ops.cst_export — export Blender objects to CST text format.
 
-from __future__ import annotations
-
 import os
 import bpy
 

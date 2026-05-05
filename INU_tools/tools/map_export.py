@@ -12,8 +12,6 @@
 # Game-side this just means loading several IPLs instead of one — engine
 # behavior is identical.
 
-from __future__ import annotations
-
 import math
 import os
 from dataclasses import dataclass
@@ -21,7 +19,9 @@ from dataclasses import dataclass
 import bpy
 
 from .model_utils import get_model_type
+from .compat import safe_icon
 from .. import T
+from typing import Dict, List, Optional, Set, Tuple
 
 
 # ──────────────────────────── grouping ────────────────────────────────
@@ -31,7 +31,7 @@ class MapGroup:
     """One DFF → (LOD, COL) group inferred from object naming."""
     base: str
     dff: bpy.types.Object
-    lod: bpy.types.Object | None = None
+    lod: Optional[bpy.types.Object] = None
     col_objects: list = None   # list of COL/SHA meshes
 
     def __post_init__(self):
@@ -39,15 +39,15 @@ class MapGroup:
             self.col_objects = []
 
 
-def collect_map_groups(objects) -> list[MapGroup]:
+def collect_map_groups(objects) -> List[MapGroup]:
     """Walk `objects` and build MapGroup records keyed by base name.
 
     A group is created for every DFF mesh; any LOD / COL / SHA objects
     sharing that base name are attached to the group.
     """
-    dffs: dict[str, bpy.types.Object] = {}
-    lods: dict[str, bpy.types.Object] = {}
-    cols: dict[str, list] = {}
+    dffs: Dict[str, bpy.types.Object] = {}
+    lods: Dict[str, bpy.types.Object] = {}
+    cols: Dict[str, list] = {}
 
     for obj in objects:
         if obj.type != 'MESH':
@@ -62,7 +62,7 @@ def collect_map_groups(objects) -> list[MapGroup]:
         elif mtype == 'COL':
             cols.setdefault(base, []).append(obj)
 
-    groups: list[MapGroup] = []
+    groups: List[MapGroup] = []
     for base, dff in dffs.items():
         groups.append(MapGroup(
             base=base,
@@ -75,8 +75,8 @@ def collect_map_groups(objects) -> list[MapGroup]:
 
 # ──────────────────────────── auto-split grid ─────────────────────────
 
-def compute_grid_cells(groups: list[MapGroup], cell_size: float
-                       ) -> dict[tuple[int, int], list[MapGroup]]:
+def compute_grid_cells(groups: List[MapGroup], cell_size: float
+                       ) -> Dict[Tuple[int, int], List[MapGroup]]:
     """Bin map groups by XY cell index (grid origin = world (0,0)).
 
     Cell index for a group is taken from the DFF object's world origin.
@@ -85,7 +85,7 @@ def compute_grid_cells(groups: list[MapGroup], cell_size: float
     """
     if cell_size <= 0:
         return {(0, 0): list(groups)}
-    cells: dict[tuple[int, int], list[MapGroup]] = {}
+    cells: Dict[Tuple[int, int], List[MapGroup]] = {}
     for g in groups:
         loc = g.dff.matrix_world.translation
         cx = int(math.floor(loc.x / cell_size))
@@ -107,10 +107,10 @@ def format_cell_name(base_name: str, cx: int, cy: int) -> str:
 
 # ──────────────────────────── adaptive grid (quadtree) ────────────────
 
-def compute_adaptive_cells(groups: list[MapGroup], *,
+def compute_adaptive_cells(groups: List[MapGroup], *,
                            max_per_cell: int = 200,
                            min_cell_size: float = 16.0
-                           ) -> dict[tuple, list[MapGroup]]:
+                           ) -> Dict[tuple, List[MapGroup]]:
     """Density-aware quadtree subdivision: dense regions get small cells,
     sparse regions stay one big cell, every leaf cell holds at most
     ``max_per_cell`` DFFs (best-effort — see floor below).
@@ -149,7 +149,7 @@ def compute_adaptive_cells(groups: list[MapGroup], *,
     x0, x1 = min(xs) - pad, max(xs) + pad
     y0, y1 = min(ys) - pad, max(ys) + pad
 
-    cells: dict[tuple, list[MapGroup]] = {}
+    cells: Dict[tuple, List[MapGroup]] = {}
 
     def _split(g_list, x0, x1, y0, y1, path):
         cell_size = min(x1 - x0, y1 - y0)
@@ -216,8 +216,8 @@ def _build_top_collection_lookup(scene) -> dict:
     return top_map
 
 
-def compute_collection_cells(groups: list[MapGroup], scene
-                             ) -> dict[str, list[MapGroup]]:
+def compute_collection_cells(groups: List[MapGroup], scene
+                             ) -> Dict[str, List[MapGroup]]:
     """Bin map groups by the name of their topmost user collection.
 
     Picks each DFF object's first :attr:`bpy.types.Object.users_collection`
@@ -232,9 +232,9 @@ def compute_collection_cells(groups: list[MapGroup], scene
     sprinkling debug calls in the operator.
     """
     top_map = _build_top_collection_lookup(scene)
-    cells: dict[str, list[MapGroup]] = {}
+    cells: Dict[str, List[MapGroup]] = {}
     for g in groups:
-        bucket: str | None = None
+        bucket: Optional[str] = None
         for coll in getattr(g.dff, 'users_collection', ()) or ():
             top = top_map.get(coll.name)
             if top is not None:
@@ -334,7 +334,7 @@ def _resolve_export_objects(context) -> list:
     outliner_colls = _gather_outliner_selected_collections(context)
 
     def _gather(colls):
-        gathered: dict[int, bpy.types.Object] = {}
+        gathered: Dict[int, bpy.types.Object] = {}
         for coll in colls:
             for obj in coll.all_objects:
                 if obj.type == 'MESH':
@@ -371,7 +371,7 @@ def _resolve_export_objects(context) -> list:
 
 # ──────────────────────────── ID helpers ──────────────────────────────
 
-def _get_or_assign_id(obj, id_pool_start: int, used_ids: set[int]) -> int:
+def _get_or_assign_id(obj, id_pool_start: int, used_ids: Set[int]) -> int:
     """Return the object's inu.model_id, allocating a free ID from the
     [`id_pool_start`, 19999] range when the current value is 0.
     """
@@ -513,7 +513,7 @@ def iter_export_map(context, target_dir: str, *, objects=None,
                     cell_size: float = 256.0,
                     max_per_cell: int = 200,
                     min_cell_size: float = 16.0,
-                    stats: dict | None = None):
+                    stats: Optional[dict] = None):
     """Generator-driven map export.
 
     Yields ``(current, total, status_label)`` after every unit of work
@@ -561,7 +561,7 @@ def iter_export_map(context, target_dir: str, *, objects=None,
     # via ``_get_or_assign_id``; then propagate the chosen ID to
     # every duplicate in the bucket.
     from .model_utils import get_model_type
-    used_ids: set[int] = set()
+    used_ids: Set[int] = set()
 
     def _bucket_key(obj):
         """Strip Blender's .001 / .002 instance suffix BEFORE running
@@ -578,7 +578,7 @@ def iter_export_map(context, target_dir: str, *, objects=None,
         _, base = get_model_type(_Mock(n))
         return base
 
-    name_to_groups: dict[str, list] = {}
+    name_to_groups: Dict[str, list] = {}
     for g in groups:
         name_to_groups.setdefault(_bucket_key(g.dff), []).append(g)
 
@@ -635,9 +635,9 @@ def iter_export_map(context, target_dir: str, *, objects=None,
     # destroy that mapping at re-export time, so we bucket per
     # txd_name and emit one .txd per bucket. Empty txd_name falls
     # back to the model's own base name (fresh hand-crafted models).
-    cell_txd_buckets: list[list[tuple[str, list]]] = []
+    cell_txd_buckets: List[List[Tuple[str, list]]] = []
     for cell_name, _cell_dir, cell_groups in cells:
-        buckets: dict[str, list] = {}
+        buckets: Dict[str, list] = {}
         if export_txd:
             for g in cell_groups:
                 inu = getattr(g.dff, 'inu', None)
@@ -970,13 +970,13 @@ class GTATOOLS_OT_map_export(bpy.types.Operator):
         # auto-detection fails to capture the user's Ctrl-clicked set
         # (Blender's selected_ids context is brittle from sidebar buttons).
         box = layout.box()
-        box.label(text=T("Целевые коллекции:"), icon='OUTLINER_COLLECTION')
+        box.label(text=T("Целевые коллекции:"), icon=safe_icon('OUTLINER_COLLECTION'))
         col = box.column(align=True)
         col.prop(self, "target_collections", expand=True)
         if not self.target_collections:
             box.label(
                 text=T("(пусто = выделение из outliner на момент нажатия)"),
-                icon='INFO',
+                icon=safe_icon('INFO'),
             )
 
         layout.separator()

@@ -19,19 +19,27 @@
 #
 # Объединённая панель инструментов для работы с GTA SA моделями
 # Включает: Export (DFF, COL, LOD, TXD), Prelight, Lightmap Generator
+#
+# ВАЖНО: НЕ добавлять `from __future__ import annotations` в этот файл!
+# Это включает PEP 563 (lazy stringified annotations), что ломает Blender'овскую
+# регистрацию `prop: BoolProperty(...)` — bpy читает `cls.__annotations__`
+# и ждёт там `_PropertyDeferred` объекты, а получает строки → "property not found".
 
 bl_info = {
     "name": "INU_tools(gta_sa)",
     "author": "INU",
     "version": (1, 7, 0),
-    # Минимум 2.80 — поддержка через tools/compat.py:
+    # Минимум 2.83 LTS — поддержка через tools/compat.py:
     # • bake / preview / DFF I/O работают через legacy mesh.vertex_colors
     # • prelight preview shader использует ShaderNodeMixRGB на ≤3.3
     # • VC Layers System требует 3.2+ (на старых показывает warning)
     # • IK rig работает на pose.bones (без bone collections)
+    # 2.80–2.82 не поддерживаются: критичные панели (Object IDE/IPL,
+    # 2DFX Effects, Prelight, Lighting) ломаются из-за отсутствия
+    # `ui_units_x` (2.83+), CHECKMARK (2.81+) и других мелких RNA-различий.
     # blender_manifest.toml для extensions.blender.org остаётся 4.2+ —
     # это второй канал distribution, для современного Blender'а.
-    "blender": (2, 80, 0),
+    "blender": (2, 83, 0),
     "location": "View3D > Sidebar (N) > GTA Tools",
     "description": "Toolset for GTA SA models",
     "category": "3D View",
@@ -325,6 +333,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from mathutils import Vector
 from bpy.props import StringProperty, BoolProperty, FloatProperty, FloatVectorProperty, IntProperty, CollectionProperty, EnumProperty, PointerProperty
 from bpy.app.handlers import persistent
+
+from .tools.compat import safe_icon
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 
@@ -1729,13 +1739,14 @@ from .ops.col_export import GTATOOLS_OT_export_col
 from .ops.dff_import import (
     GTATOOLS_OT_import_dff,
     GTATOOLS_OT_drop_dff,
-    GTATOOLS_FH_dff_drop,
 )
 from .ops.col_import import (
     GTATOOLS_OT_import_col,
     GTATOOLS_OT_drop_col,
-    GTATOOLS_FH_col_drop,
 )
+if hasattr(bpy.types, 'FileHandler'):
+    from .ops.dff_import import GTATOOLS_FH_dff_drop
+    from .ops.col_import import GTATOOLS_FH_col_drop
 from .ops.txd_import import GTATOOLS_OT_import_txd
 
 
@@ -1825,7 +1836,7 @@ from .ops.map_ops import (
 # IMG operator moved to ops/img_ops.py in Phase 3 of UI redesign.
 
 
-def _append_export_report(report_path: str, title: str, rows: list[str], max_chars: int = 200000):
+def _append_export_report(report_path: str, title: str, rows, max_chars: int = 200000):
     """Append one export run to text log and cap file size."""
     ts = time.strftime('%Y-%m-%d %H:%M:%S')
     block = [f"[{title}] {ts}"]
@@ -1912,8 +1923,13 @@ def _draw_label_with_info(layout, text, tooltip, icon='NONE'):
     """Draw info icon before label text."""
     row = layout.row(align=True)
     sub = row.row(align=True)
-    sub.ui_units_x = 1.3
-    op = sub.operator("gtatools.info_tooltip", text="", icon='INFO')
+    # ui_units_x added in Blender 2.83 — guard for 2.80–2.82 fallback
+    # (без ширины row просто чуть шире, но draw не падает).
+    try:
+        sub.ui_units_x = 1.3
+    except AttributeError:
+        pass
+    op = sub.operator("gtatools.info_tooltip", text="", icon=safe_icon('INFO'))
     op.tooltip = tooltip
     row.label(text=text, icon=icon)
 
@@ -1986,9 +2002,12 @@ from .ops.texture_ops import (
     GTATOOLS_OT_apply_lightmap_uv2,
     GTATOOLS_OT_remove_lightmap_uv2,
     GTATOOLS_OT_toggle_lightmap_uv2,
-    GTATOOLS_FH_texture_drop,
-    GTATOOLS_FH_txd_drop,
 )
+if hasattr(bpy.types, 'FileHandler'):
+    from .ops.texture_ops import (
+        GTATOOLS_FH_texture_drop,
+        GTATOOLS_FH_txd_drop,
+    )
 # =============================================================================
 # PANELS
 # =============================================================================
@@ -2162,9 +2181,9 @@ def _draw_id_manager(layout, scene, context):
     # ── 1. Preset row ──────────────────────────────────
     preset_row = layout.row(align=True)
     preset_row.prop(scene, "gtatools_id_preset", text="")
-    preset_row.operator("gtatools.id_preset_new", text="", icon='ADD')
-    preset_row.operator("gtatools.id_preset_rename", text="", icon='GREASEPENCIL')
-    preset_row.operator("gtatools.id_preset_delete", text="", icon='REMOVE')
+    preset_row.operator("gtatools.id_preset_new", text="", icon=safe_icon('ADD'))
+    preset_row.operator("gtatools.id_preset_rename", text="", icon=safe_icon('GREASEPENCIL'))
+    preset_row.operator("gtatools.id_preset_delete", text="", icon=safe_icon('REMOVE'))
 
     free = get_free_ids()
     used = get_used_ids()
@@ -2172,18 +2191,19 @@ def _draw_id_manager(layout, scene, context):
     # ── 2. Stats + next free + search + used-list ─────
     stats_box = layout.box()
     stats_row = stats_box.row(align=True)
+    from .tools.compat import ICON_CHECK
     stats_row.label(
         text=f"{T('Свободных:')} {len(free)}",
-        icon='CHECKMARK')
+        icon=ICON_CHECK)
     stats_row.label(
         text=f"{T('Занятых:')} {len(used)}",
-        icon='OBJECT_DATA')
+        icon=safe_icon('OBJECT_DATA'))
     if free:
         stats_box.label(
             text=f"{T('Следующий свободный:')} {free[0]}",
-            icon='FORWARD')
+            icon=safe_icon('FORWARD'))
 
-    layout.prop(scene, "gtatools_id_search", text="", icon='VIEWZOOM')
+    layout.prop(scene, "gtatools_id_search", text="", icon=safe_icon('VIEWZOOM'))
     search = getattr(scene, 'gtatools_id_search', '').strip()
     page = getattr(scene, 'gtatools_id_page', 0)
     per_page = 20
@@ -2210,7 +2230,7 @@ def _draw_id_manager(layout, scene, context):
         if total == 0 and search:
             layout.label(
                 text=T("Ничего не найдено"),
-                icon='ERROR')
+                icon=safe_icon('ERROR'))
         else:
             # 2 columns, COLUMN-major (top-to-bottom in col 1, then
             # top-to-bottom in col 2). Old layout was row-major
@@ -2220,7 +2240,7 @@ def _draw_id_manager(layout, scene, context):
             # bouncing across rows.
             sub = layout.box()
             sub.label(text=T("Используются:"),
-                      icon='OUTLINER_OB_GROUP_INSTANCE')
+                      icon=safe_icon('OUTLINER_OB_GROUP_INSTANCE'))
             n = len(page_items)
             half = (n + 1) // 2  # rows per column (col 1 ≥ col 2)
             col = sub.column(align=True)
@@ -2256,7 +2276,7 @@ def _draw_id_manager(layout, scene, context):
 
     if free:
         sub = layout.box()
-        sub.label(text=T("Свободные ID:"), icon='LIBRARY_DATA_DIRECT')
+        sub.label(text=T("Свободные ID:"), icon=safe_icon('LIBRARY_DATA_DIRECT'))
         text = ", ".join(str(i) for i in sorted(free)[:20])
         if len(free) > 20:
             text += "..."
@@ -2270,29 +2290,29 @@ def _draw_id_manager(layout, scene, context):
     col = layout.column(align=True)
     row = col.row(align=True)
     row.operator("gtatools.id_manager_auto_assign",
-                 text=T("Назначить"), icon='ADD')
+                 text=T("Назначить"), icon=safe_icon('ADD'))
     row.operator("gtatools.id_manager_assign_from",
-                 text=T("С ID..."), icon='SEQUENCE')
+                 text=T("С ID..."), icon=safe_icon('SEQUENCE'))
     row = col.row(align=True)
     row.operator("gtatools.id_manager_sync_scene",
-                 text=T("Sync"), icon='FILE_REFRESH')
+                 text=T("Sync"), icon=safe_icon('FILE_REFRESH'))
     row.operator("gtatools.id_manager_clear_selected",
-                 text=T("Очистить"), icon='REMOVE')
+                 text=T("Очистить"), icon=safe_icon('REMOVE'))
     row = col.row(align=True)
     row.operator("gtatools.id_manager_create",
-                 text=T("Создать ID"), icon='FILE_NEW')
+                 text=T("Создать ID"), icon=safe_icon('FILE_NEW'))
     row.operator("gtatools.id_manager_clear",
-                 text=T("Очистить всё"), icon='TRASH')
+                 text=T("Очистить всё"), icon=safe_icon('TRASH'))
     row = col.row(align=True)
     row.operator("gtatools.id_manager_from_game",
-                 text=T("Из игры"), icon='IMPORT')
+                 text=T("Из игры"), icon=safe_icon('IMPORT'))
     row.operator("gtatools.id_manager_extend",
-                 text=T("Расширить FLA"), icon='ADD')
+                 text=T("Расширить FLA"), icon=safe_icon('ADD'))
     col.operator("gtatools.id_manager_gc",
                  text=T("Освободить фантомы"),
-                 icon='ORPHAN_DATA')
+                 icon=safe_icon('ORPHAN_DATA'))
     col.operator("gtatools.id_manager_open_file",
-                 text=T("Открыть файл ID"), icon='FILE_TEXT')
+                 text=T("Открыть файл ID"), icon=safe_icon('FILE_TEXT'))
 
 
 # Operators moved to ops/id_manager_ops.py in Phase 3.
@@ -2488,9 +2508,7 @@ classes = (
     GTATOOLS_OT_load_textures,
     GTATOOLS_OT_set_blend_folder,
     GTATOOLS_OT_drop_texture_as_material,
-    GTATOOLS_FH_texture_drop,
     GTATOOLS_OT_drop_txd,
-    GTATOOLS_FH_txd_drop,
     GTATOOLS_OT_check_materials,
     GTATOOLS_OT_cleanup_materials,
     GTATOOLS_OT_sort_materials,
@@ -2522,10 +2540,8 @@ classes = (
     GTATOOLS_PT_main_panel,
     GTATOOLS_OT_import_dff,
     GTATOOLS_OT_drop_dff,
-    GTATOOLS_FH_dff_drop,
     GTATOOLS_OT_import_col,
     GTATOOLS_OT_drop_col,
-    GTATOOLS_FH_col_drop,
     GTATOOLS_OT_import_txd,
     GTATOOLS_OT_inu_import,
     GTATOOLS_OT_toggle_links,
@@ -2697,6 +2713,15 @@ classes = (
     GTATOOLS_OT_vehicle_show_damage,
     GTATOOLS_OT_vehicle_pair_report,
 )
+
+# Drag-and-drop FileHandlers — Blender 4.1+ only.
+if hasattr(bpy.types, 'FileHandler'):
+    classes = classes + (
+        GTATOOLS_FH_dff_drop,
+        GTATOOLS_FH_col_drop,
+        GTATOOLS_FH_texture_drop,
+        GTATOOLS_FH_txd_drop,
+    )
 
 
 # ── Persistent paths (saved in Blender config, survive addon updates) ──

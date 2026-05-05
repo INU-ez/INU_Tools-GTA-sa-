@@ -470,20 +470,22 @@ class GTATOOLS_OT_drop_col(_COLImportModalMixin, bpy.types.Operator):
         return self._start_modal(context)
 
 
-class GTATOOLS_FH_col_drop(bpy.types.FileHandler):
-    """File Handler для перетаскивания COL во viewport"""
-    bl_idname = "GTATOOLS_FH_col_drop"
-    bl_label = "GTA COL Drop"
-    bl_import_operator = "gtatools.drop_col"
-    bl_file_extensions = ".col"
+if hasattr(bpy.types, 'FileHandler'):
+    class GTATOOLS_FH_col_drop(bpy.types.FileHandler):
+        """File Handler для перетаскивания COL во viewport"""
+        bl_idname = "GTATOOLS_FH_col_drop"
+        bl_label = "GTA COL Drop"
+        bl_import_operator = "gtatools.drop_col"
+        bl_file_extensions = ".col"
 
-    @classmethod
-    def poll_drop(cls, context):
-        return context.area and context.area.type == 'VIEW_3D'
+        @classmethod
+        def poll_drop(cls, context):
+            return context.area and context.area.type == 'VIEW_3D'
 
 
 classes = (
     GTATOOLS_OT_import_col,
     GTATOOLS_OT_drop_col,
-    GTATOOLS_FH_col_drop,
 )
+if hasattr(bpy.types, 'FileHandler'):
+    classes = classes + (GTATOOLS_FH_col_drop,)

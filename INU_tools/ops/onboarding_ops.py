@@ -8,6 +8,7 @@
 import bpy
 
 from .. import T, get_locale
+from ..tools.compat import safe_icon
 
 
 # Docs and issues live on GitHub; the addon installer only ships the
@@ -123,7 +124,7 @@ class GTATOOLS_OT_whats_new(bpy.types.Operator):
         layout.separator()
         layout.operator("gtatools.open_release",
                         text=T("Открыть полный changelog на GitHub"),
-                        icon='URL')
+                        icon=safe_icon('URL'))
 
     def execute(self, context):
         return {'FINISHED'}

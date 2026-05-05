@@ -5,6 +5,7 @@ import bpy
 import mathutils
 from ..core.ifp import read_ifp, HAS_ROT, HAS_TRANS
 from .. import T
+from typing import List, Tuple
 
 # Blender 5.x uses layered actions; 4.x uses action.fcurves directly
 _USE_LAYERED = hasattr(bpy.types, 'ActionSlot')
@@ -371,7 +372,7 @@ def _ifp_preview_frame_handler(scene, depsgraph=None):
             pbone.location = rest_inv_mat @ gta_loc
 
 
-def preview_start(armature, anim_name) -> tuple[bool, str]:
+def preview_start(armature, anim_name) -> Tuple[bool, str]:
     """Enable live preview: register handler, stash the currently bound
     Action so we can restore it on stop."""
     if not armature or armature.type != 'ARMATURE':
@@ -406,7 +407,7 @@ def preview_start(armature, anim_name) -> tuple[bool, str]:
     return True, f"Preview: {anim_name}"
 
 
-def preview_stop() -> tuple[bool, str]:
+def preview_stop() -> Tuple[bool, str]:
     """Disable preview: unregister handler, restore stashed Action."""
     if _ifp_preview_frame_handler in bpy.app.handlers.frame_change_post:
         bpy.app.handlers.frame_change_post.remove(_ifp_preview_frame_handler)
@@ -432,7 +433,7 @@ def preview_is_active() -> bool:
 
 # ──────────────────────────── batch import ────────────────────────────
 
-def enumerate_animations(folder: str, name_filter: str = "") -> list[tuple[str, str]]:
+def enumerate_animations(folder: str, name_filter: str = "") -> List[Tuple[str, str]]:
     """Walk `folder` (non-recursive) for *.ifp files and return a flat list
     of (filepath, animation_name) tuples, optionally filtered by prefix
     (case-insensitive, empty = no filter).
@@ -440,7 +441,7 @@ def enumerate_animations(folder: str, name_filter: str = "") -> list[tuple[str, 
     import os
     from ..core.ifp import read_ifp as _read_ifp
 
-    out: list[tuple[str, str]] = []
+    out: List[Tuple[str, str]] = []
     if not folder or not os.path.isdir(folder):
         return out
     flt = (name_filter or "").strip().lower()
@@ -460,7 +461,7 @@ def enumerate_animations(folder: str, name_filter: str = "") -> list[tuple[str, 
     return out
 
 
-def _action_frame_range(action) -> tuple[float, float]:
+def _action_frame_range(action) -> Tuple[float, float]:
     """Return (start, end) in frames for an action regardless of Blender 4/5."""
     try:
         rng = action.frame_range
@@ -480,9 +481,9 @@ def _action_frame_range(action) -> tuple[float, float]:
     return start, end
 
 
-def batch_apply_sequential(armature, anims: list[tuple[str, str]],
+def batch_apply_sequential(armature, anims: List[Tuple[str, str]],
                            *, mode: str = 'NLA',
-                           offset_frames: float = 10.0) -> tuple[int, str]:
+                           offset_frames: float = 10.0) -> Tuple[int, str]:
     """Apply a list of (file, anim_name) pairs to `armature`.
 
     mode:
@@ -739,7 +740,7 @@ class GTATOOLS_OT_path_node_flag(bpy.types.Operator):
         # Build a mapping from spline-point index → full IDProp index so
         # we write flags into the right slot.
         pn_count = int(obj.get('pn_count', 0) or 0)
-        real_to_full: list[int] = []
+        real_to_full: List[int] = []
         for j in range(pn_count):
             if int(obj.get(f'pn_{j}_type', 0) or 0) > 0:
                 real_to_full.append(j)

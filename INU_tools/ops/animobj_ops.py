@@ -20,6 +20,7 @@ import math
 import os
 
 from .. import T
+from ..tools.compat import safe_icon
 
 
 # ── Live-edit PropertyGroup ──────────────────────────────────────
@@ -310,14 +311,14 @@ class GTATOOLS_OT_animobj_setup(bpy.types.Operator):
         rpm = self.turns_per_cycle * fps / max(1, self.duration_frames)
         col.label(
             text=f"≈ {rpm:.2f} {T('оборотов/сек при FPS')} {fps}",
-            icon='INFO')
+            icon=safe_icon('INFO'))
 
         col.label(
             text=T("Все вершины меша получат weight=1.0 на эту кость"),
-            icon='INFO')
+            icon=safe_icon('INFO'))
         col.label(
             text=T("Цикл точно зацикливается (целое число оборотов)"),
-            icon='LOOP_BACK')
+            icon=safe_icon('LOOP_BACK'))
 
     def execute(self, context):
         mesh_obj = context.active_object
@@ -682,11 +683,11 @@ class GTATOOLS_OT_animobj_export(bpy.types.Operator):
         if anim_name:
             col.label(
                 text=f"{T('Анимация')}: {anim_name}",
-                icon='ACTION')
+                icon=safe_icon('ACTION'))
         else:
             col.label(
                 text=T("Нет Action на armature — IFP будет пустой"),
-                icon='ERROR')
+                icon=safe_icon('ERROR'))
 
         col.separator()
         col.prop(self, "directory")
@@ -697,7 +698,7 @@ class GTATOOLS_OT_animobj_export(bpy.types.Operator):
             col.label(
                 text=T("Model ID = 0 — задай в Object Properties → "
                        "INU Tools → Model ID"),
-                icon='ERROR')
+                icon=safe_icon('ERROR'))
         col.prop(self, "draw_distance")
 
         # ── IFP file naming + write strategy ──
@@ -706,14 +707,14 @@ class GTATOOLS_OT_animobj_export(bpy.types.Operator):
         # myhood_anims.ifp. Default mode APPEND lets every
         # subsequent export grow the file safely.
         ifp_box = col.box()
-        ifp_box.label(text=T("IFP файл"), icon='ACTION')
+        ifp_box.label(text=T("IFP файл"), icon=safe_icon('ACTION'))
         # Show resolved filename next to the input — user can sanity-
         # check that it'll go where they expect.
         resolved = (self.ifp_name.strip() or self.base_name.strip()
                     or "<пусто>")
         ifp_box.prop(self, "ifp_name", text=T("Имя"))
         ifp_box.label(
-            text=f"→ {resolved}.ifp", icon='FILE_BLANK')
+            text=f"→ {resolved}.ifp", icon=safe_icon('FILE_BLANK'))
         ifp_box.prop(self, "ifp_mode", text=T("Режим"))
         ifp_box.prop(self, "ifp_format")
 
@@ -721,12 +722,12 @@ class GTATOOLS_OT_animobj_export(bpy.types.Operator):
         if self.write_ide:
             ide_path = getattr(context.scene, 'gtatools_ide_path', '')
             if ide_path:
-                col.label(text=f"IDE: {ide_path}", icon='TEXT')
+                col.label(text=f"IDE: {ide_path}", icon=safe_icon('TEXT'))
             else:
                 col.label(text=T(
                     "Scene → INU Tools → IDE Path не задан — "
                     "anim-запись не будет дописана"),
-                    icon='ERROR')
+                    icon=safe_icon('ERROR'))
 
     def execute(self, context):
         if not self.directory or not os.path.isdir(self.directory):

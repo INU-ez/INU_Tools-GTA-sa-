@@ -8,6 +8,7 @@ import os
 from gpu_extras.batch import batch_for_shader
 from bpy.props import EnumProperty
 from .. import T
+from .compat import safe_icon
 
 
 # Global variable for draw handler
@@ -567,11 +568,11 @@ class GTATOOLS_PT_uv_tools_panel(bpy.types.Panel):
 
         # UV Grid Randomizer
         box = layout.box()
-        box.label(text=T("Рандомизатор UV сетки"), icon='GRID')
+        box.label(text=T("Рандомизатор UV сетки"), icon=safe_icon('GRID'))
 
         # Toggle grid visibility button
         global _uv_grid_visible
-        icon = 'HIDE_OFF' if _uv_grid_visible else 'HIDE_ON'
+        icon=safe_icon('HIDE_OFF') if _uv_grid_visible else 'HIDE_ON'
         text = T("Скрыть сетку") if _uv_grid_visible else T("Показать сетку")
         box.operator("gtatools.toggle_uv_grid", text=text, icon=icon)
 
@@ -598,11 +599,11 @@ class GTATOOLS_PT_uv_tools_panel(bpy.types.Panel):
 
         # Link islands toggle
         row = box.row(align=True)
-        row.prop(scene, "gtatools_uv_link_islands", text=T("Связать полигоны"), icon='LINKED', toggle=True)
+        row.prop(scene, "gtatools_uv_link_islands", text=T("Связать полигоны"), icon=safe_icon('LINKED'), toggle=True)
 
         row = box.row(align=True)
-        row.operator("gtatools.randomize_uv_grid", text=T("Рандом"), icon='MOD_UVPROJECT')
-        row.operator("gtatools.snap_uv_to_grid", text=T("Привязать"), icon='SNAP_GRID')
+        row.operator("gtatools.randomize_uv_grid", text=T("Рандом"), icon=safe_icon('MOD_UVPROJECT'))
+        row.operator("gtatools.snap_uv_to_grid", text=T("Привязать"), icon=safe_icon('SNAP_GRID'))
 
 
 # =============================================================================
@@ -665,9 +666,9 @@ class VIEW3D_MT_gtasa_add_menu(bpy.types.Menu):
     def draw(self, context):
         layout = self.layout
         for key, (label, _filename) in _GTASA_MODELS.items():
-            op = layout.operator("gtatools.add_gtasa_model", text=label, icon='MESH_MONKEY')
+            op = layout.operator("gtatools.add_gtasa_model", text=label, icon=safe_icon('MESH_MONKEY'))
             op.model = key
 
 
 def _gtasa_add_menu_draw(self, context):
-    self.layout.menu("VIEW3D_MT_gtasa_add_menu", icon='AUTO')
+    self.layout.menu("VIEW3D_MT_gtasa_add_menu", icon=safe_icon('AUTO'))

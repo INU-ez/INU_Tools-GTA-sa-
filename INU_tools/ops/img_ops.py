@@ -20,6 +20,7 @@ from bpy.props import BoolProperty, StringProperty
 # in the parent __init__.py than this import — pull them lazily inside
 # each method so registration order doesn't matter.
 from .. import T
+from ..tools.compat import safe_icon
 
 
 # ──────────────────────────── helpers ─────────────────────────────────
@@ -767,8 +768,8 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
 
         info = layout.box()
         info.label(text=f"{T('IMG:')} {os.path.basename(bpy.path.abspath(scn.gtatools_img_path))}",
-                   icon='PACKAGE')
-        info.label(text=f"{T('Моделей:')} {len(wm.gtatools_txd_export_plan)}", icon='INFO')
+                   icon=safe_icon('PACKAGE'))
+        info.label(text=f"{T('Моделей:')} {len(wm.gtatools_txd_export_plan)}", icon=safe_icon('INFO'))
 
         # Format pick moved here from the main panel — same scene
         # props the «To folder» path uses, so toggling here also
@@ -782,7 +783,7 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
         if scn.gtatools_export_all_col:
             row = layout.row(align=True)
             row.prop(scn, "gtatools_export_all_col_library",
-                     text="", icon='PACKAGE')
+                     text="", icon=safe_icon('PACKAGE'))
             row.prop(scn, "gtatools_export_all_col_library_name",
                      text="", placeholder="collision")
 
@@ -796,7 +797,7 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
         box.active = not self.shared_txd
         box.label(text=T("TXD имя на модель:") if not self.shared_txd
                        else T("Общий TXD включён — список игнорируется"),
-                  icon='TEXTURE')
+                  icon=safe_icon('TEXTURE'))
         box.template_list(
             "GTATOOLS_UL_txd_export_plan", "",
             wm, "gtatools_txd_export_plan",

@@ -14,12 +14,11 @@
 #     do is help the user create matching pairs and toggle viewport
 #     visibility between OK and damaged state for preview.
 
-from __future__ import annotations
-
 import bpy
 from mathutils import Matrix, Vector
 
 from .. import T
+from typing import Dict, List, Optional, Tuple
 
 
 # ── Damage-variant naming ────────────────────────────────────────────
@@ -28,7 +27,7 @@ _OK_SUFFIX = "_ok"
 _DAM_SUFFIX = "_dam"
 
 
-def _strip_damage_suffix(name: str) -> tuple[str, str]:
+def _strip_damage_suffix(name: str) -> Tuple[str, str]:
     """Return (base, suffix) where suffix is _ok / _dam / ''."""
     if name.endswith(_OK_SUFFIX):
         return name[:-len(_OK_SUFFIX)], _OK_SUFFIX
@@ -37,7 +36,7 @@ def _strip_damage_suffix(name: str) -> tuple[str, str]:
     return name, ""
 
 
-def collect_vehicle_root(obj: "bpy.types.Object | None") -> "bpy.types.Object | None":
+def collect_vehicle_root(obj: "Optional[bpy.types.Object]") -> "Optional[bpy.types.Object]":
     """Walk parents up to the topmost ancestor for hierarchy ops."""
     if obj is None:
         return None
@@ -47,9 +46,9 @@ def collect_vehicle_root(obj: "bpy.types.Object | None") -> "bpy.types.Object | 
     return root
 
 
-def find_damage_pairs(objects) -> list[tuple["bpy.types.Object", "bpy.types.Object"]]:
+def find_damage_pairs(objects) -> List[Tuple["bpy.types.Object", "bpy.types.Object"]]:
     """Return [(ok_obj, dam_obj)] for matched suffix pairs in *objects*."""
-    by_base: dict[str, dict[str, bpy.types.Object]] = {}
+    by_base: Dict[str, Dict[str, bpy.types.Object]] = {}
     for obj in objects:
         if obj.type != 'MESH':
             continue
@@ -77,7 +76,7 @@ def _rescale_hierarchy(root, factor: float, *, dummies_only: bool):
     if factor <= 0.0:
         return 0, 0
 
-    tree: list[bpy.types.Object] = []
+    tree: List[bpy.types.Object] = []
     _walk(root, tree)
 
     scaled_meshes = 0
@@ -235,7 +234,7 @@ class GTATOOLS_OT_vehicle_show_damage(bpy.types.Operator):
         # operator harmless when there are multiple vehicles in scene.
         root = collect_vehicle_root(context.active_object)
         if root is not None:
-            tree: list[bpy.types.Object] = []
+            tree: List[bpy.types.Object] = []
             stack = [root]
             while stack:
                 cur = stack.pop()
@@ -282,8 +281,8 @@ class GTATOOLS_OT_vehicle_pair_report(bpy.types.Operator):
                 scope.append(cur)
                 stack.extend(cur.children)
 
-        oks: dict[str, bpy.types.Object] = {}
-        dams: dict[str, bpy.types.Object] = {}
+        oks: Dict[str, bpy.types.Object] = {}
+        dams: Dict[str, bpy.types.Object] = {}
         for obj in scope:
             if obj.type != 'MESH':
                 continue

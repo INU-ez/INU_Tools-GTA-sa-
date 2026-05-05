@@ -10,11 +10,10 @@
 # it round-trips through the existing DFF writer — this file only adds
 # UI + orchestration.
 
-from __future__ import annotations
-
 import bpy
 
 from ..data import material_presets as _mp
+from .compat import safe_icon
 
 
 # Built-in presets — shipped with the addon, always available.
@@ -254,7 +253,7 @@ def draw_pipeline_tab(layout, context):
     mat = context.material
     inu = getattr(mat, 'inu', None)
     if not inu:
-        layout.label(text="No inu properties on material", icon='ERROR')
+        layout.label(text="No inu properties on material", icon=safe_icon('ERROR'))
         return
 
     scene = context.scene
@@ -262,23 +261,24 @@ def draw_pipeline_tab(layout, context):
     is_user = current.startswith('USER:')
 
     box = layout.box()
-    box.label(text="Preset", icon='PRESET')
+    box.label(text="Preset", icon=safe_icon('PRESET'))
     row = box.row(align=True)
     row.prop(scene, 'gtatools_material_preset', text="")
-    op = row.operator("gtatools.material_preset", text="", icon='CHECKMARK')
+    from .compat import ICON_CHECK
+    op = row.operator("gtatools.material_preset", text="", icon=ICON_CHECK)
     op.preset = current
 
     row = box.row(align=True)
     row.operator("gtatools.material_preset_save",
-                 text="Сохранить как…", icon='ADD')
+                 text="Сохранить как…", icon=safe_icon('ADD'))
     del_row = row.row(align=True)
     del_row.enabled = is_user
     op_del = del_row.operator("gtatools.material_preset_delete",
-                              text="Удалить", icon='REMOVE')
+                              text="Удалить", icon=safe_icon('REMOVE'))
     op_del.preset_name = current[5:] if is_user else ''
 
     box = layout.box()
-    box.label(text="Active Effects", icon='MODIFIER')
+    box.label(text="Active Effects", icon=safe_icon('MODIFIER'))
     col = box.column(align=True)
     for attr, label in (
         ('export_env_map',    "Env Map"),

@@ -295,16 +295,17 @@ class GTATOOLS_OT_drop_texture_as_material(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class GTATOOLS_FH_texture_drop(bpy.types.FileHandler):
-    """File Handler для перетаскивания текстур"""
-    bl_idname = "GTATOOLS_FH_texture_drop"
-    bl_label = "GTA Texture Drop"
-    bl_import_operator = "gtatools.drop_texture_as_material"
-    bl_file_extensions = ".png;.jpg;.jpeg;.tga;.bmp;.dds"
+if hasattr(bpy.types, 'FileHandler'):
+    class GTATOOLS_FH_texture_drop(bpy.types.FileHandler):
+        """File Handler для перетаскивания текстур"""
+        bl_idname = "GTATOOLS_FH_texture_drop"
+        bl_label = "GTA Texture Drop"
+        bl_import_operator = "gtatools.drop_texture_as_material"
+        bl_file_extensions = ".png;.jpg;.jpeg;.tga;.bmp;.dds"
 
-    @classmethod
-    def poll_drop(cls, context):
-        return context.area and context.area.type == 'VIEW_3D'
+        @classmethod
+        def poll_drop(cls, context):
+            return context.area and context.area.type == 'VIEW_3D'
 
 
 class GTATOOLS_OT_drop_txd(bpy.types.Operator):
@@ -380,16 +381,17 @@ class GTATOOLS_OT_drop_txd(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class GTATOOLS_FH_txd_drop(bpy.types.FileHandler):
-    """File Handler для перетаскивания TXD"""
-    bl_idname = "GTATOOLS_FH_txd_drop"
-    bl_label = "GTA TXD Drop"
-    bl_import_operator = "gtatools.drop_txd"
-    bl_file_extensions = ".txd"
+if hasattr(bpy.types, 'FileHandler'):
+    class GTATOOLS_FH_txd_drop(bpy.types.FileHandler):
+        """File Handler для перетаскивания TXD"""
+        bl_idname = "GTATOOLS_FH_txd_drop"
+        bl_label = "GTA TXD Drop"
+        bl_import_operator = "gtatools.drop_txd"
+        bl_file_extensions = ".txd"
 
-    @classmethod
-    def poll_drop(cls, context):
-        return context.area and context.area.type == 'VIEW_3D'
+        @classmethod
+        def poll_drop(cls, context):
+            return context.area and context.area.type == 'VIEW_3D'
 
 
 class GTATOOLS_OT_check_materials(bpy.types.Operator):
@@ -878,6 +880,6 @@ classes = (
     GTATOOLS_OT_apply_lightmap_uv2,
     GTATOOLS_OT_remove_lightmap_uv2,
     GTATOOLS_OT_toggle_lightmap_uv2,
-    GTATOOLS_FH_texture_drop,
-    GTATOOLS_FH_txd_drop,
 )
+if hasattr(bpy.types, 'FileHandler'):
+    classes = classes + (GTATOOLS_FH_texture_drop, GTATOOLS_FH_txd_drop)

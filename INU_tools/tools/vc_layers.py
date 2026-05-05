@@ -21,8 +21,6 @@ User-visible label is editable in the panel — renaming an item there
 renames the underlying attribute (preserving the prefix).
 """
 
-from __future__ import annotations
-
 import bpy
 from bpy.props import (
     StringProperty, FloatProperty, FloatVectorProperty, BoolProperty,
@@ -31,6 +29,7 @@ from bpy.props import (
 
 from .. import T
 from . import compat
+from .compat import safe_icon
 from ..core.vc_layers import (
     BASE_DAY_NAME, BASE_NIGHT_NAME,
     MAX_LAYERS_PER_STACK,
@@ -1195,7 +1194,7 @@ class GTATOOLS_OT_vcl_recolor_selected(bpy.types.Operator):
         if mesh:
             n = sum(1 for it in mesh.gtatools_vc_layers if it.selected)
             layout.label(text=f"{T('Будут перекрашены')}: {n}",
-                         icon='COLOR')
+                         icon=safe_icon('COLOR'))
 
     def execute(self, context):
         mesh = _mesh_or_none(context)
@@ -1291,11 +1290,11 @@ class GTATOOLS_UL_vc_layers(bpy.types.UIList):
         if self.layout_type in {'DEFAULT', 'COMPACT'}:
             row = layout.row(align=True)
             row.prop(item, "selected", text="", emboss=False,
-                     icon='CHECKBOX_HLT' if item.selected else 'CHECKBOX_DEHLT')
+                     icon=safe_icon('CHECKBOX_HLT') if item.selected else 'CHECKBOX_DEHLT')
             row.prop(item, "visible", text="", emboss=False,
-                     icon='HIDE_OFF' if item.visible else 'HIDE_ON')
+                     icon=safe_icon('HIDE_OFF') if item.visible else 'HIDE_ON')
             row.prop(item, "locked", text="", emboss=False,
-                     icon='LOCKED' if item.locked else 'UNLOCKED')
+                     icon=safe_icon('LOCKED') if item.locked else 'UNLOCKED')
             # Click-to-rename label takes the bulk of the row width.
             row.prop(item, "label", text="", emboss=False)
             sub = row.row(align=True)
@@ -1342,11 +1341,11 @@ def _draw_other_attrs_flat_list(layout, mesh):
         return
 
     box = layout.box()
-    box.label(text=T("Дополнительные атрибуты:"), icon='COLOR')
+    box.label(text=T("Дополнительные атрибуты:"), icon=safe_icon('COLOR'))
     for attr in others:
         row = box.row(align=True)
         is_active = bool(active_attr and active_attr.name == attr.name)
-        icon = 'RADIOBUT_ON' if is_active else 'RADIOBUT_OFF'
+        icon=safe_icon('RADIOBUT_ON') if is_active else 'RADIOBUT_OFF'
         # Click activates the attribute (same operator the top list uses).
         op = row.operator("gtatools.select_color_attribute",
                           text=attr.name, icon=icon, depress=is_active)
@@ -1372,18 +1371,18 @@ def _draw_stack(layout, mesh, scope, header_text, icon):
     head.label(text=f"{count}/{MAX_LAYERS_PER_STACK}")
 
     ctrl = box.row(align=True)
-    op_add = ctrl.operator("gtatools.vcl_add", text="", icon='ADD')
+    op_add = ctrl.operator("gtatools.vcl_add", text="", icon=safe_icon('ADD'))
     op_add.scope = scope
     op_add.label = ""
-    ctrl.operator("gtatools.vcl_remove", text="", icon='REMOVE')
+    ctrl.operator("gtatools.vcl_remove", text="", icon=safe_icon('REMOVE'))
     ctrl.separator()
-    op_up = ctrl.operator("gtatools.vcl_move", text="", icon='TRIA_UP')
+    op_up = ctrl.operator("gtatools.vcl_move", text="", icon=safe_icon('TRIA_UP'))
     op_up.direction = 'UP'
-    op_dn = ctrl.operator("gtatools.vcl_move", text="", icon='TRIA_DOWN')
+    op_dn = ctrl.operator("gtatools.vcl_move", text="", icon=safe_icon('TRIA_DOWN'))
     op_dn.direction = 'DOWN'
 
     if count == 0:
-        box.label(text=T("Стек пуст — жми +"), icon='INFO')
+        box.label(text=T("Стек пуст — жми +"), icon=safe_icon('INFO'))
         return
 
     box.template_list(
@@ -1405,11 +1404,11 @@ def _draw_stack(layout, mesh, scope, header_text, icon):
                      slider=True)
             row = col.row(align=True)
             op_act = row.operator("gtatools.vcl_set_active_attr",
-                                  text=T("Рисовать"), icon='BRUSH_DATA')
+                                  text=T("Рисовать"), icon=safe_icon('BRUSH_DATA'))
             op_act.attr_name = active.attr_name
             op_act.enter_paint = True
             op_prom = row.operator("gtatools.vcl_promote",
-                                   text=T("→ База"), icon='COLOR')
+                                   text=T("→ База"), icon=safe_icon('COLOR'))
             op_prom.attr_name = active.attr_name
 
 
@@ -1446,11 +1445,11 @@ def draw_vc_layers_section(layout, context, mesh):
     if not compat.HAS_COLOR_ATTRIBUTES:
         box = layout.box()
         col = box.column(align=True)
-        col.label(text=T("VC Layers System"), icon='COLOR')
+        col.label(text=T("VC Layers System"), icon=safe_icon('COLOR'))
         col.label(
             text=compat.require_version_message(
                 "VC Layers", (3, 2, 0)),
-            icon='ERROR')
+            icon=safe_icon('ERROR'))
         return
 
     scene = context.scene
@@ -1462,7 +1461,7 @@ def draw_vc_layers_section(layout, context, mesh):
     # EXPERIMENTAL icon and reads natively in localised UIs.
     head_row = layout.row(align=True)
     head_row.prop(scene, "gtatools_vc_layers_expanded",
-                  icon='TRIA_DOWN' if expanded else 'TRIA_RIGHT',
+                  icon=safe_icon('TRIA_DOWN') if expanded else 'TRIA_RIGHT',
                   text=T("Слои Vertex Color (BETA)"),
                   emboss=False)
 
@@ -1473,20 +1472,20 @@ def draw_vc_layers_section(layout, context, mesh):
     sub_head = layout.row(align=True)
     sub_head.prop(mesh, "gtatools_vc_live_preview",
                   text=T("Live preview"),
-                  icon='HIDE_OFF' if _is_live_preview_on(mesh)
+                  icon=safe_icon('HIDE_OFF') if _is_live_preview_on(mesh)
                         else 'HIDE_ON',
                   toggle=True)
     sub_head.operator("gtatools.vcl_refresh_composite",
-                      text="", icon='FILE_REFRESH')
+                      text="", icon=safe_icon('FILE_REFRESH'))
     cur = getattr(mesh, 'gtatools_vc_preview_scope', 'DAY')
     sub = sub_head.row(align=True)
     sub.scale_x = 0.6
     op_sd = sub.operator("gtatools.vcl_show_composite",
-                          text=T("Day"), icon='LIGHT_SUN',
+                          text=T("Day"), icon=safe_icon('LIGHT_SUN'),
                           depress=(cur == 'DAY'))
     op_sd.scope = 'DAY'
     op_sn = sub.operator("gtatools.vcl_show_composite",
-                          text=T("Night"), icon='LIGHT_HEMI',
+                          text=T("Night"), icon=safe_icon('LIGHT_HEMI'),
                           depress=(cur == 'NIGHT'))
     op_sn.scope = 'NIGHT'
 
@@ -1496,7 +1495,7 @@ def draw_vc_layers_section(layout, context, mesh):
         info_row = layout.row()
         info_row.label(
             text=T("Day/Night показывают композит — рисуй на слое"),
-            icon='INFO')
+            icon=safe_icon('INFO'))
     # ──────── flat list of all non-Day/Night color attributes ────────
     _draw_other_attrs_flat_list(layout, mesh)
 
@@ -1509,7 +1508,7 @@ def draw_vc_layers_section(layout, context, mesh):
     if selected:
         box = layout.box()
         box.label(text=T("Выделенные слои ({}):").format(len(selected)),
-                  icon='SELECT_EXTEND')
+                  icon=safe_icon('SELECT_EXTEND'))
         row = box.row(align=True)
         row.prop(mesh, "gtatools_vc_multi_mode", expand=True)
 
@@ -1523,13 +1522,14 @@ def draw_vc_layers_section(layout, context, mesh):
         ):
             grow = box.row(align=True)
             grow.prop(mesh, prop_name, text=T(label_key), slider=True)
+            from .compat import ICON_CHECK
             op_apply = grow.operator("gtatools.vcl_apply_multi",
-                                      text="", icon='CHECKMARK')
+                                      text="", icon=ICON_CHECK)
             op_apply.target = target
             op_apply.value = getattr(mesh, prop_name, 0.0)
 
         box.operator("gtatools.vcl_recolor_selected",
-                     text=T("Перекрасить выделенные…"), icon='COLOR')
+                     text=T("Перекрасить выделенные…"), icon=safe_icon('COLOR'))
 
 
 classes = (

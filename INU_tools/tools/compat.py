@@ -1,6 +1,8 @@
 # INU_tools.tools.compat — Blender API compatibility shims
 #
-# Минимальная поддерживаемая версия: Blender 2.80.
+# Минимальная поддерживаемая версия: Blender 2.83 LTS.
+# 2.80–2.82 не поддерживаются (отсутствует UILayout.ui_units_x,
+# CHECKMARK icon, ряд RNA-различий — критичные панели не рисуются).
 # Этот модуль — единственное место где код знает о различиях между
 # API-версиями. Все остальные модули обращаются сюда вместо if'ов
 # по `bpy.app.version` или try/except'ов на отсутствующие attrs.
@@ -18,7 +20,7 @@ import bpy
 
 BL = bpy.app.version  # tuple (major, minor, patch)
 
-MIN_SUPPORTED = (2, 80, 0)
+MIN_SUPPORTED = (2, 83, 0)
 
 # Color Attributes API (mesh.color_attributes) — 3.2+. До этого был
 # mesh.vertex_colors (только BYTE_COLOR per-corner).
@@ -46,6 +48,73 @@ HAS_CALC_NORMALS_SPLIT = BL < (4, 1, 0)
 # Extension manifest (blender_manifest.toml) — 4.2+. До этого только
 # bl_info dict в __init__.py.
 HAS_EXTENSION_MANIFEST = BL >= (4, 2, 0)
+
+
+# ── Icon name shims ──────────────────────────────────────────────────
+# Иконка 'CHECKMARK' появилась в 2.81. На 2.80 её нет — UILayout кидает
+# исключение каждый кадр в draw_header(), что роняет UI до 2 fps. Любая
+# незнакомая иконка вызывает тот же эффект — TypeError на enum, и весь
+# оставшийся draw() в panel'е обрывается, кнопки/чекбоксы пропадают.
+#
+# Решение: на module-load интроспектируем реальный enum из bpy.types.
+# safe_icon() возвращает запрошенную иконку если есть, иначе из таблицы
+# ручных fallback'ов, иначе 'BLANK1' (везде валидный пустой 16×16).
+
+def _collect_valid_icons():
+    """Прочитать enum_items у UILayout.label.icon — возвращает set
+    реальных иконок текущего Blender'а, или None при ошибке."""
+    try:
+        items = (bpy.types.UILayout.bl_rna
+                 .functions['label']
+                 .parameters['icon']
+                 .enum_items)
+        return set(items.keys())
+    except Exception:
+        return None
+
+
+_VALID_ICONS = _collect_valid_icons()
+
+# Ручные substitution'ы для важных «модернизированных» иконок —
+# подобраны по смыслу/визуалу. Если новой иконки нет на старом
+# Blender'е, подставляем ближайший аналог. Расширяется по мере
+# обнаружения новых случаев.
+_ICON_FALLBACKS = {
+    'CHECKMARK':           'FILE_TICK',
+    'OUTLINER_COLLECTION': 'GROUP',
+    'IMAGE_RGB_ALPHA':     'IMAGE_RGB',
+    'COLLECTION':          'GROUP',
+    'COLLECTION_NEW':      'NEW',
+    'GP_SELECT_POINTS':    'PARTICLE_POINT',
+    'CURRENT_FILE':        'FILE_BLEND',
+    'TOPBAR':              'WINDOW',
+    'STATUSBAR':           'WINDOW',
+    'WORKSPACE':           'WORKSPACE',  # есть на 2.80
+    'CON_OBJECTSOLVER':    'CONSTRAINT',
+    'BLENDER_LOGO_LARGE':  'BLENDER',
+}
+
+
+def safe_icon(name):
+    """Вернуть `name` если иконка валидна в текущем Blender'е, иначе
+    fallback из таблицы либо 'BLANK1' (универсально пустой слот).
+
+    На современном Blender'е (≥ 2.81) — pass-through для всего, что
+    использует аддон. Активная подмена включается только если иконки
+    физически нет в enum'е — т.е. на старых версиях."""
+    if _VALID_ICONS is None:
+        return name  # introspection failed — trust caller
+    if name in _VALID_ICONS:
+        return name
+    fb = _ICON_FALLBACKS.get(name)
+    if fb is not None and fb in _VALID_ICONS:
+        return fb
+    return 'BLANK1' if 'BLANK1' in _VALID_ICONS else 'NONE'
+
+
+# Backward-compat constant — раньше было `ICON_CHECK`, оставляем для
+# уже подставленных мест.
+ICON_CHECK = safe_icon('CHECKMARK')
 
 
 # ── Vertex color attribute helpers ───────────────────────────────────

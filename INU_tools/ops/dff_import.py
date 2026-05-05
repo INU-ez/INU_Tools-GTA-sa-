@@ -1,6 +1,12 @@
 # INU_tools.ops.dff_import
 # DFF (RenderWare Clump) → Blender mesh objects.
 # Uses INU_tools.core.dff for binary format reading.
+#
+# НЕ добавлять `from __future__ import annotations` — Blender читает
+# `__annotations__` для регистрации `filepath: StringProperty(...)` и др.
+# на Operator'ах. PEP 563 stringify ломает это → "property not found".
+
+from typing import Optional
 
 import os
 import bpy
@@ -9,6 +15,7 @@ import mathutils
 import numpy as np
 
 from .. import T
+from ..tools.compat import safe_icon
 from bpy.props import (
     StringProperty, CollectionProperty,
 )
@@ -83,7 +90,7 @@ def _apply_uv_anim_to_material(mat, dff_mat: DffMaterial, uv_anim_dict):
 
 
 def _create_blender_material(dff_mat: DffMaterial, index: int,
-                             material_cache: dict | None = None,
+                             material_cache: Optional[dict] = None,
                              uv_anim_dict=None) -> bpy.types.Material:
     """Создаём Blender материал из DFF материала.
 
@@ -291,7 +298,7 @@ def _build_mesh_bmesh(mesh: bpy.types.Mesh, geom: DffGeometry):
 
 
 def _build_mesh(geom: DffGeometry, name: str, materials: list,
-                material_cache: dict | None = None,
+                material_cache: Optional[dict] = None,
                 uv_anim_dict=None) -> bpy.types.Mesh:
     """Build a Blender Mesh from DFF geometry via direct foreach_set.
 
@@ -482,11 +489,12 @@ def _import_2dfx(ext_2dfx: Extension2dfx, collection, base_name: str) -> list:
             obj['2dfx_flags2'] = entry.flags2
             if entry.look_direction is not None:
                 obj['2dfx_look_direction'] = list(entry.look_direction)
-            # Display precision
-            for key in ('2dfx_corona_far_clip', '2dfx_pointlight_range',
-                        '2dfx_corona_size', '2dfx_shadow_size'):
-                ui = obj.id_properties_ui(key)
-                ui.update(precision=1)
+            # Display precision — `id_properties_ui` added in Blender 3.0,
+            # на 2.83–2.93 пропускаем (косметика).
+            if hasattr(obj, 'id_properties_ui'):
+                for key in ('2dfx_corona_far_clip', '2dfx_pointlight_range',
+                            '2dfx_corona_size', '2dfx_shadow_size'):
+                    obj.id_properties_ui(key).update(precision=1)
 
         elif isinstance(entry, Particle2dfx):
             name = f"{base_name}.2dfx_particle.{i}"
@@ -754,7 +762,7 @@ def _apply_skin_weights(obj, geom, arm_obj, bone_names):
 
 def import_dff(filepath: str, context=None, *, skip_2dfx=None,
                bulk_mode: bool = False, target_collection=None,
-               material_cache: dict | None = None, profiler=None):
+               material_cache: Optional[dict] = None, profiler=None):
     """
     Импорт DFF файла в Blender.
 
@@ -796,7 +804,7 @@ def import_dff(filepath: str, context=None, *, skip_2dfx=None,
 
 def import_dff_from_clump(clump, base_name: str, *, skip_2dfx=None,
                           bulk_mode: bool = False, target_collection=None,
-                          material_cache: dict | None = None, profiler=None):
+                          material_cache: Optional[dict] = None, profiler=None):
     """Build Blender objects from an already-parsed DffClump.
 
     Separates the Blender-only work from the binary parse so the
@@ -1037,7 +1045,7 @@ def _collect_recent_dff_texture_names() -> set:
 _PICK_BEST_TXD_MIN_COVERAGE = 0.5  # 50% of DFF textures must be in TXD
 
 
-def _pick_best_txd(search_dirs: list, dff_basename: str) -> str | None:
+def _pick_best_txd(search_dirs: list, dff_basename: str) -> Optional[str]:
     """Pick the most relevant .txd file for the just-imported DFF.
 
     Strategy:
@@ -1134,11 +1142,11 @@ class GTATOOLS_OT_import_dff(bpy.types.Operator):
 
         if not getattr(scene, 'gtatools_txd_auto_import', True):
             layout.label(text=T("TXD не будет загружаться автоматически"),
-                         icon='INFO')
+                         icon=safe_icon('INFO'))
             return
 
         box = layout.box()
-        box.label(text=T("Как ищется TXD:"), icon='QUESTION')
+        box.label(text=T("Как ищется TXD:"), icon=safe_icon('QUESTION'))
         col = box.column(align=True)
         col.scale_y = 0.85
         col.label(text=T("1. <имя_dff>.txd в той же папке"))
@@ -1151,7 +1159,7 @@ class GTATOOLS_OT_import_dff(bpy.types.Operator):
         custom_dir = getattr(scene, 'gtatools_txd_import_path', '')
         if custom_dir:
             box.label(text=f"+ {T('доп. папка')}: {custom_dir}",
-                      icon='FILE_FOLDER')
+                      icon=safe_icon('FILE_FOLDER'))
 
     def execute(self, context):
         from .txd_import import import_txd as inu_import_txd
@@ -1281,20 +1289,22 @@ class GTATOOLS_OT_drop_dff(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class GTATOOLS_FH_dff_drop(bpy.types.FileHandler):
-    """File Handler для перетаскивания DFF во viewport"""
-    bl_idname = "GTATOOLS_FH_dff_drop"
-    bl_label = "GTA DFF Drop"
-    bl_import_operator = "gtatools.drop_dff"
-    bl_file_extensions = ".dff"
+if hasattr(bpy.types, 'FileHandler'):
+    class GTATOOLS_FH_dff_drop(bpy.types.FileHandler):
+        """File Handler для перетаскивания DFF во viewport"""
+        bl_idname = "GTATOOLS_FH_dff_drop"
+        bl_label = "GTA DFF Drop"
+        bl_import_operator = "gtatools.drop_dff"
+        bl_file_extensions = ".dff"
 
-    @classmethod
-    def poll_drop(cls, context):
-        return context.area and context.area.type == 'VIEW_3D'
+        @classmethod
+        def poll_drop(cls, context):
+            return context.area and context.area.type == 'VIEW_3D'
 
 
 classes = (
     GTATOOLS_OT_import_dff,
     GTATOOLS_OT_drop_dff,
-    GTATOOLS_FH_dff_drop,
 )
+if hasattr(bpy.types, 'FileHandler'):
+    classes = classes + (GTATOOLS_FH_dff_drop,)

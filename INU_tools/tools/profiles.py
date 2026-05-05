@@ -14,12 +14,14 @@
 #     `panels` is an ordered list; the position drives bl_order so the
 #     user controls both visibility and order.
 
-from __future__ import annotations
 import json
 import os
 import re
 
 import bpy
+
+from .compat import safe_icon
+from typing import Dict, List, Optional
 
 
 # 'ALL' is the only built-in. Empty `panels` list is special-cased by
@@ -53,7 +55,7 @@ def _is_valid_name(name: str) -> bool:
     return bool(name) and bool(_NAME_RE.match(name)) and len(name) <= 64
 
 
-def list_user_profiles() -> list[str]:
+def list_user_profiles() -> List[str]:
     """Return the names of profiles saved as JSON files (no extension)."""
     out = []
     try:
@@ -65,15 +67,15 @@ def list_user_profiles() -> list[str]:
     return sorted(out)
 
 
-def load_user_profile(name: str) -> dict | None:
+def load_user_profile(name: str) -> Optional[dict]:
     """Return the JSON-decoded profile or None on any error.
 
     Output is normalised to the new schema:
         {
           'name': str,
           'desc': str,
-          'order':  list[str]  # ALL known panels in user-chosen order
-          'hidden': list[str]  # subset of order that's currently hidden
+          'order':  List[str]  # ALL known panels in user-chosen order
+          'hidden': List[str]  # subset of order that's currently hidden
         }
     Old single-list ``panels`` files (visible-only) are migrated on
     read: their list becomes ``order``, missing panels are appended
@@ -125,9 +127,9 @@ def load_user_profile(name: str) -> dict | None:
     }
 
 
-def save_user_profile(name: str, order: list[str],
+def save_user_profile(name: str, order: List[str],
                       description: str = "",
-                      hidden: list[str] | None = None) -> bool:
+                      hidden: Optional[List[str]] = None) -> bool:
     """Write a user profile to disk. Returns True on success.
 
     ``order`` — full ordered list of panel ids (drives bl_order).
@@ -171,7 +173,7 @@ def delete_user_profile(name: str) -> bool:
 
 # ── Public lookup API ──────────────────────────────────────────────
 
-def resolve_profile(profile_id: str) -> dict | None:
+def resolve_profile(profile_id: str) -> Optional[dict]:
     """Return profile dict for either the built-in ALL or a user
     profile name. Returns None when nothing matches — caller falls
     back to ALL behavior (no filter)."""
@@ -256,7 +258,7 @@ def panel_label(idname: str) -> str:
 # read it from PANELS dict directly because slot+zone math happens at
 # decorator time and we want the actual final values that ended up on
 # the classes.
-_default_bl_orders: dict[str, int] = {}
+_default_bl_orders: Dict[str, int] = {}
 
 
 def _classes_by_idname() -> dict:
@@ -301,7 +303,7 @@ def apply_profile_order(profile_id: str) -> None:
     # Build {idname: new_bl_order} for everything we want to touch.
     # ALL or empty profile = restore defaults; otherwise the `order`
     # list drives bl_order (position == order index).
-    new_orders: dict[str, int] = {}
+    new_orders: Dict[str, int] = {}
     profile = resolve_profile(profile_id)
     order_list = (profile or {}).get('order') or []
     # Old profiles before the schema change still expose `panels`.
@@ -743,10 +745,10 @@ class GTATOOLS_OT_profile_edit(bpy.types.Operator):
         active = scene.gtatools_profile
         prof = load_user_profile(active)
         if prof is None:
-            layout.label(text=f"Профиль не найден: {active}", icon='ERROR')
+            layout.label(text=f"Профиль не найден: {active}", icon=safe_icon('ERROR'))
             return
 
-        layout.label(text=f"{active}", icon='PRESET')
+        layout.label(text=f"{active}", icon=safe_icon('PRESET'))
 
         # Single combined list — every panel is shown in one place.
         # Eye-toggle flips visibility without disturbing position;
@@ -772,12 +774,12 @@ class GTATOOLS_OT_profile_edit(bpy.types.Operator):
             hint.label(
                 text=(f"{_t('Взято:')} «{panel_label(picked)}» — "
                       f"{_t('клик на другую = переместить сюда')}"),
-                icon='RESTRICT_SELECT_OFF')
+                icon=safe_icon('RESTRICT_SELECT_OFF'))
         else:
             hint.label(
                 text=_t("Клик на название = взять, потом клик на "
                         "другую = поставить"),
-                icon='INFO')
+                icon=safe_icon('INFO'))
 
         col = layout.column(align=True)
         for idname in order:

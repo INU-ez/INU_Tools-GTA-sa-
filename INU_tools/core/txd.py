@@ -2,6 +2,8 @@
 # GTA SA TXD (RenderWare Texture Dictionary) reader.
 # Uses numpy for fast DXT decompression.
 
+from __future__ import annotations
+
 import numpy as np
 from .rwbinary import BinaryReader
 

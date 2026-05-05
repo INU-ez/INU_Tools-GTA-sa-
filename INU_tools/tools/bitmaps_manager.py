@@ -5,8 +5,6 @@
 # single folder (for release builds), and a simple duplicate finder
 # based on MD5 hash of file contents.
 
-from __future__ import annotations
-
 import os
 import shutil
 import hashlib
@@ -14,7 +12,10 @@ from collections import defaultdict
 
 import bpy
 
+from typing import Dict, List, Set, Tuple
+
 from .. import T
+from .compat import safe_icon
 from ..core.bitmap_diff import (
     collect_used as _collect_used_from,
     diff_unused_images as _diff_unused_images,
@@ -39,11 +40,11 @@ def scan_missing_textures():
     cannot be loaded. `reason` is one of: 'empty', 'not_found', 'packed_ok'.
     Packed images never count as missing — they are skipped from the result.
     """
-    mat_by_image: dict[bpy.types.Image, set[str]] = defaultdict(set)
+    mat_by_image: Dict[bpy.types.Image, Set[str]] = defaultdict(set)
     for img, mat in _iter_image_users():
         mat_by_image[img].add(mat.name)
 
-    missing: list[tuple[bpy.types.Image, list[str], str]] = []
+    missing: List[Tuple[bpy.types.Image, List[str], str]] = []
     for img, mats in mat_by_image.items():
         if img.packed_file:
             continue  # packed textures are always OK
@@ -69,7 +70,7 @@ def resolve_missing(search_folders, *, extensions=('.png', '.tga', '.jpg',
         return 0, 0
 
     # Build name → full path index of every candidate file
-    index: dict[str, str] = {}
+    index: Dict[str, str] = {}
     for folder in search_folders:
         if not folder or not os.path.isdir(folder):
             continue
@@ -105,13 +106,13 @@ def resolve_missing(search_folders, *, extensions=('.png', '.tga', '.jpg',
 
 # ──────────────────────────── batch copy ──────────────────────────────
 
-def _build_material_to_txds() -> dict[str, set[str]]:
+def _build_material_to_txds() -> Dict[str, Set[str]]:
     """Return {material_name: {txd_name, ...}} by walking every mesh object
     in the scene. txd_name lives on `obj.inu.txd_name` (not on the material
     itself), so one material slot can map to several TXD buckets when the
     same material is used across objects with different TXDs.
     """
-    out: dict[str, set[str]] = defaultdict(set)
+    out: Dict[str, Set[str]] = defaultdict(set)
     for obj in bpy.data.objects:
         if obj.type != 'MESH':
             continue
@@ -126,7 +127,7 @@ def _build_material_to_txds() -> dict[str, set[str]]:
 
 
 def batch_copy_textures(target_dir: str, *, used_only: bool = True,
-                        group_by_txd: bool = False) -> tuple[int, int, list[str]]:
+                        group_by_txd: bool = False) -> Tuple[int, int, List[str]]:
     """Copy textures referenced in the scene into `target_dir`.
 
     `used_only=True` copies only images that are used by at least one material.
@@ -141,7 +142,7 @@ def batch_copy_textures(target_dir: str, *, used_only: bool = True,
 
     mat_to_txds = _build_material_to_txds() if group_by_txd else {}
 
-    wanted: dict[bpy.types.Image, set[str]] = defaultdict(set)
+    wanted: Dict[bpy.types.Image, Set[str]] = defaultdict(set)
     if used_only:
         for img, mat in _iter_image_users():
             if group_by_txd:
@@ -155,7 +156,7 @@ def batch_copy_textures(target_dir: str, *, used_only: bool = True,
 
     copied = 0
     skipped = 0
-    errors: list[str] = []
+    errors: List[str] = []
 
     for img, txd_names in wanted.items():
         src = bpy.path.abspath(img.filepath or '')
@@ -164,7 +165,7 @@ def batch_copy_textures(target_dir: str, *, used_only: bool = True,
             continue
         basename = os.path.basename(src)
 
-        targets: list[str] = []
+        targets: List[str] = []
         if group_by_txd:
             for txd in (txd_names or {''}):
                 sub = os.path.join(target_dir, txd) if txd else target_dir
@@ -261,12 +262,12 @@ def remove_unused_textures(*, remove_materials: bool = False,
 
 # ──────────────────────────── duplicate detection ─────────────────────
 
-def find_duplicate_textures() -> dict[str, list[str]]:
+def find_duplicate_textures() -> Dict[str, List[str]]:
     """Hash every reachable texture file on disk and return {hash: [paths...]}
     groups where the group has more than one entry.
     """
-    by_hash: dict[str, list[str]] = defaultdict(list)
-    seen_paths: set[str] = set()
+    by_hash: Dict[str, List[str]] = defaultdict(list)
+    seen_paths: Set[str] = set()
 
     for img in bpy.data.images:
         fp = bpy.path.abspath(img.filepath or '')
@@ -431,18 +432,18 @@ class GTATOOLS_OT_bitmaps_remove_unused(bpy.types.Operator):
     def draw(self, context):
         layout = self.layout
         box = layout.box()
-        box.label(text=T("Будет удалено:"), icon='TRASH')
-        box.label(text=f"{T('Текстуры')}: {self._img_count}", icon='IMAGE_DATA')
+        box.label(text=T("Будет удалено:"), icon=safe_icon('TRASH'))
+        box.label(text=f"{T('Текстуры')}: {self._img_count}", icon=safe_icon('IMAGE_DATA'))
         if self.remove_materials:
             box.label(text=f"{T('Материалы')}: {self._mat_count}",
-                      icon='MATERIAL')
+                      icon=safe_icon('MATERIAL'))
         else:
             box.label(text=f"{T('Материалы')}: {self._mat_count} "
                            f"({T('пропущены')})",
-                      icon='MATERIAL')
+                      icon=safe_icon('MATERIAL'))
         layout.prop(self, "remove_materials")
         layout.label(text=T("use_fake_user-помеченные пропускаются"),
-                     icon='FAKE_USER_ON')
+                     icon=safe_icon('FAKE_USER_ON'))
 
     def execute(self, context):
         img_removed, mat_removed = remove_unused_textures(
@@ -494,16 +495,16 @@ class GTATOOLS_MT_textures_menu(bpy.types.Menu):
     def draw(self, context):
         layout = self.layout
         layout.operator("gtatools.bitmaps_resolve",
-                        text=T("Найти в папке…"), icon='FILE_REFRESH')
+                        text=T("Найти в папке…"), icon=safe_icon('FILE_REFRESH'))
         layout.operator("gtatools.bitmaps_copy",
-                        text=T("Скопировать в папку…"), icon='COPY_ID')
+                        text=T("Скопировать в папку…"), icon=safe_icon('COPY_ID'))
         layout.operator("gtatools.bitmaps_find_dupes",
-                        text=T("Найти дубликаты"), icon='DUPLICATE')
+                        text=T("Найти дубликаты"), icon=safe_icon('DUPLICATE'))
         layout.separator()
         layout.operator("gtatools.bitmaps_find_unused",
-                        text=T("Найти неиспользуемые"), icon='ZOOM_PREVIOUS')
+                        text=T("Найти неиспользуемые"), icon=safe_icon('ZOOM_PREVIOUS'))
         layout.operator("gtatools.bitmaps_remove_unused",
-                        text=T("Удалить неиспользуемые…"), icon='TRASH')
+                        text=T("Удалить неиспользуемые…"), icon=safe_icon('TRASH'))
 
 
 class GTATOOLS_MT_materials_menu(bpy.types.Menu):
@@ -513,11 +514,11 @@ class GTATOOLS_MT_materials_menu(bpy.types.Menu):
     def draw(self, context):
         layout = self.layout
         layout.operator("gtatools.check_materials",
-                        text=T("Проверка материалов"), icon='MATERIAL')
+                        text=T("Проверка материалов"), icon=safe_icon('MATERIAL'))
         layout.operator("gtatools.cleanup_materials",
-                        text=T("Очистка материалов"), icon='BRUSH_DATA')
+                        text=T("Очистка материалов"), icon=safe_icon('BRUSH_DATA'))
         layout.operator("gtatools.sort_materials",
-                        text=T("Сортировка материалов"), icon='SORTALPHA')
+                        text=T("Сортировка материалов"), icon=safe_icon('SORTALPHA'))
 
 
 class GTATOOLS_PT_bitmaps_panel(bpy.types.Panel):
@@ -529,7 +530,7 @@ class GTATOOLS_PT_bitmaps_panel(bpy.types.Panel):
     bl_options = {'DEFAULT_CLOSED'}
 
     def draw_header(self, context):
-        self.layout.label(text="", icon='IMAGE_DATA')
+        self.layout.label(text="", icon=safe_icon('IMAGE_DATA'))
 
     def draw(self, context):
         layout = self.layout
@@ -537,30 +538,31 @@ class GTATOOLS_PT_bitmaps_panel(bpy.types.Panel):
 
         row = layout.row(align=True)
         row.operator("gtatools.bitmaps_scan",
-                     text=T("Сканировать"), icon='VIEWZOOM')
+                     text=T("Сканировать"), icon=safe_icon('VIEWZOOM'))
+        from .compat import ICON_CHECK
         miss = scene.get('bitmaps_missing_count', None)
         if miss is not None:
             row.label(text=f"{T('Пропущено')}: {miss}",
-                      icon='ERROR' if miss else 'CHECKMARK')
+                      icon=safe_icon('ERROR') if miss else ICON_CHECK)
 
         # Текстуры dropdown — file ops + unused cleanup all live here.
         # Unused-count badge sits next to the menu since «Найти/Удалить
         # неиспользуемые» are the ops that produce/consume that count.
         row = layout.row(align=True)
         row.menu("GTATOOLS_MT_textures_menu",
-                 text=T("Текстуры"), icon='IMAGE_DATA')
+                 text=T("Текстуры"), icon=safe_icon('IMAGE_DATA'))
         unused_imgs = scene.get('bitmaps_unused_image_count')
         unused_mats = scene.get('bitmaps_unused_material_count')
         if unused_imgs is not None:
             total = unused_imgs + (unused_mats or 0)
             row.label(
                 text=f"{T('Неисп.')}: {unused_imgs}/{unused_mats or 0}",
-                icon='INFO' if total else 'CHECKMARK')
+                icon=safe_icon('INFO') if total else ICON_CHECK)
 
         # Материалы dropdown — Check / Cleanup / Sort consolidated here
         # for the same scene-wide asset-management scope as bitmaps.
         layout.menu("GTATOOLS_MT_materials_menu",
-                    text=T("Материалы"), icon='MATERIAL')
+                    text=T("Материалы"), icon=safe_icon('MATERIAL'))
 
 
 classes = (

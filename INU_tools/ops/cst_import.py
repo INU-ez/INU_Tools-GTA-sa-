@@ -1,8 +1,6 @@
 # INU_tools.ops.cst_import — import a CST (Steve's COL Editor text) file
 # by delegating mesh creation to the regular COL importer.
 
-from __future__ import annotations
-
 from ..core.cst import read_cst
 from .col_import import _create_mesh_from_col
 import bpy

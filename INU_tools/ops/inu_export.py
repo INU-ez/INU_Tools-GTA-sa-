@@ -18,6 +18,7 @@ from bpy.props import (
 from bpy_extras.io_utils import ImportHelper, ExportHelper
 
 from .. import T
+from ..tools.compat import safe_icon
 
 
 class GTATOOLS_OT_inu_import(bpy.types.Operator, ImportHelper):
@@ -145,13 +146,13 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
         if scn.gtatools_export_all_col:
             row = layout.row(align=True)
             row.prop(scn, "gtatools_export_all_col_library",
-                     text="", icon='PACKAGE')
+                     text="", icon=safe_icon('PACKAGE'))
             row.prop(scn, "gtatools_export_all_col_library_name",
                      text="", placeholder="collision")
         if scn.gtatools_export_all_txd:
             row = layout.row(align=True)
             row.prop(scn, "gtatools_export_all_txd_shared",
-                     text="", icon='PACKAGE')
+                     text="", icon=safe_icon('PACKAGE'))
             row.prop(scn, "gtatools_export_all_txd_shared_name",
                      text="", placeholder="textures")
 
@@ -478,7 +479,7 @@ class GTATOOLS_OT_inu_export(bpy.types.Operator, ExportHelper):
 
         # Format
         box = layout.box()
-        box.label(text=T("Формат:"), icon='EXPORT')
+        box.label(text=T("Формат:"), icon=safe_icon('EXPORT'))
         col = box.column(align=True)
         col.prop(self, "export_dff")
         col.prop(self, "export_col")
@@ -488,13 +489,13 @@ class GTATOOLS_OT_inu_export(bpy.types.Operator, ExportHelper):
 
         # Source
         box = layout.box()
-        box.label(text=T("Источник:"), icon='OBJECT_DATA')
+        box.label(text=T("Источник:"), icon=safe_icon('OBJECT_DATA'))
         box.prop(self, "source", text="")
 
         # DFF settings
         if self.export_dff:
             box = layout.box()
-            box.label(text="DFF:", icon='MESH_DATA')
+            box.label(text="DFF:", icon=safe_icon('MESH_DATA'))
             box.prop(self, "dff_include_2dfx")
             box.prop(self, "dff_auto_lod")
             # Pipeline
@@ -503,7 +504,7 @@ class GTATOOLS_OT_inu_export(bpy.types.Operator, ExportHelper):
         # COL settings
         if self.export_col:
             box = layout.box()
-            box.label(text="COL:", icon='MESH_ICOSPHERE')
+            box.label(text="COL:", icon=safe_icon('MESH_ICOSPHERE'))
             box.prop(self, "col_library")
             if self.col_library:
                 box.prop(self, "col_library_name")
@@ -511,20 +512,21 @@ class GTATOOLS_OT_inu_export(bpy.types.Operator, ExportHelper):
         # TXD settings
         if self.export_txd:
             box = layout.box()
-            box.label(text="TXD:", icon='IMAGE_DATA')
+            box.label(text="TXD:", icon=safe_icon('IMAGE_DATA'))
             box.prop(self, "txd_selected_only")
             nvtt_path = getattr(context.scene, 'gtatools_nvtt_path', '')
             from ..tools.txd_export import check_nvtt_available
             available, _ = check_nvtt_available(nvtt_path)
             if available:
-                box.label(text="GPU (NVTT)", icon='CHECKMARK')
+                from ..tools.compat import ICON_CHECK
+                box.label(text="GPU (NVTT)", icon=ICON_CHECK)
             else:
-                box.label(text="CPU", icon='INFO')
+                box.label(text="CPU", icon=safe_icon('INFO'))
 
         # IDE/IPL settings
         if self.export_ide or self.export_ipl:
             box = layout.box()
-            box.label(text="IDE / IPL:", icon='TEXT')
+            box.label(text="IDE / IPL:", icon=safe_icon('TEXT'))
             box.prop(self, "ide_ipl_upsert")
             if self.ide_ipl_upsert:
                 if self.export_ide:
