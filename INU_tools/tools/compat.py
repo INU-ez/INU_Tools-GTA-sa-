@@ -18,7 +18,10 @@ import bpy
 
 # ── Version constants ────────────────────────────────────────────────
 
-BL = bpy.app.version  # tuple (major, minor, patch)
+# Под unit-тестами `bpy` стабится минимально и не имеет `bpy.app` —
+# fall back на (0,0,0), чтобы все HAS_* флаги превратились в False
+# (тесты не должны полагаться на конкретный Blender API).
+BL = getattr(getattr(bpy, 'app', None), 'version', (0, 0, 0))
 
 MIN_SUPPORTED = (2, 83, 0)
 
