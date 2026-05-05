@@ -207,16 +207,28 @@ def is_panel_visible(panel_idname: str, profile_id: str) -> bool:
     return panel_idname in visible_set
 
 
+# Module-level cache for the items tuples returned by the EnumProperty
+# callback below. Blender's dynamic EnumProperty has a well-known gotcha:
+# if Python doesn't keep a strong reference to the strings inside each
+# item tuple, GC reclaims them and Blender starts logging
+#     pyrna_enum_to_py: current value 'N' matches no enum
+# at every draw of the dropdown. Caching the list at module scope keeps
+# the strings pinned alive across draws, restarts, and items recomputes.
+_profile_items_cache: list = []
+
+
 def profile_enum_items(self, context):
     """EnumProperty items callback — ALL first, then user profiles
     sorted alphabetically. Stable ordering so the dropdown doesn't
     shuffle when the user adds/removes profiles."""
+    global _profile_items_cache
     items = [('ALL', _ALL_PROFILE['label'], _ALL_PROFILE['desc'])]
     for name in list_user_profiles():
         prof = load_user_profile(name) or {}
         items.append((name, name, prof.get('desc', '') or
                       "Пользовательский профиль"))
-    return items
+    _profile_items_cache = items
+    return _profile_items_cache
 
 
 # ── Discoverable list of toggleable panels ──────────────────────
@@ -409,12 +421,19 @@ def _force_sidebar_refresh():
         if wm is None:
             return None
 
+        # Single-workspace install: workspace_cycle has nothing to
+        # cycle to. Bail early for the default-install case.
+        if len(bpy.data.workspaces) < 2:
+            return None
+
         # workspace_cycle needs a valid SCREEN/AREA context. When this
         # runs from a popup operator (pick-and-place), bpy.context is
-        # the popup's restricted context — workspace_cycle silently
-        # fails. temp_override gives us a real VIEW_3D area context so
-        # Blender treats the call the same as a profile-switch did
-        # (where the EnumProperty change runs in normal scene context).
+        # the popup's restricted context and the operator's poll()
+        # returns False. Blender then logs an ERROR on the C side
+        # ("invalid operator call 'SCREEN_OT_workspace_cycle'") BEFORE
+        # the Python try/except can swallow it. Guard with an explicit
+        # poll() check inside the override so the call only goes
+        # through when Blender will actually accept it.
         for window in wm.windows:
             for area in window.screen.areas:
                 if area.type != 'VIEW_3D':
@@ -423,6 +442,8 @@ def _force_sidebar_refresh():
                     with bpy.context.temp_override(
                             window=window, screen=window.screen,
                             area=area):
+                        if not bpy.ops.screen.workspace_cycle.poll():
+                            continue
                         bpy.ops.screen.workspace_cycle(direction='NEXT')
                         bpy.ops.screen.workspace_cycle(direction='PREV')
                     break
