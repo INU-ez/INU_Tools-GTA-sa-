@@ -7,8 +7,8 @@
 **Blender-аддон для моддинга GTA San Andreas — полный пайплайн от моделинга до IMG-архива.**
 
 <p>
-  <img src="https://img.shields.io/badge/Blender-4.2%E2%80%935.1-orange?logo=blender" alt="Blender">
-  <img src="https://img.shields.io/badge/Version-1.7.0-green" alt="Version">
+  <img src="https://img.shields.io/badge/Blender-2.83%E2%80%935.1-orange?logo=blender" alt="Blender">
+  <img src="https://img.shields.io/badge/Version-1.8.0-green" alt="Version">
   <img src="https://img.shields.io/badge/License-GPL--3.0-blue" alt="License">
 </p>
 <p>
@@ -52,55 +52,27 @@
 </tr>
 </table>
 
-## 🔮 Planned / In Progress
+## 🆕 Что нового в 1.8.0
 
-### 🚧 В следующем релизе
+Релиз с **двумя параллельными сборками**, новой системой Validate Scene, превью Modulate Color по `timecyc.dat` и пачкой багфиксов после глубокого Blender API audit'а. Поддержка Blender'а расширена до **2.83 → 5.1** через `tools/compat.py`. Полная backward-совместимость с .blend / .dff / .ipl / .ide из 1.7.x.
 
-**v1.8.0 — две параллельные сборки, обе тут на GitHub releases:**
+**Две сборки, один исходник:**
 
-- 🟢 **`INU_Tools-1.8.0-FULL.zip`** — полная версия, без ограничений. Быстрее, все функции доступны. Рекомендуется большинству пользователей.
-- 🟡 **`INU_Tools-1.8.0-STORE.zip`** — версия для extensions.blender.org (она же публикуется на официальном сайте расширений Blender). Медленнее, часть функций урезана/отключена под правила ревью (запрет `eval`/`exec`, нет subprocess, ограниченный доступ к файлам, нет бандла бинарников и т.п.).
+- 🟢 **`inu_tools_gta_sa-1.8.0-full.zip`** — полная версия, без ограничений. GPU NVTT compression (10–100× быстрее на больших атласах), полный multi-threading импорта/экспорта, все фичи доступны. **Рекомендуется большинству пользователей.** Установка через `Edit → Preferences → Add-ons → Install from Disk`.
+- 🟡 **`inu_tools_gta_sa-1.8.0.zip`** — store-версия, она же публикуется на extensions.blender.org. Без NVTT (CPU DXT), без `subprocess` вне small allowlist, ToS-compliant запись данных (per-user config dir). Медленнее, но удобно если хочется именно через официальный сайт расширений Blender. **Требует Blender 4.2+** (extension API floor).
 
-Обе сборки собираются из одного исходного кода; различия запекаются на этапе упаковки. Берите FULL, если только специально не нужна установка именно через официальный сайт расширений Blender.
+**Главное** — Validate Scene (единый pre-export sweep) · Modulate Color preview (Day / Night `ambient_obj` из `timecyc.dat`) · авто-линковка alpha после TXD-импорта · поддержка DXT2 / DXT4 fourcc (vanilla SA fence-текстуры теперь декодируются корректно) · FLA IPL (Fastman92 Limit Adjuster) · DFF auto-naming с суффиксом `_DFF` · DFF export ~×2 быстрее на тяжёлых мешах · multi-mesh OBJS в IDE парсере · IplOccl канонические имена полей · Blender 2.83 → 5.1 через `tools/compat.py`.
 
-#### Что уже вошло в 1.8.0
+**Багфиксы** — DFF import NameError (восстановлен `start = r.pos`) · unregister NameError (`_links_draw_handler`) · console spam от workspace_cycle · enum cache flicker · jerky playback IFP-экспорта (`bl_quat.normalize()`) · IK rig на rest-pose peds · понятные лимиты DFF / COL с именем модели и счётчиком · `_save_paths` / `_load_paths` (миграция PropertyGroup — пути теперь сохраняются между сессиями) · 35+ leftover-ов `scene.gtatools_*` мигрированы на `scene.inu_settings.gtatools_*`.
 
-**🆕 Новые функции:**
+**Внутри** — PropertyGroup consolidation (`scene_settings.py`) · `bpy.utils.extension_path_user` для пользовательских данных · 10 end-to-end тестов внутри headless Blender · static compliance guards (AST scan, manifest hygiene) · CI matrix билдит и валидирует обе сборки на каждый push.
 
-- **Validate Scene** — единый pre-export проход по проверкам: нормализация кватернионов в Actions арматур, флаг Modulate Color на prelit мешах, парность `_ok` / `_dam` damage-вариантов, заполненность paintjob-слотов
-- **FLA IPL** — поддержка расширенного формата IPL от Fastman92 Limit Adjuster
-- **COL progress bar** — индикатор при импорте больших COL библиотек
-- **Modulate Color preview** — переключатель OFF / Day / Night, добавляет ванильный SA-овский `ambient_obj` из `timecyc.dat` (EXTRASUNNY_LA Midday/Midnight) поверх vertex prelight. Откалиброванные дефолты (mix / contrast / gamma) подогнаны под in-game look
-- **Multi-mesh OBJS** в IDE парсере — корректная обработка type 1/2/3 (5/7/8 полей). Раньше type 2/3 молча портили draw distance и flags
-- **IplOccl канонические имена полей** — `unknown1/2/3` → `rot_x/rot_y/rot_z/flags` (как в `CFileLoader::LoadOcclusionVolume` движка); старые custom-prop ключи всё ещё читаются для совместимости со старыми сценами
-- **DFF export по именам Day/Night** — больше не цепляет промежуточные VC-слои типа `vertex_lights_both` как night vcols
-- **DFF export производительность** — bulk `foreach_get` + numpy для чтения alpha и FLOAT→BYTE конверсии (~×2 на меше 20k+ вершин)
-- **Расширенная поддержка Blender: 2.83 → 5.1** — `tools/compat.py` оборачивает различия API (vcol, Mix-ноды и т.п.), чтобы аддон работал на каждом LTS начиная с 2.83. Большинство функций работает везде; VC Layers System на старых версиях показывает «Требует Blender 3.2+»
-
-**🐛 Исправления багов:**
-
-- **IFP export jerky playback** — пропадал `bl_quat.normalize()` перед rest composition, в игре анимации шли «лесенкой»
-- **IK rig на rest-pose peds** — IK-сетап ломался когда арматура приходила в чистой rest-позе
-- **Лимиты DFF / COL** — понятные `DffLimitError` / `ColLimitError` с именем модели и счётчиком, вместо непонятного `struct.pack` overflow
-- Плюс мелкие фиксы IK rig, prelight, Vector-импорт в light_ops
-
-### 🔭 Ещё запланировано
-
-_Пусто._
-
-> [!NOTE]
-> Аддон в активной разработке. Сообщения об ошибках приветствуются в [Issues](../../../issues).
-
-## 🆕 Что нового в 1.7.0
-
-Большой UX-релиз с новыми фичами. Главное: **bone-based IK rig** для SA-педов (FK→IK bake, brute-force pole-калибровка, INU_Ground floor limiter), **Animated Map Object** workflow (одной кнопкой DFF+IFP+IDE для мельниц/кранов), **Frame Hierarchy Editor** с vanilla VEHICLE/PED шаблонами, **Vehicle Paintjob** (Pay'n'Spray альт-текстуры), **Profile system** (кастомные наборы N-sidebar панелей в JSON), и большой рефакторинг: монолитный `__init__.py` (16k строк) разбит на 22 отдельных `ops/*.py` модуля.
-
-**Главное** — IK Rig с FK→IK bake · Animated Map Object Setup wizard · Frame Hierarchy Editor + Validate Vehicle/Ped · Vehicle Paintjob (`<base>_paintjob1/2`) · Profile system (per-user видимость / порядок панелей) · drag-drop DFF/COL во viewport · Smart auto-TXD picker (coverage-based scoring) · Save-required wrappers · Texture Manager dropdowns (Текстуры/Материалы) · 2DFX collapsible-секции + семантические группы флагов · BreakableData round-trip · IFP layered-Action support (Blender 5.x).
-
-→ **[Полные release notes на GitHub](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v1.7.0)**
+→ **[Полные release notes на GitHub](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v1.8.0)**
 
 <details>
 <summary>Более старые релизы</summary>
+
+- **v1.7.0** — IK Rig для SA-педов (FK→IK bake, brute-force pole-калибровка, INU_Ground floor limiter), Animated Map Object workflow (одной кнопкой DFF+IFP+IDE для мельниц/кранов), Frame Hierarchy Editor с vanilla VEHICLE/PED шаблонами, Vehicle Paintjob (Pay'n'Spray альт-текстуры), Profile system (кастомные наборы N-sidebar панелей), большой рефакторинг: монолитный `__init__.py` (16k строк) разбит на 22 модуля `ops/*.py` — [страница релиза](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v1.7.0)
 
 - **v1.6.7** — полный round-trip Map Import → правка → Map Export с сохранением IDE / IPL / COL / TXD-лейаута (CRLF, IPL inst dedup, согласованность ID для `.NNN` дубликатов), модальный экспорт с progress-bar'ом, свойства `inu.col_name` + `inu.lod_object`, Group-by-IPL импорт + By-collection split-режим, парность main ↔ LOD, TXD-bucketing по `txd_name`, per-DFF COL по умолчанию, модальный ESC cancel, multi-collection picker, NVTT auto + параллельный DXT1, отдельная Vehicles панель — [страница релиза](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v1.6.7)
 - **v1.6.6-beta** — частичный pre-release с первым набором 1.6.6: Map auto-split (XY-сетка), damage variants, train paths verified, COL ~5×, VC Layer System (BETA), IFP ANP2 / ANPK write, Bitmaps Manager unused cleanup. Заменён на v1.6.7 (round-trip preservation, modal export, format-conformance фиксы) — [страница релиза](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v1.6.6-beta)
@@ -124,24 +96,37 @@ _Пусто._
 <details>
 <summary><b>🔧 Совместимость</b></summary>
 
+| | FULL-сборка | STORE-сборка |
+|---|---|---|
+| **Blender** | 2.83 – 5.1 (рекомендуется 4.2+) | **только 4.2+** (нижняя граница extension API) |
+| **GPU TXD-сжатие** | NVIDIA Texture Tools (NVTT) | только CPU-кодек |
+| **Дистрибуция** | прямой .zip из GitHub Release | extensions.blender.org / .zip из GitHub |
+
 | | |
 |---|---|
-| **Blender** | 4.2 – 5.1 ✅ |
 | **Игра** | GTA San Andreas (совместим с MTA:SA) |
 | **ОС** | Windows / Linux / macOS |
-| **Опционально** | NVIDIA GPU (для NVTT-сжатия текстур) |
+| **Опционально** | NVIDIA GPU + NVIDIA Texture Tools (только в FULL-сборке) |
 
 </details>
 
 <details>
 <summary><b>📦 Установка</b></summary>
 
-1. Скачай папку `INU_tools/` (или zip-архив)
-2. Скопируй её в директорию аддонов Blender:
-   ```
-   Blender/<version>/scripts/addons/INU_tools/
-   ```
-3. Открой Blender → **Edit → Preferences → Add-ons** → включи **INU_tools(gta_sa)**
+**Выбери одну из двух сборок** в последнем [GitHub Release](../../../releases/latest):
+
+**🟢 FULL — `inu_tools_gta_sa-X.Y.Z-full.zip`** (рекомендуется)
+
+1. Скачай FULL-zip со страницы релиза
+2. Открой Blender → **Edit → Preferences → Add-ons** → ⌄ → **Install from Disk** → выбери zip
+3. Включи **INU Tools (GTA SA)**
+
+**🟡 STORE — `inu_tools_gta_sa-X.Y.Z.zip`** (только Blender 4.2+)
+
+Та же версия что публикуется на extensions.blender.org. Два пути установки:
+
+- Прямо с сайта расширений: **Edit → Preferences → Get Extensions** → найди "INU Tools" → Install
+- Или скачай STORE-zip из релиза: **Edit → Preferences → Get Extensions** → ⌄ → **Install from Disk**
 
 </details>
 
@@ -163,10 +148,9 @@ Building01_COL   ← коллизия
 <details>
 <summary><b>🧰 Возможности</b></summary>
 
-Обозначения: 🆕 новое в 1.6.3 · ⚡ производительность · 🎨 UI · 📦 поддержка формата
 
 <details>
-<summary><b>📤 Экспорт / Импорт</b></summary>
+<summary><b>&emsp;📤 Экспорт / Импорт</b></summary>
 
 | Фича | Детали |
 |---|---|
@@ -182,7 +166,7 @@ Building01_COL   ← коллизия
 </details>
 
 <details>
-<summary><b>🗺️ IDE / IPL / IMG</b></summary>
+<summary><b>&emsp;🗺️ IDE / IPL / IMG</b></summary>
 
 | Фича | Детали |
 |---|---|
@@ -207,7 +191,7 @@ Building01_COL   ← коллизия
 </details>
 
 <details>
-<summary><b>💡 Prelight</b></summary>
+<summary><b>&emsp;💡 Prelight</b></summary>
 
 | Фича | Детали |
 |---|---|
@@ -232,7 +216,7 @@ Building01_COL   ← коллизия
 </details>
 
 <details>
-<summary><b>🎨 Post-Processing</b></summary>
+<summary><b>&emsp;🎨 Post-Processing</b></summary>
 
 | Фича | Детали |
 |---|---|
@@ -245,7 +229,7 @@ Building01_COL   ← коллизия
 </details>
 
 <details>
-<summary><b>🎯 2DFX эффекты</b></summary>
+<summary><b>&emsp;🎯 2DFX эффекты</b></summary>
 
 | Фича | Детали |
 |---|---|
@@ -268,7 +252,7 @@ Building01_COL   ← коллизия
 </details>
 
 <details>
-<summary><b>🎆 Particle Effects (<code>effects.fxp</code>)</b></summary>
+<summary><b>&emsp;🎆 Particle Effects (<code>effects.fxp</code>)</b></summary>
 
 > 🆕 **Полностью новая фича в 1.6.3** — редактирование частиц GTA SA прямо в Blender.
 
@@ -289,7 +273,7 @@ Building01_COL   ← коллизия
 </details>
 
 <details>
-<summary><b>🎨 Материалы</b></summary>
+<summary><b>&emsp;🎨 Материалы</b></summary>
 
 | Фича | Детали |
 |---|---|
@@ -308,7 +292,7 @@ Building01_COL   ← коллизия
 </details>
 
 <details>
-<summary><b>🧮 UV Editor</b></summary>
+<summary><b>&emsp;🧮 UV Editor</b></summary>
 
 | Фича | Детали |
 |---|---|
@@ -327,7 +311,7 @@ Building01_COL   ← коллизия
 </details>
 
 <details>
-<summary><b>🔍 Check</b></summary>
+<summary><b>&emsp;🔍 Check</b></summary>
 
 | Фича | Детали |
 |---|---|
@@ -350,7 +334,7 @@ Building01_COL   ← коллизия
 </details>
 
 <details>
-<summary><b>🌊 Water IO</b></summary>
+<summary><b>&emsp;🌊 Water IO</b></summary>
 
 | Фича | Детали |
 |---|---|
@@ -363,7 +347,7 @@ Building01_COL   ← коллизия
 </details>
 
 <details>
-<summary><b>🛣️ Path IO</b></summary>
+<summary><b>&emsp;🛣️ Path IO</b></summary>
 
 | Фича | Детали |
 |---|---|
@@ -377,7 +361,7 @@ Building01_COL   ← коллизия
 </details>
 
 <details>
-<summary><b>🦴 Персонажи (Skinned DFF)</b></summary>
+<summary><b>&emsp;🦴 Персонажи (Skinned DFF)</b></summary>
 
 | Фича | Детали |
 |---|---|
@@ -389,7 +373,7 @@ Building01_COL   ← коллизия
 </details>
 
 <details>
-<summary><b>🔌 Интеграции</b></summary>
+<summary><b>&emsp;🔌 Интеграции</b></summary>
 
 | Интеграция | Назначение |
 |---|---|
