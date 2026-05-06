@@ -1,73 +1,55 @@
-# Build INU Tools as a Blender extension package.
+# Build INU Tools as a Blender extension package — FULL edition.
+#
+# This branch (full-build) is the GitHub-release variant: NVTT GPU
+# compression is included, parallelism is on, no extensions.blender.org
+# restrictions. Output zip is renamed with a `-full` suffix so users
+# can tell the FULL build apart from the STORE build by filename.
 #
 # Uses Blender's official `extension build` command which:
 #   - Validates blender_manifest.toml
 #   - Excludes __pycache__/, .pyc, .git/, dev files automatically
 #   - Produces a .zip with the correct extension naming (id-version.zip)
 #
-# Two modes:
-#   .\dev\build_extension.ps1           — full build with NVTT (for GitHub release).
-#                                          Copies extras/nvtt_compress.py into the
-#                                          addon, builds, leaves it for dev testing.
-#   .\dev\build_extension.ps1 -Store    — extensions.blender.org build (NO NVTT).
-#                                          Removes nvtt_compress.py from addon if
-#                                          present, builds the ToS-compliant zip,
-#                                          does NOT restore (to keep zip clean).
-#
 # Run from repo root.
 
 [CmdletBinding()]
-param(
-    [switch]$Store
-)
+param()
 
 $ErrorActionPreference = 'Stop'
 
-# ── Configure ──────────────────────────────────────────────────────────
-$BlenderExe   = "D:\Program\Blender 5.1\blender.exe"
-$SourceDir    = "INU_tools"
-$OutputDir    = "."
-$NvttSource   = "extras\nvtt_compress.py"
-$NvttTarget   = "$SourceDir\tools\nvtt_compress.py"
+# --- Configure ---------------------------------------------------------
+$BlenderExe = "D:\Program\Blender 5.1\blender.exe"
+$SourceDir  = "INU_tools"
+$OutputDir  = "."
 
-# ── Pre-build cleanup ──────────────────────────────────────────────────
+# --- Pre-build cleanup -------------------------------------------------
 Write-Host "Cleaning __pycache__ folders..." -ForegroundColor Cyan
 Get-ChildItem -Path $SourceDir -Filter "__pycache__" -Recurse -Directory -ErrorAction SilentlyContinue |
     Remove-Item -Recurse -Force
 
-# ── Manage NVTT module presence based on build mode ────────────────────
-if ($Store) {
-    if (Test-Path $NvttTarget) {
-        Write-Host "Store build: removing $NvttTarget (no NVTT in extensions.blender.org zip)..." -ForegroundColor Yellow
-        Remove-Item -Path $NvttTarget -Force
-    } else {
-        Write-Host "Store build: $NvttTarget already absent (good)" -ForegroundColor Yellow
-    }
-} else {
-    if (-not (Test-Path $NvttSource)) {
-        Write-Host "Error: $NvttSource not found — can't build full release." -ForegroundColor Red
-        exit 1
-    }
-    Write-Host "Full build: copying $NvttSource → $NvttTarget..." -ForegroundColor Green
-    Copy-Item -Path $NvttSource -Destination $NvttTarget -Force
-}
-
-# ── Build ──────────────────────────────────────────────────────────────
+# --- Build -------------------------------------------------------------
+# NVTT lives directly inside INU_tools/tools/txd_export.py on the
+# full-build branch (subprocess.run on nvcompress.exe), no extras/
+# copy step needed.
 Write-Host "Building extension via Blender CLI..." -ForegroundColor Cyan
 & $BlenderExe --command extension build `
     --source-dir $SourceDir `
     --output-dir $OutputDir 2>&1 |
     Where-Object { $_ -match '^(building|complete|created|error|Error)' }
 
-if (Test-Path "inu_tools_gta_sa-*.zip") {
-    Write-Host "`nDone." -ForegroundColor Green
-    Get-ChildItem "inu_tools_gta_sa-*.zip" | Format-Table Name, Length, LastWriteTime
-    if ($Store) {
-        Write-Host "Build mode: STORE (NVTT excluded — ToS-compliant for extensions.blender.org)" -ForegroundColor Yellow
-    } else {
-        Write-Host "Build mode: FULL (NVTT included — for GitHub release)" -ForegroundColor Green
-    }
-} else {
-    Write-Host "Build did not produce a zip — check output above." -ForegroundColor Red
+# --- Rename output zip with -full suffix -------------------------------
+$builtZip = Get-ChildItem "inu_tools_gta_sa-*.zip" |
+    Where-Object { $_.Name -notmatch '-full\.zip$' } |
+    Sort-Object LastWriteTime -Descending | Select-Object -First 1
+
+if (-not $builtZip) {
+    Write-Host "Build did not produce a zip -- check output above." -ForegroundColor Red
     exit 1
 }
+
+$fullZipName = $builtZip.Name -replace '\.zip$', '-full.zip'
+Move-Item -Path $builtZip.FullName -Destination $fullZipName -Force
+
+Write-Host "`nDone." -ForegroundColor Green
+Get-ChildItem "inu_tools_gta_sa-*-full.zip" | Format-Table Name, Length, LastWriteTime
+Write-Host "Build mode: FULL (NVTT included, parallelism enabled -- GitHub release)" -ForegroundColor Green

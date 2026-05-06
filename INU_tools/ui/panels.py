@@ -601,6 +601,7 @@ class GTATOOLS_PT_export_panel(bpy.types.Panel):
         from ..tools.model_utils import (
             find_selected_models, find_all_selected_model_groups,
         )
+        from ..tools.txd_export import check_nvtt_available
         from .. import _draw_suffix_prefix
         layout = self.layout
 
@@ -638,8 +639,15 @@ class GTATOOLS_PT_export_panel(bpy.types.Panel):
         row.menu("GTATOOLS_MT_import_menu", text=T("Импорт"), icon=safe_icon('IMPORT'))
         row.menu("GTATOOLS_MT_export_menu", text=T("Экспорт"), icon=safe_icon('EXPORT'))
 
-        # ── Auto TXD ──
-        layout.prop(context.scene.inu_settings, "gtatools_txd_auto_import", text=T("Авто TXD"))
+        # ── Auto TXD + NVTT GPU/CPU status ──
+        row = layout.row(align=True)
+        row.prop(context.scene.inu_settings, "gtatools_txd_auto_import", text=T("Авто TXD"))
+        nvtt_path = getattr(context.scene.inu_settings, 'gtatools_nvtt_path', '')
+        available, _ = check_nvtt_available(nvtt_path)
+        if available:
+            row.label(text="GPU (NVTT)", icon=compat.ICON_CHECK)
+        else:
+            row.label(text="CPU", icon=safe_icon('INFO'))
 
         layout.separator()
 
@@ -1840,6 +1848,22 @@ class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
             row.operator("gtatools.set_blend_folder", text="", icon=safe_icon('FILE_REFRESH'))
             box.prop(scene.inu_settings, "gtatools_texture_path2", text="")
             box.operator("gtatools.load_textures", text=T("Загрузить текстуры"), icon=safe_icon('IMPORT'))
+
+        # NVTT Settings (collapsible)
+        from ..tools.txd_export import check_nvtt_available
+        box = layout.box()
+        row = box.row()
+        row.prop(scene.inu_settings, "gtatools_show_nvtt_settings",
+                 icon=safe_icon('TRIA_DOWN') if scene.inu_settings.gtatools_show_nvtt_settings else 'TRIA_RIGHT',
+                 text=T("Настройки NVTT"), emboss=False)
+        if scene.inu_settings.gtatools_show_nvtt_settings:
+            box.prop(scene.inu_settings, "gtatools_nvtt_path", text="")
+            nvtt_path = scene.inu_settings.gtatools_nvtt_path
+            available, msg = check_nvtt_available(nvtt_path)
+            if available:
+                box.label(text=T("Статус: Готов"), icon=compat.ICON_CHECK)
+            else:
+                box.label(text=T("Статус: Не найден"), icon=safe_icon('ERROR'))
 
         # IMG file list (collapsible)
         box = layout.box()

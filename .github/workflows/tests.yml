@@ -5,7 +5,7 @@ on:
   pull_request:
 
 jobs:
-  # ── Lane 1: pure-Python tests + static compliance checks. ────────
+  # Lane 1: pure-Python tests + static guards.
   # Runs without Blender. Catches the cheap stuff fast: parser/writer
   # unit tests, manifest validity, eval/exec ban, subprocess audit.
   pytest:
@@ -23,22 +23,15 @@ jobs:
         run: python -m pip install --upgrade pip pytest numpy
 
       # Skip packaging (needs Blender) and e2e (needs Blender + assets).
-      # Both have their own lanes below or run locally.
       - name: Run core + compliance tests
         run: pytest -q dev/tests/ --ignore=dev/tests/test_packaging.py --ignore=dev/tests/e2e
 
-  # ── Lane 2: build store / full zips and validate them. ──────────
-  # Per matrix value: pre-configure NVTT presence, run the matrix-
-  # filtered packaging tests (which build + `extension validate` the
-  # zip), then build the release artifact one final time and upload.
-  build-and-validate:
+  # Lane 2: build the FULL zip and validate it.
+  # full-build branch ships the GitHub-release variant with NVTT and
+  # full parallelism. There's no store matrix here -- store builds
+  # come from main, this branch is FULL only.
+  build-full:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        # store: NVTT excluded — uploaded to extensions.blender.org
-        # full:  NVTT included — attached to the GitHub release
-        build: [store, full]
 
     steps:
       - name: Checkout
@@ -52,9 +45,6 @@ jobs:
       - name: Install pytest
         run: python -m pip install --upgrade pip pytest
 
-      # Cache Blender across runs — the tarball is ~200 MB and downloading
-      # it every push wastes ~30 s of CI time. The cache key pins the
-      # exact version so a Blender bump invalidates correctly.
       - name: Cache Blender
         id: cache-blender
         uses: actions/cache@v4
@@ -67,47 +57,32 @@ jobs:
         run: |
           set -e
           mkdir -p ~/blender
-          # 4.2 LTS is the floor declared in blender_manifest.toml
-          # (blender_version_min = "4.2.0"). Building against the floor
-          # version exercises the same API surface we ship against.
           url="https://download.blender.org/release/Blender4.2/blender-4.2.20-linux-x64.tar.xz"
           curl -fsSL "$url" -o /tmp/blender.tar.xz
           tar -xf /tmp/blender.tar.xz -C ~/blender --strip-components=1
 
-      - name: Configure NVTT presence for ${{ matrix.build }} build
+      - name: Build FULL release zip
         run: |
           set -e
-          if [ "${{ matrix.build }}" = "full" ]; then
-            cp extras/nvtt_compress.py INU_tools/tools/nvtt_compress.py
-            echo "NVTT copied into addon (full build)"
-          else
-            rm -f INU_tools/tools/nvtt_compress.py
-            echo "NVTT removed from addon (store build)"
-          fi
-
-      - name: Run packaging tests for ${{ matrix.build }}
-        run: |
-          export BLENDER="$HOME/blender/blender"
-          test -x "$BLENDER" || { echo "Blender not at $BLENDER"; exit 1; }
-          # -k filters tests by name. test names embed `store` or `full`
-          # so this picks up the relevant subset for the matrix value.
-          pytest -q dev/tests/test_packaging.py -k "${{ matrix.build }}" -v
-
-      - name: Build release artifact for ${{ matrix.build }}
-        run: |
-          set -e
-          # Pytest fixtures save+restore NVTT state, so the source tree
-          # is back to what we configured above. Now build the final zip
-          # for upload. Output goes to repo root by default.
           "$HOME/blender/blender" --command extension build \
             --source-dir INU_tools \
             --output-dir .
-          ls -la inu_tools_gta_sa-*.zip
+          # Rename to make the FULL flavour obvious in the artifact list.
+          built=$(ls inu_tools_gta_sa-*.zip | grep -v '\-full\.zip$' | head -n 1)
+          full_name="${built%.zip}-full.zip"
+          mv "$built" "$full_name"
+          ls -la inu_tools_gta_sa-*-full.zip
 
-      - name: Upload ${{ matrix.build }} zip
+      - name: Validate FULL zip
+        run: |
+          export BLENDER="$HOME/blender/blender"
+          full_zip=$(ls inu_tools_gta_sa-*-full.zip | head -n 1)
+          "$BLENDER" --command extension validate "$full_zip"
+
+      - name: Upload FULL zip
         uses: actions/upload-artifact@v4
         with:
-          name: inu-tools-${{ matrix.build }}
-          path: inu_tools_gta_sa-*.zip
+          name: inu-tools-full
+          path: inu_tools_gta_sa-*-full.zip
           if-no-files-found: error
           retention-days: 30

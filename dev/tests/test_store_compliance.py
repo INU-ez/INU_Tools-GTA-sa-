@@ -115,6 +115,12 @@ ALLOWED_SUBPROCESS_USES = {
         "FULL build only — store build excludes this file entirely "
         "(verified by test_packaging.test_store_build_excludes_nvtt)"
     ),
+    "INU_tools/tools/txd_export.py": (
+        "FULL build path: spawns nvcompress.exe for GPU DXT compression. "
+        "Store build doesn't ship the nvcompress binary so this branch "
+        "is dead in store; no ToS issue. Kept here so the FULL branch "
+        "doesn't break the compliance test."
+    ),
 }
 
 
