@@ -578,9 +578,12 @@ def export_txd(filepath, context, selected_only=False, use_gpu=False):
     nvcompress_path = None
     mode_name = "CPU"
 
-    # Проверка GPU режима
+    # Проверка GPU режима. В 1.8.0 PropertyGroup-консолидация перенесла
+    # все scene-флаги на scene.inu_settings.* — поэтому путь NVTT
+    # читается через scene.inu_settings, а не напрямую с scene как
+    # было в 1.7.0.
     if use_gpu:
-        nvtt_path = getattr(scene, 'gtatools_nvtt_path', '')
+        nvtt_path = getattr(scene.inu_settings, 'gtatools_nvtt_path', '')
         available, result = check_nvtt_available(nvtt_path)
         if not available:
             return {'CANCELLED'}, f"GPU режим недоступен: {result}\nУкажите путь к NVIDIA Texture Tools в настройках", []
@@ -691,25 +694,60 @@ def export_txd(filepath, context, selected_only=False, use_gpu=False):
                     except Exception as e:
                         print(f"TXD CPU fallback ERROR: {e}")
 
-        # DXT3 (alpha) — keep on CPU because nvcompress's BC2 output
-        # doesn't round-trip cleanly through SA's TXD reader.
+        # DXT3 (alpha) — also route through NVTT for speed.
+        # Historical note: an earlier comment said NVTT BC2 didn't
+        # round-trip cleanly through SA's TXD reader, so DXT3 was kept
+        # on the (slow) CPU encoder. With this branch (full-build) we
+        # accept the tradeoff: GPU path is dramatically faster for
+        # foliage / fence / window TXDs, and any rare BC2 quirks fall
+        # back to CPU automatically (see cpu_fallback_dxt3 below).
         if dxt3_images:
-            dxt3_data_local = []
+            prepared_dxt3 = []
+            cpu_fallback_dxt3 = []
             for i, (name, image, _) in enumerate(dxt3_images):
                 wm.progress_update(total + dxt1_count + i)
                 try:
-                    dxt3_data_local.append(prepare_texture_data(name, image, True))
+                    prepared_dxt3.append(_nvtt_prepare_png(name, image))
                 except Exception as e:
-                    print(f"TXD CPU (DXT3) prepare ERROR: {name}: {e}")
-            with ThreadPoolExecutor(max_workers=min(8, os.cpu_count() or 4)) as executor:
-                futs = [executor.submit(process_texture_parallel, d) for d in dxt3_data_local]
-                for fut in futs:
+                    print(f"NVTT PNG save error {name}: {e} — fallback to CPU DXT3")
                     try:
-                        result = fut.result()
+                        cpu_fallback_dxt3.append(prepare_texture_data(name, image, True))
+                    except Exception as e2:
+                        print(f"NVTT CPU fallback prepare error {name}: {e2}")
+
+            with ThreadPoolExecutor(max_workers=nvtt_workers) as executor:
+                futures = [
+                    executor.submit(_nvtt_compress_and_parse, prep, True, nvcompress_path)
+                    for prep in prepared_dxt3
+                ]
+                for prep, future in zip(prepared_dxt3, futures):
+                    try:
+                        result = future.result()
                         if result:
                             tex_natives.append(result)
+                        else:
+                            name_failed = prep[0]
+                            img = next((img for n, img, _ in dxt3_images if n == name_failed), None)
+                            if img is not None:
+                                try:
+                                    cpu_fallback_dxt3.append(
+                                        prepare_texture_data(name_failed, img, True))
+                                except Exception:
+                                    pass
                     except Exception as e:
-                        print(f"TXD CPU (DXT3) ERROR: {e}")
+                        print(f"TXD GPU (DXT3) ERROR: {e}")
+
+            # CPU fallback for any DXT3 textures NVTT couldn't handle
+            if cpu_fallback_dxt3:
+                with ThreadPoolExecutor(max_workers=min(8, os.cpu_count() or 4)) as executor:
+                    fallback_futs = [executor.submit(process_texture_parallel, d) for d in cpu_fallback_dxt3]
+                    for fut in fallback_futs:
+                        try:
+                            result = fut.result()
+                            if result:
+                                tex_natives.append(result)
+                        except Exception as e:
+                            print(f"TXD CPU (DXT3) fallback ERROR: {e}")
     else:
         # CPU режим - обрабатываем в правильном порядке (DXT1 первыми)
         num_workers = min(8, os.cpu_count() or 4)

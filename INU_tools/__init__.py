@@ -2995,12 +2995,17 @@ _SAVED_PATH_KEYS = [
 ]
 
 def _save_paths(self, context):
-    """Save paths to config file when any path changes."""
+    """Save paths to config file when any path changes.
+
+    PropertyGroup consolidation moved these props from scene.X to
+    scene.inu_settings.X — both reads and writes here go through
+    the PropertyGroup. Without this redirection, save would always
+    write empty values and the JSON would never accumulate paths."""
     import json
-    scene = context.scene
+    settings = context.scene.inu_settings
     data = {}
     for key in _SAVED_PATH_KEYS:
-        val = getattr(scene, key, '')
+        val = getattr(settings, key, '')
         if val:
             data[key] = val
     try:
@@ -3010,19 +3015,50 @@ def _save_paths(self, context):
         pass
 
 def _load_paths(scene):
-    """Load saved paths from config file into scene properties."""
+    """Load saved paths from config file into scene properties.
+
+    Uses scene.inu_settings (post-PropertyGroup-consolidation). The
+    pre-1.8.0 path that wrote setattr(scene, key, val) silently
+    no-op'd because the props no longer live on scene directly.
+
+    Logs progress to console so the user can diagnose why a path
+    didn't restore — silent failures here have been a long-running
+    pain point. Catches the bare ``except`` previously used so we
+    don't lose timing-related failures."""
     import json
     path = _get_paths_file()
     if not os.path.isfile(path):
+        print(f"[INU paths] no paths.json at {path}")
         return
     try:
         with open(path, 'r', encoding='utf-8') as f:
             data = json.load(f)
-        for key, val in data.items():
-            if key in _SAVED_PATH_KEYS and hasattr(scene, key):
-                setattr(scene, key, val)
-    except:
-        pass
+    except Exception as e:
+        print(f"[INU paths] failed to parse {path}: {e}")
+        return
+
+    if scene is None:
+        print("[INU paths] _load_paths called with scene=None — skipping")
+        return
+    settings = getattr(scene, 'inu_settings', None)
+    if settings is None:
+        print("[INU paths] scene.inu_settings not available yet — skipping")
+        return
+
+    restored = []
+    for key, val in data.items():
+        if key not in _SAVED_PATH_KEYS:
+            continue
+        if not hasattr(settings, key):
+            print(f"[INU paths] settings has no attr {key} — skipping")
+            continue
+        try:
+            setattr(settings, key, val)
+            restored.append(key)
+        except Exception as e:
+            print(f"[INU paths] setattr {key}={val!r} failed: {e}")
+    if restored:
+        print(f"[INU paths] restored {len(restored)} paths: {', '.join(restored)}")
 
 
 def _upd_suffix_dff(self, ctx):

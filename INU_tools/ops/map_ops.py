@@ -26,7 +26,7 @@ class GTATOOLS_OT_discover_game(bpy.types.Operator):
     def execute(self, context):
         from ..core.gta_dat import find_all_resources
         scene = context.scene
-        game_root = bpy.path.abspath(scene.gtatools_game_root)
+        game_root = bpy.path.abspath(scene.inu_settings.gtatools_game_root)
         if not game_root or not os.path.isdir(game_root):
             self.report({'ERROR'}, T("Укажите корневую папку GTA SA"))
             return {'CANCELLED'}
@@ -44,10 +44,10 @@ class GTATOOLS_OT_discover_game(bpy.types.Operator):
 
         # Auto-set main IMG path on first discover so the user doesn't
         # have to navigate to gta3.img by hand.
-        if not scene.gtatools_img_path:
+        if not scene.inu_settings.gtatools_img_path:
             for p in info.img_paths:
                 if os.path.isfile(p) and 'gta3.img' in p.lower():
-                    scene.gtatools_img_path = p
+                    scene.inu_settings.gtatools_img_path = p
                     break
 
         self.report({'INFO'},
@@ -64,7 +64,7 @@ class GTATOOLS_OT_binary_ipl_toggle_all(bpy.types.Operator):
     enable: BoolProperty(default=True)
 
     def execute(self, context):
-        for item in context.scene.gtatools_binary_ipls:
+        for item in context.scene.inu_settings.gtatools_binary_ipls:
             item.enabled = self.enable
         return {'FINISHED'}
 
@@ -80,12 +80,12 @@ class GTATOOLS_OT_scan_binary_ipls(bpy.types.Operator):
         from ..core.img import read_directory
         scene = context.scene
 
-        game_root = bpy.path.abspath(getattr(scene, 'gtatools_game_root', ''))
+        game_root = bpy.path.abspath(getattr(scene.inu_settings, 'gtatools_game_root', ''))
         if not game_root or not os.path.isdir(game_root):
             self.report({'ERROR'}, T("Укажите корневую папку GTA SA"))
             return {'CANCELLED'}
 
-        region = getattr(scene, 'gtatools_map_region', 'ALL')
+        region = getattr(scene.inu_settings, 'gtatools_map_region', 'ALL')
         region_u = region.upper() if region != 'ALL' else 'ALL'
 
         info = find_all_resources(game_root)
@@ -99,9 +99,9 @@ class GTATOOLS_OT_scan_binary_ipls(bpy.types.Operator):
 
         # Remember previously enabled entries so rescans don't lose user picks
         prev_state = {i.name.lower(): i.enabled
-                      for i in scene.gtatools_binary_ipls}
+                      for i in scene.inu_settings.gtatools_binary_ipls}
 
-        scene.gtatools_binary_ipls.clear()
+        scene.inu_settings.gtatools_binary_ipls.clear()
         total_checked = 0
         for ip in img_paths:
             try:
@@ -121,7 +121,7 @@ class GTATOOLS_OT_scan_binary_ipls(bpy.types.Operator):
                         continue
                     if region_u != 'ALL' and not e.name.upper().startswith(region_u):
                         continue
-                    item = scene.gtatools_binary_ipls.add()
+                    item = scene.inu_settings.gtatools_binary_ipls.add()
                     item.name = e.name
                     item.img_source = ip
                     item.enabled = prev_state.get(nm, True)
@@ -130,7 +130,7 @@ class GTATOOLS_OT_scan_binary_ipls(bpy.types.Operator):
 
         scene['gtatools_binary_ipls_region'] = region
         self.report({'INFO'},
-                    f"{len(scene.gtatools_binary_ipls)} binary IPL(s) for region '{region}' "
+                    f"{len(scene.inu_settings.gtatools_binary_ipls)} binary IPL(s) for region '{region}' "
                     f"(scanned {total_checked} .ipl entries)")
         return {'FINISHED'}
 
@@ -386,7 +386,7 @@ class GTATOOLS_OT_load_map_glb(bpy.types.Operator, ImportHelper):
         scene = context.scene
 
         # Read IDE for properties
-        game_root = bpy.path.abspath(scene.gtatools_game_root)
+        game_root = bpy.path.abspath(scene.inu_settings.gtatools_game_root)
         ide_models = {}
         if game_root and os.path.isdir(game_root):
             info = find_all_resources(game_root)
@@ -490,12 +490,12 @@ class GTATOOLS_OT_build_map_glb(bpy.types.Operator):
         from ..tools.dff2gltf import build_map_glb
 
         scene = context.scene
-        game_root = bpy.path.abspath(scene.gtatools_game_root)
+        game_root = bpy.path.abspath(scene.inu_settings.gtatools_game_root)
         from .. import _get_cache_dir
         cache_dir = _get_cache_dir()
         tex_dir = os.path.join(cache_dir, 'textures')
-        skip_lod = getattr(scene, 'gtatools_img_skip_lod', False)
-        region = getattr(scene, 'gtatools_map_region', 'ALL')
+        skip_lod = getattr(scene.inu_settings, 'gtatools_img_skip_lod', False)
+        region = getattr(scene.inu_settings, 'gtatools_map_region', 'ALL')
 
         if not game_root or not os.path.isdir(game_root):
             self.report({'ERROR'}, T("Укажите корневую папку GTA SA"))
@@ -554,7 +554,7 @@ class GTATOOLS_OT_build_map_glb(bpy.types.Operator):
         # Binary IPL selection — if the scene collection has entries, honour
         # the user's explicit enabled/disabled picks; otherwise fall back to
         # the region-based auto-match.
-        bi_entries = scene.gtatools_binary_ipls
+        bi_entries = scene.inu_settings.gtatools_binary_ipls
         bi_enabled = {i.name.lower() for i in bi_entries if i.enabled}
         bi_use_selection = len(bi_entries) > 0
 
@@ -700,8 +700,8 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
         from .ipl_sections import import_ipl_sections
 
         scene = context.scene
-        game_root = bpy.path.abspath(scene.gtatools_game_root)
-        skip_lod = getattr(scene, 'gtatools_img_skip_lod', False)
+        game_root = bpy.path.abspath(scene.inu_settings.gtatools_game_root)
+        skip_lod = getattr(scene.inu_settings, 'gtatools_img_skip_lod', False)
 
         if not game_root or not os.path.isdir(game_root):
             self.report({'ERROR'}, T("Укажите корневую папку GTA SA"))
@@ -753,7 +753,7 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
                     pass
 
         # Region filter
-        region = getattr(scene, 'gtatools_map_region', 'ALL')
+        region = getattr(scene.inu_settings, 'gtatools_map_region', 'ALL')
         def _ipl_matches_region(path: str) -> bool:
             if region == 'ALL':
                 return True
@@ -802,7 +802,7 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
         # at invoke (NOT in the hot loop) to pull out their instance
         # lists. This doesn't count as "hitting IMG during import": it's
         # metadata gathering before the actual model import begins.
-        bi_entries = scene.gtatools_binary_ipls
+        bi_entries = scene.inu_settings.gtatools_binary_ipls
         bi_enabled = {i.name.lower() for i in bi_entries if i.enabled}
         bi_use_selection = len(bi_entries) > 0
 
@@ -813,7 +813,7 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
         std = os.path.join(game_root, 'models', 'gta3.img')
         if os.path.isfile(std) and std not in img_paths:
             img_paths.insert(0, std)
-        fallback = bpy.path.abspath(scene.gtatools_img_path)
+        fallback = bpy.path.abspath(scene.inu_settings.gtatools_img_path)
         if fallback and os.path.isfile(fallback) and fallback not in img_paths:
             img_paths.append(fallback)
 
@@ -868,7 +868,7 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
         # (Map_LAn / Map_LAs / Map_SF / …). Per-IPL collections are
         # created lazily as instances are bucketed in _work — empty
         # IPLs never produce empty collections.
-        group_by_ipl = bool(getattr(scene, 'gtatools_map_group_by_ipl', False))
+        group_by_ipl = bool(getattr(scene.inu_settings, 'gtatools_map_group_by_ipl', False))
 
         if group_by_ipl:
             dff_far = dff_mid = dff_near = lod_col = None
@@ -912,7 +912,7 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
         from ..tools.profiler import Profiler
         self._profiler = Profiler(
             f"Import Map ({region})",
-            enabled=bool(getattr(scene, 'gtatools_profile_enabled', False)),
+            enabled=bool(getattr(scene.inu_settings, 'gtatools_profile_enabled', False)),
         )
 
         self._gen = self._work(context)
@@ -1019,7 +1019,7 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
         skip_lod = self._skip_lod
         scene = self._scene
         prof = self._profiler
-        load_col = bool(getattr(scene, 'gtatools_map_load_col', True))
+        load_col = bool(getattr(scene.inu_settings, 'gtatools_map_load_col', True))
         # LOD detection by name only. ``is_lod_name`` already handles
         # all 4 vanilla naming patterns (LODfoo / foo_LOD / foo1LOD /
         # modeLODlaett). The IPL ``lod_index`` cross-reference used to
@@ -1043,7 +1043,7 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
         tmpdir = _get_cache_dir()
         tex_cache = os.path.join(tmpdir, 'textures')
         tex_cache_exists = os.path.isdir(tex_cache)
-        load_txd = getattr(scene, 'gtatools_img_load_txd', True)
+        load_txd = getattr(scene.inu_settings, 'gtatools_img_load_txd', True)
 
         # Shared material cache — dedupes materials across DFFs by
         # (texture_name, rgba). Same texture used by 500 different
@@ -1383,7 +1383,7 @@ class GTATOOLS_OT_replace_fake_with_dff(bpy.types.Operator):
         from .dff_import import import_dff as inu_import_dff
 
         scene = context.scene
-        game_root = bpy.path.abspath(scene.gtatools_game_root)
+        game_root = bpy.path.abspath(scene.inu_settings.gtatools_game_root)
         from .. import _get_cache_dir
         cache_dir = _get_cache_dir()
         tex_dir = os.path.join(cache_dir, 'textures')
@@ -1397,7 +1397,7 @@ class GTATOOLS_OT_replace_fake_with_dff(bpy.types.Operator):
 
         # Build IMG reader only if needed (lazy)
         img_reader = None
-        load_txd = getattr(scene, 'gtatools_img_load_txd', True)
+        load_txd = getattr(scene.inu_settings, 'gtatools_img_load_txd', True)
 
         wm = context.window_manager
         wm.progress_begin(0, len(fakes))
@@ -1503,7 +1503,7 @@ class GTATOOLS_OT_replace_fake_with_dff(bpy.types.Operator):
     def _open_img(scene, game_root):
         """Open ImgReader from settings or game root."""
         from ..core.img import ImgReader
-        img_path = bpy.path.abspath(scene.gtatools_img_path)
+        img_path = bpy.path.abspath(scene.inu_settings.gtatools_img_path)
         if not img_path or not os.path.isfile(img_path):
             if game_root:
                 std = os.path.join(game_root, 'models', 'gta3.img')
