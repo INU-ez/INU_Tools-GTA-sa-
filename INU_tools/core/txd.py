@@ -29,7 +29,9 @@ RASTER_PAL4 = 0x4000
 
 # DXT FourCC codes
 DXT1 = 0x31545844  # 'DXT1'
+DXT2 = 0x32545844  # 'DXT2' — DXT3 with pre-multiplied alpha (same byte layout)
 DXT3 = 0x33545844  # 'DXT3'
+DXT4 = 0x34545844  # 'DXT4' — DXT5 with pre-multiplied alpha (same byte layout)
 DXT5 = 0x35545844  # 'DXT5'
 
 
@@ -399,12 +401,18 @@ def _read_texture_native(r, size):
     expected_uncompressed = w * h * max(tex.depth, 8) // 8
     really_compressed = (data_size < expected_uncompressed) if expected_uncompressed > 0 else False
 
-    # DXT compression takes priority over palette flags
-    if (tex.fourcc == DXT1 or compression_flag == 1) and really_compressed:
+    # DXT compression takes priority over palette flags. FOURCC is the
+    # reliable signal: GTA SA fence/foliage textures (a_fence_*) are
+    # DXT4 with depth=8, where the size-heuristic ``really_compressed``
+    # is False (data_size matches the depth-implied uncompressed size),
+    # and the texture would otherwise mis-route into _decode_uncompressed.
+    # When fourcc says DXT, trust it — that's a true compression mark
+    # written by the encoder. DXT2/DXT4 share byte layouts with DXT3/DXT5.
+    if tex.fourcc == DXT1 or (compression_flag == 1 and really_compressed):
         tex.pixels = _decompress_dxt1(raw_data, w, h)
-    elif (tex.fourcc == DXT3 or compression_flag in (2, 3)) and really_compressed:
+    elif tex.fourcc in (DXT2, DXT3) or (compression_flag in (2, 3) and really_compressed):
         tex.pixels = _decompress_dxt3(raw_data, w, h)
-    elif (tex.fourcc == DXT5 or compression_flag in (4, 5)) and really_compressed:
+    elif tex.fourcc in (DXT4, DXT5) or (compression_flag in (4, 5) and really_compressed):
         tex.pixels = _decompress_dxt5(raw_data, w, h)
     elif has_palette and palette is not None:
         indices = np.frombuffer(raw_data[:w*h], dtype=np.uint8)
@@ -459,20 +467,18 @@ def read_txd(data: bytes) -> list:
 
         if ct == CHUNK_TEX_NATIVE:
             # Snapshot position for fallback diagnostics — if the texture
-            # crashed early we can still pull a name out of the raw chunk.
+            # crashed early we can still pull format details out of the
+            # raw chunk to figure out which decoder branch went wrong.
             chunk_start = r.pos
             try:
                 tex = _read_texture_native(r, chunk_end)
                 textures.append(tex)
             except Exception as e:
-                # Best-effort name + dims extraction so the user can match
-                # the failing texture to a specific asset. The chunk header
-                # layout is well-defined: after the Struct header there's
-                # platform_id (4) + filter_flags (4) + name (32) + mask (32)
-                # + raster_format (4) + fourcc (4) + width (2) + height (2)
-                # + depth (1) + ...
+                # Best-effort header decode so the user can match the
+                # failing texture to a specific asset AND we see enough
+                # to diagnose the decoder bug remotely.
                 tex_name = "<unknown>"
-                tex_dims = "?"
+                fmt_info = "?"
                 try:
                     r.seek(chunk_start)
                     _read_chunk_header(r)            # struct header
@@ -481,13 +487,27 @@ def read_txd(data: bytes) -> list:
                     tex_name = (name_bytes.split(b'\x00', 1)[0]
                                 .decode('ascii', errors='replace'))
                     r.read_bytes(32)                  # mask
-                    r.read_one('<I'); r.read_one('<I')  # raster_format / fourcc
+                    raster_format = r.read_one('<I')
+                    fourcc = r.read_one('<I')
                     w = r.read_one('<H'); h = r.read_one('<H')
-                    tex_dims = f"{w}x{h}"
+                    depth = r.read_one('<B')
+                    num_levels = r.read_one('<B')
+                    r.read_one('<B')                  # raster_type
+                    compression_flag = r.read_one('<B')
+                    fmt_info = (
+                        f"{w}x{h} depth={depth} "
+                        f"raster_format=0x{raster_format:X} "
+                        f"fourcc=0x{fourcc:X} "
+                        f"compr={compression_flag} "
+                        f"levels={num_levels}"
+                    )
                 except Exception:
                     pass
+                # Non-fatal: this texture is skipped, the rest of the TXD
+                # continues to load. The error stays in the console for
+                # the user to investigate / report.
                 print(f"[INU_tools TXD] Error reading texture "
-                      f"{tex_name!r} ({tex_dims}): {e}")
+                      f"{tex_name!r} ({fmt_info}): {e}")
 
         r.seek(chunk_end)
 

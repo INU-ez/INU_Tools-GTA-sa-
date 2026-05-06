@@ -13,6 +13,72 @@ from .. import T
 from ..tools import compat
 
 
+# Threshold (in pixel count) above which an image is considered to need
+# alpha blending. 5000 matches the legacy "Connect Textures" operator
+# and works well for GTA's DXT3/4/5 textures: stray alpha noise from
+# DXT compression doesn't cross it, real transparent areas (foliage,
+# fences, glass) easily do.
+_ALPHA_PIXEL_THRESHOLD = 5000
+
+
+def image_has_significant_alpha(image) -> bool:
+    """True if ``image`` has more than _ALPHA_PIXEL_THRESHOLD pixels
+    with alpha < 0.95. Used by the auto-link path to decide whether
+    to wire the texture's Alpha output into the BSDF Alpha input."""
+    if image is None or image.channels < 4:
+        return False
+    try:
+        if not image.has_data or len(image.pixels) == 0:
+            # Not loaded into memory — skip rather than calling
+            # reload() (which on packed-only images can clear pixels).
+            return False
+        pixels = np.asarray(image.pixels[:])
+        alpha = pixels[3::4]
+        return int(np.sum(alpha < 0.95)) > _ALPHA_PIXEL_THRESHOLD
+    except Exception:
+        return False
+
+
+def link_material_alpha_if_textured(material) -> bool:
+    """If ``material`` has a Principled BSDF and an Image Texture node
+    whose image carries real transparent pixels, wire texture.Alpha →
+    BSDF.Alpha and switch the material to alpha-test blending. No-op
+    when alpha is already linked or the image is opaque.
+
+    Returns True iff a new link was created. Idempotent across runs."""
+    if not material or not material.use_nodes or not material.node_tree:
+        return False
+    nodes = material.node_tree.nodes
+    links = material.node_tree.links
+
+    bsdf = next((n for n in nodes if n.type == 'BSDF_PRINCIPLED'), None)
+    if bsdf is None:
+        return False
+    alpha_input = bsdf.inputs.get('Alpha')
+    if alpha_input is None or alpha_input.is_linked:
+        return False
+
+    tex_node = next(
+        (n for n in nodes
+         if n.type == 'TEX_IMAGE' and n.image is not None),
+        None,
+    )
+    if tex_node is None or not image_has_significant_alpha(tex_node.image):
+        return False
+
+    links.new(tex_node.outputs['Alpha'], alpha_input)
+    # HASHED matches the legacy "Connect Textures" path — stochastic
+    # alpha-test in Eevee, true alpha in Cycles, and shadows behave
+    # the same as the surface.
+    if hasattr(material, 'blend_method'):
+        material.blend_method = 'HASHED'
+    if hasattr(material, 'shadow_method'):
+        material.shadow_method = 'HASHED'
+    if hasattr(material, 'show_transparent_back'):
+        material.show_transparent_back = False
+    return True
+
+
 class GTATOOLS_OT_load_textures(bpy.types.Operator):
     """Загрузить текстуры по именам материалов из указанных папок"""
     bl_idname = "gtatools.load_textures"

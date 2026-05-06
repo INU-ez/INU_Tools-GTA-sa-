@@ -1218,6 +1218,17 @@ class GTATOOLS_OT_import_dff(bpy.types.Operator):
                     filepath=txd_file,
                     name_filter=needed if needed else None)
                 self.report({'INFO'}, f"TXD: {len(images)} textures ({os.path.basename(txd_file)})")
+
+                # Now that pixels are in bpy.data.images, run the per-
+                # pixel alpha test on every material whose texture node
+                # has an image. This is the legacy "Connect Textures"
+                # behaviour: foliage / fences / windows automatically
+                # pick up alpha-test transparency without the user
+                # clicking anything. Idempotent — leaves alpha-already-
+                # linked materials and opaque textures alone.
+                from .texture_ops import link_material_alpha_if_textured
+                for material in bpy.data.materials:
+                    link_material_alpha_if_textured(material)
             except Exception as e:
                 self.report({'WARNING'}, f"TXD import error: {str(e)}")
         else:
