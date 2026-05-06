@@ -56,7 +56,33 @@
 
 ### 🚧 В следующем релизе
 
-_Пока ничего не запланировано — отчёты о багах и feature-реквесты приветствуются в [Issues](../../../issues)._
+**v1.8.0 — две параллельные сборки, обе тут на GitHub releases:**
+
+- 🟢 **`INU_Tools-1.8.0-FULL.zip`** — полная версия, без ограничений. Быстрее, все функции доступны. Рекомендуется большинству пользователей.
+- 🟡 **`INU_Tools-1.8.0-STORE.zip`** — версия для extensions.blender.org (она же публикуется на официальном сайте расширений Blender). Медленнее, часть функций урезана/отключена под правила ревью (запрет `eval`/`exec`, нет subprocess, ограниченный доступ к файлам, нет бандла бинарников и т.п.).
+
+Обе сборки собираются из одного исходного кода; различия запекаются на этапе упаковки. Берите FULL, если только специально не нужна установка именно через официальный сайт расширений Blender.
+
+#### Что уже вошло в 1.8.0
+
+**🆕 Новые функции:**
+
+- **Validate Scene** — единый pre-export проход по проверкам: нормализация кватернионов в Actions арматур, флаг Modulate Color на prelit мешах, парность `_ok` / `_dam` damage-вариантов, заполненность paintjob-слотов
+- **FLA IPL** — поддержка расширенного формата IPL от Fastman92 Limit Adjuster
+- **COL progress bar** — индикатор при импорте больших COL библиотек
+- **Modulate Color preview** — переключатель OFF / Day / Night, добавляет ванильный SA-овский `ambient_obj` из `timecyc.dat` (EXTRASUNNY_LA Midday/Midnight) поверх vertex prelight. Откалиброванные дефолты (mix / contrast / gamma) подогнаны под in-game look
+- **Multi-mesh OBJS** в IDE парсере — корректная обработка type 1/2/3 (5/7/8 полей). Раньше type 2/3 молча портили draw distance и flags
+- **IplOccl канонические имена полей** — `unknown1/2/3` → `rot_x/rot_y/rot_z/flags` (как в `CFileLoader::LoadOcclusionVolume` движка); старые custom-prop ключи всё ещё читаются для совместимости со старыми сценами
+- **DFF export по именам Day/Night** — больше не цепляет промежуточные VC-слои типа `vertex_lights_both` как night vcols
+- **DFF export производительность** — bulk `foreach_get` + numpy для чтения alpha и FLOAT→BYTE конверсии (~×2 на меше 20k+ вершин)
+- **Расширенная поддержка Blender: 2.83 → 5.1** — `tools/compat.py` оборачивает различия API (vcol, Mix-ноды и т.п.), чтобы аддон работал на каждом LTS начиная с 2.83. Большинство функций работает везде; VC Layers System на старых версиях показывает «Требует Blender 3.2+»
+
+**🐛 Исправления багов:**
+
+- **IFP export jerky playback** — пропадал `bl_quat.normalize()` перед rest composition, в игре анимации шли «лесенкой»
+- **IK rig на rest-pose peds** — IK-сетап ломался когда арматура приходила в чистой rest-позе
+- **Лимиты DFF / COL** — понятные `DffLimitError` / `ColLimitError` с именем модели и счётчиком, вместо непонятного `struct.pack` overflow
+- Плюс мелкие фиксы IK rig, prelight, Vector-импорт в light_ops
 
 ### 🔭 Ещё запланировано
 

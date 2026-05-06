@@ -514,14 +514,6 @@ class GTATOOLS_OT_inu_export(bpy.types.Operator, ExportHelper):
             box = layout.box()
             box.label(text="TXD:", icon=safe_icon('IMAGE_DATA'))
             box.prop(self, "txd_selected_only")
-            nvtt_path = getattr(context.scene.inu_settings, 'gtatools_nvtt_path', '')
-            from ..tools.txd_export import check_nvtt_available
-            available, _ = check_nvtt_available(nvtt_path)
-            if available:
-                from ..tools.compat import ICON_CHECK
-                box.label(text="GPU (NVTT)", icon=ICON_CHECK)
-            else:
-                box.label(text="CPU", icon=safe_icon('INFO'))
 
         # IDE/IPL settings
         if self.export_ide or self.export_ipl:

@@ -29,6 +29,22 @@ def _textures_to_blender_images(textures):
         if w == 0 or h == 0 or not tex.pixels:
             continue
 
+        # Pixel buffer must be exactly h*w*4 bytes (RGBA8888). The TXD
+        # decoder occasionally returns a half-sized buffer when it falls
+        # into the wrong format branch (e.g. raster flagged 8888 but
+        # data is 16-bit RGB565). Skip with an explicit message rather
+        # than reshape-crashing — the rest of the textures still load,
+        # and the user can see exactly which one needs investigating.
+        expected_bytes = h * w * 4
+        actual_bytes = len(tex.pixels)
+        if actual_bytes != expected_bytes:
+            print(f"[INU_tools TXD] Skip {name!r} ({w}x{h}): "
+                  f"decoder returned {actual_bytes} bytes, "
+                  f"expected {expected_bytes} (raster_format=0x"
+                  f"{getattr(tex, 'raster_format', 0):X}, "
+                  f"depth={getattr(tex, 'depth', 0)})")
+            continue
+
         img = bpy.data.images.get(name)
         if img is not None:
             # Reuse existing — resize in-place if dimensions changed.

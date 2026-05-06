@@ -56,7 +56,33 @@
 
 ### 🚧 Coming in next release
 
-_Nothing scheduled yet — bug reports and feature requests welcome in [Issues](../../issues)._
+**v1.8.0 — two parallel builds, both on GitHub releases:**
+
+- 🟢 **`INU_Tools-1.8.0-FULL.zip`** — full edition, no restrictions. Faster runtime, every feature available. Recommended for most users.
+- 🟡 **`INU_Tools-1.8.0-STORE.zip`** — extensions.blender.org edition (also published through the official Blender extensions site). Slower runtime, some features cut/disabled to comply with the site's review rules (no `eval`/`exec`, no subprocess, restricted file access, no bundled binaries, etc.).
+
+Both builds share the same source tree; differences are baked at packaging time. Pick FULL unless you specifically need the addon installed via the official Blender extensions site.
+
+#### What's already in 1.8.0
+
+**🆕 New features:**
+
+- **Validate Scene** — single pre-export sweep covering quaternion normalization in armature Actions, Modulate Color flag on prelit meshes, `_ok` / `_dam` damage pair completeness, paintjob slot completeness
+- **FLA IPL support** — extended IPL format from Fastman92 Limit Adjuster
+- **COL progress bar** — feedback when importing large COL libraries
+- **Modulate Color preview** — OFF / Day / Night toggle that adds vanilla SA's `ambient_obj` color from `timecyc.dat` (EXTRASUNNY_LA Midday/Midnight) on top of vertex prelight, with calibrated defaults (mix / contrast / gamma) matching the in-game look
+- **Multi-mesh OBJS** in IDE parser — proper handling of type 1/2/3 forms (5/7/8 fields). Previously type 2/3 lines silently corrupted draw distances and flags
+- **IplOccl canonical field names** — `unknown1/2/3` → `rot_x/rot_y/rot_z/flags` (matches engine's `CFileLoader::LoadOcclusionVolume`); old custom-prop keys still read for backward compat
+- **DFF export Day/Night by name** — no longer picks up intermediate VC-layer artifacts (e.g. `vertex_lights_both`) as Night colors
+- **DFF export performance** — bulk `foreach_get` + numpy for alpha read and FLOAT→BYTE conversion (~2× on 20k+ vertex meshes)
+- **Extended Blender support: 2.83 → 5.1** — `tools/compat.py` layer wraps API differences (vcol API, Mix node, etc.) so the addon runs on every LTS from 2.83 onward. Most features work everywhere; VC Layers System shows a "Requires Blender 3.2+" notice on older versions
+
+**🐛 Bug fixes:**
+
+- **IFP export jerky playback** — `bl_quat.normalize()` was missing before rest composition, in-game animations played stepped/jittery
+- **IK rig on rest-pose peds** — IK setup broke when armature came in clean rest pose
+- **DFF / COL vertex limits** — clear `DffLimitError` / `ColLimitError` with model name + count, instead of cryptic `struct.pack` overflow
+- Plus various smaller IK rig + prelight + Vector import fixes
 
 ### 🔭 Genuinely future
 

@@ -458,11 +458,36 @@ def read_txd(data: bytes) -> list:
         chunk_end = r.pos + cs
 
         if ct == CHUNK_TEX_NATIVE:
+            # Snapshot position for fallback diagnostics — if the texture
+            # crashed early we can still pull a name out of the raw chunk.
+            chunk_start = r.pos
             try:
                 tex = _read_texture_native(r, chunk_end)
                 textures.append(tex)
             except Exception as e:
-                print(f"[INU_tools TXD] Error reading texture: {e}")
+                # Best-effort name + dims extraction so the user can match
+                # the failing texture to a specific asset. The chunk header
+                # layout is well-defined: after the Struct header there's
+                # platform_id (4) + filter_flags (4) + name (32) + mask (32)
+                # + raster_format (4) + fourcc (4) + width (2) + height (2)
+                # + depth (1) + ...
+                tex_name = "<unknown>"
+                tex_dims = "?"
+                try:
+                    r.seek(chunk_start)
+                    _read_chunk_header(r)            # struct header
+                    r.read_one('<I'); r.read_one('<I')  # platform / filter
+                    name_bytes = r.read_bytes(32)
+                    tex_name = (name_bytes.split(b'\x00', 1)[0]
+                                .decode('ascii', errors='replace'))
+                    r.read_bytes(32)                  # mask
+                    r.read_one('<I'); r.read_one('<I')  # raster_format / fourcc
+                    w = r.read_one('<H'); h = r.read_one('<H')
+                    tex_dims = f"{w}x{h}"
+                except Exception:
+                    pass
+                print(f"[INU_tools TXD] Error reading texture "
+                      f"{tex_name!r} ({tex_dims}): {e}")
 
         r.seek(chunk_end)
 

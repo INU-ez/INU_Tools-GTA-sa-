@@ -4,6 +4,7 @@
 
 import os
 import bpy
+import numpy as np
 from bpy.props import (
     StringProperty, BoolProperty, CollectionProperty,
 )

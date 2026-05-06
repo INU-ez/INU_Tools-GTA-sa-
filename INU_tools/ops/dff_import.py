@@ -836,6 +836,27 @@ def import_dff_from_clump(clump, base_name: str, *, skip_2dfx=None,
 
     is_skinned = _has_skeleton(clump)
 
+    # Suffix used for the fallback object name when the DFF frame
+    # carries no name of its own. Reads the user-configured suffix from
+    # scene settings (default ``_DFF``), so importing ``1.dff`` lands
+    # ``1_DFF`` in the outliner rather than the previous ``1_0`` —
+    # matches the convention model_utils.get_model_type() expects when
+    # later inferring DFF / LOD / COL roles by name.
+    try:
+        _dff_suffix = getattr(bpy.context.scene.inu_settings,
+                              'gtatools_suffix_dff', '_DFF')
+    except Exception:
+        _dff_suffix = '_DFF'
+    _n_geoms = len(clump.geometries)
+
+    def _fallback_name(gi: int) -> str:
+        """Object name when the DFF frame has no name. Single-geom DFFs
+        get ``<base><suffix>``; multi-geom DFFs append the index so each
+        part stays unique."""
+        if _n_geoms <= 1:
+            return f"{base_name}{_dff_suffix}"
+        return f"{base_name}{_dff_suffix}_{gi}"
+
     # Создаём объекты из Atomic связей (frame → geometry)
     for atomic in clump.atomics:
         gi = atomic.geometry_index
@@ -848,7 +869,7 @@ def import_dff_from_clump(clump, base_name: str, *, skip_2dfx=None,
         frame = clump.frames[fi] if fi < len(clump.frames) else None
 
         # Имя объекта: из фрейма или из имени файла
-        obj_name = frame.name if (frame and frame.name) else f"{base_name}_{gi}"
+        obj_name = frame.name if (frame and frame.name) else _fallback_name(gi)
 
         with _stage('build_mesh'):
             mesh = _build_mesh(geom, obj_name, geom.materials,
@@ -888,7 +909,7 @@ def import_dff_from_clump(clump, base_name: str, *, skip_2dfx=None,
     # Если нет Atomic, но есть геометрии — создаём напрямую
     if not clump.atomics and clump.geometries:
         for gi, geom in enumerate(clump.geometries):
-            obj_name = f"{base_name}_{gi}"
+            obj_name = _fallback_name(gi)
             with _stage('build_mesh'):
                 mesh = _build_mesh(geom, obj_name, geom.materials,
                                material_cache, clump.uv_anim_dict)
@@ -975,7 +996,7 @@ def import_dff_from_clump(clump, base_name: str, *, skip_2dfx=None,
                 if geom.skin:
                     fi = atomic.frame_index
                     frame = clump.frames[fi] if fi < len(clump.frames) else None
-                    obj_name = frame.name if (frame and frame.name) else f"{base_name}_{gi}"
+                    obj_name = frame.name if (frame and frame.name) else _fallback_name(gi)
                     obj = bpy.data.objects.get(obj_name)
                     if obj and obj.type == 'MESH':
                         _apply_skin_weights(obj, geom, arm_obj, bone_names)
