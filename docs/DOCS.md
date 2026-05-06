@@ -78,46 +78,11 @@
 3. Blender → Edit → Preferences → Add-ons → enable **"INU_tools(gta_sa)"**
 
 **Requirements:**
-- Blender **2.83 – 5.1** (FULL build) / **4.2 – 5.1** (STORE build)
-- NVIDIA Texture Tools — optional, for GPU texture compression (FULL build only, auto-detected)
+- Blender 4.2+
+- NVIDIA Texture Tools — optional, for GPU texture compression (auto-detected)
 - Itera Tools 3 — optional, for vertex lighting
 
-**Settings persistence:** all paths (Game Root, IDE, IPL, IMG, textures, NVTT) are saved to `<user-config>/inu_tools/paths.json`, resolved via `bpy.utils.extension_path_user` (Blender 4.2+) or `bpy.utils.user_resource('CONFIG')` (legacy). Settings survive addon updates / reinstalls and are restored automatically when Blender starts. Pre-1.8.0 data from the legacy `<addons>/INU_Preset/` location is migrated once on first run.
-
-### Where user data lives (1.8.0+)
-
-`<user-config>/inu_tools/` is **outside the addon folder** — your presets and saved paths survive every addon reinstall / update. Concrete paths per platform:
-
-| Platform | Extension install (Blender 4.2+) | Legacy add-on install |
-|---|---|---|
-| **Windows** | `%APPDATA%\Blender Foundation\Blender\<X.Y>\extensions\user_default\inu_tools_gta_sa\` | `%APPDATA%\Blender Foundation\Blender\<X.Y>\config\inu_tools\` |
-| **Linux** | `~/.config/blender/<X.Y>/extensions/user_default/inu_tools_gta_sa/` | `~/.config/blender/<X.Y>/config/inu_tools/` |
-| **macOS** | `~/Library/Application Support/Blender/<X.Y>/extensions/user_default/inu_tools_gta_sa/` | `~/Library/Application Support/Blender/<X.Y>/config/inu_tools/` |
-
-Inside that folder:
-
-```
-<user data>/
-├── paths.json              ← Game Root, IDE, IPL, IMG, NVTT, texture paths
-├── profiles/               ← N-sidebar layout profiles (Profile system)
-│   ├── My Vehicle Mod.json
-│   └── Map Edit.json
-├── material_presets/       ← GTA Material panel presets
-│   ├── car_retro_matte.json
-│   └── road_asphalt.json
-└── id_presets/             ← Model ID Manager presets
-    ├── default.txt
-    └── mycity.txt
-```
-
-Note: paths are **per Blender version**. Each Blender version (4.2 / 5.1 / etc.) has its own folder — settings configured in one don't propagate to others. Migrate manually if you switch versions.
-
-Find the resolved path at runtime via Python console:
-
-```python
-from INU_tools.tools.user_data import get_user_data_dir
-print(get_user_data_dir())
-```
+**Settings persistence:** all paths (Game Root, IDE, IPL, IMG, textures, NVTT) are saved in `INU_Preset/paths.json` next to the addons folder. Settings survive addon updates and are restored automatically when Blender starts.
 
 ---
 
@@ -493,11 +458,11 @@ Vanilla GTA SA and Rockstar's own tools ship LOD models with several naming conv
 - **Assign from ID...** — assign IDs starting from a specific number, skipping occupied
 - **Release** — marks ID as free
 - **Extend IDs (FLA)** — add IDs beyond 19999 for Fastman Limit Adjuster
-- IDs stored in `model_ids.txt` in the user data directory (resolved via `bpy.utils.extension_path_user`)
+- IDs stored in `model_ids.txt` in INU_Preset folder
 
 > 💡 **Example — assign IDs to a batch of buildings:** imported 50 new buildings (no IDs). Select all → **Assign** → each object gets the next free ID starting from the first available (e.g. 3500, 3501, 3502 …). Now you can batch-export them into IDE.
 
-> 💡 **Example — separate ID preset per map:** working on map `mycity`. Create preset with **+** → name `mycity`. All IDs you hand out in this scene now go into `<user-config>/inu_tools/id_presets/mycity.txt` — no conflicts with your main project. Switch preset back to `default` — your previous ID database is back.
+> 💡 **Example — separate ID preset per map:** working on map `mycity`. Create preset with **+** → name `mycity`. All IDs you hand out in this scene now go into `INU_Preset/id_presets/mycity.txt` — no conflicts with your main project. Switch preset back to `default` — your previous ID database is back.
 
 ---
 
@@ -540,7 +505,7 @@ These are always in the dropdown, cannot be deleted.
 
 #### User presets
 
-Stored **outside the addon** — in `<user-config>/inu_tools/material_presets/*.json`. They survive addon updates and reinstalls. Sits next to `<user-config>/inu_tools/id_presets/` (same root folder as the ID Manager presets).
+Stored **outside the addon** — in `<blender addons dir>/INU_Preset/material_presets/*.json`. They survive addon updates and reinstalls. Sits next to `INU_Preset/id_presets/` (same root folder as the ID Manager presets).
 
 #### Example — modeling a car
 
@@ -554,7 +519,7 @@ Say you're building a car with 15 materials: body, glass, chrome, headlights, ti
 
 **Step 4.** Suppose you've dialed in your favorite "retro San Andreas body" mix — matter specular. Select that material → Preset → **Save as…** → name: `car_retro_matte`, description: `matte body for older cars`. Save.
 
-Now `<user-config>/inu_tools/material_presets/car_retro_matte.json` appears:
+Now `<addons>/INU_Preset/material_presets/car_retro_matte.json` appears:
 ```json
 {
   "name": "car_retro_matte",
@@ -575,7 +540,7 @@ Now `<user-config>/inu_tools/material_presets/car_retro_matte.json` appears:
 
 **Step 5.** No reload needed — the preset shows up in the dropdown immediately. Open another material → your `car_retro_matte` is there. Applies in one click.
 
-**Step 6 (bonus).** Copy the JSON file to a teammate → they drop it into their `<user-config>/inu_tools/material_presets/` → same preset instantly available. Easy sharing across a modding team.
+**Step 6 (bonus).** Copy the JSON file to a teammate → they drop it into their `<addons>/INU_Preset/material_presets/` → same preset instantly available. Easy sharing across a modding team.
 
 #### What a preset stores
 
@@ -682,7 +647,7 @@ Convert vertex colors to COL Day/Night Light values (0-15). Auto-splits material
 
 ### Presets
 
-Save/load prelight settings (Ambient, Intensity, Gamma, Shadows) as named presets. Stored in `<user-config>/inu_tools/` folder.
+Save/load prelight settings (Ambient, Intensity, Gamma, Shadows) as named presets. Stored in `INU_Preset/` folder.
 
 > 💡 **Example:** found your signature mix — Ambient 0.4, Intensity 0.7, Gamma 1.8, Shadows on. **Save preset** → name `my_night_scene`. On any future object: pick the preset → Load → all settings restored.
 

@@ -88,46 +88,11 @@
 3. Blender → Edit → Preferences → Add-ons → включите **"INU_tools(gta_sa)"**
 
 **Требования:**
-- Blender **2.83 – 5.1** (FULL-сборка) / **4.2 – 5.1** (STORE-сборка)
+- Blender 4.2+
 - NVIDIA Texture Tools — опционально, для GPU сжатия текстур (автодетект)
 - Itera Tools 3 — опционально, для vertex lighting
 
-**Сохранение настроек:** все пути (Game Root, IDE, IPL, IMG, текстуры, NVTT) сохраняются в `<user-config>/inu_tools/paths.json` (через `bpy.utils.extension_path_user` для Blender 4.2+ или `bpy.utils.user_resource('CONFIG')` fallback). Настройки переживают обновления аддона и восстанавливаются автоматически при запуске Blender. Данные из старого `<addons>/INU_Preset/` (до 1.8.0) автоматически переезжают в новое место при первом запуске.
-
-### Где лежат пользовательские данные (1.8.0+)
-
-`<user-config>/inu_tools/` лежит **вне папки аддона** — пресеты и пути выживают любую переустановку или обновление. Реальные пути по платформам:
-
-| Платформа | Extension-установка (Blender 4.2+) | Legacy add-on |
-|---|---|---|
-| **Windows** | `%APPDATA%\Blender Foundation\Blender\<X.Y>\extensions\user_default\inu_tools_gta_sa\` | `%APPDATA%\Blender Foundation\Blender\<X.Y>\config\inu_tools\` |
-| **Linux** | `~/.config/blender/<X.Y>/extensions/user_default/inu_tools_gta_sa/` | `~/.config/blender/<X.Y>/config/inu_tools/` |
-| **macOS** | `~/Library/Application Support/Blender/<X.Y>/extensions/user_default/inu_tools_gta_sa/` | `~/Library/Application Support/Blender/<X.Y>/config/inu_tools/` |
-
-Внутри:
-
-```
-<user data>/
-├── paths.json              ← Game Root, IDE, IPL, IMG, NVTT, пути к текстурам
-├── profiles/               ← профили N-sidebar (Profile system)
-│   ├── My Vehicle Mod.json
-│   └── Map Edit.json
-├── material_presets/       ← пресеты GTA Material панели
-│   ├── car_retro_matte.json
-│   └── road_asphalt.json
-└── id_presets/             ← пресеты Model ID Manager
-    ├── default.txt
-    └── mycity.txt
-```
-
-Важно: пути **per-Blender-version**. У каждой версии Blender'а (4.2 / 5.1 и т.д.) своя папка — настройки одной версии не пробрасываются в другие. При переходе между версиями данные нужно копировать вручную.
-
-Узнать реальный путь во время выполнения через Python-консоль Blender'а:
-
-```python
-from INU_tools.tools.user_data import get_user_data_dir
-print(get_user_data_dir())
-```
+**Сохранение настроек:** все пути (Game Root, IDE, IPL, IMG, текстуры, NVTT) сохраняются в `INU_Preset/paths.json` рядом с папкой аддонов. Настройки переживают обновления аддона и восстанавливаются автоматически при запуске Blender.
 
 ---
 
@@ -385,7 +350,7 @@ GTA SA умеет менять текстуру кузова машины при
 **Где:** N → GTA Tools → шапка панели «GTA Tools» — dropdown **Профиль** (по умолчанию `ALL` = все панели видимы).
 
 **Что делает:**
-- Профиль = **JSON-файл** в `<user-config>/inu_tools/profiles/<name>.json` со списком `order` (порядок панелей) и `hidden` (что спрятать).
+- Профиль = **JSON-файл** в `<addons>/INU_Preset/profiles/<name>.json` со списком `order` (порядок панелей) и `hidden` (что спрятать).
 - При выборе профиля → `is_panel_visible(idname, profile)` фильтрует `poll()` каждой панели + `bl_order` устанавливает порядок.
 - Состояние профиля живёт на Scene-проперти `gtatools_profile`, сохраняется с .blend.
 
@@ -399,7 +364,7 @@ GTA SA умеет менять текстуру кузова машины при
 
 **Редактирование/удаление:** dropdown → `▾` (edit) или `−` (delete).
 
-**Шаринг между членами команды:** скопируйте JSON из `<user-config>/inu_tools/profiles/` → друг кладёт к себе → видит профиль в dropdown.
+**Шаринг между членами команды:** скопируйте JSON из `INU_Preset/profiles/` → друг кладёт к себе → видит профиль в dropdown.
 
 **Built-in профиль `ALL`:** показывает всё, не редактируется/не удаляется. На него происходит fallback если JSON битый или профиль не найден.
 
@@ -795,11 +760,11 @@ IPL файлы определяют позиции, повороты и связ
 - **Назначить с ID...** — назначение ID начиная с указанного номера, с пропуском уже занятых
 - **Освободить** — пометить ID как свободный
 - **Расширить ID (FLA)** — добавить ID сверх 19999 для Fastman Limit Adjuster
-- ID хранятся в `model_ids.txt` в пользовательской папке данных (`bpy.utils.extension_path_user`)
+- ID хранятся в `model_ids.txt` в папке INU_Preset
 
 > 💡 **Пример — назначить ID батчу зданий:** импортировал 50 новых домов (без ID). Выдели все → **Назначить** → каждому объекту проставляется свободный ID начиная с первого доступного (например 3500, 3501, 3502 …). Теперь можно сразу батч-экспортнуть их в IDE.
 
-> 💡 **Пример — отдельный пресет ID под карту:** работаешь над картой `mycity`. Создай пресет «+» → имя `mycity`. Теперь все ID которые ты раздашь в этой сцене идут в `<user-config>/inu_tools/id_presets/mycity.txt` — не конфликтуют с твоим основным проектом. Переключил пресет обратно на `default` — вернулась прежняя база ID.
+> 💡 **Пример — отдельный пресет ID под карту:** работаешь над картой `mycity`. Создай пресет «+» → имя `mycity`. Теперь все ID которые ты раздашь в этой сцене идут в `INU_Preset/id_presets/mycity.txt` — не конфликтуют с твоим основным проектом. Переключил пресет обратно на `default` — вернулась прежняя база ID.
 
 ---
 
@@ -842,7 +807,7 @@ IPL файлы определяют позиции, повороты и связ
 
 #### Пользовательские пресеты
 
-Хранятся **снаружи аддона** — в `<user-config>/inu_tools/material_presets/*.json`. При обновлении или переустановке аддона они не пропадают. Рядом с `<user-config>/inu_tools/id_presets/` (тот же корень что у пресетов ID-менеджера).
+Хранятся **снаружи аддона** — в `<blender addons dir>/INU_Preset/material_presets/*.json`. При обновлении или переустановке аддона они не пропадают. Рядом с `INU_Preset/id_presets/` (тот же корень что у пресетов ID-менеджера).
 
 #### Пример использования — моделишь машину
 
@@ -856,7 +821,7 @@ IPL файлы определяют позиции, повороты и связ
 
 **Шаг 4.** Допусти ты нашёл свою идеальную настройку для «кузова под ретро-сан-андреас» — с сильнее матовым специкулем. Выбери этот материал → Preset → **Сохранить как…** → имя: `car_retro_matte`, описание: `матовый кузов для старых машин`. Save.
 
-Теперь в папке `<user-config>/inu_tools/material_presets/` появился `car_retro_matte.json`:
+Теперь в папке `<addons>/INU_Preset/material_presets/` появился `car_retro_matte.json`:
 ```json
 {
   "name": "car_retro_matte",
@@ -877,7 +842,7 @@ IPL файлы определяют позиции, повороты и связ
 
 **Шаг 5.** Перезагрузка dropdown не нужна — пресет появится сразу. При открытии другого материала в списке будет `car_retro_matte`. Применяется в 1 клик.
 
-**Шаг 6 (бонус).** Скопируй JSON-файл другу → он кладёт себе в `<user-config>/inu_tools/material_presets/` → у него такой же пресет. Можно шарить между членами моддинг-команды.
+**Шаг 6 (бонус).** Скопируй JSON-файл другу → он кладёт себе в `<addons>/INU_Preset/material_presets/` → у него такой же пресет. Можно шарить между членами моддинг-команды.
 
 #### Что сохраняется в пресет
 
@@ -984,7 +949,7 @@ IPL файлы определяют позиции, повороты и связ
 
 ### Пресеты
 
-Сохранение/загрузка настроек прелайта (Ambient, Intensity, Gamma, Shadows) как именованных пресетов. Хранятся в `<user-config>/inu_tools/`.
+Сохранение/загрузка настроек прелайта (Ambient, Intensity, Gamma, Shadows) как именованных пресетов. Хранятся в папке `INU_Preset/`.
 
 > 💡 **Пример:** нашёл свой «фирменный» микс — Ambient 0.4, Intensity 0.7, Gamma 1.8, Shadows on. **Save preset** → имя `my_night_scene`. Теперь на любом новом объекте: выбери пресет → Load → все настройки восстановились.
 

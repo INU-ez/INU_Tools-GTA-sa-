@@ -7,8 +7,8 @@
 **Blender addon for GTA San Andreas modding — full pipeline from modeling to IMG archive.**
 
 <p>
-  <img src="https://img.shields.io/badge/Blender-2.83%E2%80%935.1-orange?logo=blender" alt="Blender">
-  <img src="https://img.shields.io/badge/Version-1.8.0-green" alt="Version">
+  <img src="https://img.shields.io/badge/Blender-4.2%E2%80%935.1-orange?logo=blender" alt="Blender">
+  <img src="https://img.shields.io/badge/Version-1.7.0-green" alt="Version">
   <img src="https://img.shields.io/badge/License-GPL--3.0-blue" alt="License">
 </p>
 <p>
@@ -52,27 +52,55 @@
 </tr>
 </table>
 
-## 🆕 What's new in 1.8.0
+## 🔮 Planned / In Progress
 
-Release with **two parallel builds**, a new Validate Scene system, Modulate Color preview against `timecyc.dat`, and a pack of bug fixes from a deep Blender API audit. Extended Blender support down to **2.83 → 5.1** via `tools/compat.py`. Full backward-compatibility with .blend / .dff / .ipl / .ide from 1.7.x.
+### 🚧 Coming in next release
 
-**Two builds, one source tree:**
+**v1.8.0 — two parallel builds, both on GitHub releases:**
 
-- 🟢 **`inu_tools_gta_sa-1.8.0-full.zip`** — full edition, no restrictions. GPU NVTT compression (10–100× faster on large atlases), full multi-threaded import/export, every feature available. **Recommended for most users.** Install via `Edit → Preferences → Add-ons → Install from Disk`.
-- 🟡 **`inu_tools_gta_sa-1.8.0.zip`** — store edition, also published through extensions.blender.org. No NVTT (CPU DXT), no `subprocess` outside a small allowlist, ToS-compliant data writes (per-user config dir). Slower runtime, but usable when you specifically need install via the official Blender extensions site. **Requires Blender 4.2+** (extension API floor).
+- 🟢 **`INU_Tools-1.8.0-FULL.zip`** — full edition, no restrictions. Faster runtime, every feature available. Recommended for most users.
+- 🟡 **`INU_Tools-1.8.0-STORE.zip`** — extensions.blender.org edition (also published through the official Blender extensions site). Slower runtime, some features cut/disabled to comply with the site's review rules (no `eval`/`exec`, no subprocess, restricted file access, no bundled binaries, etc.).
 
-**Highlights** — Validate Scene (single pre-export sweep) · Modulate Color preview (Day / Night `ambient_obj` from `timecyc.dat`) · Auto alpha-link after TXD import · DXT2 / DXT4 fourcc support (vanilla SA fence textures now decode correctly) · FLA IPL support (Fastman92 Limit Adjuster) · DFF auto-naming with `_DFF` suffix · DFF export ~2× faster on heavy meshes · Multi-mesh OBJS in IDE parser · IplOccl canonical field names · Blender 2.83 → 5.1 via `tools/compat.py`.
+Both builds share the same source tree; differences are baked at packaging time. Pick FULL unless you specifically need the addon installed via the official Blender extensions site.
 
-**Bug fixes** — DFF import NameError (`start = r.pos` restored) · unregister NameError (`_links_draw_handler`) · workspace_cycle console spam · enum cache flicker · IFP export jerky playback (`bl_quat.normalize()`) · IK rig on rest-pose peds · DFF / COL vertex limits with model name + count · `_save_paths` / `_load_paths` PropertyGroup migration (paths now persist across sessions) · 35+ leftover `scene.gtatools_*` references migrated to `scene.inu_settings.gtatools_*`.
+#### What's already in 1.8.0
 
-**Internals** — PropertyGroup consolidation (`scene_settings.py`) · `bpy.utils.extension_path_user` for user data · 10 end-to-end tests inside headless Blender · static compliance guards (AST scan, manifest hygiene) · CI matrix builds + validates both store and full zips on every push.
+**🆕 New features:**
 
-→ **[Full release notes on GitHub](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v1.8.0)**
+- **Validate Scene** — single pre-export sweep covering quaternion normalization in armature Actions, Modulate Color flag on prelit meshes, `_ok` / `_dam` damage pair completeness, paintjob slot completeness
+- **FLA IPL support** — extended IPL format from Fastman92 Limit Adjuster
+- **COL progress bar** — feedback when importing large COL libraries
+- **Modulate Color preview** — OFF / Day / Night toggle that adds vanilla SA's `ambient_obj` color from `timecyc.dat` (EXTRASUNNY_LA Midday/Midnight) on top of vertex prelight, with calibrated defaults (mix / contrast / gamma) matching the in-game look
+- **Multi-mesh OBJS** in IDE parser — proper handling of type 1/2/3 forms (5/7/8 fields). Previously type 2/3 lines silently corrupted draw distances and flags
+- **IplOccl canonical field names** — `unknown1/2/3` → `rot_x/rot_y/rot_z/flags` (matches engine's `CFileLoader::LoadOcclusionVolume`); old custom-prop keys still read for backward compat
+- **DFF export Day/Night by name** — no longer picks up intermediate VC-layer artifacts (e.g. `vertex_lights_both`) as Night colors
+- **DFF export performance** — bulk `foreach_get` + numpy for alpha read and FLOAT→BYTE conversion (~2× on 20k+ vertex meshes)
+- **Extended Blender support: 2.83 → 5.1** — `tools/compat.py` layer wraps API differences (vcol API, Mix node, etc.) so the addon runs on every LTS from 2.83 onward. Most features work everywhere; VC Layers System shows a "Requires Blender 3.2+" notice on older versions
+
+**🐛 Bug fixes:**
+
+- **IFP export jerky playback** — `bl_quat.normalize()` was missing before rest composition, in-game animations played stepped/jittery
+- **IK rig on rest-pose peds** — IK setup broke when armature came in clean rest pose
+- **DFF / COL vertex limits** — clear `DffLimitError` / `ColLimitError` with model name + count, instead of cryptic `struct.pack` overflow
+- Plus various smaller IK rig + prelight + Vector import fixes
+
+### 🔭 Genuinely future
+
+_Nothing in this bucket right now._
+
+> [!NOTE]
+> The addon is under active development. Bug reports are welcome in [Issues](../../issues).
+
+## 🆕 What's new in 1.7.0
+
+A major UX-and-features release. Highlights: **bone-based IK rig** for SA peds (FK→IK bake, brute-force pole calibration, INU_Ground floor limiter), **Animated Map Object** workflow (one-click DFF+IFP+IDE for windmills/cranes), **Frame Hierarchy Editor** with vanilla VEHICLE/PED templates, **Vehicle Paintjob** support (Pay'n'Spray alt textures), **Profile system** (custom N-sidebar layouts saved as JSON), and a deep refactor: monolithic `__init__.py` (16k lines) split into 22 dedicated `ops/*.py` modules.
+
+**Highlights** — IK Rig with FK→IK bake · Animated Map Object Setup wizard · Frame Hierarchy Editor + Validate Vehicle/Ped · Vehicle Paintjob (`<base>_paintjob1/2`) · Profile system (per-user N-sidebar visibility/order) · DFF/COL drag-drop into viewport · Smart auto-TXD picker (coverage-based scoring) · Save-required wrappers · Texture Manager dropdowns (Текстуры/Материалы) · 2DFX collapsible sections + semantic flag groups · BreakableData round-trip · IFP layered-Action support (Blender 5.x).
+
+→ **[Full release notes on GitHub](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v1.7.0)**
 
 <details>
 <summary>Older releases</summary>
-
-- **v1.7.0** — IK Rig for SA peds (FK→IK bake, brute-force pole calibration, INU_Ground floor limiter), Animated Map Object workflow (one-click DFF+IFP+IDE for windmills/cranes), Frame Hierarchy Editor with vanilla VEHICLE/PED templates, Vehicle Paintjob support (Pay'n'Spray alt textures), Profile system (custom N-sidebar layouts), and a deep refactor: monolithic `__init__.py` (16k lines) split into 22 dedicated `ops/*.py` modules — [release page](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v1.7.0)
 
 - **v1.6.7** — full Map Import → edit → Map Export round-trip preserving IDE / IPL / COL / TXD layout (CRLF, IPL inst dedup, ID consistency across `.NNN` duplicates), modal export with progress bar, `inu.col_name` + `inu.lod_object` properties, Group-by-IPL import + By-collection export split mode, main ↔ LOD pairing, per-`txd_name` TXD bucketing, per-DFF COL by default, modal ESC cancel, multi-collection picker, NVTT auto + parallel DXT1, dedicated Vehicles panel — [release page](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v1.6.7)
 - **v1.6.6-beta** — partial pre-release with the initial 1.6.6 set: Map auto-split (XY grid), damage variants, train paths verified, COL ~5×, VC Layer System (BETA), IFP ANP2 / ANPK write, Bitmaps Manager unused cleanup. Superseded by v1.6.7 (which adds round-trip preservation, modal export, format-conformance fixes) — [release page](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v1.6.6-beta)
@@ -96,37 +124,24 @@ Release with **two parallel builds**, a new Validate Scene system, Modulate Colo
 <details>
 <summary><b>🔧 Compatibility</b></summary>
 
-| | FULL build | STORE build |
-|---|---|---|
-| **Blender** | 2.83 – 5.1 (recommended 4.2+) | **4.2+ only** (extension API floor) |
-| **GPU TXD compression** | NVIDIA Texture Tools (NVTT) supported | CPU encoder only |
-| **Distribution** | Direct .zip from GitHub Release | extensions.blender.org / .zip from GitHub |
-
 | | |
 |---|---|
+| **Blender** | 4.2 – 5.1 ✅ |
 | **Game** | GTA San Andreas (also compatible with MTA:SA) |
 | **OS** | Windows / Linux / macOS |
-| **Optional** | NVIDIA GPU + NVIDIA Texture Tools (FULL build only) |
+| **Optional** | NVIDIA GPU (for NVTT texture compression) |
 
 </details>
 
 <details>
 <summary><b>📦 Installation</b></summary>
 
-**Pick one of the two builds** from the latest [GitHub Release](../../releases/latest):
-
-**🟢 FULL — `inu_tools_gta_sa-X.Y.Z-full.zip`** (recommended)
-
-1. Download the FULL zip from the release page
-2. Open Blender → **Edit → Preferences → Add-ons** → ⌄ → **Install from Disk** → pick the zip
-3. Enable **INU Tools (GTA SA)**
-
-**🟡 STORE — `inu_tools_gta_sa-X.Y.Z.zip`** (Blender 4.2+ only)
-
-Same edition that's published on extensions.blender.org. Two ways to install:
-
-- Direct from the Blender extensions site: **Edit → Preferences → Get Extensions** → search "INU Tools" → Install
-- Or download the STORE zip from the release: **Edit → Preferences → Get Extensions** → ⌄ → **Install from Disk**
+1. Download the `INU_tools/` folder (or zip archive)
+2. Copy it into your Blender addons directory:
+   ```
+   Blender/<version>/scripts/addons/INU_tools/
+   ```
+3. Open Blender → **Edit → Preferences → Add-ons** → enable **INU_tools(gta_sa)**
 
 </details>
 
@@ -148,9 +163,10 @@ The addon auto-assembles DFF + LOD + COL + TXD into one group and exports in a s
 <details>
 <summary><b>🧰 Features</b></summary>
 
+Legend: 🆕 new in 1.6.3 · ⚡ performance · 🎨 UI · 📦 format support
 
 <details>
-<summary><b>&emsp;📤 Export / Import</b></summary>
+<summary><b>📤 Export / Import</b></summary>
 
 | Feature | Detail |
 |---|---|
@@ -166,7 +182,7 @@ The addon auto-assembles DFF + LOD + COL + TXD into one group and exports in a s
 </details>
 
 <details>
-<summary><b>&emsp;🗺️ IDE / IPL / IMG</b></summary>
+<summary><b>🗺️ IDE / IPL / IMG</b></summary>
 
 | Feature | Detail |
 |---|---|
@@ -191,7 +207,7 @@ The addon auto-assembles DFF + LOD + COL + TXD into one group and exports in a s
 </details>
 
 <details>
-<summary><b>&emsp;💡 Prelight</b></summary>
+<summary><b>💡 Prelight</b></summary>
 
 | Feature | Detail |
 |---|---|
@@ -216,7 +232,7 @@ The addon auto-assembles DFF + LOD + COL + TXD into one group and exports in a s
 </details>
 
 <details>
-<summary><b>&emsp;🎨 Post-Processing</b></summary>
+<summary><b>🎨 Post-Processing</b></summary>
 
 | Feature | Detail |
 |---|---|
@@ -229,7 +245,7 @@ The addon auto-assembles DFF + LOD + COL + TXD into one group and exports in a s
 </details>
 
 <details>
-<summary><b>&emsp;🎯 2DFX Effects</b></summary>
+<summary><b>🎯 2DFX Effects</b></summary>
 
 | Feature | Detail |
 |---|---|
@@ -252,7 +268,7 @@ The addon auto-assembles DFF + LOD + COL + TXD into one group and exports in a s
 </details>
 
 <details>
-<summary><b>&emsp;🎆 Particle Effects (<code>effects.fxp</code>)</b></summary>
+<summary><b>🎆 Particle Effects (<code>effects.fxp</code>)</b></summary>
 
 > 🆕 **Fully new in 1.6.3** — edit GTA SA particles directly in Blender.
 
@@ -273,7 +289,7 @@ The addon auto-assembles DFF + LOD + COL + TXD into one group and exports in a s
 </details>
 
 <details>
-<summary><b>&emsp;🎨 Materials</b></summary>
+<summary><b>🎨 Materials</b></summary>
 
 | Feature | Detail |
 |---|---|
@@ -292,7 +308,7 @@ The addon auto-assembles DFF + LOD + COL + TXD into one group and exports in a s
 </details>
 
 <details>
-<summary><b>&emsp;🧮 UV Editor</b></summary>
+<summary><b>🧮 UV Editor</b></summary>
 
 | Feature | Detail |
 |---|---|
@@ -311,7 +327,7 @@ The addon auto-assembles DFF + LOD + COL + TXD into one group and exports in a s
 </details>
 
 <details>
-<summary><b>&emsp;🔍 Check</b></summary>
+<summary><b>🔍 Check</b></summary>
 
 | Feature | Detail |
 |---|---|
@@ -334,7 +350,7 @@ The addon auto-assembles DFF + LOD + COL + TXD into one group and exports in a s
 </details>
 
 <details>
-<summary><b>&emsp;🌊 Water IO</b></summary>
+<summary><b>🌊 Water IO</b></summary>
 
 | Feature | Detail |
 |---|---|
@@ -347,7 +363,7 @@ The addon auto-assembles DFF + LOD + COL + TXD into one group and exports in a s
 </details>
 
 <details>
-<summary><b>&emsp;🛣️ Path IO</b></summary>
+<summary><b>🛣️ Path IO</b></summary>
 
 | Feature | Detail |
 |---|---|
@@ -361,7 +377,7 @@ The addon auto-assembles DFF + LOD + COL + TXD into one group and exports in a s
 </details>
 
 <details>
-<summary><b>&emsp;🦴 Characters (Skinned DFF)</b></summary>
+<summary><b>🦴 Characters (Skinned DFF)</b></summary>
 
 | Feature | Detail |
 |---|---|
@@ -373,7 +389,7 @@ The addon auto-assembles DFF + LOD + COL + TXD into one group and exports in a s
 </details>
 
 <details>
-<summary><b>&emsp;🔌 Integrations</b></summary>
+<summary><b>🔌 Integrations</b></summary>
 
 | Integration | Purpose |
 |---|---|
