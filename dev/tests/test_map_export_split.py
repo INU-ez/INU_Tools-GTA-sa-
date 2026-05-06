@@ -40,7 +40,14 @@ def _ensure_bpy_stubs():
 
     bpy_mod.types = types.SimpleNamespace(
         Operator=_DummyClass, Panel=_DummyClass,
-        PropertyGroup=_DummyClass)
+        PropertyGroup=_DummyClass,
+        # Object/Collection/Material referenced as forward-string
+        # annotations in tools/map_export.py. Python 3.11 in CI evals
+        # those during dataclass construction even when quoted, while
+        # Python 3.14 locally doesn't — add stubs so both behave the
+        # same.
+        Object=_DummyClass, Collection=_DummyClass,
+        Material=_DummyClass)
     bpy_mod.props = types.SimpleNamespace(
         StringProperty=lambda **kw: None,
         IntProperty=lambda **kw: None,
