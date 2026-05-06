@@ -43,10 +43,6 @@ bl_info = {
     "location": "View3D > Sidebar (N) > GTA Tools",
     "description": "Toolset for GTA SA models",
     "category": "3D View",
-    # Dev build marker — все коммиты после тега v1.7.0 идут как нерелизные.
-    # Blender показывает это поле красным в Edit → Preferences → Add-ons.
-    # Снять при cut-релиза 1.7.1 / 1.8.0.
-    "warning": "Dev build (post 1.7.0) — нерелизная сборка, возможны баги",
 }
 
 # Changelog:

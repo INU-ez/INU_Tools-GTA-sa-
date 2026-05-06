@@ -401,60 +401,29 @@ def _reregister_with_children(parent_cls):
 
 
 def _force_sidebar_refresh():
-    """Force every VIEW_3D's N-sidebar to re-evaluate its panel sort
-    by cycling the workspace. ``screen.workspace_cycle`` triggers a
-    full UI rebuild on the next workspace, which is the cleanest
-    public API we have to bust Blender's per-region panel-list cache.
+    """Tag every VIEW_3D's N-sidebar for redraw after a profile change.
 
-    Cycling NEXT then PREV returns the user to their original
-    workspace — the only side-effect is a brief frame where another
-    workspace's UI is on screen. If the user only has one workspace
-    cycle is a no-op and we fall back to plain region.tag_redraw().
+    History: an earlier version cycled the active workspace via
+    ``bpy.ops.screen.workspace_cycle(NEXT)/(PREV)`` to bust Blender's
+    per-region panel-list cache and force a full re-sort. That worked
+    visually but logged C-level ERRORs ("invalid operator call
+    SCREEN_OT_workspace_cycle") whenever the operator's poll() failed
+    in the call's resolved context — and the error fires BEFORE
+    Python's try/except, so it can't be silenced from Python.
 
-    Earlier failed attempts:
-      - region.tag_redraw() — repaint only, doesn't re-sort
+    Tradeoff: tag_redraw alone repaints regions but does NOT force
+    Blender to re-evaluate the panel sort. After a profile change the
+    user may need to collapse/expand any panel once for the new order
+    to apply. Acceptable in exchange for a clean console.
+
+    Earlier alternatives that didn't work either:
       - unregister + register panel — Blender 5.x keeps the sort cache
       - show_region_ui off/on — flickers + still doesn't re-sort
     """
-    def _cycle():
+    def _redraw():
         wm = bpy.context.window_manager
         if wm is None:
             return None
-
-        # Single-workspace install: workspace_cycle has nothing to
-        # cycle to. Bail early for the default-install case.
-        if len(bpy.data.workspaces) < 2:
-            return None
-
-        # workspace_cycle needs a valid SCREEN/AREA context. When this
-        # runs from a popup operator (pick-and-place), bpy.context is
-        # the popup's restricted context and the operator's poll()
-        # returns False. Blender then logs an ERROR on the C side
-        # ("invalid operator call 'SCREEN_OT_workspace_cycle'") BEFORE
-        # the Python try/except can swallow it. Guard with an explicit
-        # poll() check inside the override so the call only goes
-        # through when Blender will actually accept it.
-        for window in wm.windows:
-            for area in window.screen.areas:
-                if area.type != 'VIEW_3D':
-                    continue
-                try:
-                    with bpy.context.temp_override(
-                            window=window, screen=window.screen,
-                            area=area):
-                        if not bpy.ops.screen.workspace_cycle.poll():
-                            continue
-                        bpy.ops.screen.workspace_cycle(direction='NEXT')
-                        bpy.ops.screen.workspace_cycle(direction='PREV')
-                    break
-                except Exception:
-                    pass
-            else:
-                continue
-            break
-
-        # Plain redraw nudge after the cycle, so all UI regions repaint
-        # with the new sort even if Blender skipped some.
         for window in wm.windows:
             for area in window.screen.areas:
                 if area.type != 'VIEW_3D':
@@ -465,10 +434,12 @@ def _force_sidebar_refresh():
                         region.tag_redraw()
         return None
 
+    # Defer one tick so the redraw runs after the current property
+    # update returns and Blender's UI is in a stable state.
     try:
-        bpy.app.timers.register(_cycle, first_interval=0.01)
+        bpy.app.timers.register(_redraw, first_interval=0.01)
     except Exception:
-        _cycle()
+        _redraw()
 
 
 def _on_profile_changed(self, context):
