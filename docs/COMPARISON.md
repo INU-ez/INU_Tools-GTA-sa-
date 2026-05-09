@@ -91,7 +91,7 @@ A focused comparison of the three GTA San Andreas modding toolchains in active u
 |---|:---:|:---:|:---:|
 | TXD read | ✅ | ✅ | ✅ |
 | TXD write (DXT1/3/5) | ✅ | — | ✅ experimental |
-| GPU TXD encoding (NVTT) | ✅ parallel DXT1 | — | — |
+| Vectorised DXT encoder (no external binaries) | ✅ pure numpy, ~7× NVTT speed | — | — |
 | Environment / Bump / Specular / Reflection | ✅ | ✅ | ✅ |
 | UV Animation in DFF (read + write) | ✅ | ✅ | ✅ |
 | Dual Texture / Blend Mode | ✅ | ✅ | — |
@@ -134,7 +134,7 @@ A focused comparison of the three GTA San Andreas modding toolchains in active u
 
 ## When to pick what
 
-**Pick INU Tools** if you're building maps, peds, vehicles, or particle effects on a Blender pipeline. It's the only option that round-trips full IDE / IPL / IMG inside Blender, and the only one with an `effects.fxp` editor, a bone-based IK rig, and GPU-accelerated TXD encoding.
+**Pick INU Tools** if you're building maps, peds, vehicles, or particle effects on a Blender pipeline. It's the only option that round-trips full IDE / IPL / IMG inside Blender, and the only one with an `effects.fxp` editor, a bone-based IK rig, a binary file linter, and a vectorised pure-numpy DXT encoder (no external binaries).
 
 **Pick Kams Script** if you already own 3ds Max, are continuing an existing 3ds Max project, or need a few specific niches that no Blender tool yet covers (FLA4 paths, CST collision, Object Explode, Vertex Alpha tools). Be aware that the script is no longer maintained — bugs you hit are bugs you keep.
 

@@ -13,9 +13,6 @@ LANG = {
     "Количество рядов в сетке текстуры": "Number of rows in texture grid",
     "Позиция UV в ячейке": "UV position in cell",
     "Полигоны с пересекающимися UV перемещаются вместе": "Polygons with overlapping UVs move together",
-    "Путь к папке NVIDIA Texture Tools (для GPU сжатия)": "Path to NVIDIA Texture Tools folder (for GPU compression)",
-    "Использовать GPU (NVTT) для сжатия текстур": "Use GPU (NVTT) for texture compression",
-    "Показать настройки NVTT": "Show NVTT settings",
     "Путь к папке с системными текстурами GTA": "Path to GTA system textures folder",
     "Путь к папке где находится .blend файл": "Path to folder where .blend file is located",
     "Не экспортировать TXD при Export All": "Do not export TXD with Export All",
@@ -181,9 +178,6 @@ LANG = {
     "Панель UV инструментов GTA Tools": "GTA Tools UV panel",
 
     # Internal docstrings
-    "Проверить доступность NVIDIA Texture Tools": "Check NVIDIA Texture Tools availability",
-    "Папка NVTT не найдена": "NVTT folder not found",
-    "Сжать текстуру через NVIDIA Texture Tools (GPU)": "Compress texture via NVIDIA Texture Tools (GPU)",
     "Проверить, подключена ли нода к чему-либо (любой выход)": "Check if node is connected to anything (any output)",
     "Определить тип модели по суффиксу: LOD, COL, DFF в конце названия": "Determine model type by suffix: LOD, COL, DFF at end of name",
     "Найти связанные модели (DFF, LOD, COL) по базовому имени": "Find related models (DFF, LOD, COL) by base name",
@@ -401,7 +395,6 @@ LANG = {
 
     # Scene panel
     "Системные текстуры:": "System Textures:",
-    "Настройки NVTT": "NVTT Settings",
 
     # Material Effects panel
     "Фоновое затенение": "Ambient Shading",
@@ -521,9 +514,6 @@ LANG = {
     "Количество рядов в сетке текстуры": "Number of rows in texture grid",
     "Позиция UV в ячейке": "UV position in cell",
     "Полигоны с пересекающимися UV перемещаются вместе": "Polygons with overlapping UVs move together",
-    "Путь к папке NVIDIA Texture Tools (для GPU сжатия)": "Path to NVIDIA Texture Tools folder (for GPU compression)",
-    "Использовать GPU (NVTT) для сжатия текстур": "Use GPU (NVTT) for texture compression",
-    "Показать настройки NVTT": "Show NVTT settings",
     "Путь к папке с системными текстурами GTA": "Path to GTA system textures folder",
     "Путь к папке где находится .blend файл": "Path to folder where .blend file is located",
     "Флаг rpGEOMETRYLIGHT — динамическое освещение": "rpGEOMETRYLIGHT flag — dynamic lighting",
@@ -2117,4 +2107,95 @@ LANG = {
     "Исправить": "Fix",
     "Не нашёл несоответствия суффикса для этого объекта":
         "No suffix mismatch found for this object",
+
+    # ── v1.9.0 ──────────────────────────────────────────────────────
+    # File Scanner / Binary linter
+    "Скан файлов": "File Scanner",
+    "Сканировать": "Scan",
+    "Что это значит:": "What it means:",
+    "Открыть в Проводнике": "Reveal in Explorer",
+    "Сохранить отчёт:": "Save report:",
+    "Сохранить .txt": "Save .txt",
+    "Список пуст — запустите скан": "List empty — run a scan",
+    "Скан завершён": "Scan complete",
+    "Скан завершён: проблем не найдено":
+        "Scan complete: no issues found",
+    "Включите хотя бы один тип файла (DFF/COL/TXD)":
+        "Enable at least one file type (DFF/COL/TXD)",
+    "Укажите существующую папку": "Pick an existing folder",
+    "Нет результатов для сохранения — сначала запустите скан":
+        "No results to save — run a scan first",
+    "Сцена не сохранена — сохраните .blend или выберите другую папку для отчёта":
+        "Scene not saved — save the .blend or choose another report folder",
+    "Папка скана не задана — выберите .blend или свою папку":
+        "Scan folder not set — choose .blend or a custom folder",
+    "Своя папка для отчёта не задана или не существует":
+        "Custom report folder not set or doesn't exist",
+    "Неизвестный target для отчёта": "Unknown report target",
+    "Нет выбранной строки": "No row selected",
+    "Файл не найден:": "File not found:",
+    "Отчёт сохранён:": "Report saved:",
+    "Сцена не сохранена!": "Scene not saved!",
+    "Сцена не сохранена": "Scene not saved",
+
+    # Asset Library / Build Library
+    "Собрать Asset Library": "Build Asset Library",
+    "Извлечь ресурсы": "Extract resources",
+    "Корневая папка GTA SA": "GTA SA root folder",
+    "Регион": "Region",
+    "Параметры": "Parameters",
+    "Размер превью (px)": "Preview size (px)",
+    "Перегенерировать превью": "Regenerate previews",
+    "Без превьюшек (быстрее, но без миниатюр)":
+        "Skip previews (faster, but no thumbnails)",
+    "Пропускать готовые .blend": "Skip existing .blend files",
+    "Сборка библиотеки...": "Building library...",
+    "Сканирование кеша...": "Scanning cache...",
+    "Чтение IDE файлов...": "Reading IDE files...",
+    "Перегенерация превью...": "Regenerating previews...",
+    "Финализация...": "Finalising...",
+    "Инициализация...": "Initialising...",
+    "Превью: готово": "Previews: done",
+    "Готовность": "Readiness",
+    "Готово": "Ready",
+    "Старт": "Start",
+    "Кеш найден": "Cache found",
+    "Кеш пуст — Extract Resources": "Cache empty — run Extract Resources",
+    "Game Root указан": "Game Root set",
+    "Game Root не указан": "Game Root not set",
+    "Output задан": "Output set",
+    "Output не задан": "Output not set",
+    ".blend сохранён": ".blend saved",
+    "Имя уже занято": "Name already taken",
+    "Укажите корневую папку GTA SA": "Pick the GTA SA root folder",
+    "Как пользоваться": "How to use",
+    "1. Сохрани .blend": "1. Save the .blend",
+    "1. Извлечь ресурсы": "1. Extract resources",
+    "2. Папка библиотеки": "2. Library folder",
+    "2. Укажи Game Root и регион": "2. Set Game Root and region",
+    "3. Извлеки ресурсы": "3. Extract resources",
+    "4. Укажи папку Output": "4. Set the Output folder",
+    "5. Жми «Собрать»": "5. Hit «Build»",
+    "6. Edit > Preferences > File Paths >": "6. Edit > Preferences > File Paths >",
+    "   Asset Libraries > Add → твой Output":
+        "   Asset Libraries > Add → your Output",
+
+    # Prelight: V-offset inline + scatter color sub-panel
+    "Дальность": "Distance",
+    "Цвет (из кисти)": "Color (from brush)",
+    "Запечь с тенями": "Bake with shadows",
+    "Сначала выберите пресет в списке": "Pick a preset from the list first",
+    "без изменений": "no changes",
+
+    # Misc UI / IK
+    "OK": "OK",
+    "Отменено": "Cancelled",
+    "Root motion (walk/run)": "Root motion (walk/run)",
+    "Настройка анимации": "Animation setup",
+    "Исправить кватернионы (sign-flip)": "Fix quaternions (sign-flip)",
+    "Размер тени / интенсивность света":
+        "Shadow size / light intensity",
+    "VC Layers System": "VC Layers System",
+    "Выдели объект чтобы увидеть иерархию":
+        "Select an object to see the hierarchy",
 }

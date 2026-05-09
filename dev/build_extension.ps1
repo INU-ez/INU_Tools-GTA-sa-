@@ -1,9 +1,9 @@
-# Build INU Tools as a Blender extension package — FULL edition.
+# Build INU Tools as a Blender extension package.
 #
-# This branch (full-build) is the GitHub-release variant: NVTT GPU
-# compression is included, parallelism is on, no extensions.blender.org
-# restrictions. Output zip is renamed with a `-full` suffix so users
-# can tell the FULL build apart from the STORE build by filename.
+# Single unified build — same .zip works on GitHub release and on
+# extensions.blender.org. NVTT subprocess path was removed in 1.8.x;
+# DXT compression now goes through the bundled core.dxt numpy encoder
+# (and an optional bpy.gpu compute shader path that's WIP).
 #
 # Uses Blender's official `extension build` command which:
 #   - Validates blender_manifest.toml
@@ -28,18 +28,13 @@ Get-ChildItem -Path $SourceDir -Filter "__pycache__" -Recurse -Directory -ErrorA
     Remove-Item -Recurse -Force
 
 # --- Build -------------------------------------------------------------
-# NVTT lives directly inside INU_tools/tools/txd_export.py on the
-# full-build branch (subprocess.run on nvcompress.exe), no extras/
-# copy step needed.
 Write-Host "Building extension via Blender CLI..." -ForegroundColor Cyan
 & $BlenderExe --command extension build `
     --source-dir $SourceDir `
     --output-dir $OutputDir 2>&1 |
     Where-Object { $_ -match '^(building|complete|created|error|Error)' }
 
-# --- Rename output zip with -full suffix -------------------------------
 $builtZip = Get-ChildItem "inu_tools_gta_sa-*.zip" |
-    Where-Object { $_.Name -notmatch '-full\.zip$' } |
     Sort-Object LastWriteTime -Descending | Select-Object -First 1
 
 if (-not $builtZip) {
@@ -47,9 +42,5 @@ if (-not $builtZip) {
     exit 1
 }
 
-$fullZipName = $builtZip.Name -replace '\.zip$', '-full.zip'
-Move-Item -Path $builtZip.FullName -Destination $fullZipName -Force
-
 Write-Host "`nDone." -ForegroundColor Green
-Get-ChildItem "inu_tools_gta_sa-*-full.zip" | Format-Table Name, Length, LastWriteTime
-Write-Host "Build mode: FULL (NVTT included, parallelism enabled -- GitHub release)" -ForegroundColor Green
+Get-ChildItem "inu_tools_gta_sa-*.zip" | Format-Table Name, Length, LastWriteTime

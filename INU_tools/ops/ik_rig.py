@@ -1227,6 +1227,10 @@ class GTATOOLS_OT_add_ik_rig(bpy.types.Operator):
             return {'CANCELLED'}
 
         armature[_IK_FLAG] = 1
+        # Lazily attach the depsgraph follow-handler now that we have an
+        # IK-rigged armature in the scene. Idempotent — safe if another
+        # rig already triggered registration earlier this session.
+        _register_follow_handler()
         msg = (f"IK rig: {added_chains} цепочек + {added_poles} pole "
                f"+ {added_rot} rot + {added_root} root")
         if baked_frames:
@@ -1612,4 +1616,35 @@ def _register_follow_handler():
     bpy.app.handlers.frame_change_post.append(_ik_follow_handler)
 
 
-_register_follow_handler()
+def _unregister_follow_handler():
+    """Detach the IK follow handler from both event lists.
+
+    Called from the addon's ``unregister()`` so disabling the addon
+    leaves no orphan handlers.
+    """
+    for handlers in (bpy.app.handlers.depsgraph_update_post,
+                     bpy.app.handlers.frame_change_post):
+        for h in list(handlers):
+            if getattr(h, '__name__', '') == '_ik_follow_handler':
+                try:
+                    handlers.remove(h)
+                except Exception:
+                    pass
+
+
+@bpy.app.handlers.persistent
+def _on_file_load_ik(_dummy):
+    """Re-attach the IK follow handler when a saved .blend with IK-rigged
+    armatures is opened. Without this, the rig would stop following the
+    pose-bone targets after a fresh file load until the user added a new
+    rig (the depsgraph hook isn't itself persisted across files)."""
+    if any(o.type == 'ARMATURE' and o.get(_IK_FLAG) for o in bpy.data.objects):
+        _register_follow_handler()
+
+
+# Register only the lightweight load_post hook at module import. The
+# heavy depsgraph + frame_change follow-handler is attached lazily —
+# by ``GTATOOLS_OT_add_ik_rig`` on first rig setup this session, or by
+# ``_on_file_load_ik`` when opening a .blend that already has rigs.
+if _on_file_load_ik not in bpy.app.handlers.load_post:
+    bpy.app.handlers.load_post.append(_on_file_load_ik)

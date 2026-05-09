@@ -524,6 +524,7 @@ def _layers_need_sync(mesh) -> bool:
     return tracked != actual
 
 
+@bpy.app.handlers.persistent
 def _on_depsgraph_paint(scene, depsgraph):
     """Combined depsgraph hook for two jobs:
 
@@ -533,8 +534,12 @@ def _on_depsgraph_paint(scene, depsgraph):
     2. **Paint-stroke recompose** — when in vertex paint mode on a VCL
        layer with live preview on, mark the active scope dirty.
 
-    Both bodies are cheap on the no-op path: we early-out as soon as
-    nothing of interest is happening.
+    Hooked into ``depsgraph_update_post`` because vertex-paint strokes
+    write directly to ``mesh.color_attributes`` via C-level brush code —
+    there's no RNA property an ``update=`` callback could intercept. The
+    handler is registered lazily (first call to ``vcl_add`` or on file-
+    load when VCL layers are detected) and unregistered on addon disable.
+    Both bodies early-exit cheaply on the no-op path.
     """
     try:
         obj = bpy.context.active_object
@@ -805,6 +810,10 @@ class GTATOOLS_OT_vcl_add(bpy.types.Operator):
         mesh = _mesh_or_none(context)
         if mesh is None:
             return {'CANCELLED'}
+
+        # User is starting to use VC Layers in this session — lazily
+        # attach the paint-stroke handler. Idempotent.
+        vc_layers_register_paint_handler()
 
         _sync_layers_from_mesh(mesh)
         day_count, night_count = count_layers_per_scope(
@@ -1620,27 +1629,53 @@ def _on_file_load_vcl(_dummy):
             if prop_name in mesh:
                 _restore_base_attr(mesh, attr_name, prop_name)
 
+    # Loaded scene already has VCL layers somewhere? Lazily attach the
+    # paint-stroke handler so live preview keeps working without
+    # waiting for the user to invoke a VCL operator first.
+    has_vcl_anywhere = any(
+        getattr(m, 'gtatools_vc_layers', None) and len(m.gtatools_vc_layers) > 0
+        for m in bpy.data.meshes
+    )
+    if has_vcl_anywhere:
+        vc_layers_register_paint_handler()
 
-def vc_layers_register_handlers():
-    """Attach the depsgraph hook for paint-stroke recomposition + the
-    load_post reconciler.
 
-    Called by the addon's ``register()`` after the timer-driven
-    flush function exists. Idempotent — the addon does
-    register/unregister cycles on reload and re-adding a duplicate
-    handler would fire it twice per stroke.
+def vc_layers_register_load_handler():
+    """Attach only the load_post reconciler. Called by the addon's
+    ``register()`` — the file-open handler is cheap and needed always so
+    that opening a .blend with VCL state migrates correctly.
+
+    The expensive depsgraph_update_post hook is registered lazily — see
+    ``vc_layers_register_paint_handler``.
 
     На Blender 2.80-3.1 — no-op, потому что вся система требует
     mesh.color_attributes (3.2+) и при срабатывании handler'ы упадут.
     """
     if not compat.HAS_COLOR_ATTRIBUTES:
         return
-    handlers = bpy.app.handlers.depsgraph_update_post
-    if _on_depsgraph_paint not in handlers:
-        handlers.append(_on_depsgraph_paint)
     load_handlers = bpy.app.handlers.load_post
     if _on_file_load_vcl not in load_handlers:
         load_handlers.append(_on_file_load_vcl)
+
+
+def vc_layers_register_paint_handler():
+    """Lazily attach the paint-stroke / layer-sync depsgraph handler.
+
+    Called from ``GTATOOLS_OT_vcl_add`` (first time user adds a VCL
+    layer this session) and from ``_on_file_load_vcl`` (when a .blend
+    with existing VCL layers is opened). Idempotent — safe to call
+    repeatedly.
+
+    Scoping rationale: most users never use VC Layers. Registering the
+    handler at addon-enable would fire it on every depsgraph update
+    in every scene for nothing. Lazy registration keeps it dormant
+    until the feature is in actual use.
+    """
+    if not compat.HAS_COLOR_ATTRIBUTES:
+        return
+    handlers = bpy.app.handlers.depsgraph_update_post
+    if _on_depsgraph_paint not in handlers:
+        handlers.append(_on_depsgraph_paint)
 
 
 def vc_layers_unregister_handlers():

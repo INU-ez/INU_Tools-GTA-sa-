@@ -32,19 +32,23 @@
   - [Baking](#baking)
   - [Fill Colors](#fill-colors)
   - [Scatter Light](#scatter-light)
+  - [Scatter Color](#scatter-color-new-in-190)
   - [Post-Processing](#post-processing)
   - [COL Light](#col-light)
   - [Presets](#presets)
+  - [Adjust Color (per-attribute V-offset)](#adjust-color-per-attribute-v-offset-updated-in-190)
 - [2DFX Effects](#2dfx-effects)
 - [Particle Effects (effects.fxp)](#particle-effects-effectsfxp-new-in-163)
 - [UV Tools](#uv-tools)
 - [Check](#check)
+  - [File Scanner](#file-scanner-new-in-190)
 - [Characters (Skinned DFF)](#characters-skinned-dff)
 - [Water IO](#water-io)
 - [Path IO](#path-io)
 - [LightMap (beta_MTA)](#lightmap-beta_mta)
 - [Integrations](#integrations)
-- [Experimental (v1.6.4)](#experimental-v164)
+- [Asset Library](#asset-library-new-in-190)
+- [Advanced](#advanced)
   - [Map Export](#map-export)
   - [Binary IPL Write](#binary-ipl-write)
   - [UV Animation in DFF](#uv-animation-in-dff)
@@ -78,11 +82,10 @@
 3. Blender → Edit → Preferences → Add-ons → enable **"INU_tools(gta_sa)"**
 
 **Requirements:**
-- Blender 4.2+
-- NVIDIA Texture Tools — optional, for GPU texture compression (auto-detected)
+- Blender 2.83+ (4.2+ for installs through extensions.blender.org)
 - Itera Tools 3 — optional, for vertex lighting
 
-**Settings persistence:** all paths (Game Root, IDE, IPL, IMG, textures, NVTT) are saved in `INU_Preset/paths.json` next to the addons folder. Settings survive addon updates and are restored automatically when Blender starts.
+**Settings persistence:** all paths (Game Root, IDE, IPL, IMG, textures) are saved in `INU_Preset/paths.json` next to the addons folder. Settings survive addon updates and are restored automatically when Blender starts.
 
 ---
 
@@ -185,7 +188,7 @@ Split the mesh or simplify (Decimate).
 | Import TXD | `gtatools.import_txd` | Extract textures and assign to materials |
 | Export TXD | `gtatools.export_txd` | Compile textures into .txd archive |
 
-**GPU mode:** if NVIDIA Texture Tools (NVTT) is installed and path is configured in Settings → NVTT, compression uses GPU automatically. Otherwise falls back to CPU.
+**Compression backend:** pure-numpy DXT encoder bundled with the addon (`core/dxt.py`) — vectorized BC1/BC3, ~7× faster than NVTT cluster-fit on the textures vanilla SA actually ships. No external binaries needed. An experimental `bpy.gpu` compute-shader path is selectable in Scene properties (`gtatools_dxt_backend`).
 
 **Supported formats:** DXT1 (opaque), DXT3 (sharp alpha), DXT5 (smooth alpha). Auto-detected based on alpha channel.
 
@@ -621,6 +624,19 @@ Distribute light from selected faces outward. Parameters:
 
 > 💡 **Example — glowing neon:** select the neon sign faces → Fill Color pink → **Scatter from selected** (Intensity 0.8, Radius 2m, Iterations 3) → neighboring faces around the sign pick up a pinkish hue, mimicking the neon glow spilling onto the building wall.
 
+### Scatter Color *(new in 1.9.0)*
+
+**Sub-panel:** Prelight → Tools → Scatter Color
+
+Paints a tinted color **around** selected faces (instead of redistributing existing prelight). Useful for spilling a localized accent color onto neighboring geometry — neon reflections, accent glows under spotlights, dirt around drains.
+
+**Parameters:**
+- *Strength* (0–1) — center-vertex saturation of the chosen color (1 = fully replace existing colors at the centre).
+- *Distance* (0–1) — radius as fraction of the mesh's bbox half-diagonal. 0 = only selected verts; 1 = falloff covers half-diagonal.
+- *Color* — picked from the active **Vertex Paint brush** (so painting workflow stays unified). Falls back to a scene color picker if no brush is active.
+
+The falloff is linear by KDTree distance — vertices further from any selected polygon receive proportionally less colour.
+
 ### Post-Processing
 
 | Tool | Description |
@@ -647,9 +663,35 @@ Convert vertex colors to COL Day/Night Light values (0-15). Auto-splits material
 
 ### Presets
 
-Save/load prelight settings (Ambient, Intensity, Gamma, Shadows) as named presets. Stored in `INU_Preset/` folder.
+**Header row** at the top of the Prelight panel — preset selector plus 4 buttons.
 
-> 💡 **Example:** found your signature mix — Ambient 0.4, Intensity 0.7, Gamma 1.8, Shadows on. **Save preset** → name `my_night_scene`. On any future object: pick the preset → Load → all settings restored.
+Stored as `.json` in `INU_Preset/` folder. A preset captures everything bake-related across the panel and its sub-panels:
+- **Bake** — Ambient, Intensity, Gamma, Shadows
+- **Modulate Color** — mode (OFF/Day/Night), mix, contrast, gamma
+- **Adjust Color** — V-offset
+- **Scatter Color** — strength, distance
+- **Post-Processing** — smooth iterations/factor, contrast, brightness, gamma
+- **Per-object Day/Night** *(new in 1.9.0)* — V-offset per attribute, plus a flag whether to auto-create missing Day/Night attributes on Load
+
+| Button | Action |
+|---|---|
+| ✓ | **Save to Selected Preset** — overwrites the preset currently chosen in the dropdown with current scene values. Status bar reports diff: which fields changed (`old → new`) and which were added. No name dialog. |
+| ⬇ Load | Pull preset values into the scene + active mesh (creates Day/Night attrs if the preset asked for them). |
+| + Save | Create a NEW preset (opens name dialog). |
+| − Delete | Delete the selected preset file. |
+
+> 💡 **Example workflow:** craft your night look — Modulate Color = Night, Day V = +30, Night V = −20 → **+ Save** → name `my_night`. Tweak Modulate Mix from 0.002 to 0.005 → **✓** overwrites `my_night`, status bar shows `modulate_mix: 0.002 → 0.005`. Switch to a different scene → pick `my_night` → **⬇ Load** → all settings restored on whichever mesh you're working on.
+
+### Adjust Color (per-attribute V-offset) *(updated in 1.9.0)*
+
+Each Day/Night row in the colour-attribute selector has its own V-offset slider:
+
+```
+[Day]    V: +30.0   [-]
+[Night]  V: -20.0   [-]
+```
+
+Type a value → press Enter → the brightness offset is applied **immediately** to that attribute's vertex colors (only this object). The value persists per-object and survives re-baking — after a fresh bake the offset is automatically re-applied to the new colors.
 
 ### Vertex Color Management
 
@@ -935,6 +977,66 @@ Materials: 12/3 | Textures: 8/2 | Skipped (different paths): 1
 ```
 Format — `merged_slots/removed_duplicates`.
 
+### File Scanner *(new in 1.9.0)*
+
+**Sub-panel:** View3D → Sidebar (N) → GTA Tools → Check → File Scanner
+
+Lints `.dff`, `.col`, `.txd` files **on disk** for crash-prone byte patterns — without importing them into Blender. Useful when:
+- you've collected models from multiple sources and want to vet them before packing into IMG;
+- a freshly-built map crashes the game and you need to find the offender;
+- you're auditing converted/ported models (gmod → SA, etc.).
+
+**Workflow:**
+1. Pick a folder via the file picker.
+2. Toggle which formats to scan (DFF / COL / TXD checkboxes).
+3. Optionally enable «Recursive» to walk subfolders. **Default off** — prevents accidental sweeps of `gta_sa\models\`.
+4. Press **Scan**. Progress bar appears in the status bar.
+5. Results show in a scrollable list: `severity_icon  filename: short message`. Click a row to see the full description, file path, and «Reveal in Explorer» button.
+6. Filter «Only ERROR» (default on) hides WARN/INFO so you focus on real crashes.
+
+**What's checked:**
+
+*COL — collision file format*
+- Magic + filesize header consistency
+- Bounding sphere/box NaN/Inf or inverted (`min > max`)
+- Sphere-collider radius validity, vertex coords inside `(−256, 256)` int16/128.0 range
+- Face indices within vertex count
+- Surface ID range: vanilla ≤ 178, FLA ≤ 254
+- Shadow mesh offset overflow (the Manu-class `0x415D47` streaming crash)
+- Face-groups count within documented 1024 cap
+
+*DFF — RenderWare model*
+- RW chunk integrity, RW version sanity (vanilla SA = `0x36003`)
+- Atomic indices into frame/geometry arrays
+- Frame parent-tree validity (no cycles, no forward refs)
+- Per-geometry vertex/triangle/material limits (u16 caps + soft warnings)
+- UV layer count vs. flag bits agreement
+- Skin PLG: bone count u8, max_weights ≤ 4, bone-index validity
+- Triangle.material in range
+- NaN/Inf in vertex positions, bounding sphere
+- `GEOM_NATIVE` flag (PS2/Xbox-only data dropped onto PC engine)
+- 2DFX entry count
+
+*TXD — texture dictionary*
+- `platform_id` (8 = D3D8, 9 = D3D9 — anything else won't load on PC SA)
+- Bit depth in `{4, 8, 16, 24, 32}`
+- Power-of-two dimensions (vanilla D3D8 path requires POT — known crashes at `0x004C9691` / `0x00732924` / `0x00749B7B`)
+- DXT block alignment (×4)
+- AUTO_MIPMAP flag mutual exclusion with `num_levels > 1`
+- PAL + DXT mutually exclusive
+- Mipmap count vs. `log2(max(w,h))`
+- Empty / duplicate / overlong texture names
+
+Every issue code carries a long-form explanation block in the panel («What it means:») describing the root cause and how to fix.
+
+**Save report:**
+Three destinations:
+- 🟢 **Next to .blend** — default; warns if the scene isn't saved.
+- 🟡 **Same folder as scanned files**.
+- 🟠 **Custom folder** — file picker.
+
+Output: `inu_lint_<timestamp>.txt` with grouped results.
+
 ---
 
 ## Characters (Skinned DFF)
@@ -1127,9 +1229,35 @@ The **Normals** toggle controls vertex normal export in DFF:
 
 ---
 
-## Experimental (v1.6.4)
+## Asset Library *(new in 1.9.0)*
 
-> ⚠️ **Note:** The features in this section were freshly implemented and have not been extensively tested in-game. Expect rough edges, partial behaviour, or the occasional crash. Report issues in [Issues](../../issues).
+**Panel:** View3D → Sidebar (N) → GTA Tools → Asset Library
+
+Builds a Blender Asset Library from any IDE/IPL/IMG set — vanilla SA, a custom map, or a modded archive. Every prop becomes a mark-as-asset with a thumbnail you can drag straight into the scene from Blender's **Asset Browser**.
+
+**Workflow:**
+1. **Save your .blend** — required (the builder needs a working directory).
+2. **Set GTA Root + Region** (in Setup panel) — points at `gta_sa.exe` folder; region narrows IDE/IPL parsing.
+3. **Extract Resources** — unpacks DFF/TXD/COL caches once. Re-runs are skipped if cache already exists.
+4. **Set Output folder** — empty folder where the library `.blend` and thumbnails will live.
+5. Click **Build Asset Library**. Status text shows phase (cache scan → IDE read → preview gen → finalise).
+6. **Edit → Preferences → File Paths → Asset Libraries → Add → your Output folder.**
+
+After that, the Asset Browser shows every vanilla prop as a draggable thumbnail.
+
+**Options:**
+- *Preview size (px)* — thumbnail resolution (default 256, larger = slower but crisper).
+- *Skip previews* — fastest mode, uses Blender placeholder icons. Good for quick iteration.
+- *Skip existing .blend files* — incremental rebuild; only new models get processed.
+- *Regenerate previews* — rerun the thumbnail pass without re-extracting.
+
+> 💡 **First build is slow** (~15–30 min for the full vanilla map at 256 px; custom maps usually finish in a few minutes), subsequent rebuilds are minutes thanks to the «Skip existing .blend files» toggle.
+
+---
+
+## Advanced
+
+> Originally introduced in 1.6.4 as experimental — the features below have stabilised through several release cycles. Edge-case bugs still surface occasionally; report any in [Issues](../../issues).
 
 ### Map Export
 
@@ -1446,8 +1574,7 @@ INU_tools/
 │   ├── prelight.py      # Vertex color baking & post-processing
 │   ├── col_light.py     # COL lighting preview & bake
 │   ├── uv_tools.py      # UV grid tools & panel
-│   ├── model_utils.py   # Model detection by suffixes
-│   └── dff2gltf.py      # DFF → glTF conversion for map import
+│   └── model_utils.py   # Model detection by suffixes
 ├── data/
 │   ├── surface_materials.py  # 179 GTA SA surface types
 │   └── id_manager.py         # Model ID allocation
@@ -1572,8 +1699,8 @@ All scene-level settings stored in `bpy.types.Scene`:
 | gtatools_export_all_dff/col/lod/txd | Export All toggles |
 | gtatools_export_pipeline | Pipeline selection |
 | gtatools_txd_auto_import | Auto TXD on DFF import |
-| gtatools_nvtt_path | NVIDIA Texture Tools path |
 | gtatools_texture_path1/2 | Texture search paths |
+| gtatools_dxt_backend | DXT compression backend (numpy / numpy_fast / gpu) |
 | gtatools_suffix_dff/lod/col | Model suffixes |
 | gtatools_bake_ambient/intensity/gamma | Prelight settings |
 | gtatools_bake_shadows | Enable shadow baking |

@@ -1,6 +1,7 @@
 # INU_tools.ops.txd_import
 # TXD texture dictionary → Blender images + material assignment.
 
+import time
 import numpy as np
 import bpy
 from bpy.props import StringProperty
@@ -74,13 +75,26 @@ def import_txd_bytes(data: bytes, assign_to_materials: bool = False,
     textures whose name is in the set are decoded. Skips DXT decoding
     for everything else — major speedup on big TXDs (vehicle.txd has
     ~150 textures; a single DFF rarely uses more than ~10)."""
+    t0 = time.perf_counter()
     textures = read_txd(data)
     if name_filter is not None:
         textures = [t for t in textures
                     if t.name.lower() in name_filter]
+    t_decode = time.perf_counter() - t0
+
+    t0 = time.perf_counter()
     images = _textures_to_blender_images(textures)
+    t_upload = time.perf_counter() - t0
+
+    t_assign = 0.0
     if assign_to_materials:
+        t0 = time.perf_counter()
         _assign_textures_to_materials(images)
+        t_assign = time.perf_counter() - t0
+
+    print(f"[TXD IMPORT] {len(images)} textures: decode={t_decode:.3f}s "
+          f"upload={t_upload:.3f}s assign={t_assign:.3f}s "
+          f"total={t_decode+t_upload+t_assign:.3f}s")
     return images
 
 
@@ -98,35 +112,135 @@ def import_txd(filepath: str, assign_to_materials: bool = True,
     vehicle.txd for a single car door doesn't drag in 150 unrelated
     textures and freeze Blender.
     """
+    import os
+    fname = os.path.basename(filepath)
+    print(f"[TXD IMPORT] === START {fname} (assign={assign_to_materials}) ===")
+    t0 = time.perf_counter()
     textures = read_txd_file(filepath)
     if name_filter is not None:
+        before = len(textures)
         textures = [t for t in textures
                     if t.name.lower() in name_filter]
+        print(f"[TXD IMPORT] name_filter applied: {before} → {len(textures)} textures")
+    t_decode = time.perf_counter() - t0
+
+    print(f"[TXD IMPORT] decoded textures (name | size | fourcc):")
+    for t in textures:
+        nm = t.name.rstrip('\x00')
+        fc = getattr(t, 'fourcc', 0)
+        fc_str = ''.join(chr((fc >> (i*8)) & 0xFF) for i in range(4)).strip('\x00') or f'0x{fc:08X}'
+        print(f"  • {nm!r:<32} {t.width:>4}x{t.height:<4} {fc_str}")
+
+    t0 = time.perf_counter()
     images = _textures_to_blender_images(textures)
+    t_upload = time.perf_counter() - t0
+
+    print(f"[TXD IMPORT] uploaded {len(images)} images to bpy.data.images. "
+          f"Materials in scene: {len(bpy.data.materials)}, "
+          f"Objects: {len(bpy.data.objects)}")
+    if bpy.data.materials:
+        print(f"[TXD IMPORT] material list (name | dff_texture_name | use_nodes | library):")
+        for m in bpy.data.materials:
+            idprop = m.get('dff_texture_name', '<none>')
+            lib = m.library.filepath if m.library else '<local>'
+            print(f"  • {m.name!r:<32} dff_texture_name={idprop!r:<20} "
+                  f"use_nodes={m.use_nodes} library={lib}")
+
+    # Object dump — shows which objects have material slots and what's
+    # in them. If `bpy.data.materials` is short of expectations, this
+    # reveals whether the scene uses empty slots, shared materials, or
+    # linked references that are stored elsewhere.
+    mesh_objs = [o for o in bpy.data.objects if o.type == 'MESH']
+    print(f"[TXD IMPORT] mesh objects: {len(mesh_objs)} (showing first 30)")
+    for o in mesh_objs[:30]:
+        slot_info = []
+        for i, s in enumerate(o.material_slots):
+            if s.material:
+                idp = s.material.get('dff_texture_name', '')
+                slot_info.append(f"#{i}={s.material.name!r}"
+                                 + (f"[idprop={idp!r}]" if idp else ''))
+            else:
+                slot_info.append(f"#{i}=<empty>")
+        slots_str = ', '.join(slot_info) if slot_info else '<no slots>'
+        print(f"  • obj={o.name!r:<28} slots: {slots_str}")
+    if len(mesh_objs) > 30:
+        print(f"  … and {len(mesh_objs) - 30} more")
+
+    t_assign = 0.0
     if assign_to_materials:
+        t0 = time.perf_counter()
         _assign_textures_to_materials(images)
+        t_assign = time.perf_counter() - t0
+
+    print(f"[TXD IMPORT] === DONE {fname}: {len(images)} textures, "
+          f"decode={t_decode:.3f}s upload={t_upload:.3f}s "
+          f"assign={t_assign:.3f}s total={t_decode+t_upload+t_assign:.3f}s ===")
     return images
 
 
-def _assign_textures_to_materials(images):
-    """Assign imported images to materials whose names match texture names.
+# Single source of truth for alpha detection + linking lives in
+# texture_ops.py. We call link_material_alpha_if_textured() here too,
+# instead of duplicating the logic — that way blend_method, shadow_method
+# and the actual Alpha link stay in sync regardless of which import path
+# (TXD direct, DFF auto-TXD, IMG, etc.) reached the material.
+from .texture_ops import image_has_significant_alpha, link_material_alpha_if_textured
 
-    Матчинг идёт в таком порядке:
-    1. IDProp `dff_texture_name` на материале (выставляется при импорте DFF) —
-       самый надёжный способ, не ломается при Blender-suffix'ах `.001` и т.п.
-    2. Имя материала в нижнем регистре (fallback для старых/ручных сцен).
+
+def _assign_textures_to_materials(images):
+    """Assign imported images to materials and re-evaluate alpha links.
+
+    Two-phase pipeline, both with verbose console diagnostics:
+
+      Phase 1 — name match:
+        For each material, look up an image by ``mat['dff_texture_name']``
+        IDProp, fallback to lowercased material name. If matched, ensure
+        a Principled BSDF + Image Texture node exists, wire Base Color,
+        and re-evaluate the Alpha link via ``image_has_significant_alpha``.
+
+      Phase 2 — fallback alpha pass:
+        For ALL materials in the scene (including those we couldn't match
+        by name), call ``link_material_alpha_if_textured`` so any material
+        that already had a TEX_IMAGE node from elsewhere (DFF import,
+        manual user wiring) also gets its alpha re-evaluated. Catches the
+        case where DFF was imported with an old addon that didn't set
+        ``dff_texture_name``, or material names diverged from texture
+        names (Blender ``.001`` suffix, manual rename, etc.).
+
+    Every step prints a diagnostic line so failures are visible: which
+    material matched how, which image was found, what alpha decision
+    was made, and final summary counts.
     """
     image_map = {img.name.lower(): img for img in images}
 
+    n_total = len(bpy.data.materials)
+    n_matched_idprop = 0
+    n_matched_name = 0
+    n_no_match = 0
+    n_no_bsdf = 0
+    n_alpha_linked = 0
+    n_alpha_unlinked = 0
+
+    print(f"[TXD ASSIGN] Phase 1 — name matching: {n_total} materials, {len(images)} images available")
+
     for mat in bpy.data.materials:
         dff_tex = mat.get('dff_texture_name')
+        match_kind = None
         if dff_tex:
             img = image_map.get(dff_tex.lower())
+            if img is not None:
+                n_matched_idprop += 1
+                match_kind = f"IDProp dff_texture_name={dff_tex!r}"
         else:
             img = image_map.get(mat.name.lower())
+            if img is not None:
+                n_matched_name += 1
+                match_kind = f"name={mat.name!r}"
 
         if img is None:
+            n_no_match += 1
             continue
+
+        print(f"[TXD ASSIGN] mat={mat.name!r} matched via {match_kind} → image={img.name!r}")
 
         if not mat.use_nodes:
             mat.use_nodes = True
@@ -135,32 +249,76 @@ def _assign_textures_to_materials(images):
         nodes = tree.nodes
         links = tree.links
 
-        # Find Principled BSDF
         bsdf = None
         for node in nodes:
             if node.type == 'BSDF_PRINCIPLED':
                 bsdf = node
                 break
         if bsdf is None:
+            n_no_bsdf += 1
+            print(f"[TXD ASSIGN] mat={mat.name!r}: no Principled BSDF → skipping alpha wire")
             continue
 
-        # Check if there's already an image texture connected
         bc_input = bsdf.inputs.get('Base Color')
+        tex_node = None
         if bc_input and bc_input.links:
-            tex_node = bc_input.links[0].from_node
-            if tex_node.type == 'TEX_IMAGE':
+            from_node = bc_input.links[0].from_node
+            if from_node.type == 'TEX_IMAGE':
+                tex_node = from_node
                 tex_node.image = img
-                continue
+                print(f"[TXD ASSIGN] mat={mat.name!r}: reusing existing TEX_IMAGE node, image set to {img.name!r}")
 
-        # Create Image Texture node
-        tex_node = nodes.new('ShaderNodeTexImage')
-        tex_node.image = img
-        tex_node.location = (bsdf.location.x - 300, bsdf.location.y)
+        if tex_node is None:
+            tex_node = nodes.new('ShaderNodeTexImage')
+            tex_node.image = img
+            tex_node.location = (bsdf.location.x - 300, bsdf.location.y)
+            links.new(tex_node.outputs['Color'], bsdf.inputs['Base Color'])
+            print(f"[TXD ASSIGN] mat={mat.name!r}: created new TEX_IMAGE node + Base Color link")
 
-        links.new(tex_node.outputs['Color'], bsdf.inputs['Base Color'])
+        # Single unified call — checks pixels, links/unlinks Alpha,
+        # AND sets material.blend_method correctly. No duplicated logic
+        # between Phase 1 and Phase 2 anymore.
+        was_linked_before = bool(bsdf.inputs.get('Alpha') and bsdf.inputs['Alpha'].is_linked)
+        if link_material_alpha_if_textured(mat):
+            is_linked_after = bool(bsdf.inputs.get('Alpha') and bsdf.inputs['Alpha'].is_linked)
+            if is_linked_after and not was_linked_before:
+                n_alpha_linked += 1
+            elif not is_linked_after and was_linked_before:
+                n_alpha_unlinked += 1
 
-        if img.channels == 4:
-            links.new(tex_node.outputs['Alpha'], bsdf.inputs['Alpha'])
+    print(f"[TXD ASSIGN] Phase 1 done: matched_idprop={n_matched_idprop} "
+          f"matched_name={n_matched_name} no_match={n_no_match} no_bsdf={n_no_bsdf} "
+          f"alpha_linked={n_alpha_linked} alpha_unlinked={n_alpha_unlinked}")
+
+    # ── Phase 2: blanket alpha pass over ALL reachable materials ──
+    # Collects materials from both bpy.data.materials and from every
+    # mesh object's material_slots — covers the case where slots
+    # reference materials missing from the global list (rare but
+    # happens with linked / partially-loaded scenes).
+    # NB: link_material_alpha_if_textured is already imported at module
+    # level above. A second `from .texture_ops import …` here would make
+    # the name a function-local — and Phase 1's earlier reference would
+    # then raise UnboundLocalError before this import statement runs.
+    seen = set()
+    all_mats = []
+    for mat in bpy.data.materials:
+        if mat.name not in seen:
+            seen.add(mat.name)
+            all_mats.append(mat)
+    for obj in bpy.data.objects:
+        if obj.type != 'MESH':
+            continue
+        for slot in obj.material_slots:
+            if slot.material and slot.material.name not in seen:
+                seen.add(slot.material.name)
+                all_mats.append(slot.material)
+
+    n_phase2_changed = 0
+    for mat in all_mats:
+        if link_material_alpha_if_textured(mat):
+            n_phase2_changed += 1
+    print(f"[TXD ASSIGN] Phase 2 done: visited={len(all_mats)} (incl. slot-only materials) "
+          f"alpha_changed={n_phase2_changed}")
 
 
 # ──────────────────── Blender operator wrapper ────────────────────────

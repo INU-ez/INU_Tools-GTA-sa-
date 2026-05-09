@@ -1073,6 +1073,11 @@ class DffClump:
     raw_geometry_list: bytes = b''  # Raw geometry list bytes for round-trip
     raw_atomics: bytes = b''  # Raw atomic bytes for round-trip
     uv_anim_dict: Optional['UVAnimDict'] = None  # Clump-level UV anim dictionary
+    # Top-level RW chunks that appear in the file BEFORE the Clump
+    # chunk — vanilla SA ships some files like that (UV Animation Dict
+    # at 0x2B, Animation at 0x1B). Stored verbatim and re-emitted on
+    # export to preserve the file's binary identity.
+    pre_clump_data: bytes = b''
 
     def to_bytes(self) -> bytes:
         _validate_dff_writable(self)
@@ -1162,7 +1167,11 @@ class DffClump:
             clump_ext += self.uv_anim_dict.to_bytes(lib_id)
         body += _chunk(CHUNK_EXTENSION, clump_ext, lib_id)
 
-        return _chunk(CHUNK_CLUMP, body, lib_id)
+        # Pre-Clump chunks (UV Animation Dictionary, etc.) preserved
+        # from the original file. Re-emitted verbatim before the Clump
+        # so round-trip stays byte-identical for files like
+        # chinafurn1.dff that the engine reads via linear chunk walk.
+        return self.pre_clump_data + _chunk(CHUNK_CLUMP, body, lib_id)
 
 
 def write_dff(clump: DffClump) -> bytes:
@@ -1833,10 +1842,39 @@ def read_dff(data: bytes) -> DffClump:
     r = BinaryReader(data)
     clump = DffClump()
 
-    # Root chunk must be Clump
-    ct, cs, cl = _read_chunk_header(r)
-    if ct != CHUNK_CLUMP:
-        raise ValueError(f"Expected Clump chunk (0x10), got 0x{ct:X}")
+    # Vanilla SA ships some DFFs (chinafurn1.dff, casinoblock2_nt.dff,
+    # aptcanopynit_lvs01.dff, ...) where Clump (0x10) is preceded by
+    # other top-level RW chunks — most commonly UV Animation Dictionary
+    # (0x2B). The game's RW loader walks chunks linearly and processes
+    # whichever one it finds. We do the same: any non-Clump chunks
+    # before Clump are kept verbatim as raw bytes so write_dff() can
+    # emit them again on export (round-trip preservation).
+    pre_clump_start = r.pos
+    while True:
+        snap = r.pos
+        ct, cs, cl = _read_chunk_header(r)
+        if ct == CHUNK_CLUMP:
+            break
+        # Sanity: refuse to follow a wildly out-of-range chunk header
+        # rather than skip past EOF on a truly broken file.
+        if cs > len(data) - r.pos:
+            r.seek(snap)
+            raise ValueError(f"Expected Clump chunk (0x10), got 0x{ct:X}")
+        r.skip(cs)
+        if r.pos >= len(data):
+            r.seek(snap)
+            raise ValueError(f"Expected Clump chunk (0x10), got 0x{ct:X}")
+    if r.pos > pre_clump_start + 12:
+        # We consumed at least one full pre-Clump chunk. Store its raw
+        # bytes (header + body) for re-emission on export. r.pos is
+        # currently at the start of the Clump *body*, i.e. 12 bytes
+        # past the Clump header — back up to keep the slice exclusive
+        # of the Clump header itself.
+        clump.pre_clump_data = bytes(data[pre_clump_start:r.pos - 12])
+        # Re-read the Clump header so the variables ct, cs, cl reflect
+        # the Clump chunk and not whatever pre-chunk was last skipped.
+        r.seek(r.pos - 12)
+        ct, cs, cl = _read_chunk_header(r)
 
     clump.version = _decode_library_id(cl)[0]
     clump_end = r.pos + cs

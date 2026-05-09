@@ -3,12 +3,63 @@
 import bpy
 import struct
 import os
-import tempfile
-import subprocess
+import time
 import numpy as np
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 
 from .. import T
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Per-session DXT cache — keyed by Image.session_uid + name + size +
+# alpha-mode + backend. Hit-path skips the entire prepare→encode→assemble
+# pipeline and reuses the previously emitted tex_native bytes.
+#
+# Invalidation comes for free from Blender: session_uid changes whenever
+# the user reloads/replaces an Image datablock (Image > Reload, importing
+# a new file under the same name, etc.). It does NOT detect in-place
+# pixel edits in the Image Editor — fine for game-modding workflow where
+# textures originate from .png/.dds files.
+#
+# LRU with a soft cap so a long Blender session iterating over many
+# different texture sets doesn't grow memory unbounded. Each entry is
+# ~50KB–1MB depending on resolution; cap × 256 ≈ 200MB worst case.
+# ─────────────────────────────────────────────────────────────────────
+
+_TEXTURE_CACHE = OrderedDict()
+_TEXTURE_CACHE_LIMIT = 256
+
+
+def _cache_key(name, image, use_alpha, backend):
+    """Stable cache key. ``None`` means "don't cache" (older Blender)."""
+    try:
+        uid = image.session_uid
+    except AttributeError:
+        return None  # Pre-4.0 Blender — no stable per-datablock UID
+    return (uid, name, image.size[0], image.size[1], bool(use_alpha), backend)
+
+
+def _cache_get(key):
+    if key is None or key not in _TEXTURE_CACHE:
+        return None
+    _TEXTURE_CACHE.move_to_end(key)
+    return _TEXTURE_CACHE[key]
+
+
+def _cache_set(key, value):
+    if key is None:
+        return
+    _TEXTURE_CACHE[key] = value
+    _TEXTURE_CACHE.move_to_end(key)
+    while len(_TEXTURE_CACHE) > _TEXTURE_CACHE_LIMIT:
+        _TEXTURE_CACHE.popitem(last=False)
+
+
+def clear_dxt_cache():
+    """Drop all cached tex_native bytes. Useful after manual pixel edits
+    in the Image Editor that the session_uid heuristic doesn't catch."""
+    _TEXTURE_CACHE.clear()
 
 # =============================================================================
 # TXD EXPORTER
@@ -29,168 +80,6 @@ ADDRESS_WRAP = 0x01
 
 def make_filter_flags():
     return FILTER_LINEAR | (ADDRESS_WRAP << 8) | (ADDRESS_WRAP << 12)
-
-
-def check_nvtt_available(nvtt_path):
-    """Проверить доступность NVIDIA Texture Tools"""
-    if not nvtt_path or not os.path.isdir(nvtt_path):
-        return False, T("Папка NVTT не найдена")
-    nvcompress = os.path.join(nvtt_path, "nvcompress.exe")
-    if not os.path.isfile(nvcompress):
-        return False, T("nvcompress.exe не найден в указанной папке")
-    return True, nvcompress
-
-
-def _nvtt_prepare_png(name, image):
-    """Save *image* as a PNG to the system temp dir for NVTT to read.
-
-    Must run on the main thread — uses ``image.save()`` which is a
-    Blender API call. Returns ``(name, input_png, output_dds, w, h)``
-    so the parallel-safe second half can pick up without touching bpy.
-    """
-    temp_dir = tempfile.gettempdir()
-    safe_name = "".join(c if c.isalnum() or c in "._-" else "_" for c in name)
-    input_file = os.path.join(temp_dir, f"_nvtt_{safe_name}.png")
-    output_file = os.path.join(temp_dir, f"_nvtt_{safe_name}.dds")
-
-    old_path = image.filepath_raw
-    old_format = image.file_format
-    try:
-        image.filepath_raw = input_file
-        image.file_format = 'PNG'
-        image.save()
-    finally:
-        image.filepath_raw = old_path
-        image.file_format = old_format
-
-    width, height = image.size[0], image.size[1]
-    return name, input_file, output_file, width, height
-
-
-def _nvtt_compress_and_parse(prepared, use_alpha, nvcompress_path):
-    """Run ``nvcompress.exe`` on the pre-saved PNG and assemble a
-    Native Texture chunk from the resulting DDS. Pure-Python — no
-    bpy access — so it's safe to run in a ``ThreadPoolExecutor``
-    worker. Returns the texture-native bytes or ``None`` on failure.
-    """
-    name, input_file, output_file, width, height = prepared
-
-    # ``-bc1`` = DXT1, ``-bc2`` = DXT3. Alpha-flag tells nvcompress
-    # that the source PNG has a meaningful alpha channel.
-    fmt = "-bc2" if use_alpha else "-bc1"
-    alpha_flag = ["-alpha"] if use_alpha else []
-    cmd_nocuda = [nvcompress_path, "-nocuda", fmt, "-mipmap"] + alpha_flag + [input_file, output_file]
-    cmd_cuda = [nvcompress_path, fmt, "-mipmap"] + alpha_flag + [input_file, output_file]
-
-    result = subprocess.run(cmd_cuda, capture_output=True, timeout=60)
-    if result.returncode != 0:
-        result = subprocess.run(cmd_nocuda, capture_output=True, timeout=60)
-
-    if not os.path.exists(output_file):
-        return None
-    return _build_tex_native_from_dds(name, output_file, use_alpha)
-
-
-def compress_with_nvtt(name, image, use_alpha, nvcompress_path):
-    """Сжать текстуру через NVIDIA Texture Tools (GPU)
-
-    Backward-compatible serial entry point — saves the PNG and runs
-    the compressor + DDS parse in one call. Newer code paths (Map
-    Export, batch IMG export) split these stages so the subprocess
-    spawn can fan out across worker threads.
-    """
-    try:
-        prepared = _nvtt_prepare_png(name, image)
-        return _nvtt_compress_and_parse(prepared, use_alpha, nvcompress_path)
-    except Exception as e:
-        print(f"NVTT ERROR: {name}: {e}")
-        return None
-
-
-def _build_tex_native_from_dds(name, output_file, use_alpha):
-    """Read a DDS file and turn it into the RW Texture-Native chunk
-    bytes (PLATFORM_D3D9, single TextureNative record). Pure I/O +
-    binary fiddling — no bpy access. Cleans up the temp files
-    (both the DDS output and the matching ``_nvtt_<name>.png``)
-    before returning."""
-    input_file = output_file.replace('.dds', '.png')
-    try:
-        with open(output_file, 'rb') as f:
-            dds_data = f.read()
-        if dds_data[:4] != b'DDS ':
-            return None
-
-        dds_height = struct.unpack('<I', dds_data[12:16])[0]
-        dds_width = struct.unpack('<I', dds_data[16:20])[0]
-        mip_count = struct.unpack('<I', dds_data[28:32])[0]
-        if mip_count == 0:
-            mip_count = 1
-
-        # DX10 extended header pushes the pixel block 20 bytes further.
-        pf_fourcc = dds_data[84:88]
-        header_size = 148 if pf_fourcc == b'DX10' else 128
-        pixel_data = dds_data[header_size:]
-
-        if use_alpha:
-            dxt_type = 3
-            raster_format = RASTER_8888 | RASTER_MIPMAP
-            depth = 32
-            block_size = 16
-        else:
-            dxt_type = 1
-            raster_format = RASTER_565 | RASTER_MIPMAP
-            depth = 16
-            block_size = 8
-
-        tex_name = name[:31].encode('ascii', errors='replace').ljust(32, b'\x00')
-        fourcc = b'DXT1' if dxt_type == 1 else b'DXT3'
-
-        struct_data = bytearray()
-        struct_data.extend(struct.pack('<II', PLATFORM_D3D9, make_filter_flags()))
-        struct_data.extend(tex_name)
-        struct_data.extend(b'\x00' * 32)
-        struct_data.extend(struct.pack('<I', raster_format))
-        struct_data.extend(fourcc)
-        struct_data.extend(struct.pack('<HH', dds_width, dds_height))
-        struct_data.extend(struct.pack('<B', depth))
-        struct_data.extend(struct.pack('<B', mip_count))
-        struct_data.extend(struct.pack('<B', 4))   # raster type
-        struct_data.extend(struct.pack('<B', 0x08))  # D3D format flag
-
-        offset = 0
-        mip_w, mip_h = dds_width, dds_height
-        for _ in range(mip_count):
-            blocks_x = max(1, (mip_w + 3) // 4)
-            blocks_y = max(1, (mip_h + 3) // 4)
-            mip_size = blocks_x * blocks_y * block_size
-
-            if offset + mip_size <= len(pixel_data):
-                mip_data = pixel_data[offset:offset + mip_size]
-                struct_data.extend(struct.pack('<I', len(mip_data)))
-                struct_data.extend(mip_data)
-                offset += mip_size
-
-            mip_w = max(1, mip_w // 2)
-            mip_h = max(1, mip_h // 2)
-
-        tex_native = bytearray()
-        write_rw_section_header(tex_native, RW_STRUCT, len(struct_data))
-        tex_native.extend(struct_data)
-        write_rw_section_header(tex_native, RW_EXTENSION, 0)
-
-        return bytes(tex_native)
-
-    except Exception as e:
-        print(f"NVTT ERROR: {name}: {e}")
-        return None
-
-    finally:
-        for tmp in (input_file, output_file):
-            try:
-                if os.path.exists(tmp):
-                    os.remove(tmp)
-            except Exception:
-                pass
 
 
 def write_rw_section_header(data, section_type, size):
@@ -351,70 +240,23 @@ def pad_to_4x4(pixels, width, height):
     return padded, pad_w, pad_h
 
 
-def compress_dxt1_block(rgb):
-    rgb = rgb.astype(np.float32)
-    lum = rgb[:, 0] * 0.299 + rgb[:, 1] * 0.587 + rgb[:, 2] * 0.114
-    min_idx, max_idx = np.argmin(lum), np.argmax(lum)
-    c0, c1 = rgb[max_idx], rgb[min_idx]
-
-    def to_565(c):
-        r = int(np.clip(c[0] / 255.0 * 31 + 0.5, 0, 31))
-        g = int(np.clip(c[1] / 255.0 * 63 + 0.5, 0, 63))
-        b = int(np.clip(c[2] / 255.0 * 31 + 0.5, 0, 31))
-        return (r << 11) | (g << 5) | b
-
-    def from_565(c):
-        return np.array([
-            ((c >> 11) & 0x1F) * 255.0 / 31.0,
-            ((c >> 5) & 0x3F) * 255.0 / 63.0,
-            (c & 0x1F) * 255.0 / 31.0
-        ])
-
-    color0, color1 = to_565(c0), to_565(c1)
-
-    # Для DXT3 нужен режим 4 цветов (color0 > color1)
-    if color0 < color1:
-        color0, color1 = color1, color0
-
-    # Палитру строим из 565 значений (как будет при декомпрессии)
-    c0_565 = from_565(color0)
-    c1_565 = from_565(color1)
-    palette = np.array([c0_565, c1_565, (2.0*c0_565 + c1_565)/3.0, (c0_565 + 2.0*c1_565)/3.0])
-    indices = 0
-    for i in range(16):
-        dists = np.sum((rgb[i] - palette) ** 2, axis=1)
-        indices |= (np.argmin(dists) << (i * 2))
-    return struct.pack('<HHI', color0, color1, indices)
+def compress_miplevel_bc1_numpy(pixels, fast=False):
+    """Vectorized BC1/DXT1 via core.dxt — drop-in for compress_miplevel_dxt1."""
+    from ..core.dxt import encode_bc1
+    return encode_bc1(pixels, fast=fast)
 
 
-def compress_dxt3_block(rgba):
-    alpha_data = 0
-    for i in range(16):
-        a4 = int(np.clip(rgba[i, 3] / 255.0 * 15 + 0.5, 0, 15))
-        alpha_data |= (a4 << (i * 4))
-    alpha_bytes = struct.pack('<Q', alpha_data)
-    color_bytes = compress_dxt1_block(rgba[:, :3])
-    return alpha_bytes + color_bytes
+def compress_miplevel_bc2_numpy(pixels, fast=False):
+    """Vectorized BC2/DXT3 via core.dxt — drop-in for compress_miplevel_dxt3.
+    Matches the existing on-disk format (fourcc 'DXT3', 4-bit explicit alpha)."""
+    from ..core.dxt import encode_bc2
+    return encode_bc2(pixels, fast=fast)
 
 
-def compress_miplevel_dxt1(pixels):
-    h, w = pixels.shape[:2]
-    compressed = bytearray()
-    for y in range(0, h, 4):
-        for x in range(0, w, 4):
-            block = pixels[y:y+4, x:x+4, :3].reshape(16, 3)
-            compressed.extend(compress_dxt1_block(block))
-    return bytes(compressed)
-
-
-def compress_miplevel_dxt3(pixels):
-    h, w = pixels.shape[:2]
-    compressed = bytearray()
-    for y in range(0, h, 4):
-        for x in range(0, w, 4):
-            block = pixels[y:y+4, x:x+4].reshape(16, 4)
-            compressed.extend(compress_dxt3_block(block))
-    return bytes(compressed)
+def compress_miplevel_bc3_numpy(pixels, fast=False):
+    """Vectorized BC3/DXT5 via core.dxt — interpolated alpha, fourcc 'DXT5'."""
+    from ..core.dxt import encode_bc3
+    return encode_bc3(pixels, fast=fast)
 
 
 def create_texture_native(name, image, use_alpha):
@@ -490,16 +332,38 @@ def create_texture_native(name, image, use_alpha):
 
 
 def prepare_texture_data(name, image, use_alpha):
-    """Prepare texture data in main thread (Blender data access)"""
+    """Main thread only: fast pixel read via ``image.pixels.foreach_get``.
+
+    Returns ``(name, flat_float32, width, height, use_alpha)`` — the
+    reshape + uint8 conversion + vertical flip is deferred to worker
+    threads (see ``_flat_to_uint8``) so only the bpy-touching part stays
+    on the main thread, and only as long as foreach_get takes (one
+    C-level memcpy, ~5ms even on a 1024² image).
+
+    Replaces the old ``np.array(image.pixels[:])`` path, which iterated
+    the pixel sequence in pure Python and could take 100–500ms per
+    1024² image — bottleneck for the entire export."""
     width, height = image.size[0], image.size[1]
-    pixels = np.array(image.pixels[:]).reshape(height, width, 4)
-    pixels = (pixels * 255).astype(np.uint8)
-    pixels = np.flipud(pixels)
-    return (name, pixels, width, height, use_alpha)
+    flat = np.empty(width * height * 4, dtype=np.float32)
+    image.pixels.foreach_get(flat)
+    return (name, flat, width, height, use_alpha)
 
 
-def process_texture_parallel(texture_data):
-    """Process prepared texture data (can run in parallel)"""
+def _flat_to_uint8(flat, width, height):
+    """Worker thread: float32 [0,1] flat buffer → (h, w, 4) uint8, flipped vertically.
+    Pure numpy, releases GIL → genuine parallel speedup across textures."""
+    arr = (flat.reshape(height, width, 4) * 255).astype(np.uint8)
+    return np.flipud(arr)
+
+
+def _build_tex_native_from_pixels(texture_data, cmp_dxt1, cmp_dxt3):
+    """Shared mip-chain + texture-native assembly.
+
+    Encoder callbacks have signature ``cmp(pixels, mip_index) → bytes``.
+    The ``mip_index`` argument lets backends route differently per mip
+    (e.g., the hybrid GPU/numpy encoder uses GPU for mip 0 and numpy
+    for the smaller mips where dispatch overhead dominates).
+    """
     name, pixels, width, height, use_alpha = texture_data
 
     new_w = (width + 3) // 4 * 4
@@ -518,30 +382,31 @@ def process_texture_parallel(texture_data):
     mip_levels = []
     current_pixels = pixels
     current_w, current_h = width, height
+    mip_index = 0
 
     while current_w >= 1 and current_h >= 1:
         compress_pixels, _, _ = pad_to_4x4(current_pixels, current_w, current_h)
         if use_alpha:
-            compressed = compress_miplevel_dxt3(compress_pixels)
+            compressed = cmp_dxt3(compress_pixels, mip_index)
         else:
-            compressed = compress_miplevel_dxt1(compress_pixels)
+            compressed = cmp_dxt1(compress_pixels, mip_index)
         mip_levels.append(compressed)
         current_pixels, current_w, current_h = downsample_image(current_pixels, current_w, current_h)
         if current_pixels is None:
             break
+        mip_index += 1
 
     if use_alpha:
-        dxt_type = 3
         raster_format = RASTER_8888 | RASTER_MIPMAP
         depth = 32
+        fourcc = b'DXT3'
     else:
-        dxt_type = 1
         raster_format = RASTER_565 | RASTER_MIPMAP
         depth = 16
+        fourcc = b'DXT1'
 
     tex_name = name[:31].encode('ascii', errors='replace').ljust(32, b'\x00')
     mip_count = len(mip_levels)
-    fourcc = b'DXT1' if dxt_type == 1 else b'DXT3'
 
     struct_data = bytearray()
     struct_data.extend(struct.pack('<II', PLATFORM_D3D9, make_filter_flags()))
@@ -553,7 +418,7 @@ def process_texture_parallel(texture_data):
     struct_data.extend(struct.pack('<B', depth))
     struct_data.extend(struct.pack('<B', mip_count))
     struct_data.extend(struct.pack('<B', 4))  # raster type
-    # D3D format flag: 0x08 для DXT1, 0x09 для DXT3 (с альфой)
+    # D3D format flag: 0x08 for DXT1, 0x09 for DXT3 (with alpha)
     struct_data.extend(struct.pack('<B', 0x09 if use_alpha else 0x08))
 
     for mip_data in mip_levels:
@@ -564,215 +429,342 @@ def process_texture_parallel(texture_data):
     write_rw_section_header(tex_native, RW_STRUCT, len(struct_data))
     tex_native.extend(struct_data)
     write_rw_section_header(tex_native, RW_EXTENSION, 0)
-
     return bytes(tex_native)
 
 
-def export_txd(filepath, context, selected_only=False, use_gpu=False):
+def process_texture_parallel(texture_data, backend='numpy'):
+    """Worker thread: float-flat → uint8 → mip chain → texture-native bytes.
+
+    ``backend``:
+        'numpy'      — range-fit on mip 0 only (best quality where it
+                       matters), bbox-int on mip 1+ (4×4..8×8..32×32 etc.,
+                       where the algorithmic difference is invisible).
+        'numpy_fast' — bbox-int everywhere (~2× faster than full range-fit)
+    """
+    name, flat, width, height, use_alpha = texture_data
+    fast_all = (backend == 'numpy_fast')
+
+    _t0 = time.perf_counter()
+    pixels = _flat_to_uint8(flat, width, height)
+    _numpy_timing['flat_to_uint8'] += time.perf_counter() - _t0
+
+    encode_acc = {'enc': 0.0}
+
+    # Smart mip routing: on default 'numpy', upgrade only mip 0 to range-fit
+    # (where the highest detail lives) and use bbox-int for everything below.
+    # Saves ~17% of encode-aggregate at no perceptible quality cost.
+    def _use_fast(mip_index):
+        return fast_all or mip_index > 0
+
+    def _bc1(p, mip_index):
+        _et = time.perf_counter()
+        result = compress_miplevel_bc1_numpy(p, fast=_use_fast(mip_index))
+        encode_acc['enc'] += time.perf_counter() - _et
+        return result
+
+    def _bc2(p, mip_index):
+        _et = time.perf_counter()
+        result = compress_miplevel_bc2_numpy(p, fast=_use_fast(mip_index))
+        encode_acc['enc'] += time.perf_counter() - _et
+        return result
+
+    _t0 = time.perf_counter()
+    result = _build_tex_native_from_pixels(
+        (name, pixels, width, height, use_alpha), _bc1, _bc2)
+    total = time.perf_counter() - _t0
+    _numpy_timing['encode'] += encode_acc['enc']
+    _numpy_timing['assemble'] += total - encode_acc['enc']
+    _numpy_timing['count'] += 1
+    return result
+
+
+# Granular numpy export timing — accumulated across all worker threads.
+# Helps decompose where the 500ms-on-54-textures actually goes:
+#   prepare        — main-thread foreach_get pixel reads
+#   flat_to_uint8  — reshape + *255 + flipud (worker)
+#   encode         — encode_bc1/bc2 (worker, the real BC1 cost)
+#   assemble       — mip downsampling + struct packing (worker)
+_numpy_timing = {'prepare': 0.0, 'flat_to_uint8': 0.0, 'encode': 0.0,
+                 'assemble': 0.0, 'count': 0}
+
+
+def reset_numpy_timing():
+    global _numpy_timing
+    _numpy_timing = {'prepare': 0.0, 'flat_to_uint8': 0.0, 'encode': 0.0,
+                     'assemble': 0.0, 'count': 0}
+
+
+def print_numpy_timing():
+    n = _numpy_timing['count']
+    if n == 0:
+        return
+    total = sum(v for k, v in _numpy_timing.items() if k != 'count')
+    print(f"[numpy timing] {n} textures, total={total:.3f}s")
+    for phase in ('prepare', 'flat_to_uint8', 'encode', 'assemble'):
+        t = _numpy_timing[phase]
+        print(f"  {phase:14s} {t*1000:8.1f}ms ({100*t/total:5.1f}%)  avg/tex {t*1000/n:6.2f}ms")
+
+
+def _pad_mip0(pixels, width, height):
+    """Right/bottom-edge replicate to 4×4 alignment for mip 0. Mirrors
+    the same padding that ``_build_tex_native_from_pixels`` applies
+    internally so pre-encoded GPU mip 0 bytes are byte-compatible
+    with what the assembly pass expects."""
+    new_w = (width + 3) // 4 * 4
+    new_h = (height + 3) // 4 * 4
+    if new_w == width and new_h == height:
+        return pixels, width, height
+    padded = np.zeros((new_h, new_w, 4), dtype=np.uint8)
+    padded[:height, :width] = pixels
+    if width < new_w:
+        padded[:height, width:] = pixels[:, -1:, :]
+    if height < new_h:
+        padded[height:, :] = padded[height-1:height, :]
+    return padded, new_w, new_h
+
+
+def compress_textures_gpu(dxt1_data, dxt3_data, wm, total, dxt1_count):
+    """Hybrid GPU encoder, three-phase:
+
+      Phase A (main thread, serial) — GPU mip 0 dispatch + read():
+        GPU resources can only be touched from main thread. We dispatch
+        the compute shader and call out_tex.read() (which blocks for
+        GPU work) but DON'T iterate the returned Buffer yet. Returns a
+        ``handle`` per texture: (raw_buffer, blocks_x, blocks_y).
+
+      Phase B (worker threads, parallel) — Buffer→bytes finalize:
+        The slow Python iteration over the Buffer (read_iter, was 57%
+        of GPU phase time) is moved off main thread. While the main
+        thread queues more dispatches, workers process previous
+        results. Pure Python+numpy, no GPU calls, safe in workers.
+
+      Phase C (worker threads, parallel) — numpy mip 1+ + assembly:
+        Same workers also do the smaller mip levels and assemble the
+        final texture-native byte blobs. This was the previous Phase B.
+
+    Phases B and C are merged into a single worker task per texture."""
+    from ..core.dxt_gpu import (
+        encode_bc1_gpu_dispatch, encode_bc1_gpu_finalize,
+        encode_bc2_gpu_dispatch, encode_bc2_gpu_finalize,
+        reset_timing, print_timing,
+    )
+
+    reset_timing()
+
+    # ── Phase A: dispatch + GPU sync for every texture, main thread ──
+    # data is now (name, flat_float, w, h, use_alpha) per the foreach_get
+    # change; we have to materialize uint8 pixels here (small numpy cost
+    # per texture, dominated by GPU work that follows).
+    handle_map = {}  # id(data) -> ('bc1' | 'bc2', deferred handle)
+    for i, data in enumerate(dxt1_data):
+        wm.progress_update(total + i)
+        try:
+            name, flat, w, h, _ = data
+            pixels = _flat_to_uint8(flat, w, h)
+            padded, _, _ = _pad_mip0(pixels, w, h)
+            handle_map[id(data)] = ('bc1', encode_bc1_gpu_dispatch(padded))
+        except Exception as e:
+            print(f"TXD GPU mip0 dispatch ERROR ({data[0]}): {e}")
+            handle_map[id(data)] = ('bc1', None)
+    for i, data in enumerate(dxt3_data):
+        wm.progress_update(total + dxt1_count + i)
+        try:
+            name, flat, w, h, _ = data
+            pixels = _flat_to_uint8(flat, w, h)
+            padded, _, _ = _pad_mip0(pixels, w, h)
+            handle_map[id(data)] = ('bc2', encode_bc2_gpu_dispatch(padded))
+        except Exception as e:
+            print(f"TXD GPU mip0 dispatch ERROR ({data[0]}): {e}")
+            handle_map[id(data)] = ('bc2', None)
+
+    print_timing()  # GPU dispatch+read phase only
+
+    # ── Phase B+C: finalize + numpy mips 1+ + assembly (workers) ──
+    def _build_one(data):
+        # Reshape flat float buffer to uint8 image inside the worker.
+        name, flat, w, h, use_alpha = data
+        pixels = _flat_to_uint8(flat, w, h)
+        tex_data = (name, pixels, w, h, use_alpha)
+
+        kind, handle = handle_map[id(data)]
+        if handle is not None:
+            mip0 = (encode_bc1_gpu_finalize(handle) if kind == 'bc1'
+                    else encode_bc2_gpu_finalize(handle))
+        else:
+            mip0 = None
+
+        def _bc1(p, mip_index):
+            if mip_index == 0 and mip0 is not None:
+                return mip0
+            return compress_miplevel_bc1_numpy(p)
+
+        def _bc2(p, mip_index):
+            if mip_index == 0 and mip0 is not None:
+                return mip0
+            return compress_miplevel_bc2_numpy(p)
+
+        return _build_tex_native_from_pixels(tex_data, _bc1, _bc2)
+
+    results = []
+    num_workers = min(8, os.cpu_count() or 4)
+    with ThreadPoolExecutor(max_workers=num_workers) as executor:
+        futures = [executor.submit(_build_one, d) for d in dxt1_data]
+        futures += [executor.submit(_build_one, d) for d in dxt3_data]
+        for fut in futures:
+            try:
+                results.append(fut.result())
+            except Exception as e:
+                print(f"TXD hybrid Phase B+C ERROR: {e}")
+    return results
+
+
+def export_txd(filepath, context, selected_only=False, backend=None, **_legacy):
+    """Export textures to a .txd archive.
+
+    ``backend``: 'numpy' (vectorized CPU, default) or 'gpu' (bpy.gpu
+    compute shader, WIP). Anything else routes to numpy.
+
+    ``**_legacy`` swallows obsolete kwargs like ``use_gpu`` from older
+    callers we haven't migrated yet — keeps things from breaking.
+    """
     textures, transparent_list = collect_textures(selected_only)
     if not textures:
         msg = "No textures found on selected objects" if selected_only else "No textures found in scene"
         return {'CANCELLED'}, msg, []
 
     scene = context.scene
-    nvcompress_path = None
-    mode_name = "CPU"
 
-    # Проверка GPU режима. В 1.8.0 PropertyGroup-консолидация перенесла
-    # все scene-флаги на scene.inu_settings.* — поэтому путь NVTT
-    # читается через scene.inu_settings, а не напрямую с scene как
-    # было в 1.7.0.
-    if use_gpu:
-        nvtt_path = getattr(scene.inu_settings, 'gtatools_nvtt_path', '')
-        available, result = check_nvtt_available(nvtt_path)
-        if not available:
-            return {'CANCELLED'}, f"GPU режим недоступен: {result}\nУкажите путь к NVIDIA Texture Tools в настройках", []
-        nvcompress_path = result
-        mode_name = "GPU (NVTT)"
+    if backend is None:
+        backend = getattr(scene.inu_settings, 'gtatools_dxt_backend', 'numpy')
+
+    if backend == 'gpu':
+        try:
+            from ..core.dxt_gpu import gpu_compute_available
+            if not gpu_compute_available():
+                print("[TXD] GPU compute недоступен — fallback на numpy")
+                backend = 'numpy'
+        except Exception as e:
+            print(f"[TXD] GPU compute import failed ({e}) — fallback на numpy")
+            backend = 'numpy'
+
+    mode_name = {
+        'numpy':      "Numpy (range-fit mip0 + bbox mip1+)",
+        'numpy_fast': "Numpy fast (bbox-int)",
+        'gpu':        "GPU compute",
+    }.get(backend, "Numpy")
 
     wm = context.window_manager
     total = len(textures)
     wm.progress_begin(0, total * 2)
 
-    # Разделяем на DXT1 и DXT3 для правильного порядка (DXT3 в конце)
-    dxt1_images = []  # (name, image, use_alpha) для GPU
-    dxt3_images = []
-    dxt1_data = []    # prepared data для CPU
+    # Two buckets per alpha mode: ``cached`` skips the pipeline entirely;
+    # ``data + key`` lists carry textures that need encoding (key is the
+    # cache slot we'll fill after encoding succeeds).
+    cached_dxt1 = []
+    cached_dxt3 = []
+    dxt1_data = []
     dxt3_data = []
-
+    cache_keys_dxt1 = []   # parallel to dxt1_data
+    cache_keys_dxt3 = []   # parallel to dxt3_data
+    reset_numpy_timing()
     skipped_textures = []
+    cache_hits = 0
     for i, (name, (image, uses_alpha)) in enumerate(textures.items()):
         wm.progress_update(i)
-
-        # Проверка размера - должен быть кратен 4 для DXT
         w, h = image.size[0], image.size[1]
         if w % 4 != 0 or h % 4 != 0:
-            print(f"[TXD] ПРОПУСК {name}: размер {w}x{h} не кратен 4 (DXT требует кратность 4)")
+            print(f"[TXD] ПРОПУСК {name}: размер {w}x{h} не кратен 4")
             skipped_textures.append(f"{name} ({w}x{h})")
+            continue
+
+        key = _cache_key(name, image, uses_alpha, backend)
+        cached = _cache_get(key)
+        if cached is not None:
+            if uses_alpha:
+                cached_dxt3.append(cached)
+            else:
+                cached_dxt1.append(cached)
+            cache_hits += 1
             continue
 
         print(f"[TXD] {name}: {w}x{h}, uses_alpha={uses_alpha}")
         try:
+            _t0 = time.perf_counter()
+            prepared = prepare_texture_data(name, image, uses_alpha)
+            _numpy_timing['prepare'] += time.perf_counter() - _t0
             if uses_alpha:
-                dxt3_images.append((name, image, True))
-                if not use_gpu:
-                    dxt3_data.append(prepare_texture_data(name, image, True))
+                dxt3_data.append(prepared)
+                cache_keys_dxt3.append(key)
             else:
-                dxt1_images.append((name, image, False))
-                if not use_gpu:
-                    dxt1_data.append(prepare_texture_data(name, image, False))
+                dxt1_data.append(prepared)
+                cache_keys_dxt1.append(key)
         except Exception as e:
             print(f"TXD PREPARE ERROR: {name}: {e}")
 
-    dxt1_count = len(dxt1_images)
-    dxt3_count = len(dxt3_images)
+    dxt1_to_encode = len(dxt1_data)
+    dxt3_to_encode = len(dxt3_data)
+    if cache_hits:
+        print(f"[TXD] cache: {cache_hits} hit, "
+              f"{dxt1_to_encode + dxt3_to_encode} miss")
 
-    # Phase 2: Compression
-    tex_natives = []
+    # Phase 2: Compression — only for cache misses.
+    encoded_dxt1 = []
+    encoded_dxt3 = []
+    t_compress_start = time.perf_counter()
 
-    if use_gpu and nvcompress_path:
-        # GPU режим — NVTT для DXT1, CPU для DXT3 (NVTT DXT3 неточный).
-        #
-        # Two-stage pipeline:
-        #   Stage 1 (serial, main thread): image.save() PNG to temp dir.
-        #     Must stay on main thread because Blender's image API is
-        #     not thread-safe.
-        #   Stage 2 (parallel, worker pool): spawn nvcompress.exe per
-        #     PNG and parse the resulting DDS. Pure subprocess + I/O,
-        #     so 4 workers happily overlap GPU encode + disk + parse.
-        # CPU fallback (process_texture_parallel) also gets bucketed
-        # into the same DXT1 future list when image.save fails.
-        prepared_dxt1 = []
-        cpu_fallback_dxt1 = []
-        for i, (name, image, _) in enumerate(dxt1_images):
-            wm.progress_update(total + i)
-            try:
-                prepared_dxt1.append(_nvtt_prepare_png(name, image))
-            except Exception as e:
-                print(f"NVTT PNG save error {name}: {e} — fallback to CPU DXT")
-                try:
-                    cpu_fallback_dxt1.append(prepare_texture_data(name, image, False))
-                except Exception as e2:
-                    print(f"NVTT CPU fallback prepare error {name}: {e2}")
-
-        nvtt_workers = min(4, os.cpu_count() or 4)
-        with ThreadPoolExecutor(max_workers=nvtt_workers) as executor:
-            futures = [
-                executor.submit(_nvtt_compress_and_parse, prep, False, nvcompress_path)
-                for prep in prepared_dxt1
-            ]
-            for prep, future in zip(prepared_dxt1, futures):
-                try:
-                    result = future.result()
-                    if result:
-                        tex_natives.append(result)
-                    else:
-                        # NVTT silently failed (no DDS produced) — re-prepare
-                        # the texture from bpy on main thread for CPU fallback.
-                        # Rare; happens with non-power-of-two oddities.
-                        name_failed = prep[0]
-                        # find the matching image
-                        img = next((img for n, img, _ in dxt1_images if n == name_failed), None)
-                        if img is not None:
-                            try:
-                                cpu_fallback_dxt1.append(
-                                    prepare_texture_data(name_failed, img, False))
-                            except Exception:
-                                pass
-                except Exception as e:
-                    print(f"TXD GPU ERROR: {e}")
-
-        # CPU fallback for any DXT1 textures NVTT couldn't handle
-        if cpu_fallback_dxt1:
-            with ThreadPoolExecutor(max_workers=min(8, os.cpu_count() or 4)) as executor:
-                fallback_futs = [executor.submit(process_texture_parallel, d) for d in cpu_fallback_dxt1]
-                for fut in fallback_futs:
-                    try:
-                        result = fut.result()
-                        if result:
-                            tex_natives.append(result)
-                    except Exception as e:
-                        print(f"TXD CPU fallback ERROR: {e}")
-
-        # DXT3 (alpha) — also route through NVTT for speed.
-        # Historical note: an earlier comment said NVTT BC2 didn't
-        # round-trip cleanly through SA's TXD reader, so DXT3 was kept
-        # on the (slow) CPU encoder. With this branch (full-build) we
-        # accept the tradeoff: GPU path is dramatically faster for
-        # foliage / fence / window TXDs, and any rare BC2 quirks fall
-        # back to CPU automatically (see cpu_fallback_dxt3 below).
-        if dxt3_images:
-            prepared_dxt3 = []
-            cpu_fallback_dxt3 = []
-            for i, (name, image, _) in enumerate(dxt3_images):
-                wm.progress_update(total + dxt1_count + i)
-                try:
-                    prepared_dxt3.append(_nvtt_prepare_png(name, image))
-                except Exception as e:
-                    print(f"NVTT PNG save error {name}: {e} — fallback to CPU DXT3")
-                    try:
-                        cpu_fallback_dxt3.append(prepare_texture_data(name, image, True))
-                    except Exception as e2:
-                        print(f"NVTT CPU fallback prepare error {name}: {e2}")
-
-            with ThreadPoolExecutor(max_workers=nvtt_workers) as executor:
-                futures = [
-                    executor.submit(_nvtt_compress_and_parse, prep, True, nvcompress_path)
-                    for prep in prepared_dxt3
-                ]
-                for prep, future in zip(prepared_dxt3, futures):
-                    try:
-                        result = future.result()
-                        if result:
-                            tex_natives.append(result)
-                        else:
-                            name_failed = prep[0]
-                            img = next((img for n, img, _ in dxt3_images if n == name_failed), None)
-                            if img is not None:
-                                try:
-                                    cpu_fallback_dxt3.append(
-                                        prepare_texture_data(name_failed, img, True))
-                                except Exception:
-                                    pass
-                    except Exception as e:
-                        print(f"TXD GPU (DXT3) ERROR: {e}")
-
-            # CPU fallback for any DXT3 textures NVTT couldn't handle
-            if cpu_fallback_dxt3:
-                with ThreadPoolExecutor(max_workers=min(8, os.cpu_count() or 4)) as executor:
-                    fallback_futs = [executor.submit(process_texture_parallel, d) for d in cpu_fallback_dxt3]
-                    for fut in fallback_futs:
-                        try:
-                            result = fut.result()
-                            if result:
-                                tex_natives.append(result)
-                        except Exception as e:
-                            print(f"TXD CPU (DXT3) fallback ERROR: {e}")
+    if backend == 'gpu':
+        # bpy.gpu compute shader — main thread, serial. GPU path returns
+        # a flat list with DXT1 first, DXT3 second; split it back.
+        gpu_results = compress_textures_gpu(
+            dxt1_data, dxt3_data, wm, total, dxt1_to_encode)
+        encoded_dxt1 = gpu_results[:dxt1_to_encode]
+        encoded_dxt3 = gpu_results[dxt1_to_encode:]
     else:
-        # CPU режим - обрабатываем в правильном порядке (DXT1 первыми)
+        # numpy / numpy_fast — parallel via ThreadPoolExecutor.
         num_workers = min(8, os.cpu_count() or 4)
-
-        # Сначала DXT1
         with ThreadPoolExecutor(max_workers=num_workers) as executor:
-            futures = [executor.submit(process_texture_parallel, data) for data in dxt1_data]
+            futures = [executor.submit(process_texture_parallel, data, backend)
+                       for data in dxt1_data]
             for i, future in enumerate(futures):
                 wm.progress_update(total + i)
                 try:
-                    result = future.result()
-                    tex_natives.append(result)
+                    encoded_dxt1.append(future.result())
                 except Exception as e:
-                    print(f"TXD CPU ERROR: {e}")
-
-        # Потом DXT3
+                    print(f"TXD numpy ERROR: {e}")
+                    encoded_dxt1.append(None)
         with ThreadPoolExecutor(max_workers=num_workers) as executor:
-            futures = [executor.submit(process_texture_parallel, data) for data in dxt3_data]
+            futures = [executor.submit(process_texture_parallel, data, backend)
+                       for data in dxt3_data]
             for i, future in enumerate(futures):
-                wm.progress_update(total + dxt1_count + i)
+                wm.progress_update(total + dxt1_to_encode + i)
                 try:
-                    result = future.result()
-                    tex_natives.append(result)
+                    encoded_dxt3.append(future.result())
                 except Exception as e:
-                    print(f"TXD CPU ERROR: {e}")
+                    print(f"TXD numpy ERROR: {e}")
+                    encoded_dxt3.append(None)
+        if dxt1_to_encode + dxt3_to_encode > 0:
+            print_numpy_timing()
+
+    # Persist freshly-encoded results for the next export.
+    for tex_native, key in zip(encoded_dxt1, cache_keys_dxt1):
+        if tex_native is not None:
+            _cache_set(key, tex_native)
+    for tex_native, key in zip(encoded_dxt3, cache_keys_dxt3):
+        if tex_native is not None:
+            _cache_set(key, tex_native)
+
+    # Assemble final list: DXT1 (cached + encoded) then DXT3 (cached +
+    # encoded). DXT order matters for engine readers; within a bucket
+    # the relative order of cached vs freshly-encoded textures does not.
+    tex_natives = []
+    tex_natives.extend(cached_dxt1)
+    tex_natives.extend(t for t in encoded_dxt1 if t is not None)
+    tex_natives.extend(cached_dxt3)
+    tex_natives.extend(t for t in encoded_dxt3 if t is not None)
+
+    elapsed = time.perf_counter() - t_compress_start
+    print(f"[TXD] backend={mode_name}: {len(tex_natives)} textures "
+          f"encoded in {elapsed:.3f}s")
 
     wm.progress_end()
 
@@ -799,7 +791,7 @@ def export_txd(filepath, context, selected_only=False, use_gpu=False):
         f.write(tex_natives_data)
         f.write(extension_data)
 
-    msg = f"Exported {dxt1_count} DXT1 + {dxt3_count} DXT3 ({mode_name})"
+    msg = f"Exported {len(tex_natives)} textures ({mode_name})"
     if skipped_textures:
         msg += f"\nПРОПУЩЕНО (размер не кратен 4): {', '.join(skipped_textures)}"
     return {'FINISHED'}, msg, transparent_list

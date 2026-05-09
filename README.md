@@ -7,14 +7,9 @@
 **Blender addon for GTA San Andreas modding — full pipeline from modeling to IMG archive.**
 
 <p>
-  <img src="https://img.shields.io/badge/Blender-4.2%E2%80%935.1-orange?logo=blender" alt="Blender">
-  <img src="https://img.shields.io/badge/Version-1.7.0-green" alt="Version">
+  <img src="https://img.shields.io/badge/Blender-2.83%E2%80%935.1-orange?logo=blender" alt="Blender">
+  <img src="https://img.shields.io/badge/Version-1.9.0-green" alt="Version">
   <img src="https://img.shields.io/badge/License-GPL--3.0-blue" alt="License">
-</p>
-<p>
-  <img src="https://komarev.com/ghpvc/?username=INU-ez&color=orange&style=flat-square&label=REPO+VIEWS" alt="Views">
-  <a href="../../issues"><img src="https://img.shields.io/github/issues/INU-ez/INU_Tools-GTA-sa-?color=red" alt="Issues"></a>
-  <a href="../../stargazers"><img src="https://img.shields.io/github/stars/INU-ez/INU_Tools-GTA-sa-?style=social" alt="Stars"></a>
 </p>
 
 **[🇷🇺 Русская версия](docs/README_rus.md)** · **[📖 Documentation](docs/DOCS.md)** · **[⚖️ Compare to Kams / DragonFF](docs/COMPARISON.md)**
@@ -39,7 +34,7 @@
 - ⚡ **Performance** — Import Map ~10×, Export to IMG ~5–15× (parallel DFF parsing + batch IMG writer)
 - 🎨 **Native parsers** — DFF / COL / TXD / IDE / IPL / IMG / IFP / FXP, zero external dependencies
 - 🗺️ **Full map round-trip** — IMG → Blender → edit DFF + COL + TXD → IMG in another build
-- 🎆 **effects.fxp editor** — 82 systems, live particle simulation in viewport
+- 🎆 **`effects.fxp` editor** — 82 systems, live particle simulation in viewport
 - 🦴 **Skinned DFF + IFP** — import peds with 294+ vanilla animations
 - 🆔 **ID Manager** — multi-preset, scene sync, FLA range extension, conflict detection
 
@@ -52,89 +47,79 @@
 </tr>
 </table>
 
-## 🔮 Planned / In Progress
+## 🔮 Coming Next
 
-### 🚧 Coming in next release
+_Nothing in the pipeline right now._
 
-**v1.8.0 — two parallel builds, both on GitHub releases:**
+## 🆕 What's New in 1.9.0
 
-- 🟢 **`INU_Tools-1.8.0-FULL.zip`** — full edition, no restrictions. Faster runtime, every feature available. Recommended for most users.
-- 🟡 **`INU_Tools-1.8.0-STORE.zip`** — extensions.blender.org edition (also published through the official Blender extensions site). Slower runtime, some features cut/disabled to comply with the site's review rules (no `eval`/`exec`, no subprocess, restricted file access, no bundled binaries, etc.).
+- 📦 **Single unified build** — one `.zip` works on GitHub release and on extensions.blender.org. NVTT subprocess path replaced by bundled pure-numpy DXT encoder (`core/dxt.py`, ~7× faster than NVTT, no external binaries)
+- 🔍 **Binary File Linter** — sub-panel «File Scanner» inside Check. Walks DFF/COL/TXD on disk, finds crash-prone patterns (shadow-mesh corruption, NPOT textures, GEOM_NATIVE on PC, atomic/triangle indices out of range, etc.) with explanatory description for every issue code
+- 📚 **Asset Library builder** — turns any IDE/IPL/IMG set (vanilla SA, custom map, modded archive) into a Blender Asset Library with thumbnails, ready to drop into the **Asset Browser**
+- 🎨 **Day/Night V-offset inline** — per-attribute brightness slider directly in the Day/Night row (auto-applies on Enter), survives bake
+- 💡 **Prelight tweaks** — preset selector moved into the Prelight header with a one-click ✓ overwrite button (reports diff of changed fields), Modulate Color values saved per preset, new **Scatter Color** sub-panel paints chosen color around selected polygons with KDTree falloff
+- 🔄 **DFF round-trip for special files** — parser now handles DFFs that start with non-Clump RW chunks (e.g. UV Animation Dictionary 0x2B). Vanilla files like `chinafurn1.dff` import/export byte-identical
+- 🧹 Cleanup: removed `dff2gltf.py`, `extras/nvtt_compress.py`, dropped FULL/STORE build split
 
-Both builds share the same source tree; differences are baked at packaging time. Pick FULL unless you specifically need the addon installed via the official Blender extensions site.
+→ [Full release notes](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v1.9.0) · [Version history](../../releases)
 
-#### What's already in 1.8.0
+## 🧰 Features
 
-**🆕 New features:**
+### Format Support
 
-- **Validate Scene** — single pre-export sweep covering quaternion normalization in armature Actions, Modulate Color flag on prelit meshes, `_ok` / `_dam` damage pair completeness, paintjob slot completeness
-- **FLA IPL support** — extended IPL format from Fastman92 Limit Adjuster
-- **COL progress bar** — feedback when importing large COL libraries
-- **Modulate Color preview** — OFF / Day / Night toggle that adds vanilla SA's `ambient_obj` color from `timecyc.dat` (EXTRASUNNY_LA Midday/Midnight) on top of vertex prelight, with calibrated defaults (mix / contrast / gamma) matching the in-game look
-- **Multi-mesh OBJS** in IDE parser — proper handling of type 1/2/3 forms (5/7/8 fields). Previously type 2/3 lines silently corrupted draw distances and flags
-- **IplOccl canonical field names** — `unknown1/2/3` → `rot_x/rot_y/rot_z/flags` (matches engine's `CFileLoader::LoadOcclusionVolume`); old custom-prop keys still read for backward compat
-- **DFF export Day/Night by name** — no longer picks up intermediate VC-layer artifacts (e.g. `vertex_lights_both`) as Night colors
-- **DFF export performance** — bulk `foreach_get` + numpy for alpha read and FLOAT→BYTE conversion (~2× on 20k+ vertex meshes)
-- **Extended Blender support: 2.83 → 5.1** — `tools/compat.py` layer wraps API differences (vcol API, Mix node, etc.) so the addon runs on every LTS from 2.83 onward. Most features work everywhere; VC Layers System shows a "Requires Blender 3.2+" notice on older versions
+| Format | Import | Export | Edit | What it is |
+|---|:---:|:---:|:---:|---|
+| **DFF** | ✅ | ✅ | ✅ | RenderWare 3D model (geometry, skinning, materials, 2DFX, flags) |
+| **COL** | ✅ | ✅ | ✅ | Collision (COL3, 179 surface types) |
+| **TXD** | ✅ | ✅ | ✅ | Textures (DXT1/DXT5, parallel, pure numpy, drag&drop) |
+| **IDE** | ✅ | ✅ | ✅ | Object definitions (objs/tobj/anim/cars/peds/weap/hier/txdp) |
+| **IPL** | ✅ | ✅ | ✅ | Object placement (text + binary, 11 sections, FLA) |
+| **IMG** | ✅ | ✅ | ✅ | Resource archive (VER2) — DFF + LOD + COL + TXD |
+| **IFP** | ✅ | ✅ | ✅ | Animations (294+ vanilla, batch import, ANP3/ANPK/ANP2) |
+| **FXP** (`effects.fxp`) | ✅ | ✅ | ✅ | Particles — 82 systems, viewport simulation, 40+ parameters |
+| **CST** | ✅ | ✅ | ✅ | Steve's COL Editor text format |
+| **water.dat** | ✅ | ✅ | ✅ | Water: types, snap, waterclear256 texture |
+| **paths.ipl** / **tracks.dat** / **nodes\*.dat** / **flight.dat** | ✅ | ✅ | ✅ | Vehicle/ped paths, rail, compiled path nodes, flight routes |
 
-**🐛 Bug fixes:**
+### Also does
 
-- **IFP export jerky playback** — `bl_quat.normalize()` was missing before rest composition, in-game animations played stepped/jittery
-- **IK rig on rest-pose peds** — IK setup broke when armature came in clean rest pose
-- **DFF / COL vertex limits** — clear `DffLimitError` / `ColLimitError` with model name + count, instead of cryptic `struct.pack` overflow
-- Plus various smaller IK rig + prelight + Vector import fixes
+- 🗺️ **Full Map round-trip** — import the entire map straight from the game folder (IDE + IPL + IMG → Blender), edit, Map Export back preserving the layout
+- 🆔 **ID Manager** — file-backed, multi-preset, scene sync, load from game, FLA range extension, conflict detection
+- 💡 **Prelight baking** — Day/Night vcols, raycast shadows, scatter, LightMap UV2, Modulate Color preview
+- 🎯 **2DFX** — Light / Particle / Ped Attractor / Sun Glare with presets and attach/detach
+- 🎨 **Materials** — Env Map, Bump, Specular, Reflection, UV Animation, Dual Texture, COL Surface
+- 🦴 **Skinned DFF + IK Rig** — armature, weights, FK→IK bake for peds, **Frame Hierarchy Editor** with vanilla VEHICLE/PED templates, byte-perfect round-trip
+- 🎬 **Animated Map Object** — one-click wizard assembles DFF + IFP + IDE for animated objects (windmills, cranes, doors)
+- 🚗 **Vehicle Paintjob** — Pay'n'Spray alt-texture support (`<base>_paintjob1/2`) with pair validation
+- ✅ **Validate Scene** — single pre-export pass (quaternions, flags, damage/paintjob pairing)
+- 🔍 **File Scanner** — lint DFF/COL/TXD from a folder for crash-prone patterns (limit overruns, broken refs)
+- 🗺️ **X Radar Maker** — minimap tile generation (8×8 / menu / full radar) with TXD packing
+- 🧩 **Profile System** — custom N-sidebar layouts (panel visibility / order) saved as JSON, switch between tasks
+- 🚀 **Pipeline suffixes** — `_DFF` / `_LOD` / `_COL` → Export All / Export to IMG in one click
 
-### 🔭 Genuinely future
+## 🧭 UI Panels
 
-_Nothing in this bucket right now._
+| Location | Panel | What's there |
+|---|---|---|
+| `Properties > Scene` | **INU Tools** | IDE/IPL/IMG paths, textures, IMG files |
+| `Properties > Object` | **INU Tools: Model** | Type (auto+manual), Model ID, TXD, Draw Dist, IDE Flags, DFF Flags, Pipeline, Breakable, 2DFX |
+| `Properties > Material` | **GTA Material** (3 tabs) | SURFACE — collision surface type · EFFECTS — Env Map, Bump, Reflection, Specular, UV Animation · PIPELINE |
+| `View3D > Sidebar (N)` | **GTA Tools** | SETUP → MODEL → DATA → EXPORT pipeline (Export at top, ID Manager, Object IDE/IPL, all other sub-panels) |
+| `UV Editor > Sidebar (N)` | **GTA Tools** | UV tools |
 
-> [!NOTE]
-> The addon is under active development. Bug reports are welcome in [Issues](../../issues).
+## ⌨️ Hotkeys
 
-## 🆕 What's new in 1.7.0
-
-A major UX-and-features release. Highlights: **bone-based IK rig** for SA peds (FK→IK bake, brute-force pole calibration, INU_Ground floor limiter), **Animated Map Object** workflow (one-click DFF+IFP+IDE for windmills/cranes), **Frame Hierarchy Editor** with vanilla VEHICLE/PED templates, **Vehicle Paintjob** support (Pay'n'Spray alt textures), **Profile system** (custom N-sidebar layouts saved as JSON), and a deep refactor: monolithic `__init__.py` (16k lines) split into 22 dedicated `ops/*.py` modules.
-
-**Highlights** — IK Rig with FK→IK bake · Animated Map Object Setup wizard · Frame Hierarchy Editor + Validate Vehicle/Ped · Vehicle Paintjob (`<base>_paintjob1/2`) · Profile system (per-user N-sidebar visibility/order) · DFF/COL drag-drop into viewport · Smart auto-TXD picker (coverage-based scoring) · Save-required wrappers · Texture Manager dropdowns (Текстуры/Материалы) · 2DFX collapsible sections + semantic flag groups · BreakableData round-trip · IFP layered-Action support (Blender 5.x).
-
-→ **[Full release notes on GitHub](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v1.7.0)**
-
-<details>
-<summary>Older releases</summary>
-
-- **v1.6.7** — full Map Import → edit → Map Export round-trip preserving IDE / IPL / COL / TXD layout (CRLF, IPL inst dedup, ID consistency across `.NNN` duplicates), modal export with progress bar, `inu.col_name` + `inu.lod_object` properties, Group-by-IPL import + By-collection export split mode, main ↔ LOD pairing, per-`txd_name` TXD bucketing, per-DFF COL by default, modal ESC cancel, multi-collection picker, NVTT auto + parallel DXT1, dedicated Vehicles panel — [release page](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v1.6.7)
-- **v1.6.6-beta** — partial pre-release with the initial 1.6.6 set: Map auto-split (XY grid), damage variants, train paths verified, COL ~5×, VC Layer System (BETA), IFP ANP2 / ANPK write, Bitmaps Manager unused cleanup. Superseded by v1.6.7 (which adds round-trip preservation, modal export, format-conformance fixes) — [release page](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v1.6.6-beta)
-- **v1.6.5-beta** — map-workflow perf release: Import Map ~10× / Export to IMG ~5–15× faster, Load COL + Shared TXD toggles, Skip 2DFX default, ID Manager gaps & phantoms + multi-preset, UI pipeline reorganization (Stages 1-6) + Object Properties *INU Tools: Model* panel, Material Presets in `INU_Preset/`, progress bars (Build Map / Export to IMG / Extract Resources), opt-in Profiler — see [release page](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v1.6.5-beta)
-- **v1.6.4** — Experimental: Map Export (scene→IPL+IDE+COL+TXD one-op), Binary IPL Write, CST IO, UV Animation in DFF, Breakable Objects, IFP Batch Import, GTA Material Panel, Bitmaps Manager, Station Markers, Roadblocks & Traffic Lights, FLA4 Path Format, Vehicle Scale Helper
-- **v1.6.3** — Particle Effects (effects.fxp editor), Object Properties *GTA SA: IDE / IPL* panel, LightMap UV2, 2DFX UI (Detach All, attached effects list), ID Manager (Assign from ID…, Extend IDs FLA), Nodes multi-file I/O with 8×8 zone splitting
-- **v1.6.1** — IPL Import: COL moves with DFF, Empty placeholders; Model Links dashed lines; LOD/COL → DFF snap; Drag & Drop TXD
-- **v1.6.0** — Import Map full workflow, BBox Mode, IPL ZONE section, GPU NVTT auto-detect, Blender 4.2+
-- **v1.5.3** — Skinned DFF + IFP animations, Water IO, Path IO, Blender 5.1 compatibility
-- **v1.5.2** — Modular refactor (tools/ data/), COL Light Preview, Model ID Manager
-- **v1.5.1** — IDE/IPL export/import, IMG Archive export, Dual Texture / Blend Mode
-- **v1.5.0** — Native DFF/COL/TXD (no DragonFF), auto-import TXD, numpy DXT, package structure
-- **v1.4.x** — UV Editor, Post-Processing VC, Fast Bake, DFF Flags, GPU TXD via NVTT, 50 material limit
-- **v1.3.0** — Duplicate material cleanup
-- **v1.2.x** — Export improvements (COL3, GTA SA version, progress bar)
-- **v1.1.0** — DFF/COL/LOD/TXD export, suffix-based detection
-- **v1.0.0** — Initial release
-
-</details>
-
-<details>
-<summary><b>🔧 Compatibility</b></summary>
-
-| | |
+| Key | Action |
 |---|---|
-| **Blender** | 4.2 – 5.1 ✅ |
-| **Game** | GTA San Andreas (also compatible with MTA:SA) |
-| **OS** | Windows / Linux / macOS |
-| **Optional** | NVIDIA GPU (for NVTT texture compression) |
+| `Shift+T` | Toggle UV Editor |
 
-</details>
+A **GTA SA** entry is added to Blender's standard `Shift+A` (Add) menu — quick-insert Army.dff (ped) / Admiral.dff (car).
 
-<details>
-<summary><b>📦 Installation</b></summary>
+## 📹 Video Tutorial
+
+→ [Export & Import IDE / IPL / IMG / Map](https://www.youtube.com/watch?v=Jw_R9QFYxWE)
+
+## 📦 Installation
 
 1. Download the `INU_tools/` folder (or zip archive)
 2. Copy it into your Blender addons directory:
@@ -143,299 +128,13 @@ A major UX-and-features release. Highlights: **bone-based IK rig** for SA peds (
    ```
 3. Open Blender → **Edit → Preferences → Add-ons** → enable **INU_tools(gta_sa)**
 
-</details>
+## 🔧 Compatibility
 
-<details>
-<summary><b>🚀 Quick Start</b></summary>
-
-Name your objects with suffixes, select them, and click **Export All**:
-
-```
-Building01_DFF   ← main mesh
-Building01_LOD   ← low-poly LOD
-Building01_COL   ← collision
-```
-
-The addon auto-assembles DFF + LOD + COL + TXD into one group and exports in a single click.
-
-</details>
-
-<details>
-<summary><b>🧰 Features</b></summary>
-
-Legend: 🆕 new in 1.6.3 · ⚡ performance · 🎨 UI · 📦 format support
-
-<details>
-<summary><b>📤 Export / Import</b></summary>
-
-| Feature | Detail |
+| | |
 |---|---|
-| 📦 DFF export/import | GTA SA v3.6.0.3 |
-| 📦 COL export/import | COL3 format |
-| 📦 LOD export/import | automatic pairing with DFF |
-| 📦 TXD export/import | DXT compression, parallel, GPU via NVTT |
-| 🚀 Export All | batch by suffixes `_DFF` / `_LOD` / `_COL` + auto TXD |
-| 🗂️ Collection export | exports active collection if nothing selected |
-| 🎨 Drag & Drop TXD | drop `.txd` into viewport with auto material creation |
-| 🎨 DFF Flags panel | Normals, Light, Modulate Color, UV1/UV2, Day/Night, BinMesh |
-
-</details>
-
-<details>
-<summary><b>🗺️ IDE / IPL / IMG</b></summary>
-
-| Feature | Detail |
-|---|---|
-| 📦 IDE export/import | all sections (objs, tobj, anim, cars, peds, weap, hier, txdp), upsert/remove, auto-LOD |
-| 📦 IPL export/import | all sections (inst, cull, grge, enex, pick, cars, auzo, jump, occl, tcyc, zone) + binary IPL (bnry) |
-| 🎨 IPL Sections visualization | cull, garage, enex, pickup, cars, auzo, jump, occl, zone as Blender objects |
-| 📦 IMG Archive | export/import DFF + LOD + TXD + COL into `.img` (VER2) |
-| 🗺️ Import Map | extract from IMG, build `.glb`, auto-sort into collections |
-| ⚡ BBox Mode | distant objects → Bounding Box, full models within 300m of selection |
-| 🗺️ Map regions | auto-detected from `gta.dat` (LA, SF, VEGAS, COUNTRY…) |
-| 🆔 Model ID Manager | file (321–19999), sync scene, load from game, search + pagination |
-| 🆔 Assign IDs from number | 🆕 skip occupied IDs, start from any number |
-| 🆔 Extend IDs (FLA) | 🆕 extend range for Fastman Limit Adjuster |
-| 🎨 IDE Flags | 15 checkboxes (IS_ROAD, IS_TREE, DRAW_LAST…) |
-| ⚙️ Custom suffixes/prefixes | `_DFF`, `_LOD`, `_COL`, `LOD`, etc. |
-| 🔗 Model Links | dashed-line visualization DFF↔LOD↔COL |
-| 🗑️ Remove from IMG | delete DFF/COL/TXD by selected object type |
-| 🔍 IMG File List | scrollable UIList with search |
-| 🔄 Replace Empty | replace IPL placeholders with scene models |
-| 🗺️ X Radar Maker | minimap tiles (8×8, menu, full radar) + pack to TXD |
-
-</details>
-
-<details>
-<summary><b>💡 Prelight</b></summary>
-
-| Feature | Detail |
-|---|---|
-| 💡 Vertex Colors baking | Fast / With Shadows |
-| 💡 Raycast shadows | via depsgraph |
-| 🎨 Fill Colors | polygon painting with eyedropper + level system |
-| 💡 Scatter Light | configurable light scattering |
-| 🌓 Day/Night | separate color attributes |
-| 💡 LightMap UV2 | 🆕 Add/Toggle/Remove buttons, Multiply blend |
-| 🔍 Vertex color analysis | and preview |
-| 💡 Prelight COL | vertex colors → COL Day/Night Light |
-| 🎨 COL Light Preview | Edge / Threshold / Contrast settings |
-| ⚙️ Prelight Presets | save/load bake settings |
-
-<details>
-<summary>📹 Tutorial .gif</summary>
-
-![COL Light](docs/gif/col_light.gif)
-
-</details>
-
-</details>
-
-<details>
-<summary><b>🎨 Post-Processing</b></summary>
-
-| Feature | Detail |
-|---|---|
-| 🎨 Smooth | smooth vertex colors between neighboring vertices |
-| 🎨 Smooth Between Objects | smooth VC at seams between different objects |
-| 🎨 Contrast | contrast adjustment |
-| 🎨 Brightness | brightness adjustment |
-| 🎨 Gamma | gamma correction |
-
-</details>
-
-<details>
-<summary><b>🎯 2DFX Effects</b></summary>
-
-| Feature | Detail |
-|---|---|
-| 🎆 Create effects | Light, Particle, Ped Attractor, Sun Glare |
-| 🔗 Attach/Detach to mesh | coordinates auto-recalculated on export |
-| 🔗 Detach All from Mesh | 🆕 batch detach all 2DFX from selected mesh |
-| 🎨 Attached 2DFX list | 🆕 in mesh UI with per-item detach buttons |
-| ⚙️ Presets | Default, OnAllDay, Lamp Post, BB Pickup, Flashing, Train Crossing, Traffic |
-| 🎨 Texture dropdowns | 34 Corona textures, Shadow, Show Mode, Flare Type |
-| 📦 2DFX export | RW Light chunk + 2DFX PLG |
-| 🎨 Real-time visualization | and editing of all effects |
-
-<details>
-<summary>📹 Tutorial .gif</summary>
-
-![2DFX](docs/gif/2DFX.gif)
-
-</details>
-
-</details>
-
-<details>
-<summary><b>🎆 Particle Effects (<code>effects.fxp</code>)</b></summary>
-
-> 🆕 **Fully new in 1.6.3** — edit GTA SA particles directly in Blender.
-
-| Feature | Detail |
-|---|---|
-| 📦 Full parser | text-based `effects.fxp`, 82 effects |
-| ⚡ Viewport simulation | 30 FPS, up to 64 particles per emitter |
-| 🎨 Effect dropdown | pick from all systems in `effects.fxp` |
-| 🎨 Multi-emitter switching | browse emitters within a single system |
-| ⚙️ 40+ parameters | color (start/mid/end), size, speed, direction, physics |
-| 💨 Emission | rate, life, speed, direction, angle, volume box, offset |
-| 🌍 Physics | gravity, friction, wind, noise, jitter, ground bounce |
-| 📈 Keyframe editor | curves for size/color/alpha over lifetime |
-| 💾 Save back | to `effects.fxp` with auto-backup (`.fxp.bak`) |
-| ⚙️ Operators | New / Delete / Switch Emitter / Reload |
-| 🎨 Camera-facing billboards | same as Light corona |
-
-</details>
-
-<details>
-<summary><b>🎨 Materials</b></summary>
-
-| Feature | Detail |
-|---|---|
-| 🎨 Environment Map | |
-| 🎨 Bump Map | |
-| 🎨 Specular | |
-| 🎨 UV Animation | |
-| 🎨 Reflection Material | |
-| 🎨 Dual Texture / Blend Mode | |
-| 📦 COL Surface Type | 179 GTA SA types |
-| ⚡ Auto-load textures | by material names |
-| 🎨 Drag & Drop | create materials from images |
-| 🧹 Duplicate cleanup | removes `.001`, `.002` |
-| 🔤 Sort materials | by name |
-
-</details>
-
-<details>
-<summary><b>🧮 UV Editor</b></summary>
-
-| Feature | Detail |
-|---|---|
-| 🎲 UV Grid Randomizer | randomize UV positions within grid cells |
-| 🎯 Snap to Grid | snap UV islands to nearest cell |
-| 📐 9 alignment points | choose UV position within a cell |
-| 🔗 Link Polygons | move polygons with overlapping UVs together |
-
-<details>
-<summary>📹 Tutorial .gif</summary>
-
-![Random windows](docs/gif/random_windows.gif)
-
-</details>
-
-</details>
-
-<details>
-<summary><b>🔍 Check</b></summary>
-
-| Feature | Detail |
-|---|---|
-| 🔍 Geometry check | loose vertices, edges, N-gons |
-| ⚠️ Material limit check | 50 materials for GTA SA |
-| 🧹 Material cleanup/sorting | |
-| 🎯 LOD/COL → DFF snap | move LOD and COL to DFF position |
-| 👁️ Hide DFF/LOD/COL | separately |
-| ⚠️ Model ID conflict detection | |
-| 🔄 Batch Set Type | 🆕 OBJ / COL / SHA / NON with auto-rename |
-| 🔄 Reset Transform | 🆕 zero out Location and Rotation |
-
-<details>
-<summary>📹 Tutorial .gif</summary>
-
-![Check](docs/gif/Check.gif)
-
-</details>
-
-</details>
-
-<details>
-<summary><b>🌊 Water IO</b></summary>
-
-| Feature | Detail |
-|---|---|
-| 📦 Import/export | `water.dat` |
-| 🌊 waterclear256 texture | with flow animation |
-| 🌊 Water types | Default / Shallow, Visible / Invisible |
-| 🎯 Snap to grid (×4) | stitch edges |
-| 📦 Export Water collection | |
-
-</details>
-
-<details>
-<summary><b>🛣️ Path IO</b></summary>
-
-| Feature | Detail |
-|---|---|
-| 📦 paths.ipl | vehicle/ped paths for `gta.dat` |
-| 📦 tracks.dat | train tracks and stations |
-| 📦 NODES.dat | compiled path nodes, multi-file import 🆕 |
-| 🛣️ Create paths | convert curves/edges to paths |
-| ⚙️ Auto-split | 12-node groups |
-| 🗺️ NODES export | auto-split by 8×8 map zones 🆕 |
-
-</details>
-
-<details>
-<summary><b>🦴 Characters (Skinned DFF)</b></summary>
-
-| Feature | Detail |
-|---|---|
-| 🦴 Import skeleton | Armature + vertex weights + bone matrices |
-| 📦 Export skinned DFF | byte-perfect round-trip |
-| 🎬 IFP animations | import `ped.ifp` (294+ anims), search, apply |
-| ✅ Compatible | Kams Script DFF and original game models |
-
-</details>
-
-<details>
-<summary><b>🔌 Integrations</b></summary>
-
-| Integration | Purpose |
-|---|---|
-| [Itera Tools 3](https://itera.gumroad.com/l/IteraTools3) | Vertex Lit Linear / Quickstart |
-| LightMap (beta_MTA) | apply pre-baked lightmap via MTA script |
-| Pipeline | Building / Reflections |
-| Hotkeys | `Shift+T`, `Shift+A` |
-| Localization | RU / EN |
-
-</details>
-
-</details>
-
-<details>
-<summary><b>🧭 UI Panels</b></summary>
-
-| Location | Panel | What's there |
-|---|---|---|
-| `Properties > Scene` | **INU Tools** | IDE/IPL/IMG paths, textures, NVTT, suffixes, ID manager, presets |
-| `Properties > Object` | **GTA SA Object** | object type (OBJ/COL/SHA/2DFX), DFF Flags, Pipeline, UV Maps |
-| `Properties > Object` | **GTA SA: IDE / IPL** 🆕 | Model ID, Draw Dist, LOD Dist, IDE Flags, Interior, conflicts |
-| `Properties > Material` | **GTA SA Material Effects** | Environment Map, Bump Map, Reflection, Specular, UV Animation |
-| `Properties > Material` | **COL Surface Type** | collision surface type selection |
-| `View3D > Sidebar (N)` | **GTA Tools** | export/import, prelight, 2DFX, particles, vertex paint |
-| `UV Editor > Sidebar (N)` | **GTA Tools** | UV tools |
-
-</details>
-
-<details>
-<summary><b>⌨️ Hotkeys</b></summary>
-
-| Key | Action |
-|---|---|
-| `Shift+T` | Open / close UV Editor |
-| `Shift+A` | GTA SA → Army.dff (ped) / Admiral.dff (car) |
-
-</details>
-
-<details>
-<summary><b>📹 Video Tutorial</b></summary>
-
-[![IDE/IPL/IMG/Map Tutorial](https://img.youtube.com/vi/Jw_R9QFYxWE/0.jpg)](https://www.youtube.com/watch?v=Jw_R9QFYxWE)
-
-> Export & Import IDE / IPL / IMG / Map
-
-</details>
+| **Blender** | 2.83 – 5.1 ✅ (4.2+ for extensions.blender.org install) |
+| **Game** | GTA San Andreas (also compatible with MTA:SA) |
+| **OS** | Windows / Linux / macOS |
 
 ## 🙏 Credits
 
@@ -446,8 +145,7 @@ Inspired by and partially compatible with:
 
 ### 🔧 Recommended companion tools
 
-- **[Itera Tools 3](https://itera.gumroad.com/l/IteraTools3)** — Blender addon for vertex lighting. INU_tools includes a dedicated **Itera Tools 3** sub-panel (under the *Lighting* container) that auto-detects Itera in your Asset Libraries and applies its `Vertex Lit Linear` / `Quickstart` material presets to the selection (with one-click `Remove Itera` to restore original materials).
-- **[NVIDIA Texture Tools](https://developer.nvidia.com/texture-tools-exporter)** — standalone CLI/GUI for GPU-accelerated DXT compression. Optional but recommended: when installed and pointed at via `Scene → INU Tools → NVTT Path`, TXD export uses GPU encoding (parallel DXT1, much faster than the bundled CPU encoder).
+- **[Itera Tools 3](https://itera.gumroad.com/l/IteraTools3)** — Blender addon for vertex lighting. INU_tools includes a dedicated **Itera Tools 3** sub-panel (under the *Lighting* container): auto-detects Itera in your Asset Libraries and applies its `Vertex Lit Linear` / `Quickstart` material presets to the selection (plus one-click `Remove Itera` to restore original materials).
 
 ### Author
 

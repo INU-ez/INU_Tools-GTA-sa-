@@ -52,17 +52,53 @@ class GTATOOLS_OT_inu_import(bpy.types.Operator, ImportHelper):
         imported = []
         errors = []
         imported_txd_paths = set()
+        imported_col_paths = set()
+        imported_lod_paths = set()
 
         for fname in file_list:
             fpath = os.path.join(directory, fname)
             ext = os.path.splitext(fname)[1].lower()
             try:
                 if ext == '.dff':
+                    # Skip if this is a LOD already imported as a sibling.
+                    if fpath in imported_lod_paths:
+                        continue
                     inu_import_dff(filepath=fpath, context=context)
                     imported.append(fname)
+                    dff_name = os.path.splitext(fname)[0]
+
+                    # Auto-import sibling COL/LOD/TXD by base name. User
+                    # chose «All» в меню — значит хочет одним кликом
+                    # подтянуть все связанные файлы. Skip если уже импортнуты
+                    # либо если выбраны вручную в файл-листе.
+                    file_set = {f.lower() for f in file_list}
+
+                    # LOD: «LOD{name}.dff» рядом
+                    lod_path = os.path.join(directory, f"LOD{dff_name}.dff")
+                    if (os.path.isfile(lod_path)
+                            and lod_path not in imported_lod_paths
+                            and f"lod{dff_name.lower()}.dff" not in file_set):
+                        try:
+                            inu_import_dff(filepath=lod_path, context=context)
+                            imported_lod_paths.add(lod_path)
+                            imported.append(f"LOD{dff_name}.dff")
+                        except Exception as e:
+                            errors.append(f"LOD{dff_name}.dff: {e}")
+
+                    # COL: «{name}.col» рядом
+                    col_path = os.path.join(directory, f"{dff_name}.col")
+                    if (os.path.isfile(col_path)
+                            and col_path not in imported_col_paths
+                            and f"{dff_name.lower()}.col" not in file_set):
+                        try:
+                            inu_import_col(filepath=col_path, context=context)
+                            imported_col_paths.add(col_path)
+                            imported.append(f"{dff_name}.col")
+                        except Exception as e:
+                            errors.append(f"{dff_name}.col: {e}")
+
                     # Auto-import TXD if enabled and not already imported
                     if getattr(context.scene.inu_settings, 'gtatools_txd_auto_import', True):
-                        dff_name = os.path.splitext(fname)[0]
                         custom_dir = getattr(context.scene.inu_settings, 'gtatools_txd_import_path', '')
                         if custom_dir:
                             custom_dir = bpy.path.abspath(custom_dir)
@@ -86,7 +122,10 @@ class GTATOOLS_OT_inu_import(bpy.types.Operator, ImportHelper):
                             except Exception as e:
                                 errors.append(f"{os.path.basename(txd_file)}: {e}")
                 elif ext == '.col':
+                    if fpath in imported_col_paths:
+                        continue
                     inu_import_col(filepath=fpath, context=context)
+                    imported_col_paths.add(fpath)
                     imported.append(fname)
                 elif ext == '.txd':
                     if fpath in imported_txd_paths:
@@ -104,6 +143,32 @@ class GTATOOLS_OT_inu_import(bpy.types.Operator, ImportHelper):
                     errors.append(f"{fname}: unsupported extension")
             except Exception as e:
                 errors.append(f"{fname}: {e}")
+
+        # ── Final pass: alpha-link for all materials ──────────────────
+        # The TXD-first sort above means TXD images load BEFORE DFF
+        # creates its materials, so the TXD-side Phase 1/2 sees an empty
+        # scene and connects nothing. Run the alpha-link pass HERE,
+        # after every file is imported — at this point both images
+        # (from TXD) and materials (from DFF) exist together.
+        if imported_txd_paths:
+            print(f"[INU Import] post-import alpha-link pass: "
+                  f"{len(bpy.data.materials)} materials in scene")
+            from .texture_ops import link_material_alpha_if_textured
+            n_changed = 0
+            seen = set()
+            all_mats = list(bpy.data.materials)
+            for obj in bpy.data.objects:
+                if obj.type != 'MESH':
+                    continue
+                for slot in obj.material_slots:
+                    if slot.material and id(slot.material) not in seen:
+                        seen.add(id(slot.material))
+                        if slot.material not in all_mats:
+                            all_mats.append(slot.material)
+            for m in all_mats:
+                if link_material_alpha_if_textured(m):
+                    n_changed += 1
+            print(f"[INU Import] alpha-link done: changed={n_changed} of {len(all_mats)} materials")
 
         if imported:
             self.report({'INFO'}, f"INU Import: {len(imported)} — {', '.join(imported)}")
@@ -156,7 +221,7 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
             row.prop(scn.inu_settings, "gtatools_export_all_txd_shared_name",
                      text="", placeholder="textures")
 
-    def export_model_group(self, context, base_name, models, skip_dff, skip_col, skip_lod, skip_txd, use_gpu):
+    def export_model_group(self, context, base_name, models, skip_dff, skip_col, skip_lod, skip_txd, backend):
         """Export a single model group (DFF + LOD + COL + TXD)"""
         exported = []
         errors = []
@@ -229,7 +294,7 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
                     if not models['DFF']:
                         context.view_layer.objects.active = models['LOD']
                 from ..tools.txd_export import export_txd
-                result, message, _ = export_txd(txd_path, context, selected_only=True, use_gpu=use_gpu)
+                result, message, _ = export_txd(txd_path, context, selected_only=True, backend=backend)
                 if result == {'FINISHED'}:
                     exported.append(f"{base_name}.txd")
                 else:
@@ -285,8 +350,7 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
         col_library_name = getattr(context.scene.inu_settings, 'gtatools_export_all_col_library_name', '') or 'collision'
         txd_shared = bool(getattr(context.scene.inu_settings, 'gtatools_export_all_txd_shared', False))
         txd_shared_name = getattr(context.scene.inu_settings, 'gtatools_export_all_txd_shared_name', '') or 'textures'
-        from ..tools.txd_export import check_nvtt_available
-        use_gpu = check_nvtt_available(getattr(context.scene.inu_settings, 'gtatools_nvtt_path', ''))[0]
+        backend = getattr(context.scene.inu_settings, 'gtatools_dxt_backend', 'numpy')
 
         # Library mode: skip the per-group COL write path and collect all
         # COL objects instead. A single combined .col file is written after
@@ -328,7 +392,7 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
                 wm.progress_update(current_step)
                 context.workspace.status_text_set(
                     f"{T('Экспорт:')} {group_idx + 1}/{len(model_groups)} {base_name}")
-                exported, errors = self.export_model_group(context, base_name, models, skip_dff, skip_col, skip_lod, skip_txd, use_gpu)
+                exported, errors = self.export_model_group(context, base_name, models, skip_dff, skip_col, skip_lod, skip_txd, backend)
                 all_exported.extend(exported)
                 all_errors.extend(errors)
 
@@ -373,7 +437,7 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
                     context.view_layer.objects.active = shared_txd_objects[0]
                     from ..tools.txd_export import export_txd
                     result, message, _ = export_txd(
-                        shared_path, context, selected_only=True, use_gpu=use_gpu)
+                        shared_path, context, selected_only=True, backend=backend)
                     if result == {'FINISHED'}:
                         all_exported.append(
                             f"{txd_shared_name}.txd ({len(shared_txd_objects)} models)")
@@ -402,17 +466,6 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
             preview = '; '.join(all_errors[:5])
             more = f" (+{len(all_errors) - 5})" if len(all_errors) > 5 else ""
             self.report({'WARNING'}, f"{T('Ошибки:')} {preview}{more}")
-
-        # Persist full per-run report into export directory.
-        try:
-            report_path = os.path.join(self.directory, "_export_report.txt")
-            rows = [f"Directory: {self.directory}"]
-            rows.extend(f"[OK] {row}" for row in all_exported)
-            rows.extend(f"[ERR] {row}" for row in all_errors)
-            from .. import _append_export_report
-            _append_export_report(report_path, "Export All", rows)
-        except Exception as e:
-            self.report({'WARNING'}, f"{T('Не удалось записать отчёт:')} {e}")
 
         return {'FINISHED'}
 
@@ -514,14 +567,13 @@ class GTATOOLS_OT_inu_export(bpy.types.Operator, ExportHelper):
             box = layout.box()
             box.label(text="TXD:", icon=safe_icon('IMAGE_DATA'))
             box.prop(self, "txd_selected_only")
-            nvtt_path = getattr(context.scene.inu_settings, 'gtatools_nvtt_path', '')
-            from ..tools.txd_export import check_nvtt_available
-            available, _ = check_nvtt_available(nvtt_path)
-            if available:
-                from ..tools.compat import ICON_CHECK
-                box.label(text="GPU (NVTT)", icon=ICON_CHECK)
-            else:
-                box.label(text="CPU", icon=safe_icon('INFO'))
+            backend = getattr(context.scene.inu_settings, 'gtatools_dxt_backend', 'numpy')
+            backend_label = {
+                'numpy':      "Numpy (range-fit mip0 + bbox mip1+)",
+                'numpy_fast': "Numpy fast (bbox-int)",
+                'gpu':        "GPU compute",
+            }.get(backend, backend)
+            box.label(text=f"DXT: {backend_label}", icon=safe_icon('INFO'))
 
         # IDE/IPL settings
         if self.export_ide or self.export_ipl:
@@ -590,8 +642,7 @@ class GTATOOLS_OT_inu_export(bpy.types.Operator, ExportHelper):
 
         all_exported = []
         all_errors = []
-        from ..tools.txd_export import check_nvtt_available
-        use_gpu = check_nvtt_available(getattr(context.scene.inu_settings, 'gtatools_nvtt_path', ''))[0]
+        backend = getattr(context.scene.inu_settings, 'gtatools_dxt_backend', 'numpy')
 
         # Library COL bypasses the per-group loop — collect once and emit
         # a single multi-entry .col after all groups finish.
@@ -664,7 +715,7 @@ class GTATOOLS_OT_inu_export(bpy.types.Operator, ExportHelper):
                         models['LOD'].select_set(True)
                         if not models['DFF']:
                             context.view_layer.objects.active = models['LOD']
-                    result, msg, _ = export_txd(txd_path, context, self.txd_selected_only, use_gpu)
+                    result, msg, _ = export_txd(txd_path, context, self.txd_selected_only, backend=backend)
                     if result == {'FINISHED'}:
                         all_exported.append(f"{base_name}.txd")
                     else:

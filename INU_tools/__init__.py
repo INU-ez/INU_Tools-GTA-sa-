@@ -28,7 +28,7 @@
 bl_info = {
     "name": "INU_tools(gta_sa)",
     "author": "INU",
-    "version": (1, 8, 0),
+    "version": (1, 9, 0),
     # Минимум 2.83 LTS — поддержка через tools/compat.py:
     # • bake / preview / DFF I/O работают через legacy mesh.vertex_colors
     # • prelight preview shader использует ShaderNodeMixRGB на ≤3.3
@@ -403,7 +403,7 @@ from .tools.vc_layers import (
     GTATOOLS_OT_vcl_show_composite, GTATOOLS_OT_vcl_refresh_composite,
     GTATOOLS_OT_vcl_apply_multi, GTATOOLS_OT_vcl_recolor_selected,
     GTATOOLS_UL_vc_layers,
-    vc_layers_register_handlers, vc_layers_unregister_handlers,
+    vc_layers_register_load_handler, vc_layers_unregister_handlers,
     _on_active_layer_change as _vc_on_active_layer_change,
     _on_live_preview_toggle as _vc_on_live_preview_toggle,
 )
@@ -411,6 +411,7 @@ from .tools.vc_layers import (
 # Imported AFTER def T because panels.py does `from .. import T` at
 # top-level (T is referenced in class bodies for bl_label etc., evaluated
 # at class-definition time so it can't be deferred).
+from .ui.library_panel import GTATOOLS_PT_library_panel
 from .ui.panels import (  # noqa: E501
     GTATOOLS_PT_material_panel,
     GTATOOLS_UL_txd_export_plan,
@@ -425,6 +426,8 @@ from .ui.panels import (  # noqa: E501
     GTATOOLS_MT_radar_generate,
     GTATOOLS_MT_path_traffic,
     GTATOOLS_PT_check_panel,
+    GTATOOLS_UL_lint_issues,
+    GTATOOLS_PT_file_scanner,
     GTATOOLS_PT_vehicle_panel,
     GTATOOLS_PT_frame_hierarchy,
     GTATOOLS_PT_2dfx_panel,
@@ -435,6 +438,7 @@ from .ui.panels import (  # noqa: E501
     GTATOOLS_PT_light_master,
     GTATOOLS_PT_prelight_panel,
     GTATOOLS_PT_bake_settings_subpanel,
+    GTATOOLS_PT_scatter_color_subpanel,
     GTATOOLS_PT_vc_postprocess_panel,
     GTATOOLS_PT_itera_panel,
     GTATOOLS_PT_prelight_col_panel,
@@ -452,6 +456,7 @@ from .scene_settings import (
     INUValidateIssue,
     GTATOOLS_BinaryIplEntry,
     GTATOOLS_ImgFileEntry,
+    GTATOOLS_LintIssueItem,
 )
 from .ops.ifp_import import (
     GTATOOLS_OT_ifp_batch_import,
@@ -1308,25 +1313,88 @@ class INUObjectProps(bpy.types.PropertyGroup):
     custom_pipeline : StringProperty(name="Custom Pipeline")
 
     export_normals : BoolProperty(
-        default=True,
-        description=T("Экспорт нормалей вершин (отключить для map объектов)"),
+        default=False,
+        description=T("Экспорт нормалей вершин в DFF.\n\n"
+                      "ВКЛЮЧАТЬ: для скиннингованных объектов (peds, vehicles)\n"
+                      "и любых моделей у которых динамическое освещение должно\n"
+                      "корректно реагировать на смену освещения сцены.\n\n"
+                      "ВЫКЛЮЧАТЬ (по умолчанию для map-объектов): нормали\n"
+                      "удваивают размер vertex stream'а; статичные здания\n"
+                      "обычно полностью освещены через vertex prelight, и\n"
+                      "движок нормали не использует. Файл получается меньше"),
         update=_make_inu_flag_update("export_normals"),
     )
     export_binsplit : BoolProperty(
         default=True,
-        description=T("Экспорт Bin Mesh PLG (совместимость с просмотрщиками DFF)"),
+        description=T("Экспорт chunk'а Bin Mesh PLG в DFF.\n\n"
+                      "Содержит индексы триангуляции в том виде в котором\n"
+                      "движок ожидает их у себя в RpAtomic. Без него:\n"
+                      "• MEd / DFF Viewer не показывает геометрию\n"
+                      "• некоторые версии движка не рендерят меш\n\n"
+                      "Выключать имеет смысл только при микро-оптимизации\n"
+                      "размера DFF когда модель не идёт в игру"),
         update=_make_inu_flag_update("export_binsplit"),
     )
 
-    uv_map1 : BoolProperty(default=True, description=T("Экспорт первой UV карты"), update=_make_inu_flag_update("uv_map1"))
-    uv_map2 : BoolProperty(default=True, description=T("Экспорт второй UV карты"), update=_make_inu_flag_update("uv_map2"))
-    day_cols : BoolProperty(default=True, description=T("Экспорт дневных vertex colors"), update=_make_inu_flag_update("day_cols"))
-    night_cols : BoolProperty(default=True, description=T("Экспорт ночных vertex colors"), update=_make_inu_flag_update("night_cols"))
+    uv_map1 : BoolProperty(
+        default=True,
+        description=T("Экспорт первой UV-карты — основной набор текстурных\n"
+                      "координат. Должен быть включён почти всегда —\n"
+                      "выключи только если меш специально без UV"),
+        update=_make_inu_flag_update("uv_map1"))
+    uv_map2 : BoolProperty(
+        default=True,
+        description=T("Экспорт второй UV-карты — используется для lightmap'ов\n"
+                      "и dual-pass материалов. Если меш без второй UV-карты,\n"
+                      "флаг безопасно оставить включённым (DFF не получит\n"
+                      "лишний chunk)"),
+        update=_make_inu_flag_update("uv_map2"))
+    day_cols : BoolProperty(
+        default=True,
+        description=T("Экспорт дневных vertex colors (атрибут «Day»).\n"
+                      "Это ванильный prelight который игра умножает на\n"
+                      "ambient_obj в runtime. Выключи только если хочешь\n"
+                      "DFF без vertex colors (редкий случай)"),
+        update=_make_inu_flag_update("day_cols"))
+    night_cols : BoolProperty(
+        default=True,
+        description=T("Экспорт ночных vertex colors (атрибут «Night»,\n"
+                      "RpExtraVertColors chunk). Игра берёт их в ночное\n"
+                      "время через timecyc-blend. Если у меша нет «Night»\n"
+                      "слоя — chunk не пишется автоматически"),
+        update=_make_inu_flag_update("night_cols"))
 
-    light : BoolProperty(default=True, description=T("Флаг rpGEOMETRYLIGHT — динамическое освещение"), update=_make_inu_flag_update("light"))
-    modulate_color : BoolProperty(default=True, description=T("Флаг rpGEOMETRYMODULATEMATERIALCOLOR — цвет материала влияет на модель"), update=_make_inu_flag_update("modulate_color"))
-    set_material_alpha : BoolProperty(default=True, description=T("Автоматически ставить material alpha = 254 при наличии vertex alpha < 255.\nНужно для стандартных прозрачных мешей (стёкла, дым). Выключи если материал должен остаться opaque"), update=_make_inu_flag_update("set_material_alpha"))
-    light_beam_asi : BoolProperty(default=False, description=T("Помечает меш как объёмный луч света для плагина SA_Light.asi.\nУстанавливает material color = (254,254,254,254) — этот маркер плагин ищет во время рендера.\n\nТРЕБУЕТ SA_Light.asi в корне GTA SA. Без плагина меш будет рендериться как обычный полупрозрачный объект с жёстким срезом alpha.\n\nДля использования:\n1. Собери меш-конус/куб формой луча\n2. Покрась vertex colors как хочешь (любые значения alpha)\n3. Включи этот флаг + Set Material Alpha выключи\n4. Экспорт → плагин автоматически включит плавный alpha blend на этом меше"), update=_make_inu_flag_update("light_beam_asi"))
+    light : BoolProperty(
+        default=True,
+        description=T("Флаг rpGEOMETRYLIGHT — геометрия принимает\n"
+                      "динамическое освещение от движка (sun + ambient).\n\n"
+                      "Без флага: меш рендерится как unlit, виден только\n"
+                      "vertex prelight × matCol. Используется для\n"
+                      "self-illuminated объектов (вывески, окна с\n"
+                      "запечённым свечением)"),
+        update=_make_inu_flag_update("light"))
+    modulate_color : BoolProperty(
+        default=True,
+        description=T("Флаг rpGEOMETRYMODULATEMATERIALCOLOR — vertex prelight\n"
+                      "умножается на material color и ambient_obj в runtime.\n\n"
+                      "ВЫКЛЮЧИ если хочешь чтобы prelight использовался «как\n"
+                      "есть» без модуляции (нужно для запечённого ночного\n"
+                      "освещения, эффектов flicker от prelight). Стандарт\n"
+                      "у ванильных зданий — включён"),
+        update=_make_inu_flag_update("modulate_color"))
+    set_material_alpha : BoolProperty(
+        default=False,
+        description=T("Автоматически ставить material.alpha = 254 при наличии\n"
+                      "vertex alpha < 255 хоть на одной вершине меша.\n\n"
+                      "ВКЛЮЧАТЬ: для прозрачных мешей (стёкла, дым, листва)\n"
+                      "если хочешь чтобы движок воспринял геометрию как\n"
+                      "alpha-blended объект и сортировал её правильно.\n\n"
+                      "ВЫКЛЮЧАТЬ (по умолчанию): материал остаётся opaque,\n"
+                      "vertex alpha не задаёт прозрачность всего объекта.\n"
+                      "Полезно когда vertex alpha используется для других\n"
+                      "целей (vcol fade, light beam masking)"),
+        update=_make_inu_flag_update("set_material_alpha"))
+    light_beam_asi : BoolProperty(default=False, description="", update=_make_inu_flag_update("light_beam_asi"))
 
     # ── IDE / IPL properties ──
     model_id : IntProperty(
@@ -1662,6 +1730,14 @@ from .ops.img_ops import (
     GTATOOLS_OT_export_to_img,
 )
 
+# Asset Library Builder — turns .inu_cache contents into a portable
+# Blender Asset Library (one .blend per category, with thumbnails and
+# embedded IDE metadata). Sibling to Extract Resources in the workflow.
+from .ops.build_library_ops import (
+    GTATOOLS_OT_build_asset_library,
+    GTATOOLS_OT_regenerate_previews,
+)
+
 
 class GTATOOLS_FillColorItem(bpy.types.PropertyGroup):
     """Элемент списка цветов заливки"""
@@ -1937,6 +2013,7 @@ from .ops.light_ops import (
     GTATOOLS_OT_delete_fill_color_level,
     GTATOOLS_OT_clear_fill_color_levels,
     GTATOOLS_OT_scatter_light,
+    GTATOOLS_OT_scatter_color,
     GTATOOLS_OT_toggle_face_select,
     GTATOOLS_OT_switch_to_edit,
     GTATOOLS_OT_switch_to_vpaint,
@@ -2345,6 +2422,8 @@ from .ops.prelight_preset_ops import (
     GTATOOLS_OT_prelight_preset_load,
     GTATOOLS_OT_prelight_preset_save,
     GTATOOLS_OT_prelight_preset_delete,
+    GTATOOLS_OT_prelight_preset_apply,
+    GTATOOLS_OT_prelight_preset_rename,
 )
 # Operators moved to ops/water_geometry_ops.py in Phase 3.
 from .ops.water_geometry_ops import (
@@ -2352,6 +2431,12 @@ from .ops.water_geometry_ops import (
     GTATOOLS_OT_water_snap_grid,
     GTATOOLS_OT_water_set_params,
     GTATOOLS_OT_water_stitch,
+)
+from .ops.file_scanner_ops import (
+    GTATOOLS_OT_scan_files,
+    GTATOOLS_OT_scan_save_report,
+    GTATOOLS_OT_scan_reveal_file,
+    GTATOOLS_OT_scan_clear,
 )
 # =============================================================================
 # IFP (ANIMATION) OPERATORS
@@ -2372,6 +2457,8 @@ from .ops.ik_rig import (
     GTATOOLS_OT_add_ik_rig,
     GTATOOLS_OT_bake_ik_rig,
     GTATOOLS_OT_add_ground_plane,
+    _unregister_follow_handler as _ik_unregister_follow_handler,
+    _on_file_load_ik as _ik_on_file_load,
 )
 # ── X Radar Maker ────────────────────────────────────────────────────
 
@@ -2391,6 +2478,7 @@ classes = (
     INUMaterialProps,
     GTATOOLS_ImgFileEntry,
     GTATOOLS_BinaryIplEntry,
+    GTATOOLS_LintIssueItem,
     GTATOOLS_TxdExportEntry,
     GTATOOLS_UL_txd_export_plan,
     GTATOOLS_UL_img_files,
@@ -2427,6 +2515,8 @@ classes = (
     GTATOOLS_OT_prelight_preset_load,
     GTATOOLS_OT_prelight_preset_save,
     GTATOOLS_OT_prelight_preset_delete,
+    GTATOOLS_OT_prelight_preset_apply,
+    GTATOOLS_OT_prelight_preset_rename,
     GTATOOLS_OT_reset_scatter_settings,
     GTATOOLS_OT_analyze_vertex_colors,
     GTATOOLS_OT_apply_v_offset,
@@ -2453,6 +2543,7 @@ classes = (
     GTATOOLS_OT_delete_fill_color_level,
     GTATOOLS_OT_clear_fill_color_levels,
     GTATOOLS_OT_scatter_light,
+    GTATOOLS_OT_scatter_color,
     GTATOOLS_OT_toggle_face_select,
     GTATOOLS_OT_switch_to_edit,
     GTATOOLS_OT_switch_to_vpaint,
@@ -2494,6 +2585,7 @@ classes = (
     GTATOOLS_OT_snap_uv_to_grid,
     GTATOOLS_OT_set_uv_align,
     GTATOOLS_PT_main_panel,
+    GTATOOLS_PT_library_panel,
     GTATOOLS_OT_import_dff,
     GTATOOLS_OT_drop_dff,
     GTATOOLS_OT_import_col,
@@ -2503,6 +2595,8 @@ classes = (
     GTATOOLS_OT_toggle_links,
     GTATOOLS_OT_toggle_bbox,
     GTATOOLS_OT_extract_resources,
+    GTATOOLS_OT_build_asset_library,
+    GTATOOLS_OT_regenerate_previews,
     GTATOOLS_OT_import_map,
     GTATOOLS_OT_import_ipl_sections,
     GTATOOLS_OT_export_ipl_sections,
@@ -2513,6 +2607,10 @@ classes = (
     GTATOOLS_OT_water_snap_grid,
     GTATOOLS_OT_water_set_params,
     GTATOOLS_OT_water_stitch,
+    GTATOOLS_OT_scan_files,
+    GTATOOLS_OT_scan_save_report,
+    GTATOOLS_OT_scan_reveal_file,
+    GTATOOLS_OT_scan_clear,
     GTATOOLS_OT_import_track,
     GTATOOLS_OT_export_track,
     GTATOOLS_OT_import_nodes,
@@ -2556,6 +2654,8 @@ classes = (
     GTATOOLS_MT_radar_generate,
     GTATOOLS_MT_path_traffic,
     GTATOOLS_PT_check_panel,
+    GTATOOLS_UL_lint_issues,
+    GTATOOLS_PT_file_scanner,
     GTATOOLS_PT_vehicle_panel,
     GTATOOLS_PT_frame_hierarchy,
     GTATOOLS_OT_apply_2dfx_preset,
@@ -2590,6 +2690,7 @@ classes = (
     GTATOOLS_PT_itera_panel,
     GTATOOLS_PT_prelight_panel,
     GTATOOLS_PT_bake_settings_subpanel,
+    GTATOOLS_PT_scatter_color_subpanel,
     GTATOOLS_PT_vc_postprocess_panel,
     GTATOOLS_OT_preview_col_light,
     GTATOOLS_OT_bake_col_light,
@@ -2991,7 +3092,6 @@ def _get_paths_file():
 _SAVED_PATH_KEYS = [
     'gtatools_ide_path', 'gtatools_ipl_path', 'gtatools_img_path', 'gtatools_game_root',
     'gtatools_texture_path1', 'gtatools_texture_path2',
-    'gtatools_nvtt_path',
 ]
 
 def _save_paths(self, context):
@@ -3224,10 +3324,59 @@ def register():
     # gtatools_binary_ipls, gtatools_img_entries) live inside
     # INUSceneSettings now — see scene_settings.py.
     bpy.types.Object.gtatools_fill_colors = CollectionProperty(type=GTATOOLS_FillColorItem)
+
+    # Per-object V-offsets for Day/Night vcols. Auto-applied via
+    # update callback whenever the value changes (Enter pressed).
+    # Storage: existing obj["v_offset_<name>"] custom-prop tracks
+    # what's currently applied to colors; the callback feeds the new
+    # target into apply_brightness_offset which computes the delta.
+    def _apply_v_offset_to_attr(obj, attr_name, value):
+        if obj is None or obj.type != 'MESH':
+            return
+        from .tools import compat
+        from .tools.prelight import apply_brightness_offset
+        mesh = obj.data
+        layer = compat.vcol_get(mesh, attr_name)
+        if layer is None:
+            return
+        saved = compat.vcol_active(mesh)
+        saved_name = saved.name if saved else None
+        try:
+            if saved_name != attr_name:
+                compat.vcol_active(mesh, layer)
+            apply_brightness_offset(obj, value)
+        finally:
+            if saved_name and saved_name != attr_name:
+                saved_layer = compat.vcol_get(mesh, saved_name)
+                if saved_layer is not None:
+                    compat.vcol_active(mesh, saved_layer)
+
+    def _update_v_offset_day(self, context):
+        _apply_v_offset_to_attr(self, "Day", self.gtatools_v_offset_day)
+
+    def _update_v_offset_night(self, context):
+        _apply_v_offset_to_attr(self, "Night", self.gtatools_v_offset_night)
+
+    bpy.types.Object.gtatools_v_offset_day = bpy.props.FloatProperty(
+        name="V Day",
+        description="V-offset для Day vcol — применяется автоматически при изменении",
+        default=0.0, min=-100.0, max=100.0,
+        update=_update_v_offset_day,
+    )
+    bpy.types.Object.gtatools_v_offset_night = bpy.props.FloatProperty(
+        name="V Night",
+        description="V-offset для Night vcol — применяется автоматически при изменении",
+        default=0.0, min=-100.0, max=100.0,
+        update=_update_v_offset_night,
+    )
     bpy.types.WindowManager.gtatools_txd_export_plan = CollectionProperty(
         type=GTATOOLS_TxdExportEntry)
     bpy.types.WindowManager.gtatools_txd_export_plan_index = IntProperty(
         default=0)
+    # File scanner results — transient (WM, not Scene): не пишутся в .blend.
+    bpy.types.WindowManager.gtatools_scan_results = CollectionProperty(
+        type=GTATOOLS_LintIssueItem)
+    bpy.types.WindowManager.gtatools_scan_results_index = IntProperty(default=0)
 
     # Keymap: Shift+T — toggle UV Editor
     wm = bpy.context.window_manager
@@ -3362,7 +3511,10 @@ def register():
         # Section-expanded toggle for the inline «Слои Vertex Color»
         # block in the prelight panel — moved to INUSceneSettings.
         # gtatools_vc_layers_expanded is part of scene_settings.py.
-        vc_layers_register_handlers()
+        # Register only the load_post handler at addon enable; the
+        # heavy depsgraph hook is attached lazily on first VCL use
+        # (see vc_layers_register_paint_handler in tools/vc_layers.py).
+        vc_layers_register_load_handler()
     except Exception as _e:
         import traceback
         print(f"[GTA Tools] VC Layer System register failed: {_e}")
@@ -3576,7 +3728,17 @@ def unregister():
     except Exception:
         pass
     try:
+        del bpy.types.WindowManager.gtatools_scan_results
+        del bpy.types.WindowManager.gtatools_scan_results_index
+    except Exception:
+        pass
+    try:
         del bpy.types.Object.gtatools_fill_colors
+    except (AttributeError, RuntimeError):
+        pass
+    try:
+        del bpy.types.Object.gtatools_v_offset_day
+        del bpy.types.Object.gtatools_v_offset_night
     except (AttributeError, RuntimeError):
         pass
 
@@ -3585,6 +3747,17 @@ def unregister():
     try:
         from .ops import particle_sim
         particle_sim.stop_simulation()
+    except Exception:
+        pass
+
+    # IK Rig — drop both runtime handler and load_post hook.
+    try:
+        _ik_unregister_follow_handler()
+    except Exception:
+        pass
+    try:
+        if _ik_on_file_load in bpy.app.handlers.load_post:
+            bpy.app.handlers.load_post.remove(_ik_on_file_load)
     except Exception:
         pass
 

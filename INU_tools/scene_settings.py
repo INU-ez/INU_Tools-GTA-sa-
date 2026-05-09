@@ -319,6 +319,18 @@ class GTATOOLS_BinaryIplEntry(bpy.types.PropertyGroup):
     img_source: StringProperty()
 
 
+class GTATOOLS_LintIssueItem(bpy.types.PropertyGroup):
+    """One row in the binary file scanner UIList. Mirrors core/file_lint.LintIssue.
+
+    Lives on WindowManager (transient — results don't pollute .blend).
+    """
+    severity: StringProperty(default='ERROR')   # ERROR / WARN / INFO
+    code: StringProperty(default='')            # stable key
+    file: StringProperty(default='')            # absolute path
+    where: StringProperty(default='')           # 'model[1].sphere[7]'
+    message: StringProperty(default='')
+
+
 # ── PropertyGroup ─────────────────────────────────────────────────
 
 
@@ -490,7 +502,7 @@ class INUSceneSettings(bpy.types.PropertyGroup):
         default="", subtype='FILE_PATH',
         update=_save_paths_proxy)
 
-    # ── TXD / NVTT settings ─────────────────────────────────────
+    # ── TXD settings ────────────────────────────────────────────
     gtatools_txd_auto_import: BoolProperty(
         name="Import TXD",
         description="Автоимпорт TXD текстур при импорте DFF",
@@ -503,19 +515,100 @@ class INUSceneSettings(bpy.types.PropertyGroup):
         name="TXD Import Folder",
         description="Папка для поиска TXD при импорте DFF",
         default="", subtype='DIR_PATH')
-    gtatools_nvtt_path: StringProperty(
-        name="NVTT Path",
-        description="Путь к папке NVIDIA Texture Tools",
-        default="", subtype='DIR_PATH',
-        update=_save_paths_proxy)
-    gtatools_txd_use_gpu: BoolProperty(
-        name="Use GPU",
-        description="Использовать GPU (NVTT) для сжатия",
+
+    # ── Asset Library Builder ───────────────────────────────────
+    # Settings for the operator that turns the .inu_cache contents into
+    # a portable Blender Asset Library (one .blend per category, with
+    # thumbnails + IDE metadata embedded on every asset).
+    gtatools_library_output_path: StringProperty(
+        name="Library Output",
+        description="Папка куда писать собранную Asset Library "
+                    "(13 .blend файлов + blender_assets.cats.txt + textures/)",
+        default="", subtype='DIR_PATH')
+    gtatools_library_no_preview: BoolProperty(
+        name="Без превью",
+        description="Не рендерить превьюшки. В ~3× быстрее, но Asset Browser "
+                    "показывает заглушки вместо миниатюр",
         default=False)
-    gtatools_show_nvtt_settings: BoolProperty(
-        name="Show NVTT Settings",
-        description="Показать настройки NVTT",
+    gtatools_library_preview_size: IntProperty(
+        name="Размер превью",
+        description="Размер превьюшек в пикселях. 128 — стандарт Blender, "
+                    "256 крупнее но в 4× медленнее на рендере",
+        default=128, min=64, max=512)
+    gtatools_library_skip_existing: BoolProperty(
+        name="Пропускать готовые",
+        description="Пропускать категории чьи .blend уже существуют в Output. "
+                    "Удобно при инкрементальном добавлении новых моделей "
+                    "после установки модов",
+        default=True)
+    gtatools_library_delete_cache: BoolProperty(
+        name="Удалить кеш после сборки",
+        description="После успешной сборки библиотеки удалить папку "
+                    ".inu_cache/ (DFF, COL, исходные PNG). Освобождает "
+                    "много места на диске. Текстуры в самой библиотеке "
+                    "остаются — при включённой галочке они принудительно "
+                    "копируются в библиотеку (не симлинком). Будь готов "
+                    "что Import Map после этого потребует повторно "
+                    "«Извлечь ресурсы»",
         default=False)
+    # Дополнительные категории при региональной сборке. Когда Map Region
+    # ≠ ALL, по умолчанию строится только regional + GENERIC + LOD.
+    # Чекбоксы ниже позволяют опционально докинуть универсальные группы.
+    # При region == ALL — игнорируются (всё равно строится всё).
+    gtatools_library_include_vehicles: BoolProperty(
+        name="Vehicles",
+        description="Включить в сборку машины/мотоциклы/лодки/самолёты. "
+                    "Имеет смысл только при выбранном регионе — при ALL "
+                    "категория всё равно строится",
+        default=False)
+    gtatools_library_include_peds: BoolProperty(
+        name="Peds",
+        description="Включить в сборку модели NPC / игрока. "
+                    "Имеет смысл только при выбранном регионе",
+        default=False)
+    gtatools_library_include_weapons: BoolProperty(
+        name="Weapons",
+        description="Включить в сборку модели оружия. "
+                    "Имеет смысл только при выбранном регионе",
+        default=False)
+    gtatools_library_include_interiors: BoolProperty(
+        name="Interiors",
+        description="Включить в сборку Interior-объекты (data/maps/interior). "
+                    "Имеет смысл только при выбранном регионе",
+        default=False)
+    gtatools_dxt_backend: EnumProperty(
+        name="DXT",
+        description=(
+            "Бэкенд сжатия DXT-текстур.\n"
+            "Pure numpy, без NVTT и внешних бинарей — соответствует требованиям\n"
+            "extensions.blender.org. Поверх любого бэкенда работает кэш по\n"
+            "session_uid: повторный экспорт без правок текстур почти мгновенный."
+        ),
+        items=[
+            ('numpy', "Numpy",
+             "Рекомендуемый режим для финального экспорта в IMG.\n"
+             "Range-fit на mip 0 (главный уровень детализации) + bbox-int\n"
+             "на меньших мипах. Лучшее качество — на уровне NVTT2 «fast».\n"
+             "Скорость: ~0.5с на 54 текстурах (1024²). В ~7× быстрее старого\n"
+             "NVTT-пути. Бери его, если не уверен какой выбрать"),
+            ('numpy_fast', "Numpy fast",
+             "Для массовых тестовых прогонов и итеративной работы над\n"
+             "геометрией, когда пиксельное качество не критично.\n"
+             "Bbox-int на всех мипах, ~1.7× быстрее режима Numpy\n"
+             "(~0.27с на тех же 54 текстурах).\n"
+             "Качество: на типовых текстурах (бетон, кирпич, дороги) на глаз\n"
+             "не отличается. На текстурах с резкими альфа-границами — заборы\n"
+             "(a_fence_*), листва, проволока — могут быть видимые артефакты\n"
+             "до −5 dB PSNR. Перед релизом переключи обратно на Numpy"),
+            ('gpu', "GPU",
+             "Work-in-progress. bpy.gpu compute shader через RGBA32F image-\n"
+             "слот (в Blender 5.1 ещё нет публичного SSBO API). На практике\n"
+             "не даёт выигрыша: readback Buffer'а упирается в Python GIL и\n"
+             "выходит медленнее обоих CPU-режимов. Оставлено как задел —\n"
+             "оживёт когда в Blender добавят GPUStorageBuf. Сейчас используй\n"
+             "Numpy или Numpy fast"),
+        ],
+        default='numpy')
 
     # ── UI section toggles ──────────────────────────────────────
     gtatools_show_texture_settings: BoolProperty(
@@ -836,6 +929,23 @@ class INUSceneSettings(bpy.types.PropertyGroup):
         description="Радиус поиска соседних граней",
         default=0.0)
 
+    # Scatter Color — paints chosen color around selected polys with
+    # linear distance falloff. Independent from Scatter Light (which
+    # spreads existing prelight).
+    gtatools_scatter_color_color: FloatVectorProperty(
+        name="Цвет",
+        description="Цвет, которым заливаются вершины вокруг выделенных полигонов",
+        subtype='COLOR_GAMMA', size=3,
+        default=(1.0, 1.0, 1.0), min=0.0, max=1.0)
+    gtatools_scatter_color_strength: FloatProperty(
+        name="Сила",
+        description="Сила вклада цвета в центре. 0 — ничего не делать, 1 — полностью заменить vcols в центре на выбранный цвет",
+        default=1.0, min=0.0, max=1.0, subtype='FACTOR')
+    gtatools_scatter_color_distance: FloatProperty(
+        name="Дальность",
+        description="Радиус как доля половины bbox-диагонали меша. 0 — только выделенные вершины, 1 — расходится на половину диагонали",
+        default=0.3, min=0.0, max=1.0, subtype='FACTOR')
+
     # ── Pipeline / Material preset ──────────────────────────────
     gtatools_export_pipeline: EnumProperty(
         items=[
@@ -889,6 +999,34 @@ class INUSceneSettings(bpy.types.PropertyGroup):
     gtatools_vc_layers_expanded: BoolProperty(
         name="VC Layers Section Expanded",
         default=False)
+
+    # ── Binary file scanner (DFF / COL / TXD lint) ─────────────
+    gtatools_scan_dir: StringProperty(
+        name="Папка",
+        description="Папка с DFF/COL/TXD для сканирования",
+        subtype='DIR_PATH', default="")
+    gtatools_scan_recursive: BoolProperty(
+        name="Включая подпапки",
+        description="Рекурсивный обход подпапок. По умолчанию выключено, чтобы случайно не просканировать всю систему",
+        default=False)
+    gtatools_scan_dff: BoolProperty(name="DFF", default=True)
+    gtatools_scan_col: BoolProperty(name="COL", default=True)
+    gtatools_scan_txd: BoolProperty(name="TXD", default=True)
+    gtatools_scan_only_errors: BoolProperty(
+        name="Только ERROR",
+        description="Скрыть WARN/INFO в списке (фильтр draw, коллекция не пересоздаётся)",
+        default=True)
+    gtatools_scan_report_target: EnumProperty(
+        name="Куда сохранять отчёт",
+        items=[
+            ('BLEND', "Рядом с .blend", "В папке текущей сцены (.blend должен быть сохранён)"),
+            ('SCAN',  "В папке скана",   "Туда же, откуда брались файлы"),
+            ('CUSTOM',"Своя папка",      "Указать вручную"),
+        ],
+        default='BLEND')
+    gtatools_scan_report_custom_path: StringProperty(
+        name="Папка для отчёта",
+        subtype='DIR_PATH', default="")
 
     # ── CollectionProperty fields with custom item types ──────
     inu_validate_issues: CollectionProperty(type=INUValidateIssue)

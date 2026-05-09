@@ -23,6 +23,19 @@ DIR_ENTRY_SIZE = 32
 NAME_SIZE = 24
 
 
+# Filename sanitization for entry/texture names extracted from corrupt
+# archives. Non-ASCII bytes get replaced with `?` during ascii-decode,
+# and `?` is invalid on Windows; the rest of this set covers POSIX/NTFS
+# reserved characters. Real GTA SA archives never need this — it only
+# fires when a TXD/IMG was hand-edited with garbage bytes.
+_FILENAME_INVALID = '<>:"/\\|?*\x00'
+
+
+def safe_filename(name: str) -> str:
+    """Replace filesystem-invalid characters with underscore."""
+    return ''.join('_' if c in _FILENAME_INVALID else c for c in name).strip()
+
+
 @dataclass
 class ImgEntry:
     """One file entry in an IMG archive."""
@@ -163,7 +176,7 @@ class ImgReader:
             if name_filter is not None and not name_filter(low):
                 continue
 
-            out_path = os.path.join(output_dir, entry.name)
+            out_path = os.path.join(output_dir, safe_filename(entry.name))
             if skip_existing and os.path.isfile(out_path):
                 counts['skipped'] += 1
                 continue

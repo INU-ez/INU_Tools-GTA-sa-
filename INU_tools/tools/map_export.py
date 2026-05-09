@@ -678,14 +678,12 @@ def iter_export_map(context, target_dir: str, *, objects=None,
             from ..ops.col_export import export_col as _export_col
     if export_txd:
         from ..tools.txd_export import export_txd as _export_txd
-        from ..tools.txd_export import check_nvtt_available as _check_nvtt
-        # Auto-detect NVTT (GPU DXT compression) up front so all bucket
-        # writes use it consistently. ~10× faster than the CPU fallback
-        # on shared TXDs with a few hundred textures.
-        _txd_nvtt_path = getattr(
-            getattr(context, 'scene', None),
-            'gtatools_nvtt_path', '') or ''
-        _txd_use_gpu = bool(_check_nvtt(_txd_nvtt_path)[0])
+        # DXT compression backend — read once at the top so every bucket
+        # uses the same encoder. Default 'numpy' is the vectorized core.dxt
+        # path (no NVTT, ToS-clean for extensions.blender.org).
+        _txd_backend = getattr(
+            getattr(getattr(context, 'scene', None), 'inu_settings', None),
+            'gtatools_dxt_backend', 'numpy')
     if export_ide:
         from ..ops.ide_export import export_ide as _export_ide
     if export_ipl:
@@ -777,7 +775,7 @@ def iter_export_map(context, target_dir: str, *, objects=None,
                             pass
                     try:
                         _export_txd(txd_path, context, selected_only=True,
-                                    use_gpu=_txd_use_gpu)
+                                    backend=_txd_backend)
                         stats['txd'] += 1
                     except Exception as e:
                         print(f"[map_export] TXD {txd_basename} failed: {e}")

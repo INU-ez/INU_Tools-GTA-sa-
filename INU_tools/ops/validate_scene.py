@@ -305,14 +305,10 @@ def _gather_light_beam_meshes():
 
 def _sa_light_asi_present():
     """Check if SA_Light.asi is present in the configured GTA root.
-    Empty/missing root → False (so the check stays silent rather than
-    raising spurious INFO entries when the user hasn't set the path)."""
+    Empty/missing root → True (no false-positive INFO when path unset)."""
     import os
     root = getattr(bpy.context.scene.inu_settings, 'gtatools_game_root', '') or ''
     if not root:
-        # If user hasn't set game root, we can't tell — assume it's
-        # there to avoid false-positive INFO noise. Power users who
-        # haven't set the root probably know what they're doing.
         return True
     abs_root = bpy.path.abspath(root)
     if not os.path.isdir(abs_root):

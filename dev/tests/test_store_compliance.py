@@ -110,6 +110,19 @@ def test_no_dunder_import_with_runtime_arg():
 ALLOWED_SUBPROCESS_USES = {
     # Path -> reason. Update when adding a legitimate new caller.
     "INU_tools/ops/id_manager_ops.py": "xdg-open user-initiated file open",
+    "INU_tools/ops/file_scanner_ops.py": (
+        "xdg-open / `open` to reveal the scan-report folder in the "
+        "system file manager. User-initiated (operator triggered by "
+        "explicit button click), no shell=True, args is a literal "
+        "list with a fixed path arg. Windows path uses os.startfile."
+    ),
+    "INU_tools/ops/build_library_ops.py": (
+        "Spawns a headless Blender subprocess (`blender --background "
+        "--python scripts/build_library_worker.py`) to drain the asset-"
+        "library generator end-to-end without UI yields. 2-5x faster "
+        "than the in-process modal pump. Args are a literal list, no "
+        "shell=True; cmd[0] is bpy.app.binary_path (current Blender)."
+    ),
     "INU_tools/tools/nvtt_compress.py": (
         "spawns the NVTT binary for hardware DXT compression; "
         "FULL build only — store build excludes this file entirely "

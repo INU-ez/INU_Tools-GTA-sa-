@@ -812,10 +812,13 @@ def import_dff_from_clump(clump, base_name: str, *, skip_2dfx=None,
     previous model.
     """
     # Resolve 2DFX skip flag from scene when not passed explicitly.
+    # Свойство живёт на scene.inu_settings, не на scene напрямую —
+    # без этого префикса getattr всегда возвращал False, и тогл
+    # «Без 2DFX» в Import Map игнорировался.
     if skip_2dfx is None:
         try:
-            skip_2dfx = bool(getattr(
-                bpy.context.scene, 'gtatools_map_skip_2dfx', False))
+            settings = getattr(bpy.context.scene, 'inu_settings', None)
+            skip_2dfx = bool(getattr(settings, 'gtatools_map_skip_2dfx', False))
         except Exception:
             skip_2dfx = False
 

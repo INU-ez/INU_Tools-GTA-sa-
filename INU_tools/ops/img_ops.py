@@ -25,6 +25,24 @@ from ..tools.compat import safe_icon
 
 # ──────────────────────────── helpers ─────────────────────────────────
 
+def _read_png_dimensions(path):
+    """Read width × height from a PNG file's IHDR chunk. Returns (0, 0)
+    if the file isn't a valid PNG. Used by Extract Resources to dedupe
+    by resolution rather than by raw-vs-compressed byte count, which
+    was meaningless (raw RGBA is almost always larger than its PNG)."""
+    try:
+        with open(path, 'rb') as f:
+            sig = f.read(8)
+            if sig != b'\x89PNG\r\n\x1a\n':
+                return 0, 0
+            f.read(8)  # IHDR length(4) + chunk-type "IHDR"(4)
+            w = int.from_bytes(f.read(4), 'big')
+            h = int.from_bytes(f.read(4), 'big')
+            return w, h
+    except (OSError, ValueError):
+        return 0, 0
+
+
 def _refresh_img_entries(scn, img_path):
     """Directly refresh IMG entries list."""
     scn.inu_settings.gtatools_img_entries.clear()
@@ -69,7 +87,15 @@ class GTATOOLS_OT_refresh_img_list(bpy.types.Operator):
 
 
 class GTATOOLS_OT_extract_resources(bpy.types.Operator):
-    """Извлечь все DFF, COL и текстуры из IMG в .inu_cache/"""
+    """Извлечь все DFF, COL и текстуры из IMG-архивов GTA SA.
+
+    Кеш создаётся в папке .inu_cache/ рядом с твоим .blend файлом,
+    поэтому сцену нужно сначала сохранить — без сохранённого .blend
+    кешу некуда лечь, и оператор откажется работать.
+
+    Региональный фильтр (если выбран) сужает извлечение до TXD/моделей,
+    реально используемых в этом регионе по IDE/IPL — экономит минуты
+    на больших картах. ALL = извлечь всё"""
     bl_idname = "gtatools.extract_textures"
     bl_label = "INU: Extract Resources"
     bl_options = {'REGISTER'}
@@ -121,12 +147,22 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
             self.report({'ERROR'}, T("Не найден IMG архив"))
             return {'CANCELLED'}
 
-        # Region filter — when picked, walk matching IPLs to gather used
-        # model_ids, look those up in IDE files to get TXD names, then
-        # only extract those TXDs. Saves minutes on large extracts.
+        # Region filter — when picked, walk matching IPLs (BOTH text +
+        # binary-from-IMG) to gather used model_ids, look those up in
+        # IDE files to get TXD names, then only extract those TXDs.
+        # Saves minutes on large extracts.
+        #
+        # Why scan binary IPLs too: vanilla SA places a lot of district
+        # geometry via binary IPLs inside gta3.img (countn1.ipl,
+        # countryS.ipl, …), and these aren't declared in gta.dat. The
+        # previous version only walked text IPLs from gta.dat — for
+        # COUNTRY that misses ~half of placements, which dropped the
+        # corresponding TXDs from ``needed_txds`` and left them filtered.
         region = getattr(scene.inu_settings, 'gtatools_map_region', 'ALL')
         needed_txds = None  # None = "extract everything"
         if region != 'ALL':
+            from ..core.ipl import _read_binary_ipl
+
             def _ipl_matches_region(path: str) -> bool:
                 parts = path.replace('\\', '/').upper().split('/')
                 for i, part in enumerate(parts):
@@ -134,6 +170,32 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
                         return parts[i + 1] == region
                 name = path.replace('\\', '/').rsplit('/', 1)[-1].upper()
                 return name.startswith(region)
+
+            # Binary IPLs in gta3.img don't follow the folder-name region
+            # picker. Vanilla SA filenames use abbreviated prefixes:
+            # COUNTRY → countn*, country*, countxx; LA → la*; SF → sf*;
+            # VEGAS → vegas*. Map the user-facing region label to the
+            # filename prefixes the IMG actually contains.
+            _BIN_IPL_PREFIXES = {
+                'COUNTRY': ('COUNT',),    # countn*, country*, countxx, ...
+                'LA':      ('LA',),
+                'SF':      ('SF',),
+                'VEGAS':   ('VEGAS',),
+            }
+            bin_ipl_prefixes = _BIN_IPL_PREFIXES.get(region, (region,))
+
+            # Honour explicit binary-IPL toggles if the user curated them
+            # (gtatools_binary_ipls is a per-scene checklist that the
+            # sidebar's «Binary IPLs» panel surfaces).
+            bi_entries = scene.inu_settings.gtatools_binary_ipls
+            bi_enabled = {i.name.lower() for i in bi_entries if i.enabled}
+            bi_use_selection = len(bi_entries) > 0
+
+            def _bin_ipl_matches(name_lower: str) -> bool:
+                if bi_use_selection:
+                    return name_lower in bi_enabled
+                upper = name_lower.upper()
+                return any(upper.startswith(p) for p in bin_ipl_prefixes)
 
             ide_txd_by_id = {}
             for p in info.ide_paths:
@@ -148,14 +210,47 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
                         pass
 
             used_ids = set()
+
+            # Pass 1: text IPLs from gta.dat
+            text_ipl_count = 0
             for p in info.ipl_paths:
                 if os.path.isfile(p) and _ipl_matches_region(p):
                     try:
                         ipl = read_ipl(p)
                         for inst in ipl.instances:
                             used_ids.add(inst.model_id)
+                        text_ipl_count += 1
                     except Exception:
                         pass
+
+            # Pass 2: binary IPLs inside IMG archives. Read the directory,
+            # filter by name prefix or user selection, parse the bnry
+            # blob to pull instance model_ids.
+            bin_ipl_count = 0
+            from ..core.img import extract_file
+            for ip in img_paths:
+                try:
+                    for e in read_directory(ip):
+                        low = e.name.lower()
+                        if not low.endswith('.ipl'):
+                            continue
+                        if not _bin_ipl_matches(low):
+                            continue
+                        try:
+                            ipl_data = extract_file(ip, e.name)
+                            if ipl_data and ipl_data[:4] == b'bnry':
+                                ipl_parsed = _read_binary_ipl(ipl_data)
+                                for inst in ipl_parsed.instances:
+                                    used_ids.add(inst.model_id)
+                                bin_ipl_count += 1
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
+            print(f"[Extract Resources] region={region}: scanned "
+                  f"{text_ipl_count} text IPLs + {bin_ipl_count} binary IPLs, "
+                  f"{len(used_ids)} unique model_ids")
 
             needed_txds = {
                 ide_txd_by_id[mid].lower()
@@ -194,6 +289,19 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
         self._tex_count = 0
         self._skipped = 0
         self._txd_progress = 0
+        # Per-reason skip counters — updated from worker threads, gated
+        # by ``counters_lock`` in _work. Final report shows the breakdown
+        # so the user can see WHY textures are missing (region filter vs
+        # parse error vs degenerate header vs already-extracted-larger).
+        self._skip_reasons = {
+            'archive_filtered': 0,  # TXD archive didn't match region IPL
+            'parse_error': 0,       # read_txd raised on the archive
+            'no_name': 0,           # texture name was empty/all-null
+            'zero_dims': 0,         # width or height was 0
+            'no_pixels': 0,         # pixel data was empty
+            'dedup': 0,             # existing PNG already at >= resolution
+            'write_error': 0,       # _write_png raised
+        }
 
         from ..tools.profiler import Profiler
         self._profiler = Profiler(
@@ -210,7 +318,7 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
         return {'RUNNING_MODAL'}
 
     def _work(self, context):
-        from ..core.img import ImgReader
+        from ..core.img import ImgReader, safe_filename
         from ..core.txd import read_txd
         from .. import _write_png
         import threading
@@ -221,8 +329,39 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
         prof = self._profiler
 
         # Counters lock protects self._tex_count / self._skipped updates
-        # from worker threads.
+        # from worker threads. errors_lock serializes appends to the shared
+        # error/skip logs so concurrent failures don't interleave mid-line.
         counters_lock = threading.Lock()
+        errors_lock = threading.Lock()
+        err_log_path = os.path.join(cache_dir, '_txd_errors.log')
+        skip_log_path = os.path.join(cache_dir, '_extract_skipped.log')
+
+        # Reset skip log at start of each extraction so the user always
+        # sees results from this run, not a growing all-time history.
+        try:
+            if os.path.isfile(skip_log_path):
+                os.remove(skip_log_path)
+        except Exception:
+            pass
+
+        def _log_err(msg):
+            try:
+                with errors_lock, open(err_log_path, 'a', encoding='utf-8') as lf:
+                    lf.write(msg + '\n')
+            except Exception:
+                pass
+
+        def _log_skip(reason: str, tex_name: str, source: str, extra: str = ""):
+            """Increment counter + record one line per skipped texture."""
+            with counters_lock:
+                self._skip_reasons[reason] = self._skip_reasons.get(reason, 0) + 1
+                self._skipped += 1
+            try:
+                with errors_lock, open(skip_log_path, 'a', encoding='utf-8') as lf:
+                    lf.write(f"{reason:18s} | {tex_name[:40]:40s} | "
+                             f"{source[:30]:30s} | {extra}\n")
+            except Exception:
+                pass
 
         def _process_txd(entry_name: str, txd_data: bytes):
             """Worker: parse TXD bytes and write PNG for each texture.
@@ -235,25 +374,42 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
                 with prof.stage('read_txd (numpy DXT)', note=entry_name):
                     textures = read_txd(txd_data)
             except Exception as e:
-                try:
-                    with open(os.path.join(cache_dir, '_txd_errors.log'),
-                              'a', encoding='utf-8') as lf:
-                        lf.write(f"{entry_name}: {e}\n")
-                except Exception:
-                    pass
+                _log_err(f"{entry_name}: {e}")
+                _log_skip('parse_error', '*', entry_name, str(e))
                 return
 
             for tex in textures:
-                name = tex.name.rstrip('\x00')
-                if not name or tex.width == 0 or tex.height == 0 or not tex.pixels:
+                raw_name = (tex.name or '').rstrip('\x00')
+                # tex.name comes from a TXD that may carry garbage bytes —
+                # `_read_str32` decodes with errors='replace' so non-ASCII
+                # turns into '?'. Sanitize before forming a filesystem path
+                # so corrupt archives don't crash the writer on Windows.
+                name = safe_filename(raw_name)
+                if not name:
+                    _log_skip('no_name', raw_name or '<empty>', entry_name)
                     continue
+                if tex.width == 0 or tex.height == 0:
+                    _log_skip('zero_dims', name, entry_name,
+                              f"{tex.width}x{tex.height}")
+                    continue
+                if not tex.pixels:
+                    _log_skip('no_pixels', name, entry_name,
+                              f"{tex.width}x{tex.height}")
+                    continue
+
                 png_path = os.path.join(tex_dir, name + '.png')
+
+                # Dedup: read existing PNG's actual resolution from its
+                # IHDR. Skip only when the file on disk is at least as
+                # large as the new texture in BOTH dimensions — protects
+                # against a downscale variant from another IMG overwriting
+                # a higher-res original. The previous comparison of
+                # raw-RGBA bytes vs compressed PNG bytes was meaningless.
                 if os.path.isfile(png_path):
-                    existing_size = os.path.getsize(png_path)
-                    new_size = tex.width * tex.height * 4
-                    if new_size <= existing_size:
-                        with counters_lock:
-                            self._skipped += 1
+                    ew, eh = _read_png_dimensions(png_path)
+                    if ew >= tex.width and eh >= tex.height:
+                        _log_skip('dedup', name, entry_name,
+                                  f"existing {ew}x{eh} >= new {tex.width}x{tex.height}")
                         continue
 
                 try:
@@ -262,12 +418,8 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
                     with counters_lock:
                         self._tex_count += 1
                 except Exception as e:
-                    try:
-                        with open(os.path.join(cache_dir, '_txd_errors.log'),
-                                  'a', encoding='utf-8') as lf:
-                            lf.write(f"{entry_name}/{name}: {e}\n")
-                    except Exception:
-                        pass
+                    _log_err(f"{entry_name}/{name}: {e}")
+                    _log_skip('write_error', name, entry_name, str(e))
 
         # Worker count — start conservative (4). Bumping to 8 is safe too
         # but diminishing returns above that since IMG reads are serial.
@@ -300,6 +452,10 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
                             _self._txd_progress += 1
 
                     pool = ThreadPoolExecutor(max_workers=workers)
+                    # Track on self so _cleanup() can tear it down on ESC
+                    # — otherwise worker threads would keep churning after
+                    # the operator returns CANCELLED.
+                    self._pool = pool
                     submitted = 0
                     try:
                         for entry in img.entries:
@@ -307,11 +463,18 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
                             if not low.endswith('.txd'):
                                 continue
                             if needed_txds is not None and low[:-4] not in needed_txds:
+                                # Region filter excluded this TXD — log
+                                # at archive level so the user can see if
+                                # their region pick was too narrow.
+                                _log_skip('archive_filtered', '*', entry.name,
+                                          f"region={self._region}")
                                 continue
 
                             with prof.stage('img.read (TXD bytes)'):
                                 txd_data = img.read(entry.name)
                             if not txd_data:
+                                _log_skip('parse_error', '*', entry.name,
+                                          "empty read")
                                 continue
 
                             fut = pool.submit(_process_txd, entry.name, txd_data)
@@ -331,6 +494,7 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
                             yield
                     finally:
                         pool.shutdown(wait=False)
+                        self._pool = None
             except Exception:
                 pass
 
@@ -355,10 +519,27 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
                 next(self._gen)
             except StopIteration:
                 self._cleanup(context)
-                self.report({'INFO'},
-                    f"DFF: {self._dff_count}, COL: {self._col_count}, "
-                    f"{T('Извлечено текстур:')} {self._tex_count}, "
-                    f"{T('пропущено:')} {self._skipped}")
+
+                # Build breakdown — surface only the categories that
+                # actually fired this run, otherwise the message is noise.
+                # Detailed per-texture log lives in _extract_skipped.log.
+                reasons = {k: v for k, v in self._skip_reasons.items() if v}
+                breakdown = ""
+                if reasons:
+                    parts = ", ".join(f"{k}={v}" for k, v in
+                                      sorted(reasons.items(), key=lambda kv: -kv[1]))
+                    breakdown = f" [{parts}]"
+                # Print the full breakdown to the system console so it's
+                # easy to copy-paste into a bug report; the operator
+                # status line keeps a short version for the header bar.
+                full_msg = (f"DFF: {self._dff_count}, COL: {self._col_count}, "
+                            f"{T('Извлечено текстур:')} {self._tex_count}, "
+                            f"{T('пропущено:')} {self._skipped}{breakdown}")
+                print(f"[Extract Resources] {full_msg}")
+                if reasons:
+                    print(f"[Extract Resources] подробности по каждой текстуре: "
+                          f"{os.path.join(self._cache_dir, '_extract_skipped.log')}")
+                self.report({'INFO'}, full_msg)
                 return {'FINISHED'}
 
         wm.progress_update(self._txd_progress)
@@ -369,6 +550,26 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
         return {'RUNNING_MODAL'}
 
     def _cleanup(self, context):
+        # Order matters on ESC: kill the pool first so its workers stop
+        # picking up new tasks, then close the generator (its finally
+        # block clears self._pool). cancel_futures requires Python 3.9+
+        # which Blender 4.2 satisfies.
+        pool = getattr(self, '_pool', None)
+        if pool is not None:
+            try:
+                pool.shutdown(wait=False, cancel_futures=True)
+            except Exception:
+                pass
+            self._pool = None
+
+        gen = getattr(self, '_gen', None)
+        if gen is not None:
+            try:
+                gen.close()
+            except Exception:
+                pass
+            self._gen = None
+
         if self._timer:
             context.window_manager.event_timer_remove(self._timer)
             self._timer = None
@@ -810,7 +1011,7 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
         from ..core.dff import GTA_SA_VERSION
         from ..core.col import write_col
         from ..tools.model_utils import find_all_selected_model_groups
-        from ..tools.txd_export import export_txd, check_nvtt_available
+        from ..tools.txd_export import export_txd
         from .dff_export import build_dff_clump
         from .col_export import build_col_model, export_col_library
 
@@ -836,7 +1037,7 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
         export_txd_flag = getattr(context.scene.inu_settings, 'gtatools_export_all_txd', True)
         col_library = bool(getattr(context.scene.inu_settings, 'gtatools_export_all_col_library', False))
         col_library_name = getattr(context.scene.inu_settings, 'gtatools_export_all_col_library_name', '') or 'collision'
-        use_gpu = check_nvtt_available(getattr(context.scene.inu_settings, 'gtatools_nvtt_path', ''))[0]
+        backend = getattr(context.scene.inu_settings, 'gtatools_dxt_backend', 'numpy')
 
         wm = context.window_manager
         plan_by_name = {}
@@ -982,7 +1183,7 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
                             for src in sources:
                                 src.select_set(True)
                             context.view_layer.objects.active = sources[0]
-                            result, msg, _ = export_txd(txd_path, context, True, use_gpu)
+                            result, msg, _ = export_txd(txd_path, context, True, backend=backend)
                             if result == {'FINISHED'}:
                                 with open(txd_path, 'rb') as f:
                                     status = writer.add(txd_name + '.txd', f.read())

@@ -2130,3 +2130,112 @@ def scatter_light_from_selected(obj, intensity=1.0, falloff=2.0, iterations=3, r
         bpy.ops.object.mode_set(mode='EDIT')
 
     return True, f"Light scattered to {modified_count} vertices (radius: {radius:.2f})", affected_loops
+
+
+def scatter_color_from_selected(obj, color, strength=1.0, distance=1.0):
+    """Paint a chosen color around selected faces with linear falloff.
+
+    Use case: добавить локальный тинт/свечение в зону вокруг выбранных
+    полигонов — не тащит prelight под ногами, а замешивает указанный
+    цвет с убыванием по расстоянию.
+
+    color   — (r, g, b, a) target color, 0..1.
+    strength — 0..1, сила вклада в центре (0 — ничего не делать,
+               1 — полная замена цвета на target в центре).
+    distance — 0..1, радиус как доля половины bbox-диагонали меша.
+               0 = тинт только на выделенных вершинах; 1 = расходится
+               на половину диагонали меша.
+
+    Existing vcols blended (not replaced); рассчитывается per-vertex
+    Euclidean distance до ближайшей выбранной вершины через mathutils
+    KDTree. Запись через foreach_set.
+    """
+    if obj is None or obj.type != 'MESH':
+        return False, "Select a mesh object!"
+
+    original_mode = obj.mode
+    if original_mode == 'EDIT':
+        bpy.ops.object.mode_set(mode='OBJECT')
+
+    mesh = obj.data
+    color_attr = compat.vcol_active(mesh)
+    if color_attr is None:
+        if original_mode == 'EDIT':
+            bpy.ops.object.mode_set(mode='EDIT')
+        return False, "No active color layer!"
+
+    n_verts = len(mesh.vertices)
+    n_loops = len(mesh.loops)
+    if n_loops == 0:
+        if original_mode == 'EDIT':
+            bpy.ops.object.mode_set(mode='EDIT')
+        return False, "Mesh has no loops"
+
+    # Selected vertex set (any face that's selected contributes its verts)
+    selected_verts = []
+    for poly in mesh.polygons:
+        if poly.select:
+            selected_verts.extend(poly.vertices)
+    selected_verts = list(set(selected_verts))
+    if not selected_verts:
+        if original_mode == 'EDIT':
+            bpy.ops.object.mode_set(mode='EDIT')
+        return False, "No faces selected"
+
+    # Bulk read vertex positions
+    coords = np.empty(n_verts * 3, dtype=np.float32)
+    mesh.vertices.foreach_get('co', coords)
+    coords = coords.reshape(n_verts, 3)
+
+    # BBox half-diagonal — radius scale
+    bbox_min = coords.min(axis=0)
+    bbox_max = coords.max(axis=0)
+    half_diag = float(np.linalg.norm(bbox_max - bbox_min)) * 0.5
+    max_radius = max(0.001, half_diag * float(distance))
+
+    # KDTree on selected vertex coords for nearest-neighbor distance
+    import mathutils
+    kd = mathutils.kdtree.KDTree(len(selected_verts))
+    for i, vi in enumerate(selected_verts):
+        kd.insert(mathutils.Vector(coords[vi].tolist()), i)
+    kd.balance()
+
+    # Per-vertex blend factor: 1 at sel vert, linearly down to 0 at max_radius
+    sel_set = set(selected_verts)
+    vert_blend = np.zeros(n_verts, dtype=np.float32)
+    for vi in range(n_verts):
+        if vi in sel_set:
+            vert_blend[vi] = 1.0
+            continue
+        co = coords[vi]
+        _, _, dist = kd.find(mathutils.Vector(co.tolist()))
+        if dist is None:
+            continue
+        if dist <= max_radius:
+            vert_blend[vi] = 1.0 - (dist / max_radius)
+    vert_blend *= float(strength)
+
+    # Per-loop expansion via vertex_index
+    loop_vidx = np.empty(n_loops, dtype=np.int32)
+    mesh.loops.foreach_get('vertex_index', loop_vidx)
+    loop_blend = vert_blend[loop_vidx]
+
+    # Read existing vcols, blend toward target color
+    flat = np.empty(n_loops * 4, dtype=np.float32)
+    color_attr.data.foreach_get('color', flat)
+    existing = flat.reshape(n_loops, 4)
+
+    target = np.array(
+        (color[0], color[1], color[2],
+         color[3] if len(color) >= 4 else 1.0),
+        dtype=np.float32)
+
+    f = loop_blend[:, None]
+    new_colors = existing * (1.0 - f) + target[None, :] * f
+    color_attr.data.foreach_set('color', new_colors.ravel())
+
+    if original_mode == 'EDIT':
+        bpy.ops.object.mode_set(mode='EDIT')
+
+    affected = int(np.count_nonzero(vert_blend))
+    return True, f"Scattered color around {len(selected_verts)} selected → {affected} affected verts (radius {max_radius:.2f})"

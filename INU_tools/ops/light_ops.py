@@ -29,7 +29,47 @@ from ..tools.prelight import (
     remove_fill_color_by_index, get_selected_faces_color,
     fill_selected_faces_with_backup, restore_filled_faces,
     scatter_light_from_selected,
+    scatter_color_from_selected,
 )
+
+
+def _force_object_mode(context):
+    """Switch active object out of EDIT (or other non-OBJECT) mode and
+    return a `(prev_mode, prev_obj)` tuple for later restore.
+
+    Bake helpers iterate `mesh.color_attributes.data` via foreach_set;
+    в EDIT mode mesh-данные стейджатся в BMesh, поэтому foreach_set
+    видит 0-length массив → cryptic TypeError. Принудительный выход
+    в OBJECT — единственный надёжный способ.
+
+    Returns ``(None, None)`` если переключение не нужно или невозможно.
+    """
+    obj = context.active_object
+    if obj is None:
+        return None, None
+    prev_mode = obj.mode
+    if prev_mode == 'OBJECT':
+        return None, None
+    try:
+        bpy.ops.object.mode_set(mode='OBJECT')
+    except RuntimeError:
+        return None, None
+    return prev_mode, obj
+
+
+def _restore_mode(prev_mode, prev_obj):
+    """Restore mode captured by `_force_object_mode`. Silent no-op on
+    failure (e.g., объект удалён, mode недоступен)."""
+    if not prev_mode or prev_obj is None:
+        return
+    try:
+        # Make sure the object that was in edit mode is still active —
+        # other ops in the batch could have changed selection.
+        if bpy.context.view_layer.objects.active is not prev_obj:
+            bpy.context.view_layer.objects.active = prev_obj
+        bpy.ops.object.mode_set(mode=prev_mode)
+    except (RuntimeError, ReferenceError):
+        pass
 
 
 class GTATOOLS_OT_detect_models(bpy.types.Operator):
@@ -242,14 +282,28 @@ class GTATOOLS_OT_bake_vertex_colors(bpy.types.Operator):
             self.report({'ERROR'}, T("Выделите меш объекты"))
             return {'CANCELLED'}
 
-        baked = 0
-        for obj in mesh_objects:
-            success, message = bake_vertex_colors_from_lights(obj, self.use_shadows)
-            if success:
-                if compat.vcol_active(obj.data):
-                    prop_name = f"v_offset_{compat.vcol_active(obj.data).name}"
-                    obj[prop_name] = 0.0
-                baked += 1
+        prev_mode, prev_obj = _force_object_mode(context)
+        try:
+            baked = 0
+            for obj in mesh_objects:
+                success, message = bake_vertex_colors_from_lights(obj, self.use_shadows)
+                if success:
+                    act = compat.vcol_active(obj.data)
+                    if act:
+                        attr_name = act.name
+                        # Свежие колоры → applied-state = 0.
+                        obj[f"v_offset_{attr_name}"] = 0.0
+                        # Сохранить пользовательский V-offset: накладываем
+                        # его поверх свежих колоров через apply_brightness_offset
+                        # (он сам обновит obj["v_offset_<name>"]).
+                        from ..tools.prelight import apply_brightness_offset
+                        if attr_name == "Day" and obj.gtatools_v_offset_day != 0.0:
+                            apply_brightness_offset(obj, obj.gtatools_v_offset_day)
+                        elif attr_name == "Night" and obj.gtatools_v_offset_night != 0.0:
+                            apply_brightness_offset(obj, obj.gtatools_v_offset_night)
+                    baked += 1
+        finally:
+            _restore_mode(prev_mode, prev_obj)
 
         if baked:
             self.report({'INFO'}, f"Baked from lights: {baked} objects")
@@ -279,14 +333,26 @@ class GTATOOLS_OT_bake_vertex_colors_simple(bpy.types.Operator):
         gamma = scene.inu_settings.gtatools_bake_gamma
         use_shadows = False
 
-        baked = 0
-        for obj in mesh_objects:
-            success, message = bake_vertex_colors_simple(obj, ambient, intensity, gamma, use_shadows)
-            if success:
-                if compat.vcol_active(obj.data):
-                    prop_name = f"v_offset_{compat.vcol_active(obj.data).name}"
-                    obj[prop_name] = 0.0
-                baked += 1
+        prev_mode, prev_obj = _force_object_mode(context)
+        try:
+            baked = 0
+            for obj in mesh_objects:
+                success, message = bake_vertex_colors_simple(obj, ambient, intensity, gamma, use_shadows)
+                if success:
+                    act = compat.vcol_active(obj.data)
+                    if act:
+                        attr_name = act.name
+                        obj[f"v_offset_{attr_name}"] = 0.0
+                        # Сохранить пользовательский V-offset поверх
+                        # свежих колоров (см. полный комментарий выше).
+                        from ..tools.prelight import apply_brightness_offset
+                        if attr_name == "Day" and obj.gtatools_v_offset_day != 0.0:
+                            apply_brightness_offset(obj, obj.gtatools_v_offset_day)
+                        elif attr_name == "Night" and obj.gtatools_v_offset_night != 0.0:
+                            apply_brightness_offset(obj, obj.gtatools_v_offset_night)
+                    baked += 1
+        finally:
+            _restore_mode(prev_mode, prev_obj)
 
         if baked:
             _act = compat.vcol_active(mesh_objects[0].data)
@@ -1594,6 +1660,46 @@ class GTATOOLS_OT_clear_fill_color_levels(bpy.types.Operator):
             return {'CANCELLED'}
 
 
+class GTATOOLS_OT_scatter_color(bpy.types.Operator):
+    """Рассеять выбранный цвет вокруг выделенных полигонов с убыванием по расстоянию"""
+    bl_idname = "gtatools.scatter_color"
+    bl_label = "INU: Scatter Color"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        obj = context.active_object
+        scene = context.scene
+        if not obj or obj.type != 'MESH':
+            self.report({'ERROR'}, T("Выберите меш!"))
+            return {'CANCELLED'}
+
+        # Pull color from active Vertex Paint brush. Fallback на scene
+        # prop если режим не Vertex Paint (например, юзер запустил
+        # оператор из Edit mode).
+        color = None
+        try:
+            ts = context.tool_settings
+            vp = getattr(ts, 'vertex_paint', None)
+            if vp and getattr(vp, 'brush', None) is not None:
+                c = vp.brush.color
+                color = (c[0], c[1], c[2])
+        except (AttributeError, RuntimeError):
+            pass
+        if color is None:
+            color = tuple(scene.inu_settings.gtatools_scatter_color_color)
+
+        strength = float(scene.inu_settings.gtatools_scatter_color_strength)
+        distance = float(scene.inu_settings.gtatools_scatter_color_distance)
+        success, message = scatter_color_from_selected(
+            obj, (color[0], color[1], color[2], 1.0),
+            strength=strength, distance=distance)
+        if success:
+            self.report({'INFO'}, message)
+            return {'FINISHED'}
+        self.report({'ERROR'}, message)
+        return {'CANCELLED'}
+
+
 class GTATOOLS_OT_scatter_light(bpy.types.Operator):
     """Рассеять свет от выделенных граней к соседним"""
     bl_idname = "gtatools.scatter_light"
@@ -1925,6 +2031,7 @@ classes = (
     GTATOOLS_OT_delete_fill_color_level,
     GTATOOLS_OT_clear_fill_color_levels,
     GTATOOLS_OT_scatter_light,
+    GTATOOLS_OT_scatter_color,
     GTATOOLS_OT_toggle_face_select,
     GTATOOLS_OT_switch_to_edit,
     GTATOOLS_OT_switch_to_vpaint,

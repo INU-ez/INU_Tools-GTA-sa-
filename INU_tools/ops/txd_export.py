@@ -1,15 +1,15 @@
 # INU_tools.ops.txd_export — Blender wrappers for TXD export.
 #
-# The actual encoder lives in tools.txd_export (`export_txd`,
-# `check_nvtt_available`); this module just holds the operator classes
-# that own filepath dialogs and report results to Blender's UI.
+# The actual encoder lives in tools.txd_export (`export_txd`); this
+# module just holds the operator classes that own filepath dialogs
+# and report results to Blender's UI.
 
 import bpy
 from bpy.props import StringProperty, BoolProperty
 from bpy_extras.io_utils import ExportHelper
 
 from .. import T
-from ..tools.txd_export import export_txd, check_nvtt_available
+from ..tools.txd_export import export_txd
 
 
 class GTATOOLS_OT_export_txd(bpy.types.Operator, ExportHelper):
@@ -57,8 +57,8 @@ class GTATOOLS_OT_export_txd(bpy.types.Operator, ExportHelper):
                 name += '.txd'
             target = os.path.join(os.path.dirname(target), name)
 
-        use_gpu = check_nvtt_available(getattr(context.scene.inu_settings, 'gtatools_nvtt_path', ''))[0]
-        result, message, transparent_list = export_txd(target, context, sel_only, use_gpu)
+        backend = getattr(context.scene.inu_settings, 'gtatools_dxt_backend', 'numpy')
+        result, message, transparent_list = export_txd(target, context, sel_only, backend=backend)
         self.report({'INFO'} if result == {'FINISHED'} else {'ERROR'}, message)
         return result
 
@@ -96,9 +96,9 @@ class GTATOOLS_OT_export_shared_txd(bpy.types.Operator, ExportHelper):
             self.report({'ERROR'}, T("Выделите меш объекты"))
             return {'CANCELLED'}
 
-        use_gpu = check_nvtt_available(getattr(context.scene.inu_settings, 'gtatools_nvtt_path', ''))[0]
+        backend = getattr(context.scene.inu_settings, 'gtatools_dxt_backend', 'numpy')
         # Force selected_only=True for shared TXD (collects from all selected DFFs)
-        result, message, transparent_list = export_txd(self.filepath, context, True, use_gpu)
+        result, message, transparent_list = export_txd(self.filepath, context, True, backend=backend)
         self.report({'INFO'} if result == {'FINISHED'} else {'ERROR'}, message)
         return result
 

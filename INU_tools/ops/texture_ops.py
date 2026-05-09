@@ -3,6 +3,7 @@
 # Phase 3 (2026-04-26): operators moved from __init__.py.
 
 import os
+import re as _re
 import bpy
 import numpy as np
 from bpy.props import (
@@ -13,49 +14,98 @@ from .. import T
 from ..tools import compat
 
 
-# Threshold (in pixel count) above which an image is considered to need
-# alpha blending. 5000 matches the legacy "Connect Textures" operator
-# and works well for GTA's DXT3/4/5 textures: stray alpha noise from
-# DXT compression doesn't cross it, real transparent areas (foliage,
-# fences, glass) easily do.
-_ALPHA_PIXEL_THRESHOLD = 5000
+# Alpha-detection thresholds. A texture is considered an "alpha texture"
+# iff at least ALPHA_MIN_TRANSPARENT_PIXELS pixels have alpha below
+# ALPHA_OPAQUE_THRESHOLD/255.
+#
+# Why two values:
+#   - DXT decoder occasionally produces stray sub-255 alpha pixels from
+#     block-quantization noise on fully opaque textures. A single-pixel
+#     check would false-positive every DXT1 texture as alpha.
+#   - Channel count alone (`img.channels == 4`) is useless: every
+#     DXT-decoded image is RGBA8 by construction.
+#
+# Defaults: anything below ~98% opaque counts as transparent, and we
+# need at least 10 such pixels (well above decoder noise, well below
+# any real alpha texture which has hundreds-to-thousands).
+#
+# 1.8.x history: legacy threshold was 5000 pixels @ <0.95 — far too
+# strict for typical 256×256 GTA fence/foliage textures, which have
+# 1500-3000 transparent pixels and were silently failing the check.
+ALPHA_OPAQUE_THRESHOLD = 250          # alpha < 250/255 → "transparent"
+ALPHA_MIN_TRANSPARENT_PIXELS = 10     # min count to count as alpha texture
 
 
 def image_has_significant_alpha(image) -> bool:
-    """True if ``image`` has more than _ALPHA_PIXEL_THRESHOLD pixels
-    with alpha < 0.95. Used by the auto-link path to decide whether
-    to wire the texture's Alpha output into the BSDF Alpha input."""
-    if image is None or image.channels < 4:
+    """True iff ``image`` has at least ``ALPHA_MIN_TRANSPARENT_PIXELS``
+    pixels with alpha below ``ALPHA_OPAQUE_THRESHOLD``/255. Used by the
+    auto-link path to decide whether to wire the texture's Alpha output
+    into the BSDF Alpha input.
+
+    Prints a one-line diagnostic per checked image so you can see in the
+    console why a texture was (or wasn't) classified as alpha — useful
+    when fences/foliage don't get their transparency wired automatically."""
+    if image is None:
+        return False
+    if image.channels < 4:
+        print(f"[ALPHA] {image.name}: channels={image.channels}, no alpha")
         return False
     try:
-        if not image.has_data or len(image.pixels) == 0:
-            # Not loaded into memory — skip rather than calling
-            # reload() (which on packed-only images can clear pixels).
+        # Don't trust ``image.has_data`` — it returns False on
+        # packed-only images right after ``pack()``, even when the
+        # pixels are already accessible. Read pixels directly and let
+        # any real failure raise.
+        pixels_seq = image.pixels[:]
+        if len(pixels_seq) == 0:
+            print(f"[ALPHA] {image.name}: pixels not loaded yet")
             return False
-        pixels = np.asarray(image.pixels[:])
+        pixels = np.asarray(pixels_seq, dtype=np.float32)
         alpha = pixels[3::4]
-        return int(np.sum(alpha < 0.95)) > _ALPHA_PIXEL_THRESHOLD
-    except Exception:
+        threshold_f = ALPHA_OPAQUE_THRESHOLD / 255.0
+        transparent_count = int(np.count_nonzero(alpha < threshold_f))
+        is_alpha = transparent_count >= ALPHA_MIN_TRANSPARENT_PIXELS
+        print(f"[ALPHA] {image.name}: "
+              f"{transparent_count}/{alpha.size} pixels < {ALPHA_OPAQUE_THRESHOLD}/255 "
+              f"(min_a={alpha.min():.3f}), threshold={ALPHA_MIN_TRANSPARENT_PIXELS}, "
+              f"is_alpha={is_alpha}")
+        return is_alpha
+    except Exception as e:
+        print(f"[ALPHA] {getattr(image, 'name', '?')}: error {type(e).__name__}: {e}")
         return False
 
 
 def link_material_alpha_if_textured(material) -> bool:
-    """If ``material`` has a Principled BSDF and an Image Texture node
-    whose image carries real transparent pixels, wire texture.Alpha →
-    BSDF.Alpha and switch the material to alpha-test blending. No-op
-    when alpha is already linked or the image is opaque.
+    """If ``material`` has a Principled BSDF and an Image Texture node,
+    re-evaluate the Alpha link based on the image's actual pixel content:
 
-    Returns True iff a new link was created. Idempotent across runs."""
-    if not material or not material.use_nodes or not material.node_tree:
+      * image has transparent pixels → wire texture.Alpha → BSDF.Alpha
+        (and switch the material to HASHED alpha-test for Eevee/Cycles)
+      * image is opaque → remove any existing texture→Alpha link
+
+    Idempotent across runs and re-imports — safe to call repeatedly,
+    catches both new alpha textures and textures that lost their alpha
+    after being re-imported as opaque.
+
+    Verbose: prints a one-line diagnostic per material so it's obvious
+    why a fence/foliage material did or didn't get its alpha wired.
+
+    Returns True iff the link state was changed (added or removed)."""
+    if not material:
+        return False
+    name = material.name
+    if not material.use_nodes or not material.node_tree:
+        print(f"[ALPHA-LINK] mat={name!r}: no node tree, skip")
         return False
     nodes = material.node_tree.nodes
     links = material.node_tree.links
 
     bsdf = next((n for n in nodes if n.type == 'BSDF_PRINCIPLED'), None)
     if bsdf is None:
+        print(f"[ALPHA-LINK] mat={name!r}: no Principled BSDF, skip")
         return False
     alpha_input = bsdf.inputs.get('Alpha')
-    if alpha_input is None or alpha_input.is_linked:
+    if alpha_input is None:
+        print(f"[ALPHA-LINK] mat={name!r}: BSDF has no Alpha input, skip")
         return False
 
     tex_node = next(
@@ -63,20 +113,70 @@ def link_material_alpha_if_textured(material) -> bool:
          if n.type == 'TEX_IMAGE' and n.image is not None),
         None,
     )
-    if tex_node is None or not image_has_significant_alpha(tex_node.image):
+    if tex_node is None:
+        print(f"[ALPHA-LINK] mat={name!r}: no TEX_IMAGE with image, skip")
         return False
 
-    links.new(tex_node.outputs['Alpha'], alpha_input)
-    # HASHED matches the legacy "Connect Textures" path — stochastic
-    # alpha-test in Eevee, true alpha in Cycles, and shadows behave
-    # the same as the surface.
-    if hasattr(material, 'blend_method'):
-        material.blend_method = 'HASHED'
-    if hasattr(material, 'shadow_method'):
-        material.shadow_method = 'HASHED'
-    if hasattr(material, 'show_transparent_back'):
-        material.show_transparent_back = False
-    return True
+    img = tex_node.image
+    has_alpha = image_has_significant_alpha(img)
+    already_linked = (
+        alpha_input.is_linked
+        and alpha_input.links[0].from_node is tex_node
+    )
+
+    changed = False
+
+    if has_alpha:
+        # Ensure the link itself
+        if not already_linked:
+            for link in list(alpha_input.links):
+                links.remove(link)
+            links.new(tex_node.outputs['Alpha'], alpha_input)
+            changed = True
+
+        # CRITICAL: always enforce blend_method, even when the link was
+        # already correct. Reason — earlier passes (Phase 1 from
+        # _assign_textures_to_materials, manual user wiring) may have
+        # created the link without touching blend_method, leaving the
+        # material in an inconsistent state where Alpha is wired in the
+        # node graph but the viewport renders it opaque. This is the
+        # exact bug that produces «alpha pin connected, fence still
+        # black». Re-running this every TXD import keeps blend mode
+        # in sync with the actual link state.
+        if hasattr(material, 'blend_method') and material.blend_method == 'OPAQUE':
+            material.blend_method = 'HASHED'
+            changed = True
+        if hasattr(material, 'shadow_method') and material.shadow_method == 'OPAQUE':
+            material.shadow_method = 'HASHED'
+            changed = True
+        if hasattr(material, 'show_transparent_back') and material.show_transparent_back:
+            material.show_transparent_back = False
+            changed = True
+
+        if changed:
+            print(f"[ALPHA-LINK] mat={name!r} img={img.name!r}: "
+                  f"Alpha {'WIRED' if not already_linked else 'kept'} + blend=HASHED")
+        else:
+            print(f"[ALPHA-LINK] mat={name!r} img={img.name!r}: already correct (link + blend)")
+        return changed
+
+    # Image is opaque — drop any tex_node→Alpha link, restore OPAQUE blend.
+    for link in list(alpha_input.links):
+        if link.from_node is tex_node:
+            links.remove(link)
+            changed = True
+    if changed and hasattr(material, 'blend_method'):
+        # Only flip blend back to OPAQUE if WE removed a link — leave it
+        # alone if the user has set BLEND/HASHED for some other reason.
+        material.blend_method = 'OPAQUE'
+        if hasattr(material, 'shadow_method'):
+            material.shadow_method = 'OPAQUE'
+
+    if changed:
+        print(f"[ALPHA-LINK] mat={name!r} img={img.name!r}: opaque → REMOVED Alpha link + blend=OPAQUE")
+    else:
+        print(f"[ALPHA-LINK] mat={name!r} img={img.name!r}: opaque, no change")
+    return changed
 
 
 class GTATOOLS_OT_load_textures(bpy.types.Operator):

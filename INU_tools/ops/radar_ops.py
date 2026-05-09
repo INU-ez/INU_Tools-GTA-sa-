@@ -187,8 +187,7 @@ class GTATOOLS_OT_radar_pack_txd(bpy.types.Operator):
             return {'CANCELLED'}
 
         grid = scn.inu_settings.gtatools_radar_grid
-        from ..tools.txd_export import check_nvtt_available
-        use_gpu = check_nvtt_available(getattr(scn.inu_settings, 'gtatools_nvtt_path', ''))[0]
+        backend = getattr(scn.inu_settings, 'gtatools_dxt_backend', 'numpy')
 
         txd_dir = os.path.join(output_dir, "txd")
         os.makedirs(txd_dir, exist_ok=True)
@@ -242,7 +241,7 @@ class GTATOOLS_OT_radar_pack_txd(bpy.types.Operator):
             txd_path = os.path.join(txd_dir, name + ".txd")
             try:
                 from ..tools.txd_export import export_txd
-                result, msg, _ = export_txd(txd_path, context, selected_only=True, use_gpu=use_gpu)
+                result, msg, _ = export_txd(txd_path, context, selected_only=True, backend=backend)
                 if result == {'FINISHED'}:
                     packed += 1
             except Exception as e:
