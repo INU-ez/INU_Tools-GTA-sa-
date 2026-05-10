@@ -47,9 +47,16 @@
 </tr>
 </table>
 
-## 🔮 Coming Next
+## 🔮 Roadmap
 
-_Nothing in the pipeline right now._
+Ideas being considered. Not all of these will ship — some may turn out impractical, deprioritised, or just not worth it on closer inspection.
+
+- 🔍 **Game Validator** — cross-file IDE / IPL / IMG / COL / TXD checks: missing references, duplicate IDs, broken LOD chains, coordinates out of map bounds. Single report grouped Critical / Warning / Info
+- 💾 **Game Folder Backup** — auto-snapshot `gta3.img` and key `.ide` files before destructive ops (Map Export, IMG rebuild)
+- 🧪 **Lint Profiles** — strict / lenient / FLA toggle for File Scanner and Game Validator (FLA builds have different limits)
+- 🔁 **IPL Mass Replace** — swap all INST entries with model X for model Y by coordinates / radius / tag
+- 🔍 **Texture Browser** — UIList with all textures from all TXDs in the game folder, with search and cross-ref «used by»
+- 🎬 **IFP Library Viewer** — preview any of the 294 animations on a temporary armature without creating a ped
 
 ## 🆕 What's New in 1.9.0
 
