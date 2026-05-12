@@ -192,6 +192,11 @@ class GTATOOLS_OT_build_asset_library(bpy.types.Operator):
                         T("Не найден исполняемый файл Blender'а"))
             return {'CANCELLED'}
 
+        # Полное имя модуля аддона. Legacy install → 'INU_tools',
+        # extension install (4.2+) → 'bl_ext.<repo>.<addon>'. Worker
+        # сам не знает — передаём своё __package__ minus '.ops'.
+        addon_module = __package__.rsplit('.', 1)[0] if __package__ else 'INU_tools'
+
         cmd = [
             blender_exe, '--background',
             '--python', worker, '--',
@@ -199,6 +204,7 @@ class GTATOOLS_OT_build_asset_library(bpy.types.Operator):
             '--game-root', game_root,
             '--output', output_dir,
             '--preview-size', str(preview_size),
+            '--addon-module', addon_module,
         ]
         if no_preview:
             cmd.append('--no-preview')

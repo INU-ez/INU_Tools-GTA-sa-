@@ -48,7 +48,42 @@ def _parse_args():
     p.add_argument('--categories', default='',
                    help='Comma-separated subset of categories to build '
                         '(default: all). Empty string = no filter.')
+    # Полное имя модуля аддона в текущем install-mode:
+    #   • Legacy:  'INU_tools'
+    #   • Extension (4.2+): 'bl_ext.<repo>.<addon_basename>'
+    # Operator passes own __package__ root так что worker не гадает.
+    p.add_argument('--addon-module', default='',
+                   help='Full python module name of the addon (passed from '
+                        'the parent operator). Auto-detected from __file__ '
+                        'if empty.')
     return p.parse_args(argv)
+
+
+def _detect_addon_module() -> str:
+    """Derive the addon's python module name from this worker's path.
+
+    Two install modes covered:
+      • Legacy `scripts/addons/INU_tools/scripts/build_library_worker.py`
+        → 'INU_tools'
+      • Extension `extensions/<repo>/<addon>/scripts/build_library_worker.py`
+        → 'bl_ext.<repo>.<addon>'
+
+    Used as a fallback when `--addon-module` isn't passed by the parent
+    operator (e.g., during direct CLI invocation from `dev/`).
+    """
+    worker_file = os.path.abspath(__file__)
+    scripts_dir = os.path.dirname(worker_file)
+    addon_dir = os.path.dirname(scripts_dir)
+    addon_basename = os.path.basename(addon_dir)
+    parent_dir = os.path.dirname(addon_dir)
+    parent_basename = os.path.basename(parent_dir)
+    # Extension install lives under `…/extensions/<repo>/<addon>/`. The
+    # signature: parent's parent is named `extensions`. Anything else we
+    # treat as legacy (parent is `addons` или ad-hoc dev path).
+    grand = os.path.basename(os.path.dirname(parent_dir))
+    if grand == 'extensions':
+        return f'bl_ext.{parent_basename}.{addon_basename}'
+    return addon_basename
 
 
 def _emit_progress(status: dict):
@@ -68,26 +103,38 @@ def main():
     args = _parse_args()
 
     import bpy  # noqa: E402
+    import importlib
+
+    # Resolve addon module name. Operator passes it via --addon-module
+    # (knows its own __package__); if missing — auto-detect from path.
+    addon_module = args.addon_module or _detect_addon_module()
+    print(f"[Worker] addon module = {addon_module}", flush=True)
 
     # Make the addon importable. When the worker is launched from a
-    # running Blender (operator-mode), the addon is already installed in
-    # `<config>/scripts/addons/INU_tools/` and `addon_enable` finds it
-    # by name. When the worker is run directly from the repo (dev mode),
-    # we put the repo root on sys.path so `import INU_tools` resolves.
+    # running Blender (operator-mode), the addon is already installed
+    # and `addon_enable` finds it by name. For dev-mode (direct CLI)
+    # we put the repo parent on sys.path so `import INU_tools` resolves.
     _this = os.path.dirname(os.path.abspath(__file__))
-    _pkg_root = os.path.dirname(os.path.dirname(_this))  # parent of INU_tools
+    _pkg_root = os.path.dirname(os.path.dirname(_this))
     if _pkg_root not in sys.path:
         sys.path.insert(0, _pkg_root)
 
     try:
-        bpy.ops.preferences.addon_enable(module='INU_tools')
+        bpy.ops.preferences.addon_enable(module=addon_module)
     except Exception as e:
-        print(f"[Worker] addon_enable failed ({e}); falling back to manual register",
-              flush=True)
-        import INU_tools  # noqa: F401
-        INU_tools.register()
+        print(f"[Worker] addon_enable({addon_module}) failed ({e}); "
+              f"falling back to manual register", flush=True)
+        try:
+            mod = importlib.import_module(addon_module)
+            if hasattr(mod, 'register'):
+                mod.register()
+        except Exception as e2:
+            print(f"[Worker] manual register failed: {e2}", flush=True)
+            raise
 
-    from INU_tools.tools.build_library import build_library_iter
+    build_library_module = importlib.import_module(
+        f'{addon_module}.tools.build_library')
+    build_library_iter = build_library_module.build_library_iter
 
     cache = os.path.abspath(args.cache)
     game_root = os.path.abspath(args.game_root)
