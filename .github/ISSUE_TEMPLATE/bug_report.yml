@@ -63,6 +63,7 @@ body:
         - SAMP / open.mp
         - MTA:SA
         - Other / Unknown
+
     validations:
       required: true
 
