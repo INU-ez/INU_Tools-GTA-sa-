@@ -143,14 +143,17 @@ body:
   - type: textarea
     id: console
     attributes:
-      label: Blender console output
+      label: Error message / Blender console output
       description: |
-        Window → Toggle System Console (Windows) or launch Blender from a terminal (Linux/macOS).  Paste the full traceback if any.
+        **If you saw any red text, error code or popup — paste it in full here.**
+        Open `Window → Toggle System Console` on Windows, or launch Blender from a terminal on Linux/macOS, to see the full traceback.
+        Error codes / tracebacks are the single biggest clue for fixing the bug — please don't skip this if anything is shown.
       render: shell
       placeholder: |
         Traceback (most recent call last):
           File "...", line 123, in execute
             ...
+        KeyError: 'expected_chunk_0x2B'
     validations:
       required: false
 
