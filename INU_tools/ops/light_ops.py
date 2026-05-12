@@ -745,7 +745,7 @@ class GTATOOLS_OT_load_lightmap(bpy.types.Operator):
             # ShaderNodeMix(RGBA), на 2.80-3.3 — ShaderNodeMixRGB.
             mix_node = nodes.new(compat.MIX_NODE_TYPE)
             compat.setup_mix_rgba_node(mix_node, blend='MULTIPLY')
-            mix_node.inputs[compat.MIX_INPUT_FACTOR].default_value = 1.0
+            compat.mix_input_factor(mix_node).default_value = 1.0
             _mix_in1, _mix_in2, _mix_out = (
                 compat.MIX_INPUT_A, compat.MIX_INPUT_B, compat.MIX_OUTPUT_RESULT)
             mix_node.name = "Lightmap_Mix"

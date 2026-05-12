@@ -895,7 +895,7 @@ class GTATOOLS_OT_apply_lightmap_uv2(bpy.types.Operator):
                 # 3.4+ или ShaderNodeMixRGB на 2.80-3.3).
                 mix = nodes.new(compat.MIX_NODE_TYPE)
                 compat.setup_mix_rgba_node(mix, blend='MULTIPLY')
-                mix.inputs[compat.MIX_INPUT_FACTOR].default_value = 1.0
+                compat.mix_input_factor(mix).default_value = 1.0
                 in_a, in_b, out_r = (
                     compat.MIX_INPUT_A, compat.MIX_INPUT_B, compat.MIX_OUTPUT_RESULT)
                 mix.name = "LM_Mix"

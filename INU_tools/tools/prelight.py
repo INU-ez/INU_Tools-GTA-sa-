@@ -1028,7 +1028,7 @@ def setup_prelight_preview(obj, enable=True):
                     vc_node.layer_name = color_name
                 elif hasattr(vc_node, 'attribute_name'):
                     vc_node.attribute_name = color_name
-                bright_node.inputs[compat.MIX_INPUT_B].default_value = (0.0, 0.0, 0.0, 0.0)
+                compat.mix_input_b(bright_node).default_value = (0.0, 0.0, 0.0, 0.0)
                 # Insert Prelight_Ambient if missing (older preview without it)
                 if amb_node is None:
                     amb_node = nodes.new(compat.MIX_NODE_TYPE)
@@ -1038,12 +1038,12 @@ def setup_prelight_preview(obj, enable=True):
                     amb_node.location = (
                         principled.location.x - 280, principled.location.y - 100)
                     # Splice between bright_node and mix_node B
-                    for lnk in list(mix_node.inputs[compat.MIX_INPUT_B].links):
+                    for lnk in list(compat.mix_input_b(mix_node).links):
                         links.remove(lnk)
-                    links.new(bright_node.outputs[compat.MIX_OUTPUT_RESULT], amb_node.inputs[compat.MIX_INPUT_A])
-                    links.new(amb_node.outputs[compat.MIX_OUTPUT_RESULT], mix_node.inputs[compat.MIX_INPUT_B])
-                amb_node.inputs[compat.MIX_INPUT_FACTOR].default_value = amb_factor
-                amb_node.inputs[compat.MIX_INPUT_B].default_value = amb_b
+                    links.new(compat.mix_output_result(bright_node), compat.mix_input_a(amb_node))
+                    links.new(compat.mix_output_result(amb_node), compat.mix_input_b(mix_node))
+                compat.mix_input_factor(amb_node).default_value = amb_factor
+                compat.mix_input_b(amb_node).default_value = amb_b
                 # Создать недостающие ноды: PostFx1, PostFx2, BrightContrast, Gamma
                 if pf1_node is None:
                     pf1_node = nodes.new(compat.MIX_NODE_TYPE)
@@ -1075,23 +1075,23 @@ def setup_prelight_preview(obj, enable=True):
                 # Перевязать цепочку: Mix → PostFx1 → PostFx2 → BrightContrast → Gamma → Base Color
                 for lnk in list(base_color_input.links):
                     links.remove(lnk)
-                for lnk in list(pf1_node.inputs[compat.MIX_INPUT_A].links):
+                for lnk in list(compat.mix_input_a(pf1_node).links):
                     links.remove(lnk)
-                for lnk in list(pf2_node.inputs[compat.MIX_INPUT_A].links):
+                for lnk in list(compat.mix_input_a(pf2_node).links):
                     links.remove(lnk)
                 for lnk in list(bc_node.inputs['Color'].links):
                     links.remove(lnk)
                 for lnk in list(gm_node.inputs['Color'].links):
                     links.remove(lnk)
-                links.new(mix_node.outputs[compat.MIX_OUTPUT_RESULT], pf1_node.inputs[compat.MIX_INPUT_A])
-                links.new(pf1_node.outputs[compat.MIX_OUTPUT_RESULT], pf2_node.inputs[compat.MIX_INPUT_A])
-                links.new(pf2_node.outputs[compat.MIX_OUTPUT_RESULT], bc_node.inputs['Color'])
+                links.new(compat.mix_output_result(mix_node), compat.mix_input_a(pf1_node))
+                links.new(compat.mix_output_result(pf1_node), compat.mix_input_a(pf2_node))
+                links.new(compat.mix_output_result(pf2_node), bc_node.inputs['Color'])
                 links.new(bc_node.outputs['Color'], gm_node.inputs['Color'])
                 links.new(gm_node.outputs['Color'], base_color_input)
-                pf1_node.inputs[compat.MIX_INPUT_FACTOR].default_value = pf1_f
-                pf1_node.inputs[compat.MIX_INPUT_B].default_value = pf1_b
-                pf2_node.inputs[compat.MIX_INPUT_FACTOR].default_value = pf2_f
-                pf2_node.inputs[compat.MIX_INPUT_B].default_value = pf2_b
+                compat.mix_input_factor(pf1_node).default_value = pf1_f
+                compat.mix_input_b(pf1_node).default_value = pf1_b
+                compat.mix_input_factor(pf2_node).default_value = pf2_f
+                compat.mix_input_b(pf2_node).default_value = pf2_b
                 bc_node.inputs['Contrast'].default_value = bc_contrast
                 gm_node.inputs['Gamma'].default_value = gm_gamma
                 continue
@@ -1121,8 +1121,8 @@ def setup_prelight_preview(obj, enable=True):
                 bright_node.label = "Brightness"
                 compat.setup_mix_rgba_node(bright_node, blend='ADD')
                 bright_node.location = (principled.location.x - 350, principled.location.y - 200)
-                bright_node.inputs[compat.MIX_INPUT_FACTOR].default_value = 1.0
-            bright_node.inputs[compat.MIX_INPUT_B].default_value = (0.0, 0.0, 0.0, 0.0)
+                compat.mix_input_factor(bright_node).default_value = 1.0
+            compat.mix_input_b(bright_node).default_value = (0.0, 0.0, 0.0, 0.0)
 
             # Create Ambient (Modulate) node — adds ambient_obj × surfAmb
             # to vertex color, mirroring ванильный SA-шейдер зданий
@@ -1135,8 +1135,8 @@ def setup_prelight_preview(obj, enable=True):
                 compat.setup_mix_rgba_node(amb_node, blend='ADD')
                 amb_node.location = (
                     principled.location.x - 280, principled.location.y - 100)
-            amb_node.inputs[compat.MIX_INPUT_FACTOR].default_value = amb_factor
-            amb_node.inputs[compat.MIX_INPUT_B].default_value = amb_b
+            compat.mix_input_factor(amb_node).default_value = amb_factor
+            compat.mix_input_b(amb_node).default_value = amb_b
 
             # Create Mix node (Multiply with texture)
             if not mix_node:
@@ -1145,7 +1145,7 @@ def setup_prelight_preview(obj, enable=True):
                 mix_node.label = "Prelight Multiply"
                 compat.setup_mix_rgba_node(mix_node, blend='MULTIPLY')
                 mix_node.location = (principled.location.x - 200, principled.location.y)
-                mix_node.inputs[compat.MIX_INPUT_FACTOR].default_value = 1.0
+                compat.mix_input_factor(mix_node).default_value = 1.0
 
             # ── PostFx1 + PostFx2 — точная игровая формула из
             # CPostEffects::ColourFilter (gta-reversed-modern):
@@ -1160,8 +1160,8 @@ def setup_prelight_preview(obj, enable=True):
                 pf1_node.label = "PostFx1 (Add)"
                 compat.setup_mix_rgba_node(pf1_node, blend='ADD')
                 pf1_node.location = (principled.location.x - 200, principled.location.y - 50)
-            pf1_node.inputs[compat.MIX_INPUT_FACTOR].default_value = pf1_f
-            pf1_node.inputs[compat.MIX_INPUT_B].default_value = pf1_b
+            compat.mix_input_factor(pf1_node).default_value = pf1_f
+            compat.mix_input_b(pf1_node).default_value = pf1_b
 
             if not pf2_node:
                 pf2_node = nodes.new(compat.MIX_NODE_TYPE)
@@ -1169,8 +1169,8 @@ def setup_prelight_preview(obj, enable=True):
                 pf2_node.label = "PostFx2 (Add)"
                 compat.setup_mix_rgba_node(pf2_node, blend='ADD')
                 pf2_node.location = (principled.location.x - 150, principled.location.y - 50)
-            pf2_node.inputs[compat.MIX_INPUT_FACTOR].default_value = pf2_f
-            pf2_node.inputs[compat.MIX_INPUT_B].default_value = pf2_b
+            compat.mix_input_factor(pf2_node).default_value = pf2_f
+            compat.mix_input_b(pf2_node).default_value = pf2_b
 
             # ── BrightContrast + Gamma — color-grading на финальный результат
             if not bc_node:
@@ -1191,24 +1191,24 @@ def setup_prelight_preview(obj, enable=True):
             # Connect nodes
             if tex_node and original_link:
                 # Texture -> Mix A
-                links.new(tex_output, mix_node.inputs[compat.MIX_INPUT_A])
+                links.new(tex_output, compat.mix_input_a(mix_node))
             else:
                 # No texture - use white
-                mix_node.inputs[compat.MIX_INPUT_A].default_value = (1, 1, 1, 1)
+                compat.mix_input_a(mix_node).default_value = (1, 1, 1, 1)
 
             # Vertex Color -> Bright A
-            links.new(vc_node.outputs['Color'], bright_node.inputs[compat.MIX_INPUT_A])
+            links.new(vc_node.outputs['Color'], compat.mix_input_a(bright_node))
 
             # Bright Result -> Ambient A
-            links.new(bright_node.outputs[compat.MIX_OUTPUT_RESULT], amb_node.inputs[compat.MIX_INPUT_A])
+            links.new(compat.mix_output_result(bright_node), compat.mix_input_a(amb_node))
 
             # Ambient Result -> Mix B
-            links.new(amb_node.outputs[compat.MIX_OUTPUT_RESULT], mix_node.inputs[compat.MIX_INPUT_B])
+            links.new(compat.mix_output_result(amb_node), compat.mix_input_b(mix_node))
 
             # Mix -> PostFx1 -> PostFx2 -> BrightContrast -> Gamma -> Base Color
-            links.new(mix_node.outputs[compat.MIX_OUTPUT_RESULT], pf1_node.inputs[compat.MIX_INPUT_A])
-            links.new(pf1_node.outputs[compat.MIX_OUTPUT_RESULT], pf2_node.inputs[compat.MIX_INPUT_A])
-            links.new(pf2_node.outputs[compat.MIX_OUTPUT_RESULT], bc_node.inputs['Color'])
+            links.new(compat.mix_output_result(mix_node), compat.mix_input_a(pf1_node))
+            links.new(compat.mix_output_result(pf1_node), compat.mix_input_a(pf2_node))
+            links.new(compat.mix_output_result(pf2_node), bc_node.inputs['Color'])
             links.new(bc_node.outputs['Color'], gm_node.inputs['Color'])
             links.new(gm_node.outputs['Color'], base_color_input)
 
@@ -1400,10 +1400,10 @@ def apply_modulate_preview(scene=None):
             amb_n.label = "Ambient (Modulate)"
             compat.setup_mix_rgba_node(amb_n, blend='ADD')
             amb_n.location = (mix_n.location.x - 80, mix_n.location.y - 100)
-            for lnk in list(mix_n.inputs[compat.MIX_INPUT_B].links):
+            for lnk in list(compat.mix_input_b(mix_n).links):
                 nt.links.remove(lnk)
-            nt.links.new(bright_n.outputs[compat.MIX_OUTPUT_RESULT], amb_n.inputs[compat.MIX_INPUT_A])
-            nt.links.new(amb_n.outputs[compat.MIX_OUTPUT_RESULT], mix_n.inputs[compat.MIX_INPUT_B])
+            nt.links.new(compat.mix_output_result(bright_n), compat.mix_input_a(amb_n))
+            nt.links.new(compat.mix_output_result(amb_n), compat.mix_input_b(mix_n))
 
         # Lazy upgrade: вставить PostFx1+PostFx2+BrightContrast+Gamma
         # после mix_n, перед Principled.Base Color если их нет.
@@ -1442,29 +1442,29 @@ def apply_modulate_preview(scene=None):
                 # Перевязать: mix → pf1 → pf2 → bc → gm → Base Color
                 for lnk in list(base_input.links):
                     nt.links.remove(lnk)
-                for lnk in list(pf1_n.inputs[compat.MIX_INPUT_A].links):
+                for lnk in list(compat.mix_input_a(pf1_n).links):
                     nt.links.remove(lnk)
-                for lnk in list(pf2_n.inputs[compat.MIX_INPUT_A].links):
+                for lnk in list(compat.mix_input_a(pf2_n).links):
                     nt.links.remove(lnk)
                 for lnk in list(bc_n.inputs['Color'].links):
                     nt.links.remove(lnk)
                 for lnk in list(gm_n.inputs['Color'].links):
                     nt.links.remove(lnk)
-                nt.links.new(mix_n.outputs[compat.MIX_OUTPUT_RESULT], pf1_n.inputs[compat.MIX_INPUT_A])
-                nt.links.new(pf1_n.outputs[compat.MIX_OUTPUT_RESULT], pf2_n.inputs[compat.MIX_INPUT_A])
-                nt.links.new(pf2_n.outputs[compat.MIX_OUTPUT_RESULT], bc_n.inputs['Color'])
+                nt.links.new(compat.mix_output_result(mix_n), compat.mix_input_a(pf1_n))
+                nt.links.new(compat.mix_output_result(pf1_n), compat.mix_input_a(pf2_n))
+                nt.links.new(compat.mix_output_result(pf2_n), bc_n.inputs['Color'])
                 nt.links.new(bc_n.outputs['Color'], gm_n.inputs['Color'])
                 nt.links.new(gm_n.outputs['Color'], base_input)
 
         try:
-            amb_n.inputs[compat.MIX_INPUT_FACTOR].default_value = amb_factor
-            amb_n.inputs[compat.MIX_INPUT_B].default_value = amb_b
+            compat.mix_input_factor(amb_n).default_value = amb_factor
+            compat.mix_input_b(amb_n).default_value = amb_b
             if pf1_n is not None:
-                pf1_n.inputs[compat.MIX_INPUT_FACTOR].default_value = pf1_f
-                pf1_n.inputs[compat.MIX_INPUT_B].default_value = pf1_b
+                compat.mix_input_factor(pf1_n).default_value = pf1_f
+                compat.mix_input_b(pf1_n).default_value = pf1_b
             if pf2_n is not None:
-                pf2_n.inputs[compat.MIX_INPUT_FACTOR].default_value = pf2_f
-                pf2_n.inputs[compat.MIX_INPUT_B].default_value = pf2_b
+                compat.mix_input_factor(pf2_n).default_value = pf2_f
+                compat.mix_input_b(pf2_n).default_value = pf2_b
             if bc_n is not None:
                 bc_n.inputs['Contrast'].default_value = bc_contrast
             if gm_n is not None:

@@ -234,6 +234,63 @@ def setup_mix_rgba_node(node, *, blend='MIX'):
     node.blend_type = blend
 
 
+# ── ShaderNodeMix socket resolvers ──────────────────────────────────
+# На 3.4+ ShaderNodeMix имеет ТРИ пары сокетов A/B (Float/Vector/Color).
+# `node.inputs['B']` возвращает ПЕРВЫЙ — Float — даже когда data_type=
+# 'RGBA' и Float-сокеты помечены как hidden/unavail. Прямое присваивание
+# `node.inputs['B'].default_value = (1,1,1,1)` падает с TypeError на
+# Float-сокете. Поэтому хелперы ниже фильтруют по `sock.type == 'RGBA'`,
+# которые надёжно достают именно Color-сокеты на любой версии.
+#
+# ВАЖНО: НЕ заменять обратно на string-константы `MIX_INPUT_*`. Это
+# регрессировало однажды в session 2026-05-09 и вернуло TypeError в
+# setup_prelight_preview. Хелперы — единственный safe-путь.
+
+def _find_socket_by_name_and_type(sockets, name, sock_type):
+    """Helper: прокрутить collection (inputs/outputs) и вернуть первый
+    сокет с заданным `.name` и `.type`. None если не нашли."""
+    for sock in sockets:
+        if sock.name == name and sock.type == sock_type:
+            return sock
+    return None
+
+
+def mix_input_factor(node):
+    """Float Factor input (обоих node-типов одинаковый)."""
+    if HAS_SHADER_NODE_MIX:
+        s = _find_socket_by_name_and_type(node.inputs, 'Factor', 'VALUE')
+        if s is not None:
+            return s
+    return node.inputs.get('Fac') or node.inputs.get('Factor')
+
+
+def mix_input_a(node):
+    """Color A input (RGBA-typed) для blend operations."""
+    if HAS_SHADER_NODE_MIX:
+        s = _find_socket_by_name_and_type(node.inputs, 'A', 'RGBA')
+        if s is not None:
+            return s
+    return node.inputs.get('Color1') or node.inputs.get('A')
+
+
+def mix_input_b(node):
+    """Color B input (RGBA-typed) для blend operations."""
+    if HAS_SHADER_NODE_MIX:
+        s = _find_socket_by_name_and_type(node.inputs, 'B', 'RGBA')
+        if s is not None:
+            return s
+    return node.inputs.get('Color2') or node.inputs.get('B')
+
+
+def mix_output_result(node):
+    """Color Result output (RGBA-typed) для дальнейших links."""
+    if HAS_SHADER_NODE_MIX:
+        s = _find_socket_by_name_and_type(node.outputs, 'Result', 'RGBA')
+        if s is not None:
+            return s
+    return node.outputs.get('Color') or node.outputs.get('Result')
+
+
 class _MixWrap:
     """Унифицированный handle поверх ShaderNodeMix или ShaderNodeMixRGB.
 
@@ -263,11 +320,15 @@ def make_mix_rgba(nodes, *, blend='MIX', name=None, label=None):
         n = nodes.new('ShaderNodeMix')
         n.data_type = 'RGBA'
         n.blend_type = blend
+        # ВАЖНО: ShaderNodeMix имеет тройные A/B/Result сокеты (Float/
+        # Vector/Color). `n.inputs['A']` возвращает Float A. Хелперы
+        # фильтруют по `sock.type == 'RGBA'` — корректно достают Color-
+        # сокеты в RGBA-режиме.
         wrap = _MixWrap(n,
-                        factor=n.inputs['Factor'],
-                        a=n.inputs['A'],
-                        b=n.inputs['B'],
-                        result=n.outputs['Result'])
+                        factor=mix_input_factor(n),
+                        a=mix_input_a(n),
+                        b=mix_input_b(n),
+                        result=mix_output_result(n))
     else:
         n = nodes.new('ShaderNodeMixRGB')
         n.blend_type = blend

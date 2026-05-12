@@ -104,37 +104,73 @@ def main():
 
     import bpy  # noqa: E402
     import importlib
+    import traceback
 
     # Resolve addon module name. Operator passes it via --addon-module
     # (knows its own __package__); if missing — auto-detect from path.
     addon_module = args.addon_module or _detect_addon_module()
     print(f"[Worker] addon module = {addon_module}", flush=True)
+    print(f"[Worker] bpy.app.version = {bpy.app.version}", flush=True)
+    print(f"[Worker] blender exe = {bpy.app.binary_path}", flush=True)
 
     # Make the addon importable. When the worker is launched from a
     # running Blender (operator-mode), the addon is already installed
-    # and `addon_enable` finds it by name. For dev-mode (direct CLI)
-    # we put the repo parent on sys.path so `import INU_tools` resolves.
+    # and the enable-path resolves by module name. For dev-mode (direct
+    # CLI) we put the repo parent on sys.path so import resolves.
     _this = os.path.dirname(os.path.abspath(__file__))
     _pkg_root = os.path.dirname(os.path.dirname(_this))
     if _pkg_root not in sys.path:
         sys.path.insert(0, _pkg_root)
 
+    # Extension-system aware enable. Three tries:
+    #   1. bpy.ops.preferences.addon_enable — стандартный путь.
+    #   2. addon_utils.enable() — низкоуровневый, иногда работает там
+    #      где operator не справляется (особенно для bl_ext.* модулей
+    #      в headless Blender).
+    #   3. importlib + manual register() — последний resort, dev-mode.
+    enabled = False
     try:
         bpy.ops.preferences.addon_enable(module=addon_module)
-    except Exception as e:
-        print(f"[Worker] addon_enable({addon_module}) failed ({e}); "
-              f"falling back to manual register", flush=True)
+        enabled = True
+        print(f"[Worker] enabled via bpy.ops.preferences.addon_enable", flush=True)
+    except Exception as e1:
+        print(f"[Worker] bpy.ops.preferences.addon_enable({addon_module}) "
+              f"failed: {type(e1).__name__}: {e1}", flush=True)
         try:
-            mod = importlib.import_module(addon_module)
-            if hasattr(mod, 'register'):
-                mod.register()
+            import addon_utils
+            addon_utils.enable(addon_module, default_set=False, persistent=False)
+            enabled = True
+            print(f"[Worker] enabled via addon_utils.enable", flush=True)
         except Exception as e2:
-            print(f"[Worker] manual register failed: {e2}", flush=True)
-            raise
+            print(f"[Worker] addon_utils.enable failed: "
+                  f"{type(e2).__name__}: {e2}", flush=True)
+            try:
+                mod = importlib.import_module(addon_module)
+                if hasattr(mod, 'register'):
+                    mod.register()
+                    enabled = True
+                    print(f"[Worker] enabled via manual register()", flush=True)
+            except Exception as e3:
+                print(f"[Worker] manual register failed: "
+                      f"{type(e3).__name__}: {e3}", flush=True)
+                traceback.print_exc()
+                raise RuntimeError(
+                    f"Could not enable addon module '{addon_module}'. "
+                    f"Tried 3 methods, all failed.")
 
-    build_library_module = importlib.import_module(
-        f'{addon_module}.tools.build_library')
-    build_library_iter = build_library_module.build_library_iter
+    if not enabled:
+        raise RuntimeError(f"Addon module '{addon_module}' was not enabled.")
+
+    try:
+        build_library_module = importlib.import_module(
+            f'{addon_module}.tools.build_library')
+        build_library_iter = build_library_module.build_library_iter
+        print(f"[Worker] imported {addon_module}.tools.build_library", flush=True)
+    except Exception as e:
+        print(f"[Worker] import build_library failed: "
+              f"{type(e).__name__}: {e}", flush=True)
+        traceback.print_exc()
+        raise
 
     cache = os.path.abspath(args.cache)
     game_root = os.path.abspath(args.game_root)
@@ -169,20 +205,25 @@ def main():
     # timer slicing. After each yield the worker emits a JSON-progress
     # line so the parent operator can repaint its progress bar without
     # re-running any of the heavy work itself.
-    last_emit_keys: tuple = ()
-    for _ in gen:
-        # Cheap dedup: skip emit if the keys we care about haven't changed
-        # (cuts stdout volume on long categories where status flips many
-        # times per asset).
-        cur_keys = (
-            status.get('phase'),
-            status.get('category'),
-            status.get('cat_done'),
-            status.get('current_asset'),
-        )
-        if cur_keys != last_emit_keys:
-            _emit_progress(dict(status))
-            last_emit_keys = cur_keys
+    # Wrap в try/except — иначе parent operator видит только exit code 1
+    # без диагностики, а тут полный traceback падает в stderr.
+    last_emit_keys = ()
+    try:
+        for _ in gen:
+            cur_keys = (
+                status.get('phase'),
+                status.get('category'),
+                status.get('cat_done'),
+                status.get('current_asset'),
+            )
+            if cur_keys != last_emit_keys:
+                _emit_progress(dict(status))
+                last_emit_keys = cur_keys
+    except Exception as e:
+        print(f"[Worker] generator crashed: {type(e).__name__}: {e}",
+              flush=True)
+        traceback.print_exc()
+        raise
 
     # Final summary so the parent reports «done» with stats.
     _emit_progress({
