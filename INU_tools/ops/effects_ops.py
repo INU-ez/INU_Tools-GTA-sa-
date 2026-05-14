@@ -970,6 +970,10 @@ def _apply_particle_props_to_emitter(obj, em) -> int:
     Returns the number of fields actually applied.
     """
     from ..core.fxp import FXCurve, FXKeyframe, FXInfoBlock
+    # `_sample_particle_from_emitter` живёт в __init__.py — lazy-импорт
+    # внутри функции т.к. модульный from-import при загрузке вызывает
+    # circular dependency (effects_ops регится из __init__.py).
+    from .. import _sample_particle_from_emitter
     inu = obj.inu
     fresh = _sample_particle_from_emitter(em)
 
