@@ -632,7 +632,15 @@ def _build_armature(clump: DffClump, name: str):
         bone_name = frame.name if frame.name else f"Bone_{hbone.bone_id}"
 
         e_bone = edit_bones.new(bone_name)
-        e_bone.tail = (0, 0.05, 0)  # Prevent auto-deletion
+        # Bone visualisation length. 5 cm is enough to prevent Blender's
+        # auto-delete-zero-length but is invisible at typical map-prop
+        # scale. Use a larger fallback (0.5 m) when there's no skin
+        # (animated map object): bone has no per-vertex anchor, the
+        # user needs to see it to keyframe rotations. Skinned peds keep
+        # 5 cm because the next pass below transforms+rolls the bone
+        # using the skin matrix and a larger initial tail would skew
+        # the orientation calculation.
+        e_bone.tail = (0, 0.5 if skin is None else 0.05, 0)
         e_bone['bone_id'] = hbone.bone_id
         e_bone['bone_type'] = hbone.bone_type
         e_bone['bone_index'] = hbone.index
@@ -656,17 +664,29 @@ def _build_armature(clump: DffClump, name: str):
                 matrix.to_3x3() @ mathutils.Vector((0, 0, 1))
             )
         else:
-            # Fallback: frame rotation/position
+            # Fallback: frame rotation/position (animated map objects —
+            # rigs without SkinPLG). DFF stores frame.rotation row-major
+            # with rows = axis vectors (RW convention), so the Matrix
+            # constructor below — which takes ROW tuples — must read
+            # (rot[0],rot[1],rot[2]) as row 0, NOT a column.
+            #
+            # The earlier "build as columns, then .transposed()" path
+            # was equivalent in pure linear algebra (transpose twice =
+            # identity) BUT for a bone authored with tail=(0,0,1) it
+            # flipped the head→tail vector to -Z, because the export
+            # side writes matrix_local.transposed() and we have to read
+            # it back row-major to get matrix_local — not its transpose.
+            # Symptoms before the fix: animated mesh imported lying on
+            # its side (X+90°) and IFP application rotated 180° around Y.
             rot = frame.rotation
             pos = frame.position
             matrix = mathutils.Matrix((
-                (rot[0], rot[3], rot[6]),
-                (rot[1], rot[4], rot[7]),
-                (rot[2], rot[5], rot[8]),
+                (rot[0], rot[1], rot[2]),
+                (rot[3], rot[4], rot[5]),
+                (rot[6], rot[7], rot[8]),
             ))
             e_bone.matrix = (
-                mathutils.Matrix.Translation(pos) @
-                matrix.transposed().to_4x4()
+                mathutils.Matrix.Translation(pos) @ matrix.to_4x4()
             )
 
         # Parent relationship (like DragonFF: frame.parent >= root frame_index and in bone_list)
@@ -977,32 +997,114 @@ def import_dff_from_clump(clump, base_name: str, *, skip_2dfx=None,
             bpy.context.view_layer.update()
 
     # Skeleton: create Armature + apply skin weights if DFF has bones.
-    # Two guards:
-    #   1. bulk_mode (map import) — skip armatures entirely. Vanilla
-    #      map DFFs occasionally carry HAnim chunks with skin=no, and
-    #      we don't want a ``<name>_Armature`` object per such model
-    #      cluttering the outliner and bloating depsgraph.
-    #   2. require an actual skin somewhere — HAnim without skin is
-    #      just animation metadata, no armature-bound mesh to pair with.
+    # Build armature when HAnim frames are present (peds OR animated
+    # map objects). Earlier this also required ``has_skin`` to avoid
+    # cluttering bulk-imported maps with armatures for vanilla DFFs
+    # that have stray HAnim chunks — that guard now lives in
+    # ``bulk_mode`` alone. Animated map objects (windmills, cranes,
+    # doors) have HAnim+frame_index without skin and DO need an
+    # armature for IFP playback in Blender.
     has_skin = any(geom.skin for geom in clump.geometries)
-    if not bulk_mode and _has_skeleton(clump) and has_skin:
+    if not bulk_mode and _has_skeleton(clump):
         try:
             arm_obj, bone_names = _build_armature(clump, base_name)
             imported_objects.append(arm_obj)
 
-            # Apply skin weights to skinned mesh objects
+            # Collect names of HAnim frames so we can recognise which
+            # meshes are bone-parented animated parts (vs rigid root
+            # attachments).
+            hanim_frame_names = {clump.frames[i].name for i, f
+                                 in enumerate(clump.frames)
+                                 if f.hanim and f.hanim.bones is not None
+                                 and clump.frames[i].name}
+
             for atomic in clump.atomics:
                 gi = atomic.geometry_index
                 if gi >= len(clump.geometries):
                     continue
                 geom = clump.geometries[gi]
+                fi = atomic.frame_index
+                frame = clump.frames[fi] if fi < len(clump.frames) else None
+                # Use the dict populated by the atomic-loop above (real
+                # object reference), not bpy.data.objects.get(name) —
+                # the latter would return a stale "blades_bone" left
+                # over from a previous import session if Blender added
+                # the new mesh as "blades_bone.001" to avoid a name
+                # collision.
+                obj = frame_to_obj.get(fi)
+                if not (obj and obj.type == 'MESH'):
+                    continue
+
                 if geom.skin:
-                    fi = atomic.frame_index
-                    frame = clump.frames[fi] if fi < len(clump.frames) else None
-                    obj_name = frame.name if (frame and frame.name) else _fallback_name(gi)
-                    obj = bpy.data.objects.get(obj_name)
-                    if obj and obj.type == 'MESH':
-                        _apply_skin_weights(obj, geom, arm_obj, bone_names)
+                    # Skinned mesh (peds, skinned vehicles) — per-vertex
+                    # bone weights wire the mesh to the armature.
+                    _apply_skin_weights(obj, geom, arm_obj, bone_names)
+                elif frame and frame.hanim:
+                    # Animated map object — mesh attaches rigidly to
+                    # ONE bone. We do this via an armature modifier with
+                    # an all-weight vertex group, NOT parent_type='BONE'.
+                    #
+                    # Bone-tail parenting (parent_type='BONE') offsets
+                    # the child by bone.length along the bone's local Y
+                    # axis (Blender attaches to the bone's TAIL). For a
+                    # tail=(0,0,1) bone (animobj_setup default) that
+                    # shows up as the mesh being shifted +Z and rotated
+                    # to align with the bone's rest matrix — visually
+                    # the mesh "lies on its side" and the IFP keyframes
+                    # then rotate it around the wrong world axis.
+                    #
+                    # Armature-modifier parenting matches how
+                    # animobj_setup wires fresh rigs, so import→edit→
+                    # export round-trip is clean.
+                    target_bone = frame.name
+                    if target_bone and target_bone in bone_names:
+                        obj.parent = arm_obj
+                        obj.parent_type = 'OBJECT'
+                        obj.matrix_parent_inverse.identity()
+
+                        # Reset mesh's own transform — the matrix_basis
+                        # loop above wrote bone's matrix_local into it
+                        # (because atomic.frame_index points at the bone
+                        # frame, and that's the HAnim bone's local
+                        # rotation, e.g. X+90° for a tail=+Z bone). For
+                        # a rigid-attached animated map object the mesh
+                        # must sit at armature origin with identity
+                        # transform — the bone's rotation reaches the
+                        # mesh through the armature modifier, not the
+                        # parent-transform chain. Without this reset
+                        # the mesh would visibly lie on its side after
+                        # every import (legacy bug).
+                        obj.matrix_basis = mathutils.Matrix.Identity(4)
+
+                        mod = next((m for m in obj.modifiers
+                                    if m.type == 'ARMATURE'), None)
+                        if mod is None:
+                            mod = obj.modifiers.new("Armature", 'ARMATURE')
+                        mod.object = arm_obj
+
+                        # Single full-weight vertex group on target bone
+                        # — the armature modifier reads this to know
+                        # which bone deforms which verts; all verts on
+                        # one bone == rigid attachment.
+                        vg = obj.vertex_groups.get(target_bone)
+                        if vg is None:
+                            vg = obj.vertex_groups.new(name=target_bone)
+                        vg.add(list(range(len(obj.data.vertices))),
+                               1.0, 'REPLACE')
+
+                        # Tag the rig so panels/animobj_export pick it up
+                        # exactly like a freshly-built one from
+                        # animobj_setup. Without this marker the live-edit
+                        # sliders + the auto-rebuild-before-export path
+                        # both silently no-op on imported rigs.
+                        arm_obj['inu_animobj'] = True
+
+                        print(f"[INU] mesh '{obj.name}' rigidly attached to "
+                              f"bone '{target_bone}' via armature modifier "
+                              f"(frame_idx={fi})")
+                    else:
+                        print(f"[INU] WARN: cannot parent mesh '{obj.name}' to "
+                              f"bone '{target_bone}' — not in bone_names={bone_names}")
         except Exception as e:
             import traceback
             print(f"[INU_tools] Skeleton import error: {e}")

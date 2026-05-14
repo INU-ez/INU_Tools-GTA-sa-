@@ -387,9 +387,46 @@ def _needs_split(bm, vert, uv_layers, color_layers):
     return groups
 
 
-def _process_mesh(obj, clump: DffClump, frame_index: int):
+def _classify_skin(obj, arm_obj):
+    """Identify whether ``obj`` is rigidly attached to a single armature
+    bone (animated map object pattern) or truly multi-bone skinned (ped).
+
+    Returns the bone INDEX when rigid (or 0 = root when there are no
+    weights at all but an armature is still present), or ``None`` when
+    the mesh is truly skinned across multiple bones.
+
+    Used by build_dff_clump to decide:
+      * rigid → atomic.frame_index = that bone's frame, skip SkinPLG
+      * real  → atomic.frame_index = mesh's own frame, emit SkinPLG
+    """
+    if arm_obj is None or not obj.vertex_groups:
+        return 0 if (arm_obj and arm_obj.data.bones) else None
+    bone_list = list(arm_obj.data.bones)
+    if not bone_list:
+        return None
+    bone_name_to_idx = {b.name: i for i, b in enumerate(bone_list)}
+    unique_bones = set()
+    for v in obj.data.vertices:
+        for g in v.groups:
+            vg = obj.vertex_groups[g.group]
+            if vg.name in bone_name_to_idx and g.weight > 0.0001:
+                unique_bones.add(bone_name_to_idx[vg.name])
+        if len(unique_bones) > 1:
+            return None    # truly skinned
+    if len(unique_bones) == 1:
+        return next(iter(unique_bones))
+    return 0
+
+
+def _process_mesh(obj, clump: DffClump, frame_index: int, *,
+                  force_no_skin: bool = False):
     """
     Convert a Blender mesh object into DffGeometry + DffAtomic.
+
+    ``force_no_skin`` skips the SkinPLG emission path even when the
+    mesh has an armature modifier — used by the animated-map-object
+    flow where mesh is rigidly attached to one bone (atomic links
+    directly to that bone's frame; no per-vertex skin data).
     """
     import mathutils
 
@@ -679,7 +716,35 @@ def _process_mesh(obj, clump: DffClump, frame_index: int):
             armature_mod = mod
             break
 
-    if armature_mod:
+    # An armature modifier alone doesn't imply skinning — animated map
+    # objects (windmills, cranes, doors) carry an armature solely to
+    # hold the frame hierarchy for IFP, with the mesh rigidly attached
+    # to one frame. Emit SkinPLG only when at least one vertex is
+    # weighted to a NON-ROOT bone (bone index ≥ 1). Weights on the
+    # root bone (index 0) alone match the animated-map-object pattern
+    # Blender produces when you parent with "Automatic Weights" against
+    # a single-bone armature — those should export as rigid.
+    has_skin_weights = False
+    if armature_mod and obj.vertex_groups:
+        arm_obj_probe = armature_mod.object
+        bone_idx_by_name = {b.name: i for i, b
+                            in enumerate(arm_obj_probe.data.bones)}
+        for v in obj.data.vertices:
+            for g in v.groups:
+                vg = obj.vertex_groups[g.group]
+                bi = bone_idx_by_name.get(vg.name)
+                # Skip: group with no matching bone, zero weight, or
+                # weight against the root bone (Kams' bones_used drops
+                # bone 0 anyway, so root-only weights would produce an
+                # empty bones_used array — degenerate SkinPLG).
+                if bi is None or bi == 0 or g.weight <= 0.0:
+                    continue
+                has_skin_weights = True
+                break
+            if has_skin_weights:
+                break
+
+    if armature_mod and has_skin_weights and not force_no_skin:
         arm_obj = armature_mod.object
         bones = arm_obj.data.bones
         bone_names = [b.name for b in bones]
@@ -1175,6 +1240,23 @@ def _build_dff_clump_inner(objects, version: int, col_model_name: str) -> DffClu
                 print(f"[DFF Export] Skinned mesh: frame_index={mesh_frame_idx}")
             else:
                 mesh_frame_idx = frame_idx
+
+            # Animated map object detection: when every weighted vertex
+            # group targets a single bone, the mesh is rigidly attached
+            # to that bone (typical of windmill/crane/door pattern). We
+            # route the atomic at the BONE's frame instead of the mesh
+            # frame and skip SkinPLG — engine drives the mesh via the
+            # bone frame's IFP-animated transform, not per-vertex skin.
+            rigid_bone_idx = _classify_skin(obj, arm_obj)
+            if rigid_bone_idx is not None and arm_obj and not clump.raw_frame_list:
+                target_frame_idx = frame_idx + 1 + rigid_bone_idx
+                if target_frame_idx < len(clump.frames):
+                    print(f"[DFF Export] Rigid attach to bone[{rigid_bone_idx}] "
+                          f"({clump.frames[target_frame_idx].name}) — "
+                          f"atomic frame={target_frame_idx}, no SkinPLG")
+                    _process_mesh(obj, clump, target_frame_idx,
+                                  force_no_skin=True)
+                    continue
 
             _process_mesh(obj, clump, mesh_frame_idx)
     else:

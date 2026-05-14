@@ -17,6 +17,7 @@
 import bpy
 from bpy.props import StringProperty, IntProperty, FloatProperty, EnumProperty
 import math
+import mathutils
 import os
 
 from .. import T
@@ -31,8 +32,11 @@ from ..tools.compat import safe_icon
 
 def _rebuild_animobj_action(arm_obj):
     """Idempotently rewrite the rig's action so it matches the props.
-    Clears the bone's existing rotation_euler keyframes first to avoid
-    leftover keyframes when ``duration_frames`` shrinks."""
+
+    Writes ``rotation_quaternion`` keys (NOT euler) — the IFP exporter
+    only picks up quaternion fcurves, so euler-keyed actions silently
+    export with 0 bones. Splits each turn into 3 slices so slerp
+    actually traverses the full rotation."""
     if arm_obj is None or arm_obj.type != 'ARMATURE':
         return
     props = arm_obj.inu_animobj_props
@@ -48,28 +52,54 @@ def _rebuild_animobj_action(arm_obj):
     if pb is None:
         return
 
-    # Drop every fcurve that targets this bone's rotation_euler. We can't
-    # rely on keyframe_insert overwriting because the user may have
-    # shrunk duration — old end-frame would linger as a stale keyframe.
-    target_path = f'pose.bones["{props.bone_name}"].rotation_euler'
-    _strip_fcurves_at_path(action, target_path)
+    # Drop every fcurve that targets this bone's rotation channels. We
+    # strip BOTH euler and quaternion paths so re-running the rebuild
+    # on a legacy rig (created when this op wrote euler) cleans up the
+    # ignored-by-IFP-export curves before laying down new quaternion
+    # keys.
+    bone = props.bone_name
+    _strip_fcurves_at_path(action, f'pose.bones["{bone}"].rotation_euler')
+    _strip_fcurves_at_path(action, f'pose.bones["{bone}"].rotation_quaternion')
 
-    # Re-insert the two boundary keyframes.
+    # Build the full rotation as a series of slerp-friendly slices.
     sign = -1.0 if props.reverse else 1.0
     total_radians = sign * props.turns_per_cycle * 2.0 * math.pi
-    axis_idx = {'X': 0, 'Y': 1, 'Z': 2}[props.axis]
+    world_axis = {
+        'X': mathutils.Vector((1.0, 0.0, 0.0)),
+        'Y': mathutils.Vector((0.0, 1.0, 0.0)),
+        'Z': mathutils.Vector((0.0, 0.0, 1.0)),
+    }[props.axis]
+
+    # World-space axis → bone-local: pose_bone.rotation_quaternion is
+    # applied in bone-local space, so we must rebase the world axis the
+    # user picked through the bone's rest matrix. Without this the rig
+    # spins around the bone's local Z, which for a Z-tail bone shows up
+    # as rotation around a perpendicular world axis.
+    rest_bone = arm_obj.data.bones.get(bone)
+    if rest_bone is not None:
+        local_axis = rest_bone.matrix_local.to_3x3().inverted() @ world_axis
+        if local_axis.length > 0:
+            local_axis.normalize()
+        else:
+            local_axis = world_axis
+    else:
+        local_axis = world_axis
 
     pb.rotation_mode = 'XYZ'
+    duration = max(2, props.duration_frames)
+
     pb.rotation_euler = (0.0, 0.0, 0.0)
     pb.keyframe_insert(data_path="rotation_euler",
-                       frame=1, group=props.bone_name)
+                       frame=1, group=bone)
 
-    end_rot = [0.0, 0.0, 0.0]
-    end_rot[axis_idx] = total_radians
+    end_rot = [
+        total_radians * local_axis.x,
+        total_radians * local_axis.y,
+        total_radians * local_axis.z,
+    ]
     pb.rotation_euler = tuple(end_rot)
     pb.keyframe_insert(data_path="rotation_euler",
-                       frame=max(2, props.duration_frames),
-                       group=props.bone_name)
+                       frame=duration, group=bone)
 
     pb.rotation_euler = (0.0, 0.0, 0.0)
 
@@ -341,9 +371,20 @@ class GTATOOLS_OT_animobj_setup(bpy.types.Operator):
         bpy.ops.object.mode_set(mode='EDIT')
         bone = arm_data.edit_bones.new(self.bone_name)
         bone.head = (0.0, 0.0, 0.0)
-        # Pointing along Z so Z-rotation is the visual axis the user
-        # picked (most windmill rigs spin around Z).
-        bone.tail = (0.0, 0.0, 1.0)
+        # Point along +Y — Blender's native bone direction. This keeps
+        # rest_quat = identity, so:
+        #   * the axis vector we feed to Quaternion(axis, angle) is
+        #     interpreted in the SAME frame as the user's selection
+        #     (world X/Y/Z → bone-local X/Y/Z directly);
+        #   * the round-trip Blender → IFP → DFF → game lands on the
+        #     same visual axis the user picked. A bone pointed along
+        #     +Z would have rest_quat = R_x(-90°) and silently remap
+        #     "rotate around Z" to bone-local Z = world -Y, so the
+        #     windmill would spin around the wrong axis in-game.
+        #   * the DFF importer rebuilds animated-map-object bones with
+        #     tail along +Y too — so an exported + re-imported rig
+        #     comes back identical, not on a different axis.
+        bone.tail = (0.0, 1.0, 0.0)
         bpy.ops.object.mode_set(mode='OBJECT')
         context.view_layer.objects.active = prev_active
 
@@ -382,7 +423,11 @@ class GTATOOLS_OT_animobj_setup(bpy.types.Operator):
         # ends at the same orientation it started → seamless loop.
         total_radians = self.turns_per_cycle * 2.0 * math.pi
 
-        axis_idx = {'X': 0, 'Y': 1, 'Z': 2}[self.axis]
+        world_axis = {
+            'X': mathutils.Vector((1.0, 0.0, 0.0)),
+            'Y': mathutils.Vector((0.0, 1.0, 0.0)),
+            'Z': mathutils.Vector((0.0, 0.0, 1.0)),
+        }[self.axis]
 
         pb = arm_obj.pose.bones.get(self.bone_name)
         if pb is None:
@@ -390,21 +435,51 @@ class GTATOOLS_OT_animobj_setup(bpy.types.Operator):
                         f"{T('Не найдена кость')} {self.bone_name}")
             return {'CANCELLED'}
 
-        # Frame 1: zero rotation
+        # Convert user's WORLD-space axis into the bone's LOCAL space.
+        # Pose-bone rotation_quaternion is applied as a delta on top of
+        # rest_mat, so the axis is interpreted local-to-bone, not local-
+        # to-world. Bones built head→tail along +Z have their local Y
+        # pointing along world Z — naively writing Quaternion((0,0,1),a)
+        # would spin around a perpendicular axis (the visible bug).
+        rest_bone = arm_data.bones.get(self.bone_name)
+        if rest_bone is not None:
+            local_axis = rest_bone.matrix_local.to_3x3().inverted() @ world_axis
+            if local_axis.length > 0:
+                local_axis.normalize()
+            else:
+                local_axis = world_axis
+        else:
+            local_axis = world_axis
+
+        # Author keys as rotation_euler with just two endpoints (0° at
+        # frame 1, full N×360° at duration). Euler interpolates linearly
+        # through the full turn — no quaternion shortest-arc trap — and
+        # the IFP exporter densifies the fcurve to quaternion samples
+        # on its side. Keeps the timeline view clean (matches the
+        # "1 cycle = 1 turn, 2 keyframes" UX promised by the addon).
         pb.rotation_mode = 'XYZ'
+        axis_idx = {'X': 0, 'Y': 1, 'Z': 2}[self.axis]
+
+        # Frame 1: zero rotation
         pb.rotation_euler = (0.0, 0.0, 0.0)
         pb.keyframe_insert(data_path="rotation_euler",
                            frame=1, group=self.bone_name)
 
-        # Last frame: total_radians on chosen axis
-        end_rot = [0.0, 0.0, 0.0]
-        end_rot[axis_idx] = total_radians
+        # Last frame: full N×360° on the chosen LOCAL axis.
+        # local_axis is the user's world axis re-expressed in bone-local
+        # space — for tail=+Y rigs (matrix_local=identity) it's identity
+        # so euler.{x,y,z} = world.{x,y,z}. Decompose along that axis.
+        end_rot = [
+            total_radians * local_axis.x,
+            total_radians * local_axis.y,
+            total_radians * local_axis.z,
+        ]
         pb.rotation_euler = tuple(end_rot)
         pb.keyframe_insert(data_path="rotation_euler",
                            frame=self.duration_frames,
                            group=self.bone_name)
 
-        # Reset back to zero so the bone visually starts at origin
+        # Reset back to identity so the bone visually starts at origin
         pb.rotation_euler = (0.0, 0.0, 0.0)
 
         # Tag for our IFP exporter so the action survives 'Save Materials'
@@ -762,6 +837,22 @@ class GTATOOLS_OT_animobj_export(bpy.types.Operator):
             self.report({'ERROR'},
                         T("Не нашли пару MESH+ARMATURE — запустите Validate"))
             return {'CANCELLED'}
+
+        # Auto-migrate legacy actions: rigs created before quaternion/
+        # world-axis fixes have either rotation_euler keys (IFP exporter
+        # drops them → 0-bone IFP) or quaternion keys around the wrong
+        # axis. _rebuild_animobj_action is idempotent — it strips old
+        # rotation fcurves and rewrites them via the current code path,
+        # so a fresh rig is unaffected and a stale rig gets healed
+        # transparently right before export.
+        if arm.get('inu_animobj') and arm.animation_data \
+                and arm.animation_data.action:
+            try:
+                _rebuild_animobj_action(arm)
+            except Exception as ex:
+                # Don't block export on a rebuild failure — the user can
+                # still get a (possibly stale) IFP out and fix later.
+                print(f"[INU] animobj rebuild skipped: {ex}")
 
         # IFP filename: user override wins, else fall back to base_name.
         # Useful for shared "myhood_anims.ifp" across many rigs.

@@ -276,6 +276,7 @@ def _build_animation(action, armature, fps: float) -> Animation:
         bone = AnimBone(name=bone_name)
 
         has_rot = 'rotation_quaternion' in props
+        has_euler = 'rotation_euler' in props and not has_rot
         has_loc = 'location' in props
 
         # Strip the translation channel for bones that never actually
@@ -343,8 +344,20 @@ def _build_animation(action, armature, fps: float) -> Animation:
             if not rot_active:
                 has_rot = False
 
+        if has_euler:
+            euler_active = False
+            for fc in props['rotation_euler']:
+                for kp in fc.keyframe_points:
+                    if abs(kp.co[1]) > 1e-5:
+                        euler_active = True
+                        break
+                if euler_active:
+                    break
+            if not euler_active:
+                has_euler = False
+
         bone.key_type = 0
-        if has_rot:
+        if has_rot or has_euler:
             bone.key_type |= HAS_ROT
         if has_loc:
             bone.key_type |= HAS_TRANS
@@ -377,11 +390,39 @@ def _build_animation(action, armature, fps: float) -> Animation:
         # the ground — every bone was rotated by rest^-1.
         rest_quat, rest_mat = _bone_rest_local(armature, bone_name)
 
+        # Collect all keyed timestamps across location/rotation channels.
         times = set()
         for prop_curves in props.values():
             for fc in prop_curves:
                 for kp in fc.keyframe_points:
                     times.add(kp.co[0])
+
+        # rotation_euler can store a full 0→2π turn between just two
+        # keyframes (start + end). Quaternion conversion of those two
+        # endpoints alone is identity → identity, so an IFP keyed only
+        # at those frames would have the engine slerp between two
+        # identities (no rotation in-game). Densify between every pair
+        # of adjacent timestamps so the in-IFP shortest-arc slerp can
+        # actually traverse the full turn. 4 splits per interval =
+        # max 90° between adjacent IFP keys (slerp short-arc OK up to
+        # 180°, picking 90° gives us safety margin).
+        if has_euler and len(times) >= 2:
+            sorted_times = sorted(times)
+            for a, b in zip(sorted_times, sorted_times[1:]):
+                step = (b - a) / 4.0
+                for k in range(1, 4):
+                    times.add(a + step * k)
+
+        # Find first euler frame's value as a baseline so we only emit
+        # the "delta from rest" quaternion through rest_quat. The fcurve
+        # values are already in pose space (rest-relative), so direct
+        # Euler→Quaternion is correct.
+        euler_rotation_mode = 'XYZ'
+        if has_euler and armature is not None:
+            pb = armature.pose.bones.get(bone_name)
+            if pb is not None and pb.rotation_mode in (
+                    'XYZ', 'XZY', 'YXZ', 'YZX', 'ZXY', 'ZYX'):
+                euler_rotation_mode = pb.rotation_mode
 
         for frame in sorted(times):
             kf = KeyFrame(time=frame / fps)
@@ -399,6 +440,23 @@ def _build_animation(action, armature, fps: float) -> Animation:
                 # magnitude propagates through ANP3 int16×4096 quant
                 # and the engine applies slightly-off rotations every
                 # 30Hz tick → visible "stepped" playback in-game.
+                if bl_quat.magnitude > 0:
+                    bl_quat.normalize()
+                gta_quat = rest_quat @ bl_quat
+                kf.rotation = (
+                    gta_quat.x, gta_quat.y, gta_quat.z, gta_quat.w)
+            elif has_euler:
+                # Sample the euler triplet at this frame, build a
+                # quaternion, then apply the rest_quat the same way the
+                # quaternion path does. Lets animobj_setup keep its
+                # natural 2-keyframe euler representation (0° → 360°)
+                # while still producing a valid IFP rotation track.
+                euler_vals = [0.0, 0.0, 0.0]
+                for fc in props['rotation_euler']:
+                    euler_vals[fc.array_index] = fc.evaluate(frame)
+                bl_quat = mathutils.Euler(
+                    (euler_vals[0], euler_vals[1], euler_vals[2]),
+                    euler_rotation_mode).to_quaternion()
                 if bl_quat.magnitude > 0:
                     bl_quat.normalize()
                 gta_quat = rest_quat @ bl_quat
