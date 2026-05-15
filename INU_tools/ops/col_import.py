@@ -29,7 +29,17 @@ def _get_or_make_col_material(surface, material_cache):
     mat.inu.col_mat_index = s.material
     mat.inu.col_flags = s.flags
     mat.inu.col_brightness = s.brightness
-    mat.inu.col_light = s.light
+    # COL2/COL3 surface.light is one byte packed as
+    #   day  = light & 0xF   (low 4 bits)
+    #   night= light >> 4    (high 4 bits)
+    # — matches the export side (col_export.py). The N-panel UI reads
+    # `col_day_light` / `col_night_light` separately, so the raw byte
+    # alone (`col_light = s.light`) leaves the UI sliders at zero.
+    # Split here so что юзер сразу видит правильные значения после
+    # импорта.
+    mat.inu.col_light = s.light                          # raw byte (legacy)
+    mat.inu.col_day_light   = s.light & 0xF
+    mat.inu.col_night_light = (s.light >> 4) & 0xF
 
     if material_cache is not None:
         material_cache[key] = mat
