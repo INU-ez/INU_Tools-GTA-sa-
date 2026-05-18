@@ -461,7 +461,7 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
         # Result
         num_groups = len(model_groups)
         if all_exported:
-            self.report({'INFO'}, f"{T('Экспортировано:')} {len(all_exported)} файлов ({num_groups} моделей)")
+            self.report({'INFO'}, f"{T('Экспортировано:')} {len(all_exported)}{T(' файлов (')}{num_groups}{T(' моделей)')}")
         if all_errors:
             preview = '; '.join(all_errors[:5])
             more = f" (+{len(all_errors) - 5})" if len(all_errors) > 5 else ""

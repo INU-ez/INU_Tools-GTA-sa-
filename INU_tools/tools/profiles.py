@@ -21,6 +21,7 @@ import re
 
 import bpy
 
+from .. import T
 from .compat import safe_icon
 from .user_data import get_user_data_dir
 from typing import Dict, List, Optional
@@ -488,11 +489,11 @@ class GTATOOLS_OT_profile_save(bpy.types.Operator):
     def execute(self, context):
         if not _is_valid_name(self.profile_name):
             self.report({'ERROR'},
-                        "Имя содержит недопустимые символы или слишком длинное")
+                        T("Имя содержит недопустимые символы или слишком длинное"))
             return {'CANCELLED'}
         if self.profile_name.upper() == 'ALL':
             self.report({'ERROR'},
-                        "Имя 'ALL' зарезервировано")
+                        T("Имя 'ALL' зарезервировано"))
             return {'CANCELLED'}
 
         # Default: all panels in canonical order, nothing hidden.
@@ -506,10 +507,10 @@ class GTATOOLS_OT_profile_save(bpy.types.Operator):
             except Exception:
                 pass
             self.report({'INFO'},
-                        f"Создан: {self.profile_name}")
+                        f"{T('Создан: ')}{self.profile_name}")
             return {'FINISHED'}
         else:
-            self.report({'ERROR'}, "Ошибка записи профиля")
+            self.report({'ERROR'}, T("Ошибка записи профиля"))
             return {'CANCELLED'}
 
 
@@ -530,14 +531,14 @@ class GTATOOLS_OT_profile_delete(bpy.types.Operator):
     def execute(self, context):
         active = context.scene.inu_settings.gtatools_profile
         if active == 'ALL':
-            self.report({'ERROR'}, "ALL удалить нельзя")
+            self.report({'ERROR'}, T("ALL удалить нельзя"))
             return {'CANCELLED'}
         if delete_user_profile(active):
             context.scene.inu_settings.gtatools_profile = 'ALL'
-            self.report({'INFO'}, f"Удалён: {active}")
+            self.report({'INFO'}, f"{T('Удалён: ')}{active}")
             return {'FINISHED'}
         else:
-            self.report({'ERROR'}, "Ошибка удаления")
+            self.report({'ERROR'}, T("Ошибка удаления"))
             return {'CANCELLED'}
 
 
@@ -614,7 +615,7 @@ class GTATOOLS_OT_profile_pick_panel(bpy.types.Operator):
         # a real frame to settle.
         if not save_user_profile(active, order, desc,
                                  hidden=original_hidden):
-            self.report({'ERROR'}, "Ошибка сохранения")
+            self.report({'ERROR'}, T("Ошибка сохранения"))
             return {'CANCELLED'}
 
         scene.inu_settings.gtatools_profile_picked = ""

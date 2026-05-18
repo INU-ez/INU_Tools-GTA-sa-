@@ -522,7 +522,7 @@ class GTATOOLS_MT_materials_menu(bpy.types.Menu):
 
 
 class GTATOOLS_PT_bitmaps_panel(bpy.types.Panel):
-    bl_label = T("Менеджер текстур")
+    bl_label = "Менеджер текстур"
     bl_idname = "GTATOOLS_PT_bitmaps_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'

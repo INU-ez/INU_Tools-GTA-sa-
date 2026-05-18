@@ -68,32 +68,98 @@ def export_track(filepath: str, obj=None):
 
 def export_nodes(filepath: str, objects=None, *, fla4: bool = False):
     """Export mesh objects as nodes*.dat. Set ``fla4=True`` to emit the
-    extended Fastman Limit Adjuster 4 format."""
+    extended Fastman Limit Adjuster 4 format.
+
+    Round-trip preservation: reads `obj['extra_data_b64']` (set on
+    import) and threads it back into `nodes_file.extra_data` so the
+    post-link section (naviLinks, linkLengths, pathIntersections) is
+    written out unchanged. Without this, exported files would be
+    missing those tail bytes and the game would crash / paths would
+    not work.
+
+    Also auto-upgrades to FLA4 format if any source object carries the
+    `fla4` flag from import — explicit `fla4=True` caller still wins
+    (it's a fresh choice, not metadata).
+    """
+    import base64
     if objects is None:
         objects = [o for o in bpy.context.selected_objects
-                   if o.type == 'MESH' and o.get('path_type', '').startswith('nodes_')]
+                   if o.type == 'MESH' and o.get('path_type', '').startswith('nodes_')
+                   and o.get('path_type') != 'nodes_viz']
 
     nodes_file = NodesFile()
     nodes_file.fla4 = fla4
+
+    # Reconstruct post-link tail from the first object that has it.
+    # Every object from the same file carries an identical copy of
+    # the file-level metadata, so picking any one is fine.
+    #
+    # Two paths depending on what the importer stored:
+    #   * `parsed_extras=True` — naviLinks / linkLengths / pathIntersections
+    #     are stored as per-index props (`navi_link_{i}`, etc). Read them
+    #     back into lists. Editable round-trip.
+    #   * `extra_data_b64` — raw bytes fallback. Decode to `extra_data`.
+    def _arr(obj, name):
+        """Read an array IDProperty as a plain Python list. Returns []
+        if missing. Importer now stores per-node/link arrays in bulk."""
+        v = obj.get(name)
+        return list(v) if v is not None else []
+
+    def _at(arr, i, default=0):
+        return int(arr[i]) if 0 <= i < len(arr) else default
+
+    for obj in objects:
+        if obj.get('parsed_extras', False):
+            nodes_file.navi_links         = [int(v) for v in _arr(obj, 'navi_links')]
+            nodes_file.link_lengths       = [int(v) for v in _arr(obj, 'link_lengths')]
+            nodes_file.path_intersections = [int(v) for v in _arr(obj, 'path_intersections')]
+            nodes_file.parsed_extras = True
+            break
+        b64 = obj.get('extra_data_b64', '')
+        if b64:
+            try:
+                nodes_file.extra_data = base64.b64decode(b64)
+            except Exception as e:
+                print(f"[INU] nodes extra_data decode failed: {e}")
+            break
+
+    # Auto-upgrade FLA4 if any object came from an FLA4 file. Explicit
+    # caller `fla4=True` already on; only flip from False → True here.
+    if not nodes_file.fla4:
+        for obj in objects:
+            if obj.get('fla4', False):
+                nodes_file.fla4 = True
+                break
 
     for obj in objects:
         path_type = obj.get('path_type', '')
         mat_w = obj.matrix_world
         mesh = obj.data
 
+        # Bulk-read parallel arrays once per object — much faster than
+        # `obj.get(f'node_{i}_link')` × num_nodes which was O(n²)
+        # against the IDProperty dict.
+        node_links  = _arr(obj, 'node_links')
+        node_areas  = _arr(obj, 'node_areas')
+        node_ids    = _arr(obj, 'node_ids')
+        node_widths = _arr(obj, 'node_widths')
+        node_types  = _arr(obj, 'node_types')
+        node_flags  = _arr(obj, 'node_flags')
+
         for i, vert in enumerate(mesh.vertices):
             co = mat_w @ vert.co
             node = PathNode(
                 x=co.x, y=co.y, z=co.z,
-                link_id=obj.get(f'node_{i}_link', 0),
-                area_id=obj.get(f'node_{i}_area', 0),
-                node_id=obj.get(f'node_{i}_id', i),
-                path_width=obj.get(f'node_{i}_width', 0),
-                node_type=obj.get(f'node_{i}_type', 0),
-                flags=obj.get(f'node_{i}_flags', 0),
-                spawn_probability=obj.get(f'node_{i}_spawn', 0),
-                speed_limit_kmh=obj.get(f'node_{i}_speed', 0),
-                lane_count_override=obj.get(f'node_{i}_lanes', 0),
+                link_id   = _at(node_links,  i),
+                area_id   = _at(node_areas,  i),
+                node_id   = _at(node_ids,    i, i),
+                path_width= _at(node_widths, i),
+                node_type = _at(node_types,  i),
+                flags     = _at(node_flags,  i),
+                # FLA4 extension fields — currently unused, default 0
+                spawn_probability=0,
+                speed_limit_kmh=0,
+                lane_count_override=0,
             )
 
             if path_type == 'nodes_vehicle':
@@ -102,23 +168,30 @@ def export_nodes(filepath: str, objects=None, *, fla4: bool = False):
                 nodes_file.ped_nodes.append(node)
 
         if path_type == 'nodes_navi':
+            navi_areas = _arr(obj, 'navi_areas')
+            navi_ids   = _arr(obj, 'navi_ids')
+            navi_dx    = _arr(obj, 'navi_dx')
+            navi_dy    = _arr(obj, 'navi_dy')
+            navi_flags = _arr(obj, 'navi_flags')
             for i, vert in enumerate(mesh.vertices):
                 co = mat_w @ vert.co
                 nodes_file.navi_nodes.append(NaviNode(
                     x=co.x, y=co.y,
-                    area_id=obj.get(f'navi_{i}_area', 0),
-                    node_id=obj.get(f'navi_{i}_node', 0),
-                    dir_x=obj.get(f'navi_{i}_dx', 0),
-                    dir_y=obj.get(f'navi_{i}_dy', 0),
-                    flags=obj.get(f'navi_{i}_flags', 0),
+                    area_id = _at(navi_areas, i),
+                    node_id = _at(navi_ids,   i),
+                    dir_x   = _at(navi_dx,    i),
+                    dir_y   = _at(navi_dy,    i),
+                    flags   = _at(navi_flags, i),
                 ))
 
-        # Restore links
-        num_links = obj.get('num_links', 0)
+        # Restore links from bulk arrays.
+        link_areas = _arr(obj, 'link_areas')
+        link_nodes = _arr(obj, 'link_nodes')
+        num_links = int(obj.get('num_links', 0))
         for i in range(num_links):
             nodes_file.links.append(PathLink(
-                area_id=obj.get(f'link_{i}_area', 0),
-                node_id=obj.get(f'link_{i}_node', 0),
+                area_id=_at(link_areas, i),
+                node_id=_at(link_nodes, i),
             ))
 
     return write_nodes(filepath, nodes_file)

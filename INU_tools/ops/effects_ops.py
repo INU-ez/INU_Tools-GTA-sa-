@@ -441,11 +441,11 @@ class GTATOOLS_OT_particle_effect_new(bpy.types.Operator):
 
         game_root = bpy.path.abspath(context.scene.inu_settings.gtatools_game_root or '')
         if not game_root:
-            self.report({'ERROR'}, "Game Root не задан")
+            self.report({'ERROR'}, T("Game Root не задан"))
             return {'CANCELLED'}
         fxp_path = os.path.join(game_root, 'models', 'effects.fxp')
         if not os.path.isfile(fxp_path):
-            self.report({'ERROR'}, f"effects.fxp не найден: {fxp_path}")
+            self.report({'ERROR'}, f"{T('effects.fxp не найден: ')}{fxp_path}")
             return {'CANCELLED'}
 
         # Auto-backup on first write
@@ -456,18 +456,18 @@ class GTATOOLS_OT_particle_effect_new(bpy.types.Operator):
                 shutil.copy2(fxp_path, backup_path)
                 print(f"[FXP] backed up to {backup_path}")
             except Exception as e:
-                self.report({'ERROR'}, f"Не удалось создать бэкап: {e}")
+                self.report({'ERROR'}, f"{T('Не удалось создать бэкап: ')}{e}")
                 return {'CANCELLED'}
 
         from ..core import fxp as _fxp
         try:
             fxf = _fxp.read_fxp(fxp_path)
         except Exception as e:
-            self.report({'ERROR'}, f"Ошибка парсинга: {e}")
+            self.report({'ERROR'}, f"{T('Ошибка парсинга: ')}{e}")
             return {'CANCELLED'}
 
         if fxf.find(name) is not None:
-            self.report({'ERROR'}, f"Эффект '{name}' уже существует")
+            self.report({'ERROR'}, f"{T("Эффект '")}{name}{T("' уже существует")}")
             return {'CANCELLED'}
 
         new_system = _create_blank_particle_system(name)
@@ -476,7 +476,7 @@ class GTATOOLS_OT_particle_effect_new(bpy.types.Operator):
         try:
             _fxp.write_fxp(fxp_path, fxf)
         except Exception as e:
-            self.report({'ERROR'}, f"Ошибка записи: {e}")
+            self.report({'ERROR'}, f"{T('Ошибка записи: ')}{e}")
             return {'CANCELLED'}
 
         _fxp.clear_cache()
@@ -497,7 +497,7 @@ class GTATOOLS_OT_particle_effect_new(bpy.types.Operator):
         except Exception:
             pass
 
-        self.report({'INFO'}, f"Создан эффект: {name}")
+        self.report({'INFO'}, f"{T('Создан эффект: ')}{name}")
         return {'FINISHED'}
 
 
@@ -563,11 +563,11 @@ class GTATOOLS_OT_particle_effect_delete(bpy.types.Operator):
 
         game_root = bpy.path.abspath(context.scene.inu_settings.gtatools_game_root or '')
         if not game_root:
-            self.report({'ERROR'}, "Game Root не задан")
+            self.report({'ERROR'}, T("Game Root не задан"))
             return {'CANCELLED'}
         fxp_path = os.path.join(game_root, 'models', 'effects.fxp')
         if not os.path.isfile(fxp_path):
-            self.report({'ERROR'}, f"effects.fxp не найден: {fxp_path}")
+            self.report({'ERROR'}, f"{T('effects.fxp не найден: ')}{fxp_path}")
             return {'CANCELLED'}
 
         backup_path = fxp_path + '.bak'
@@ -577,27 +577,27 @@ class GTATOOLS_OT_particle_effect_delete(bpy.types.Operator):
                 shutil.copy2(fxp_path, backup_path)
                 print(f"[FXP] backed up to {backup_path}")
             except Exception as e:
-                self.report({'ERROR'}, f"Не удалось создать бэкап: {e}")
+                self.report({'ERROR'}, f"{T('Не удалось создать бэкап: ')}{e}")
                 return {'CANCELLED'}
 
         from ..core import fxp as _fxp
         try:
             fxf = _fxp.read_fxp(fxp_path)
         except Exception as e:
-            self.report({'ERROR'}, f"Ошибка парсинга: {e}")
+            self.report({'ERROR'}, f"{T('Ошибка парсинга: ')}{e}")
             return {'CANCELLED'}
 
         before = len(fxf.systems)
         fxf.systems = [s for s in fxf.systems if s.name != name]
         removed = before - len(fxf.systems)
         if removed == 0:
-            self.report({'WARNING'}, f"Эффект '{name}' не найден в effects.fxp")
+            self.report({'WARNING'}, f"{T("Эффект '")}{name}{T("' не найден в effects.fxp")}")
             return {'CANCELLED'}
 
         try:
             _fxp.write_fxp(fxp_path, fxf)
         except Exception as e:
-            self.report({'ERROR'}, f"Ошибка записи: {e}")
+            self.report({'ERROR'}, f"{T('Ошибка записи: ')}{e}")
             return {'CANCELLED'}
 
         _fxp.clear_cache()
@@ -614,7 +614,7 @@ class GTATOOLS_OT_particle_effect_delete(bpy.types.Operator):
         except Exception:
             pass
 
-        self.report({'INFO'}, f"Удалено: {name}")
+        self.report({'INFO'}, f"{T('Удалено: ')}{name}")
         return {'FINISHED'}
 
 
@@ -642,9 +642,9 @@ class GTATOOLS_OT_particle_curve_select(bpy.types.Operator):
         obj.inu.particle_curve_name = self.curve_name
         if _load_curve_into_buffer(obj, self.curve_name):
             n = len(obj.inu.particle_curve_keys)
-            self.report({'INFO'}, f"{self.curve_name}: {n} ключей")
+            self.report({'INFO'}, f"{self.curve_name}: {n}{T(' ключей')}")
         else:
-            self.report({'WARNING'}, f"Не удалось загрузить {self.curve_name}")
+            self.report({'WARNING'}, f"{T('Не удалось загрузить ')}{self.curve_name}")
         return {'FINISHED'}
 
     def invoke(self, context, event):
@@ -733,17 +733,17 @@ class GTATOOLS_OT_particle_curve_write(bpy.types.Operator):
         obj = context.active_object
         curve_key = obj.inu.particle_curve_name
         if '.' not in curve_key:
-            self.report({'ERROR'}, f"Неверный ключ кривой: {curve_key}")
+            self.report({'ERROR'}, f"{T('Неверный ключ кривой: ')}{curve_key}")
             return {'CANCELLED'}
         info_type, field_name = curve_key.split('.', 1)
 
         game_root = bpy.path.abspath(context.scene.inu_settings.gtatools_game_root or '')
         if not game_root:
-            self.report({'ERROR'}, "Game Root не задан")
+            self.report({'ERROR'}, T("Game Root не задан"))
             return {'CANCELLED'}
         fxp_path = os.path.join(game_root, 'models', 'effects.fxp')
         if not os.path.isfile(fxp_path):
-            self.report({'ERROR'}, f"effects.fxp не найден: {fxp_path}")
+            self.report({'ERROR'}, f"{T('effects.fxp не найден: ')}{fxp_path}")
             return {'CANCELLED'}
 
         effect_name = obj.get('2dfx_effect_name', '') or ''
@@ -759,7 +759,7 @@ class GTATOOLS_OT_particle_curve_write(bpy.types.Operator):
                 shutil.copy2(fxp_path, backup_path)
                 print(f"[FXP] backed up to {backup_path}")
             except Exception as e:
-                self.report({'ERROR'}, f"Не удалось создать бэкап: {e}")
+                self.report({'ERROR'}, f"{T('Не удалось создать бэкап: ')}{e}")
                 return {'CANCELLED'}
 
         from ..core import fxp as _fxp
@@ -767,12 +767,12 @@ class GTATOOLS_OT_particle_curve_write(bpy.types.Operator):
         try:
             fxf = _fxp.read_fxp(fxp_path)
         except Exception as e:
-            self.report({'ERROR'}, f"Ошибка парсинга: {e}")
+            self.report({'ERROR'}, f"{T('Ошибка парсинга: ')}{e}")
             return {'CANCELLED'}
 
         system = fxf.find(effect_name)
         if not system or not system.emitters:
-            self.report({'ERROR'}, f"Система '{effect_name}' не найдена")
+            self.report({'ERROR'}, f"{T("Система '")}{effect_name}{T("' не найдена")}")
             return {'CANCELLED'}
 
         em_idx = max(0, min(int(obj.inu.particle_emitter_index), len(system.emitters) - 1))
@@ -796,7 +796,7 @@ class GTATOOLS_OT_particle_curve_write(bpy.types.Operator):
         try:
             _fxp.write_fxp(fxp_path, fxf)
         except Exception as e:
-            self.report({'ERROR'}, f"Ошибка записи: {e}")
+            self.report({'ERROR'}, f"{T('Ошибка записи: ')}{e}")
             return {'CANCELLED'}
 
         _fxp.clear_cache()
@@ -812,7 +812,7 @@ class GTATOOLS_OT_particle_curve_write(bpy.types.Operator):
         except Exception:
             pass
 
-        self.report({'INFO'}, f"{curve_key}: {len(keys_sorted)} ключей записано")
+        self.report({'INFO'}, f"{curve_key}: {len(keys_sorted)}{T(' ключей записано')}")
         return {'FINISHED'}
 
 
@@ -1261,12 +1261,12 @@ class GTATOOLS_OT_save_particle_effect(bpy.types.Operator):
         obj = context.active_object
         game_root = bpy.path.abspath(context.scene.inu_settings.gtatools_game_root or '')
         if not game_root:
-            self.report({'ERROR'}, "Game Root не задан")
+            self.report({'ERROR'}, T("Game Root не задан"))
             return {'CANCELLED'}
 
         fxp_path = os.path.join(game_root, 'models', 'effects.fxp')
         if not os.path.isfile(fxp_path):
-            self.report({'ERROR'}, f"effects.fxp не найден: {fxp_path}")
+            self.report({'ERROR'}, f"{T('effects.fxp не найден: ')}{fxp_path}")
             return {'CANCELLED'}
 
         target_name = self.effect_name.strip()
@@ -1279,7 +1279,7 @@ class GTATOOLS_OT_save_particle_effect(bpy.types.Operator):
         try:
             fxf = _fxp.read_fxp(fxp_path)
         except Exception as e:
-            self.report({'ERROR'}, f"Ошибка парсинга effects.fxp: {e}")
+            self.report({'ERROR'}, f"{T('Ошибка парсинга effects.fxp: ')}{e}")
             return {'CANCELLED'}
 
         existing = fxf.find(target_name)
@@ -1289,7 +1289,7 @@ class GTATOOLS_OT_save_particle_effect(bpy.types.Operator):
             source_name = obj.get('2dfx_effect_name', '') or ''
             source = fxf.find(source_name)
             if source is None:
-                self.report({'ERROR'}, f"Исходная система '{source_name}' не найдена — нечего клонировать")
+                self.report({'ERROR'}, f"{T("Исходная система '")}{source_name}{T("' не найдена — нечего клонировать")}")
                 return {'CANCELLED'}
             import copy
             new_system = copy.deepcopy(source)
@@ -1305,19 +1305,19 @@ class GTATOOLS_OT_save_particle_effect(bpy.types.Operator):
             target_system = new_system
         else:
             if not self.overwrite:
-                self.report({'ERROR'}, f"Система '{target_name}' уже существует (снимите галку 'Overwrite' нельзя, включите её)")
+                self.report({'ERROR'}, f"{T("Система '")}{target_name}{T("' уже существует (снимите галку 'Overwrite' нельзя, включите её)")}")
                 return {'CANCELLED'}
             target_system = existing
 
         if not target_system.emitters:
-            self.report({'ERROR'}, f"У системы '{target_name}' нет эмиттеров")
+            self.report({'ERROR'}, f"{T("У системы '")}{target_name}{T("' нет эмиттеров")}")
             return {'CANCELLED'}
 
         em_idx = max(0, min(int(obj.inu.particle_emitter_index), len(target_system.emitters) - 1))
         try:
             applied = _apply_particle_props_to_emitter(obj, target_system.emitters[em_idx])
         except Exception as e:
-            self.report({'ERROR'}, f"Ошибка применения правок: {e}")
+            self.report({'ERROR'}, f"{T('Ошибка применения правок: ')}{e}")
             return {'CANCELLED'}
 
         # System-level header fields (LENGTH/PLAYMODE/CULLDIST) — dirty check
@@ -1367,13 +1367,13 @@ class GTATOOLS_OT_save_particle_effect(bpy.types.Operator):
                 shutil.copy2(fxp_path, backup_path)
                 print(f"[FXP] backed up to {backup_path}")
             except Exception as e:
-                self.report({'ERROR'}, f"Не удалось создать бэкап: {e}")
+                self.report({'ERROR'}, f"{T('Не удалось создать бэкап: ')}{e}")
                 return {'CANCELLED'}
 
         try:
             _fxp.write_fxp(fxp_path, fxf)
         except Exception as e:
-            self.report({'ERROR'}, f"Ошибка записи: {e}")
+            self.report({'ERROR'}, f"{T('Ошибка записи: ')}{e}")
             return {'CANCELLED'}
 
         _fxp.clear_cache()

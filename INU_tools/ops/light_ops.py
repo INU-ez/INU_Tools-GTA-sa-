@@ -861,10 +861,10 @@ class GTATOOLS_OT_remove_lightmap(bpy.types.Operator):
             removed_count += 1
 
         if removed_count > 0:
-            self.report({'INFO'}, f"Lightmap удалён из {removed_count} материал(ов)")
+            self.report({'INFO'}, f"{T('Lightmap удалён из ')}{removed_count}{T(' материал(ов)')}")
             return {'FINISHED'}
         else:
-            self.report({'WARNING'}, "Lightmap не найден в материалах")
+            self.report({'WARNING'}, T("Lightmap не найден в материалах"))
             return {'CANCELLED'}
 
 

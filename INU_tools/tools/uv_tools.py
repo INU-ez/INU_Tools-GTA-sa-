@@ -97,7 +97,7 @@ def draw_uv_grid_callback():
 class GTATOOLS_OT_toggle_uv_editor(bpy.types.Operator):
     """Toggle UV Editor panel (split/join area)"""
     bl_idname = "gtatools.toggle_uv_editor"
-    bl_label = T("Открыть/Закрыть UV Editor")
+    bl_label = "Открыть/Закрыть UV Editor"
     bl_options = {'REGISTER'}
 
     def execute(self, context):

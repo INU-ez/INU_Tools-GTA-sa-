@@ -202,18 +202,30 @@ class GTATOOLS_OT_import_nodes(bpy.types.Operator):
 
     def execute(self, context):
         from .path_import import import_nodes
+        wm = context.window_manager
         total_nodes = 0
         total_files = 0
-        for f in self.files:
-            path = os.path.join(self.directory, f.name)
-            if not os.path.isfile(path):
-                continue
-            try:
-                objects = import_nodes(filepath=path, context=context)
-                total_nodes += sum(len(o.data.vertices) for o in objects if o.type == 'MESH')
-                total_files += 1
-            except Exception as e:
-                self.report({'WARNING'}, f"{f.name}: {str(e)}")
+        # Progress bar: cursor flips through the file count so user
+        # gets visual feedback during a full-map import (64 zone files).
+        # Blender's `wm.progress_*` only updates the cursor, not the
+        # viewport, but it's the standard pattern and good enough
+        # since import is a blocking single-threaded operation.
+        n_files = max(1, len(self.files))
+        wm.progress_begin(0, n_files)
+        try:
+            for idx, f in enumerate(self.files):
+                wm.progress_update(idx)
+                path = os.path.join(self.directory, f.name)
+                if not os.path.isfile(path):
+                    continue
+                try:
+                    objects = import_nodes(filepath=path, context=context)
+                    total_nodes += sum(len(o.data.vertices) for o in objects if o.type == 'MESH')
+                    total_files += 1
+                except Exception as e:
+                    self.report({'WARNING'}, f"{f.name}: {str(e)}")
+        finally:
+            wm.progress_end()
         self.report({'INFO'}, f"Nodes: {total_nodes} nodes from {total_files} files")
         return {'FINISHED'}
 
@@ -232,6 +244,14 @@ class GTATOOLS_OT_export_nodes(bpy.types.Operator):
     )
 
     def invoke(self, context, event):
+        # Auto-detect FLA4 from selected imported objects so the user
+        # doesn't have to remember the format of the file they loaded.
+        # Without this, re-exporting an FLA4 source silently downgrades
+        # to vanilla format (losing spawn/speed/lane per-node fields).
+        for obj in context.selected_objects:
+            if obj.get('fla4', False):
+                self.fla4 = True
+                break
         context.window_manager.fileselect_add(self)
         return {'RUNNING_MODAL'}
 

@@ -450,12 +450,28 @@ class PathLink:
 
 @dataclass
 class NodesFile:
-    """One nodes*.dat file (one zone area)."""
+    """One nodes*.dat file (one zone area).
+
+    The post-link tail (naviLinks, linkLengths, pathIntersections) is
+    parsed into structured lists when its size matches the expected
+    `4 * num_links` layout (2-byte naviLink + 1-byte linkLength +
+    1-byte pathIntersection per link). When the size doesn't fit —
+    files with extra trailing data, or older / modded variants — the
+    raw bytes are kept in `extra_data` instead, and `parsed_extras`
+    stays False so the writer just blits them back.
+    """
     vehicle_nodes: List[PathNode] = field(default_factory=list)
     ped_nodes: List[PathNode] = field(default_factory=list)
     navi_nodes: List[NaviNode] = field(default_factory=list)
     links: List[PathLink] = field(default_factory=list)
-    extra_data: bytes = b''  # Raw bytes after links (naviLinks, linkLengths, etc.)
+    # Parsed post-link arrays (each indexed by link index). Only valid
+    # when `parsed_extras` is True.
+    navi_links: List[int] = field(default_factory=list)         # uint16 each
+    link_lengths: List[int] = field(default_factory=list)       # uint8 each
+    path_intersections: List[int] = field(default_factory=list) # uint8 each
+    parsed_extras: bool = False
+    # Raw fallback when post-link layout doesn't match expectations.
+    extra_data: bytes = b''
     fla4: bool = False       # True when loaded from / meant to write a FLA4 file
 
 
@@ -547,9 +563,32 @@ def read_nodes(filepath: str) -> NodesFile:
 
         result.links.append(PathLink(area_id=area_id, node_id=node_id))
 
-    # Preserve remaining data (naviLinks, linkLengths, pathIntersections, etc.)
-    if offset < len(data):
-        result.extra_data = data[offset:]
+    # Post-link tail. Expected vanilla SA layout is:
+    #   naviLinks         — uint16 × num_links  (2 bytes each)
+    #   linkLengths       — uint8  × num_links  (1 byte each)
+    #   pathIntersections — uint8  × num_links  (1 byte each)
+    # Total = 4 × num_links bytes. When the actual remainder matches
+    # exactly, parse into structured fields so the user can edit them.
+    # Otherwise keep raw — safe for FLA4-modded or non-standard files.
+    tail = data[offset:]
+    expected = 4 * num_links
+    if num_links > 0 and len(tail) == expected:
+        try:
+            nl_end = num_links * 2
+            ll_end = nl_end + num_links
+            result.navi_links = list(
+                struct.unpack_from(f'<{num_links}H', tail, 0))
+            result.link_lengths = list(
+                struct.unpack_from(f'<{num_links}B', tail, nl_end))
+            result.path_intersections = list(
+                struct.unpack_from(f'<{num_links}B', tail, ll_end))
+            result.parsed_extras = True
+        except struct.error:
+            # Defensive — shouldn't trigger when sizes match, but keep
+            # raw fallback if anything goes wrong.
+            result.extra_data = tail
+    elif tail:
+        result.extra_data = tail
 
     return result
 
@@ -604,8 +643,29 @@ def write_nodes(filepath: str, nodes_file: NodesFile) -> int:
         for link in nodes_file.links:
             f.write(struct.pack('<2H', link.area_id, link.node_id))
 
-        # Extra data (naviLinks, linkLengths, etc.)
-        if nodes_file.extra_data:
+        # Post-link tail. Prefer the parsed structures when available
+        # so user edits round-trip; fall back to the raw `extra_data`
+        # blob for files where the layout didn't match expectations.
+        if nodes_file.parsed_extras:
+            n = num_links
+            nl = nodes_file.navi_links
+            ll = nodes_file.link_lengths
+            pi = nodes_file.path_intersections
+            # If user edited and counts no longer match num_links, pad
+            # / truncate to keep the file geometrically valid. Game
+            # may still load even if some entries are zeroed — better
+            # that than a too-short file the game can't read past.
+            def _fit(arr, fill=0):
+                if len(arr) >= n:
+                    return arr[:n]
+                return list(arr) + [fill] * (n - len(arr))
+            for v in _fit(nl):
+                f.write(struct.pack('<H', v & 0xFFFF))
+            for v in _fit(ll):
+                f.write(struct.pack('<B', v & 0xFF))
+            for v in _fit(pi):
+                f.write(struct.pack('<B', v & 0xFF))
+        elif nodes_file.extra_data:
             f.write(nodes_file.extra_data)
 
     return num_nodes

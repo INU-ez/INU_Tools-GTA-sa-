@@ -332,38 +332,54 @@ from .tools.compat import safe_icon
 # =============================================================================
 
 def get_locale():
-    """Get current Blender UI language"""
+    """Return Blender's current UI locale, e.g. 'ru_RU', 'es_ES', 'en_US'."""
     try:
-        locale = bpy.app.translations.locale
-        if locale and locale.startswith('ru'):
-            return 'ru'
-    except:
-        pass
-    return 'en'
+        return bpy.app.translations.locale or 'en_US'
+    except Exception:
+        return 'en_US'
 
-# Translation dictionary: Russian -> English
+
+# Map Blender locale prefix → locale/<code>.py filename
+_LOCALE_TO_LANG = {
+    'ru': None,   # Russian = source language, no translation needed
+    'en': 'eng',
+    'es': 'spa',
+}
+
+# Translation dictionary: Russian -> target language
 from .locale import get_translation
 
 
 def T(text):
-    """Translate text based on Blender UI language.
-    Code uses Russian strings as keys. For Russian UI — returns as-is.
-    For other languages — looks up translation in locale/<lang>.py files.
-    Falls back to English (eng.py) if current language not found.
+    """Translate a Russian source string to the current Blender UI language.
+
+    Code uses Russian strings as canonical keys. For Russian UI — returns
+    the input as-is. For other languages — looks up translation in
+    ``locale/<lang>.py``. Falls back to English (eng.py) if the current
+    locale has no dedicated file.
+
+    Note: when used in ``bl_label`` / ``bl_description`` class attributes,
+    ``T()`` runs ONCE at class-definition time and the result is baked in.
+    For dynamic translation (Blender re-translates on UI-language switch)
+    rely on the ``bpy.app.translations`` registration in
+    ``_register_blender_translations()`` and leave the raw Russian source
+    in ``bl_label`` directly.
     """
     locale = get_locale()
-    if locale and locale.startswith('ru'):
-        return text
-    # Try exact locale first, then fall back to English
-    tr = get_translation(locale)
+    prefix = locale[:2].lower() if locale else 'en'
+    lang_code = _LOCALE_TO_LANG.get(prefix, 'eng')
+    if lang_code is None:
+        return text  # Russian source — return verbatim
+    tr = get_translation(lang_code)
     if tr:
         result = tr.get(text)
         if result:
             return result
-    # Fallback to English
-    eng = get_translation('eng')
-    if eng:
-        return eng.get(text, text)
+    # Fallback to English if target language file is missing the key
+    if lang_code != 'eng':
+        eng = get_translation('eng')
+        if eng:
+            return eng.get(text, text)
     return text
 
 
@@ -3244,20 +3260,41 @@ def _register_blender_translations():
     most common contexts so any UI element looking up our message
     finds it regardless of the context Blender picks.
     """
-    from .locale import get_translation
-    eng_dict = get_translation('eng')
-    if not eng_dict:
-        return
+    from .locale import get_translation, available_languages
 
     # Mirror every entry across the contexts Blender consults for
     # different UI element kinds. Costs a few KiB of dict — negligible.
     contexts = ('*', 'Operator', 'Property', 'WindowManager')
-    en_us_entries = {}
-    for k, v in eng_dict.items():
-        for ctx in contexts:
-            en_us_entries[(ctx, k)] = v
 
-    blender_dict = {'en_US': en_us_entries}
+    # Map our locale/<code>.py to Blender locale identifiers.
+    # Blender 4.x lists Spanish as both 'es' (generic / Latin America) and
+    # 'es_ES' (Spain) — when the user picks "Spanish" in the language
+    # dropdown, ``bpy.app.translations.locale`` returns one or the other
+    # depending on the OS / Blender build, so register under BOTH. Same
+    # idea for English: en_US / en_GB / bare 'en'.
+    # Extend this dict when adding new language files.
+    LANG_TO_BLENDER_LOCALES = {
+        'eng': ('en_US', 'en_GB', 'en'),
+        'spa': ('es_ES', 'es'),
+    }
+
+    blender_dict = {}
+    for lang_code in available_languages():
+        blender_locales = LANG_TO_BLENDER_LOCALES.get(lang_code)
+        if not blender_locales:
+            continue
+        lang_dict = get_translation(lang_code)
+        if not lang_dict:
+            continue
+        entries = {}
+        for k, v in lang_dict.items():
+            for ctx in contexts:
+                entries[(ctx, k)] = v
+        for blender_locale in blender_locales:
+            blender_dict[blender_locale] = entries
+
+    if not blender_dict:
+        return
 
     # Idempotent — addon reload may otherwise hit «already registered».
     try:

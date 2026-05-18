@@ -519,16 +519,16 @@ class GTATOOLS_MT_create_2dfx(bpy.types.Menu):
 
     def draw(self, context):
         layout = self.layout
-        op = layout.operator("gtatools.create_2dfx", text="Свет",
+        op = layout.operator("gtatools.create_2dfx", text=T("Свет"),
                              icon=safe_icon('LIGHT_POINT'))
         op.effect_type = 'LIGHT'
-        op = layout.operator("gtatools.create_2dfx", text="Частица",
+        op = layout.operator("gtatools.create_2dfx", text=T("Частица"),
                              icon=safe_icon('PARTICLES'))
         op.effect_type = 'PARTICLE'
         op = layout.operator("gtatools.create_2dfx", text="Ped Attractor",
                              icon=safe_icon('COMMUNITY'))
         op.effect_type = 'PED_ATTRACTOR'
-        op = layout.operator("gtatools.create_2dfx", text="Блик солнца",
+        op = layout.operator("gtatools.create_2dfx", text=T("Блик солнца"),
                              icon=safe_icon('LIGHT_SUN'))
         op.effect_type = 'SUN_GLARE'
 
@@ -545,23 +545,23 @@ class GTATOOLS_MT_radar_generate(bpy.types.Menu):
     def draw(self, context):
         layout = self.layout
         op = layout.operator("gtatools.radar_generate",
-                             text="Генерировать радар",
+                             text=T("Генерировать радар"),
                              icon=safe_icon('RENDER_RESULT'))
         op.mode = 'ALL'
         op = layout.operator("gtatools.radar_generate",
-                             text="Меню радар (3x3)",
+                             text=T("Меню радар (3x3)"),
                              icon=safe_icon('RENDER_RESULT'))
         op.mode = 'MENU'
         layout.separator()
         op = layout.operator("gtatools.radar_generate",
-                             text="Полный радар", icon=safe_icon('IMAGE'))
+                             text=T("Полный радар"), icon=safe_icon('IMAGE'))
         op.mode = 'FULL'
         op = layout.operator("gtatools.radar_generate",
-                             text="Полный меню", icon=safe_icon('IMAGE'))
+                             text=T("Полный меню"), icon=safe_icon('IMAGE'))
         op.mode = 'FULL_MENU'
         layout.separator()
         op = layout.operator("gtatools.radar_generate",
-                             text="Указанные тайлы",
+                             text=T("Указанные тайлы"),
                              icon=safe_icon('RENDER_RESULT'))
         op.mode = 'SPECIFIC'
 
@@ -576,20 +576,20 @@ class GTATOOLS_MT_path_traffic(bpy.types.Menu):
 
     def draw(self, context):
         layout = self.layout
-        op = layout.operator("gtatools.path_node_flag", text="Без светофора")
+        op = layout.operator("gtatools.path_node_flag", text=T("Без светофора"))
         op.action = 'TRAFFIC_NONE'
-        op = layout.operator("gtatools.path_node_flag", text="Обычный")
+        op = layout.operator("gtatools.path_node_flag", text=T("Обычный"))
         op.action = 'TRAFFIC_NORMAL'
-        op = layout.operator("gtatools.path_node_flag", text="Железнодорожный")
+        op = layout.operator("gtatools.path_node_flag", text=T("Железнодорожный"))
         op.action = 'TRAFFIC_RAIL'
-        op = layout.operator("gtatools.path_node_flag", text="Автобусный")
+        op = layout.operator("gtatools.path_node_flag", text=T("Автобусный"))
         op.action = 'TRAFFIC_BUS'
 
 
 @apply_order
 class GTATOOLS_PT_export_panel(bpy.types.Panel):
     """Панель экспорта/импорта GTA моделей"""
-    bl_label = T("Экспорт / Импорт")
+    bl_label = "Экспорт / Импорт"
     bl_idname = "GTATOOLS_PT_export_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
@@ -701,7 +701,7 @@ class GTATOOLS_PT_validate_scene(bpy.types.Panel):
 
     Sub-panel живёт внутри Export panel — pre-flight check рядом с
     кнопкой экспорта, без отдельного слота в registry."""
-    bl_label = T("Проверка перед экспортом")
+    bl_label = "Проверка перед экспортом"
     bl_idname = "GTATOOLS_PT_validate_scene"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
@@ -858,7 +858,7 @@ class GTATOOLS_PT_validate_scene(bpy.types.Panel):
 @apply_order
 class GTATOOLS_PT_check_panel(bpy.types.Panel):
     """Панель проверки геометрии и материалов"""
-    bl_label = T("Проверка")
+    bl_label = "Проверка"
     bl_idname = "GTATOOLS_PT_check_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
@@ -967,7 +967,7 @@ class GTATOOLS_PT_file_scanner(bpy.types.Panel):
     Отдельно от GTATOOLS_PT_validate_scene (pre-export sweep, который
     работает со сценой) — здесь линтер уже-готовых файлов на диске.
     """
-    bl_label = T("Скан файлов")
+    bl_label = "Скан файлов"
     bl_idname = "GTATOOLS_PT_file_scanner"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
@@ -1078,7 +1078,7 @@ class GTATOOLS_PT_vehicle_panel(bpy.types.Panel):
     damage variants (_ok / _dam pairs). Moved out of Check so the
     vehicle workflow has a stable home, and so non-vehicle modders
     don't see it during regular map work."""
-    bl_label = T("Машины")
+    bl_label = "Машины"
     bl_idname = "GTATOOLS_PT_vehicle_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
@@ -1124,7 +1124,7 @@ class GTATOOLS_PT_frame_hierarchy(bpy.types.Panel):
     против vanilla SA шаблонов (vehicle, ped). DFF-frame-list пишется
     точно по этим именам, так что любая опечатка ломает поведение в
     игре — лучше отловить здесь, чем после копирования в IMG."""
-    bl_label = T("Иерархия фреймов")
+    bl_label = "Иерархия фреймов"
     bl_idname = "GTATOOLS_PT_frame_hierarchy"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
@@ -2740,7 +2740,7 @@ class GTATOOLS_PT_water_panel(bpy.types.Panel):
 @apply_order
 class GTATOOLS_PT_anim_panel(bpy.types.Panel):
     """Панель анимаций IFP"""
-    bl_label = T("Анимации")
+    bl_label = "Анимации"
     bl_idname = "GTATOOLS_PT_anim_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
@@ -3067,7 +3067,7 @@ class GTATOOLS_PT_radar_panel(bpy.types.Panel):
 @apply_order
 class GTATOOLS_PT_paths_panel(bpy.types.Panel):
     """Панель Path IO"""
-    bl_label = T("Пути")
+    bl_label = "Пути"
     bl_idname = "GTATOOLS_PT_paths_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'

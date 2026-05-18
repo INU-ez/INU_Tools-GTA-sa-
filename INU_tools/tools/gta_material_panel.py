@@ -12,6 +12,7 @@
 
 import bpy
 
+from .. import T
 from ..data import material_presets as _mp
 from .compat import safe_icon
 
@@ -198,11 +199,11 @@ class GTATOOLS_OT_material_preset_save(bpy.types.Operator):
             return {'CANCELLED'}
         name = (self.preset_name or '').strip()
         if not name:
-            self.report({'ERROR'}, "имя обязательно")
+            self.report({'ERROR'}, T("имя обязательно"))
             return {'CANCELLED'}
         data = _mp.capture_from_inu(inu)
         if not _mp.save_preset(name, data, self.description):
-            self.report({'ERROR'}, "ошибка сохранения")
+            self.report({'ERROR'}, T("ошибка сохранения"))
             return {'CANCELLED'}
         invalidate_cache()
         # Select the newly saved preset
@@ -210,7 +211,7 @@ class GTATOOLS_OT_material_preset_save(bpy.types.Operator):
             context.scene.inu_settings.gtatools_material_preset = f'USER:{name}'
         except Exception:
             pass
-        self.report({'INFO'}, f"сохранён: {name}")
+        self.report({'INFO'}, f"{T('сохранён: ')}{name}")
         return {'FINISHED'}
 
 
@@ -224,10 +225,10 @@ class GTATOOLS_OT_material_preset_delete(bpy.types.Operator):
 
     def execute(self, context):
         if not self.preset_name:
-            self.report({'ERROR'}, "нет выбранного пресета")
+            self.report({'ERROR'}, T("нет выбранного пресета"))
             return {'CANCELLED'}
         if not _mp.delete_preset(self.preset_name):
-            self.report({'ERROR'}, "не удалось удалить")
+            self.report({'ERROR'}, T("не удалось удалить"))
             return {'CANCELLED'}
         invalidate_cache()
         # Reset dropdown to a built-in
@@ -235,7 +236,7 @@ class GTATOOLS_OT_material_preset_delete(bpy.types.Operator):
             context.scene.inu_settings.gtatools_material_preset = 'GENERIC'
         except Exception:
             pass
-        self.report({'INFO'}, f"удалён: {self.preset_name}")
+        self.report({'INFO'}, f"{T('удалён: ')}{self.preset_name}")
         return {'FINISHED'}
 
 
@@ -270,11 +271,11 @@ def draw_pipeline_tab(layout, context):
 
     row = box.row(align=True)
     row.operator("gtatools.material_preset_save",
-                 text="Сохранить как…", icon=safe_icon('ADD'))
+                 text=T("Сохранить как…"), icon=safe_icon('ADD'))
     del_row = row.row(align=True)
     del_row.enabled = is_user
     op_del = del_row.operator("gtatools.material_preset_delete",
-                              text="Удалить", icon=safe_icon('REMOVE'))
+                              text=T("Удалить"), icon=safe_icon('REMOVE'))
     op_del.preset_name = current[5:] if is_user else ''
 
     box = layout.box()
