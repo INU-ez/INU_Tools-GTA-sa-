@@ -324,6 +324,73 @@ class GTATOOLS_OT_export_nodes(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class GTATOOLS_OT_toggle_nodes_viz(bpy.types.Operator):
+    """Создать или скрыть геометрию визуализации путей"""
+    bl_idname = "gtatools.toggle_nodes_viz"
+    bl_label = "INU: Toggle Path Nodes Visualization"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        # Walk every path-node mesh in scene (vehicle + ped).
+        path_meshes = [
+            o for o in context.scene.objects
+            if o.type == 'MESH'
+            and o.get('path_type', '') in ('nodes_vehicle', 'nodes_ped')
+        ]
+        if not path_meshes:
+            self.report({'INFO'}, "No path nodes meshes in scene")
+            return {'CANCELLED'}
+
+        # Determine current state: any Skin modifier with show_viewport
+        # = True means visualisation is currently ON. State machine:
+        #   OFF → ON  : ensure Skin exists + show. Lazy-creates the
+        #               modifier on the first toggle so import stays
+        #               cheap (heavy geometry only when user asks).
+        #   ON  → OFF : hide existing modifiers but keep them so the
+        #               next ON click is instant (no rebuild).
+        any_on = False
+        for obj in path_meshes:
+            for mod in obj.modifiers:
+                if mod.type == 'SKIN' and mod.show_viewport:
+                    any_on = True
+                    break
+            if any_on:
+                break
+        new_state = not any_on
+
+        n_changed = 0
+        if new_state:
+            # OFF → ON
+            from .path_import import _add_skin_modifier
+            for obj in path_meshes:
+                mod = next((m for m in obj.modifiers if m.type == 'SKIN'), None)
+                if mod is None:
+                    # First toggle for this object — create from
+                    # scratch. Edges already live on the mesh from
+                    # import; reuse them so Skin tubes the same graph.
+                    edges = [(e.vertices[0], e.vertices[1])
+                             for e in obj.data.edges]
+                    radius = (0.5 if obj.get('path_type') == 'nodes_vehicle'
+                              else 0.35)
+                    _add_skin_modifier(obj, edges, radius=radius)
+                    n_changed += 1
+                elif not mod.show_viewport:
+                    mod.show_viewport = True
+                    n_changed += 1
+        else:
+            # ON → OFF
+            for obj in path_meshes:
+                for mod in obj.modifiers:
+                    if mod.type == 'SKIN' and mod.show_viewport:
+                        mod.show_viewport = False
+                        n_changed += 1
+
+        verb = "shown" if new_state else "hidden"
+        self.report({'INFO'},
+                    f"Path nodes geometry {verb} ({n_changed} obj)")
+        return {'FINISHED'}
+
+
 class GTATOOLS_OT_import_paths_ipl(bpy.types.Operator):
     """Импорт paths.ipl — пути для gta.dat"""
     bl_idname = "gtatools.import_paths_ipl"
@@ -757,6 +824,7 @@ classes = (
     GTATOOLS_OT_export_track,
     GTATOOLS_OT_import_nodes,
     GTATOOLS_OT_export_nodes,
+    GTATOOLS_OT_toggle_nodes_viz,
     GTATOOLS_OT_import_paths_ipl,
     GTATOOLS_OT_export_paths_ipl,
     GTATOOLS_OT_convert_to_path,

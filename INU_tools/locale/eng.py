@@ -721,6 +721,9 @@ LANG = {
     "Пути (paths.ipl):": "Paths (paths.ipl):",
     "Создать путь": "Add Path",
     "Скомпилированные (NODES):": "Compiled (NODES):",
+    "Геометрия путей": "Path geometry",
+    "Создать или скрыть геометрию визуализации путей":
+        "Create or hide path visualisation geometry",
     "Путь IPL": "Path IPL",
     "Авто": "Vehicle",
     "Пешеходный": "Pedestrian",

@@ -3131,6 +3131,13 @@ class GTATOOLS_PT_paths_panel(bpy.types.Panel):
         row = box.row(align=True)
         row.operator("gtatools.import_nodes", text=T("Импорт"), icon=safe_icon('IMPORT'))
         row.operator("gtatools.export_nodes", text=T("Экспорт"), icon=safe_icon('EXPORT'))
+        # Visualization toggle — turns Skin modifier off on all path
+        # meshes so heavy maps don't lag the viewport. Mesh data (verts
+        # + link arrays) survives; only the generated tube geometry
+        # is hidden.
+        box.operator("gtatools.toggle_nodes_viz",
+                     text=T("Геометрия путей"),
+                     icon=safe_icon('MODIFIER'))
 
         # Info about selected path object
         obj = context.active_object

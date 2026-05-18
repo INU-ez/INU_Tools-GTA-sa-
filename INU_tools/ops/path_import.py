@@ -99,7 +99,8 @@ def import_nodes(filepath: str, context=None):
     name = os.path.splitext(os.path.basename(filepath))[0]
     created = []
 
-    # Vehicle nodes — mesh + chain edges + Skin tubes
+    # Vehicle nodes — mesh + chain edges (NO Skin modifier; user
+    # toggles tube geometry on via `gtatools.toggle_nodes_viz`)
     if data.vehicle_nodes:
         veh_edges = _compute_intra_category_edges(data, is_vehicle=True)
         obj = _create_nodes_mesh(f"{name}_vehicle", data.vehicle_nodes, col,
@@ -107,10 +108,9 @@ def import_nodes(filepath: str, context=None):
         obj['path_type'] = 'nodes_vehicle'
         obj['nodes_filename'] = name + '.dat'
         _assign_path_material(obj, 'VehicleNode_Mat', (0.0, 0.5, 1.0, 0.8))  # Blue
-        _add_skin_modifier(obj, veh_edges, radius=0.5)
         created.append(obj)
 
-    # Ped nodes — mesh + chain edges + Skin tubes
+    # Ped nodes — mesh + chain edges (NO Skin modifier; same as above)
     if data.ped_nodes:
         ped_edges = _compute_intra_category_edges(data, is_vehicle=False)
         obj = _create_nodes_mesh(f"{name}_ped", data.ped_nodes, col,
@@ -118,7 +118,6 @@ def import_nodes(filepath: str, context=None):
         obj['path_type'] = 'nodes_ped'
         obj['nodes_filename'] = name + '.dat'
         _assign_path_material(obj, 'PedNode_Mat', (0.0, 1.0, 0.3, 0.8))  # Green
-        _add_skin_modifier(obj, ped_edges, radius=0.35)
         created.append(obj)
 
     # Navi nodes — mesh + cube-empty instanced at every vertex
@@ -142,7 +141,10 @@ def import_nodes(filepath: str, context=None):
 
         _assign_path_material(obj, 'NaviNode_Mat', (1.0, 0.5, 0.0, 0.8))  # Orange
         col.objects.link(obj)
-        _attach_vertex_cube_empty(obj, col, display_size=1.5)
+        # Navi rendered as bare mesh vertices (theme's vertex display) —
+        # the cube-empty VERTS-instance approach was tried but the
+        # instances inherited the parent's selection outline, making
+        # every cube look "active" by default. Plain vertices are clearer.
         created.append(obj)
 
     # Store links + post-link tail + FLA4 flag on EVERY created object.
