@@ -1,4 +1,4 @@
-name: Bug report
+name: Bug report (English)
 description: Something doesn't work as expected — please fill in the fields so it can be reproduced
 title: "[Bug] "
 labels: ["bug"]
@@ -8,7 +8,7 @@ body:
       value: |
         Thanks for reporting!  Please fill in every field — without reproduction steps and source files most issues cannot be fixed.
 
-        Reports in **Russian** are welcome too.
+        If you prefer **Russian** or **Spanish** — pick the matching template instead.
 
   - type: input
     id: inu_version

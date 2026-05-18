@@ -1,0 +1,166 @@
+name: Отчёт о баге (Русский)
+description: Что-то работает не так — заполните поля, чтобы баг можно было воспроизвести
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Спасибо за отчёт! Заполните все поля — без шагов воспроизведения и исходных файлов большинство багов починить нельзя.
+
+  - type: input
+    id: inu_version
+    attributes:
+      label: Версия INU Tools
+      description: Видно в `Edit → Preferences → Add-ons → INU_tools(gta_sa)` или в имени установленного zip
+      placeholder: "1.9.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install_source
+    attributes:
+      label: Откуда установлено
+      options:
+        - GitHub release (.zip из /releases)
+        - ветка main (git clone или Code → Download ZIP)
+        - extensions.blender.org
+        - Другое (опишите в шагах)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: blender_version
+    attributes:
+      label: Версия Blender
+      options:
+        - "5.1"
+        - "5.0"
+        - "4.5 LTS"
+        - "4.4"
+        - "4.3"
+        - "4.2 LTS"
+        - "4.1"
+        - "4.0"
+        - "3.6 LTS"
+        - "3.x (другая)"
+        - "2.83 LTS"
+        - "Другое (опишите в шагах)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: game_build
+    attributes:
+      label: Сборка игры
+      description: Из какой сборки SA взяты затронутые файлы?
+      options:
+        - Vanilla SA 1.0 (US/EU PC)
+        - Vanilla SA 1.01 / 2.00
+        - SA с FLA (Fastman92 Limit Adjuster)
+        - SAMP / open.mp
+        - MTA:SA
+        - Другое / Неизвестно
+
+    validations:
+      required: true
+
+  - type: dropdown
+    id: feature
+    attributes:
+      label: Затронутая область
+      description: Какая функция / формат участвует?
+      options:
+        - DFF (импорт / экспорт / редактирование)
+        - COL (импорт / экспорт / редактирование)
+        - TXD (импорт / экспорт / редактирование)
+        - IDE (импорт / экспорт / редактирование)
+        - IPL (импорт / экспорт / binary)
+        - IMG (импорт / экспорт / archive)
+        - IFP (импорт / экспорт анимации / batch)
+        - FXP (редактор effects.fxp / симуляция в вьюпорте)
+        - Map (полный Map Import / Map Export round-trip)
+        - Asset Library builder
+        - File Scanner (binary linter)
+        - Prelight (vcols / scatter / LightMap UV2)
+        - 2DFX (Light / Particle / Ped Attractor / Sun Glare)
+        - Skinned DFF / IK Rig / Frame Hierarchy
+        - Vehicle Paintjob / Animated Map Object
+        - Paths (paths.ipl / tracks.dat / NODES.dat / flight.dat)
+        - water.dat
+        - X Radar Maker
+        - ID Manager
+        - Profile System / UI / панели
+        - Materials (Env Map / Bump / Specular / UV Anim)
+        - CST (Steve's COL Editor format)
+        - Другое (опишите в шагах)
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Шаги воспроизведения
+      description: |
+        Будьте точны. «Не работает» — не отчёт; напишите, какую кнопку вы нажали и с каким файлом.
+      placeholder: |
+        1. Открыть Blender, включить INU Tools
+        2. Боковая панель (N) → GTA Tools → Import → DFF → выбрать `airport.dff` из ванильного gta3.img
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Ожидаемое поведение
+      placeholder: Меш импортируется со всеми материалами и прикреплёнными 2DFX-источниками света
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Фактическое поведение
+      placeholder: Материалы импортируются, но 2DFX-источники света пропадают. В консоли — traceback с KeyError.
+    validations:
+      required: true
+
+  - type: textarea
+    id: files
+    attributes:
+      label: Исходные файлы
+      description: |
+        **Приложите проблемный файл(ы)** — перетащите `.dff` / `.col` / `.txd` / `.ide` / `.ipl` / `.blend` прямо в это поле или загрузите zip.
+        Без исходников большинство багов невозможно воспроизвести.
+        Если файл из платного мода / под NDA — напишите название и не загружайте, обсудим в комментариях.
+      placeholder: Перетащите файлы сюда или вставьте ссылку на загрузку
+    validations:
+      required: false
+
+  - type: textarea
+    id: console
+    attributes:
+      label: Сообщение об ошибке / вывод консоли Blender
+      description: |
+        **Если был любой красный текст, код ошибки или попап — вставьте его сюда целиком.**
+        На Windows откройте `Window → Toggle System Console`, на Linux/macOS запускайте Blender из терминала — там виден полный traceback.
+        Коды ошибок и traceback — главная подсказка для фикса; не пропускайте этот пункт, если что-то выводилось.
+      render: shell
+      placeholder: |
+        Traceback (most recent call last):
+          File "...", line 123, in execute
+            ...
+        KeyError: 'expected_chunk_0x2B'
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Перед отправкой
+      options:
+        - label: Я искал среди [открытых и закрытых issues](../../issues?q=) похожий отчёт
+          required: true
+        - label: Я использую последний релиз (или `main` — указал выше)
+          required: true

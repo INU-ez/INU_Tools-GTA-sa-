@@ -1,0 +1,128 @@
+name: Предложение функции (Русский)
+description: Предложить новую функцию, формат, оператор или улучшение интерфейса
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Спасибо за предложение! Конкретные идеи с чётким сценарием использования реализуются быстрее, чем абстрактное «было бы неплохо».
+
+  - type: input
+    id: inu_version
+    attributes:
+      label: Версия INU Tools
+      description: Видно в `Edit → Preferences → Add-ons → INU_tools(gta_sa)` — чтобы понять, нет ли уже этой функции в свежей сборке
+      placeholder: "1.9.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: feature_area
+    attributes:
+      label: Затронутая область
+      description: Какую функцию / формат это затронет?
+      options:
+        - DFF (импорт / экспорт / редактирование)
+        - COL (импорт / экспорт / редактирование)
+        - TXD (импорт / экспорт / редактирование)
+        - IDE (импорт / экспорт / редактирование)
+        - IPL (импорт / экспорт / binary)
+        - IMG (импорт / экспорт / archive)
+        - IFP (импорт / экспорт анимации / batch)
+        - FXP (редактор effects.fxp / симуляция в вьюпорте)
+        - Map (полный Map Import / Map Export round-trip)
+        - Asset Library builder
+        - File Scanner (binary linter)
+        - Prelight (vcols / scatter / LightMap UV2)
+        - 2DFX (Light / Particle / Ped Attractor / Sun Glare)
+        - Skinned DFF / IK Rig / Frame Hierarchy
+        - Vehicle Paintjob / Animated Map Object
+        - Paths (paths.ipl / tracks.dat / NODES.dat / flight.dat)
+        - water.dat
+        - X Radar Maker
+        - ID Manager
+        - Profile System / UI / панели
+        - Materials (Env Map / Bump / Specular / UV Anim)
+        - CST (Steve's COL Editor format)
+        - Новый формат / область (опишите ниже)
+    validations:
+      required: true
+
+  - type: input
+    id: summary
+    attributes:
+      label: Краткая суть в одной строке
+      placeholder: например, «Добавить batch-оператор retarget IFP для нескольких скелетов»
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Проблема / мотивация
+      description: Что сейчас неудобно, медленно или невозможно? Опишите модерский workflow, который упирается в стену.
+      placeholder: |
+        Сейчас ретаргет 100+ анимаций по одной через панель IFP занимает ~2 часа. Нет способа переименовать кости пачкой — каждый файл надо переимпортировать и заново экспортировать вручную.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Предлагаемое решение
+      description: Как это должно работать со стороны пользователя? Кнопки, расположение в панелях, имена операторов, диалоги файлов и т.д.
+      placeholder: |
+        Добавить оператор в Animation → IFP → «Retarget Folder»: выбрать папку с .ifp и таблицу переименования костей (.csv или inline), получить папку с переименованными .ifp с сохранением исходного тайминга.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Рассмотренные альтернативы
+      description: Пробовали обходные пути? Другие инструменты (Kams, DragonFF, IFP Editor) — как они решают эту задачу?
+      placeholder: Пробовал через IFP Editor — он умеет только по одному файлу. DragonFF вообще не поддерживает IFP.
+    validations:
+      required: false
+
+  - type: textarea
+    id: usecase
+    attributes:
+      label: Пример workflow / use case
+      description: Опишите конкретный сценарий, где вы это используете. Реальные числа и имена файлов помогают.
+      placeholder: |
+        Я портирую анимации педов из GTA IV в SA. ~340 .ifp, все с именами костей GTA IV. Надо переименовать в SA-имена и сохранить как ANP3.
+    validations:
+      required: false
+
+  - type: textarea
+    id: refs
+    attributes:
+      label: Референсы / мокапы / аналогичные реализации
+      description: |
+        Скриншоты, мокапы, ссылки на то, как это сделано в других инструментах (Kams, DragonFF, ZModeler, плагины Maya, GIMS Evo), темы на форумах и т.д.
+      placeholder: Перетащите картинки сюда или вставьте ссылки
+    validations:
+      required: false
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Насколько это критично для вас?
+      options:
+        - "Nice-to-have — сэкономит время, но у меня есть обходной путь"
+        - "Важно — сейчас блокирует часть моего проекта"
+        - "Критично — без этого мне не закончить мод"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Перед отправкой
+      options:
+        - label: Я искал среди [открытых и закрытых issues](../../issues?q=) похожее предложение
+          required: true
+        - label: Я проверил последний релиз и этой функции в нём ещё нет
+          required: true
