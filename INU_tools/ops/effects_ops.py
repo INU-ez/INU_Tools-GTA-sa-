@@ -467,7 +467,7 @@ class GTATOOLS_OT_particle_effect_new(bpy.types.Operator):
             return {'CANCELLED'}
 
         if fxf.find(name) is not None:
-            self.report({'ERROR'}, f"{T("Эффект '")}{name}{T("' уже существует")}")
+            self.report({'ERROR'}, T("Эффект '") + name + T("' уже существует"))
             return {'CANCELLED'}
 
         new_system = _create_blank_particle_system(name)
@@ -591,7 +591,7 @@ class GTATOOLS_OT_particle_effect_delete(bpy.types.Operator):
         fxf.systems = [s for s in fxf.systems if s.name != name]
         removed = before - len(fxf.systems)
         if removed == 0:
-            self.report({'WARNING'}, f"{T("Эффект '")}{name}{T("' не найден в effects.fxp")}")
+            self.report({'WARNING'}, T("Эффект '") + name + T("' не найден в effects.fxp"))
             return {'CANCELLED'}
 
         try:
@@ -772,7 +772,7 @@ class GTATOOLS_OT_particle_curve_write(bpy.types.Operator):
 
         system = fxf.find(effect_name)
         if not system or not system.emitters:
-            self.report({'ERROR'}, f"{T("Система '")}{effect_name}{T("' не найдена")}")
+            self.report({'ERROR'}, T("Система '") + effect_name + T("' не найдена"))
             return {'CANCELLED'}
 
         em_idx = max(0, min(int(obj.inu.particle_emitter_index), len(system.emitters) - 1))
@@ -1289,7 +1289,7 @@ class GTATOOLS_OT_save_particle_effect(bpy.types.Operator):
             source_name = obj.get('2dfx_effect_name', '') or ''
             source = fxf.find(source_name)
             if source is None:
-                self.report({'ERROR'}, f"{T("Исходная система '")}{source_name}{T("' не найдена — нечего клонировать")}")
+                self.report({'ERROR'}, T("Исходная система '") + source_name + T("' не найдена — нечего клонировать"))
                 return {'CANCELLED'}
             import copy
             new_system = copy.deepcopy(source)
@@ -1305,12 +1305,12 @@ class GTATOOLS_OT_save_particle_effect(bpy.types.Operator):
             target_system = new_system
         else:
             if not self.overwrite:
-                self.report({'ERROR'}, f"{T("Система '")}{target_name}{T("' уже существует (снимите галку 'Overwrite' нельзя, включите её)")}")
+                self.report({'ERROR'}, T("Система '") + target_name + T("' уже существует (снимите галку 'Overwrite' нельзя, включите её)"))
                 return {'CANCELLED'}
             target_system = existing
 
         if not target_system.emitters:
-            self.report({'ERROR'}, f"{T("У системы '")}{target_name}{T("' нет эмиттеров")}")
+            self.report({'ERROR'}, T("У системы '") + target_name + T("' нет эмиттеров"))
             return {'CANCELLED'}
 
         em_idx = max(0, min(int(obj.inu.particle_emitter_index), len(target_system.emitters) - 1))
