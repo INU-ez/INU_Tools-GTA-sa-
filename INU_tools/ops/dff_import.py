@@ -1155,10 +1155,14 @@ def import_dff_from_clump(clump, base_name: str, *, skip_2dfx=None,
 # headers (no pixel decode) — sub-millisecond per file even on big TXDs.
 
 def _collect_recent_dff_texture_names() -> set:
-    """Names recorded as ``mat['dff_texture_name']`` across all current
-    materials. After a DFF import this includes every texture the just-
-    imported model references, which is exactly what we need to match
-    candidate TXD files against."""
+    """Names recorded as ``mat['dff_texture_name']`` across **all**
+    materials in scene. After a DFF import this includes every texture
+    the just-imported model references — but ALSO every previously
+    imported one. Use `_collect_new_dff_texture_names(mats_before)`
+    instead during batch import to keep the set scoped to the current
+    DFF only; otherwise the auto-TXD picker drifts (sees more "needed"
+    names with every import) and `name_filter` to `import_txd` over-
+    decodes shared textures."""
     out = set()
     for mat in bpy.data.materials:
         n = mat.get('dff_texture_name')
@@ -1167,10 +1171,54 @@ def _collect_recent_dff_texture_names() -> set:
     return out
 
 
+def _collect_new_dff_texture_names(mat_names_before: set) -> set:
+    """Texture names from materials that did NOT exist before the
+    snapshot. Pass the set captured from `{m.name for m in
+    bpy.data.materials}` BEFORE calling `import_dff` — we diff after
+    and return only the brand-new materials' texture refs."""
+    out = set()
+    for mat in bpy.data.materials:
+        if mat.name in mat_names_before:
+            continue
+        n = mat.get('dff_texture_name')
+        if n:
+            out.add(n.lower())
+    return out
+
+
+# Module-level cache for `read_txd_texture_names` results. Batch
+# character/ped import walks the same folder of .txd files for every
+# DFF and re-parses each header set from disk every time — O(N×M).
+# Caching by (path, mtime) collapses that to O(M) per session;
+# mtime check keeps the cache safe if the user re-saves a .txd
+# between imports.
+_TXD_NAMES_CACHE: dict = {}
+
+
+def _read_txd_names_cached(path: str) -> set:
+    """Return lowercase texture names for `path`, reading the file
+    once per session and reusing the result on subsequent calls."""
+    from ..core.txd import read_txd_texture_names
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        mtime = 0.0
+    cached = _TXD_NAMES_CACHE.get(path)
+    if cached is not None and cached[0] == mtime:
+        return cached[1]
+    try:
+        names = {n.lower() for n in read_txd_texture_names(path)}
+    except Exception:
+        names = set()
+    _TXD_NAMES_CACHE[path] = (mtime, names)
+    return names
+
+
 _PICK_BEST_TXD_MIN_COVERAGE = 0.5  # 50% of DFF textures must be in TXD
 
 
-def _pick_best_txd(search_dirs: list, dff_basename: str) -> Optional[str]:
+def _pick_best_txd(search_dirs: list, dff_basename: str,
+                   needed_names: set = None) -> Optional[str]:
     """Pick the most relevant .txd file for the just-imported DFF.
 
     Strategy:
@@ -1210,15 +1258,19 @@ def _pick_best_txd(search_dirs: list, dff_basename: str) -> Optional[str]:
     if not candidates:
         return None
 
-    # Pass 2: coverage-based scoring
-    needed = _collect_recent_dff_texture_names()
+    # Pass 2: coverage-based scoring. `needed_names` should be the
+    # JUST-imported DFF's referenced texture set; falling back to the
+    # full scene-wide collection works for one-shot import but
+    # drifts badly across a batch.
+    needed = needed_names if needed_names is not None else _collect_recent_dff_texture_names()
     if needed:
         # Build (coverage, txd_size, path) tuples for every candidate.
         # coverage = fraction of DFF textures that exist in this TXD.
         # txd_size used as tie-breaker (smaller = more specific).
+        # `_read_txd_names_cached` reads each .txd once per session.
         scored = []
         for c in candidates:
-            names_in_txd = {n.lower() for n in read_txd_texture_names(c)}
+            names_in_txd = _read_txd_names_cached(c)
             matched = needed & names_in_txd
             coverage = len(matched) / len(needed)
             scored.append((coverage, len(names_in_txd), c, len(matched)))
@@ -1288,6 +1340,12 @@ class GTATOOLS_OT_import_dff(bpy.types.Operator):
 
     def execute(self, context):
         from .txd_import import import_txd as inu_import_txd
+        # Snapshot existing materials BEFORE the import so we can
+        # tell which materials this DFF actually adds. Batch character
+        # imports would otherwise see the "needed textures" set grow
+        # with every prior DFF, causing the TXD picker to drift and
+        # `name_filter` to over-decode shared textures.
+        mats_before = {m.name for m in bpy.data.materials}
         try:
             import_dff(filepath=self.filepath, context=context)
             self.report({'INFO'}, f"Imported DFF: {self.filepath}")
@@ -1308,7 +1366,10 @@ class GTATOOLS_OT_import_dff(bpy.types.Operator):
             search_dirs.append(custom_dir)
         search_dirs.append(os.path.dirname(self.filepath))
 
-        txd_file = _pick_best_txd(search_dirs, dff_name)
+        # Compute the just-imported DFF's texture set once, reuse it
+        # for both the TXD picker and `name_filter`.
+        needed = _collect_new_dff_texture_names(mats_before)
+        txd_file = _pick_best_txd(search_dirs, dff_name, needed_names=needed)
 
         if txd_file:
             try:
@@ -1318,7 +1379,6 @@ class GTATOOLS_OT_import_dff(bpy.types.Operator):
                 # spawn dozens of orphan images and freeze Blender on
                 # the DXT decode pass. The filter narrows the work to
                 # ~5-10 actually-used textures.
-                needed = _collect_recent_dff_texture_names()
                 images = inu_import_txd(
                     filepath=txd_file,
                     name_filter=needed if needed else None)
@@ -1381,6 +1441,9 @@ class GTATOOLS_OT_drop_dff(bpy.types.Operator):
             if not (os.path.isfile(path)
                     and path.lower().endswith('.dff')):
                 continue
+            # Per-file material snapshot — see `GTATOOLS_OT_import_dff`
+            # for why this matters during a batch import.
+            mats_before = {m.name for m in bpy.data.materials}
             try:
                 import_dff(filepath=path, context=context)
                 imported += 1
@@ -1400,13 +1463,13 @@ class GTATOOLS_OT_drop_dff(bpy.types.Operator):
                 search_dirs.append(custom_dir)
             search_dirs.append(os.path.dirname(path))
 
-            txd_file = _pick_best_txd(search_dirs, dff_name)
+            needed = _collect_new_dff_texture_names(mats_before)
+            txd_file = _pick_best_txd(search_dirs, dff_name, needed_names=needed)
             if txd_file:
                 try:
                     # Same name-filter trick as in import_dff — avoid
                     # loading 100+ unrelated textures from shared
                     # archives like vehicle.txd.
-                    needed = _collect_recent_dff_texture_names()
                     inu_import_txd(
                         filepath=txd_file,
                         name_filter=needed if needed else None)

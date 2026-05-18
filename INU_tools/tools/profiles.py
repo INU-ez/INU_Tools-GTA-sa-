@@ -21,7 +21,17 @@ import re
 
 import bpy
 
-from .. import T
+# `from .. import T` works in production (module loaded as
+# `INU_tools.tools.profiles`) but breaks under unit tests that put
+# `INU_tools/` on `sys.path` and load `tools` as a top-level package
+# (`..` then goes above top-level). Fall back to identity-function so
+# error-message strings pass through untranslated — fine for tests.
+try:
+    from .. import T
+except ImportError:
+    def T(s):
+        return s
+
 from .compat import safe_icon
 from .user_data import get_user_data_dir
 from typing import Dict, List, Optional
