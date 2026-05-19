@@ -128,6 +128,39 @@ def _create_sphere(sphere, collection, model_name: str, index: int):
     return empty
 
 
+def _create_box(box, collection, model_name: str, index: int):
+    """Create an Empty with cube display from ColBox primitive.
+
+    GTA SA collision files store axis-aligned box primitives (TBox)
+    alongside spheres for fast broad-phase collision. Each box has
+    `bb_min`/`bb_max` corners + a surface (material/flags/brightness/
+    light). DragonFF convention: location = (min+max)/2, scale =
+    (max-min)/2 — so Blender's scale directly carries the box's
+    half-extents on each axis. Re-export mirrors this:
+    `bb_min = loc - scale`, `bb_max = loc + scale`.
+    """
+    name = f"{model_name}_box_{index}"
+    empty = bpy.data.objects.new(name, None)
+    empty.empty_display_type = 'CUBE'
+    empty.empty_display_size = 1.0     # constant — scale carries the size
+    half_x = (box.bb_max.x - box.bb_min.x) * 0.5
+    half_y = (box.bb_max.y - box.bb_min.y) * 0.5
+    half_z = (box.bb_max.z - box.bb_min.z) * 0.5
+    cx = box.bb_min.x + half_x
+    cy = box.bb_min.y + half_y
+    cz = box.bb_min.z + half_z
+    empty.location = (cx, cy, cz)
+    empty.scale    = (half_x, half_y, half_z)
+
+    empty.inu.col_material   = box.surface.material
+    empty.inu.col_flags      = box.surface.flags
+    empty.inu.col_brightness = box.surface.brightness
+    empty.inu.col_light      = box.surface.light
+
+    collection.objects.link(empty)
+    return empty
+
+
 def import_col(filepath: str, context=None):
     """
     Import a COL file into Blender.
@@ -184,13 +217,20 @@ def import_col_from_models(models, *, bulk_mode: bool = False,
         if sha_obj:
             imported_objects.append(sha_obj)
 
-        # Spheres — only for single-file import; map import uses the
-        # mesh collision geometry and skipping sphere primitives keeps
-        # the outliner manageable at 3000+ models.
+        # Spheres + boxes — only for single-file import; map import
+        # uses the mesh collision geometry and skipping primitives
+        # keeps the outliner manageable at 3000+ models. Primitives
+        # are the game's broad-phase shapes (fast collision check
+        # before falling back to mesh-mesh) so on map-import they're
+        # already covered by the mesh collision.
         if not bulk_mode:
             for i, sphere in enumerate(model.spheres):
                 emp = _create_sphere(sphere, collection,
                                      model.model_name or "col", i)
+                imported_objects.append(emp)
+            for i, box in enumerate(model.boxes):
+                emp = _create_box(box, collection,
+                                  model.model_name or "col", i)
                 imported_objects.append(emp)
 
     # Single-file-import UX: place COL at the matching DFF's origin
@@ -290,6 +330,11 @@ def _iter_import_col_files(filepaths, target_collection, stats):
                 emp = _create_sphere(
                     sphere, target_collection,
                     model.model_name or "col", s_idx)
+                stats['imported_objects'].append(emp)
+            for b_idx, box in enumerate(model.boxes):
+                emp = _create_box(
+                    box, target_collection,
+                    model.model_name or "col", b_idx)
                 stats['imported_objects'].append(emp)
 
         stats['files_done'] += 1

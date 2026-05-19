@@ -1125,6 +1125,32 @@ def import_dff_from_clump(clump, base_name: str, *, skip_2dfx=None,
                 fx_objects = _import_2dfx(geom.ext_2dfx, fx_col, base_name)
                 imported_objects.extend(fx_objects)
 
+    # Embedded collision — vehicles and skinned characters store COL
+    # primitives (spheres + boxes + meshes) INSIDE the .dff as a
+    # CHUNK_COLLISION_MODEL bytes blob, not as a separate .col file.
+    # `read_dff_file` already preserved those bytes on
+    # `clump.collision_data`. Parse them here and feed through the
+    # normal COL importer so the user sees the same sphere empties /
+    # col mesh objects that DragonFF creates — without this step
+    # the col data was bit-perfect preserved for round-trip but
+    # entirely invisible in viewport.
+    if clump.collision_data:
+        try:
+            from ..core.col import read_col
+            from .col_import import import_col_from_models
+            col_models = read_col(clump.collision_data)
+            if col_models:
+                col_objs = import_col_from_models(
+                    col_models,
+                    bulk_mode=bulk_mode,
+                    target_collection=target_collection,
+                    skip_position_match=True,
+                )
+                imported_objects.extend(col_objs)
+        except Exception as e:
+            print(f"[INU] embedded COL parse failed for "
+                  f"{base_name}: {e}")
+
     # Выделяем импортированные объекты. При bulk_mode пропускаем
     # select_all — это O(scene_size) операция, которая для импорта
     # карты (тысячи моделей) в сумме даёт O(N²). Для bulk достаточно

@@ -10,7 +10,7 @@ from bpy_extras.io_utils import ExportHelper
 
 from .. import T
 from ..core.col import (
-    ColModel, ColFace, ColSphere, Bounds, Vec3, Surface,
+    ColModel, ColFace, ColSphere, ColBox, Bounds, Vec3, Surface,
     write_col_file, write_col,
 )
 
@@ -144,6 +144,45 @@ def _collect_sphere(obj, model: ColModel):
     model.spheres.append(ColSphere(center=center, radius=radius, surface=surface))
 
 
+def _collect_box(obj, model: ColModel):
+    """Convert an Empty (cube display) to ColBox primitive.
+
+    Inverse of `_create_box` in col_import: Blender's location is the
+    box center, scale carries the half-extents per axis. AABB min/max
+    fall out as `loc ± scale`. `abs()` on scale defends against the
+    user mirroring an empty to a negative scale — the game stores an
+    unordered AABB and a min > max box is silently dropped at load.
+    """
+    cx, cy, cz = obj.location
+    sx, sy, sz = abs(obj.scale.x), abs(obj.scale.y), abs(obj.scale.z)
+
+    surface = Surface()
+    inu = getattr(obj, 'inu', None)
+    if inu is not None:
+        surface.material   = getattr(inu, 'col_material', 0)
+        surface.flags      = getattr(inu, 'col_flags', 0)
+        surface.brightness = getattr(inu, 'col_brightness', 0)
+        surface.light      = getattr(inu, 'col_light', 0)
+
+    model.boxes.append(ColBox(
+        bb_min=Vec3(cx - sx, cy - sy, cz - sz),
+        bb_max=Vec3(cx + sx, cy + sy, cz + sz),
+        surface=surface,
+    ))
+
+
+def _collect_empty(obj, model: ColModel):
+    """Dispatch an Empty to the right collector based on its display
+    type. `'SPHERE'` → sphere primitive; `'CUBE'` → box primitive.
+    Any other display type (`ARROWS`, `PLAIN_AXES`, …) is treated as
+    sphere for backward compat with files imported by older versions
+    that only knew about sphere empties."""
+    if obj.empty_display_type == 'CUBE':
+        _collect_box(obj, model)
+    else:
+        _collect_sphere(obj, model)
+
+
 def _compute_bounds(model: ColModel) -> Bounds:
     """Calculate bounding sphere and AABB from all geometry.
 
@@ -179,12 +218,12 @@ def _compute_bounds(model: ColModel) -> Bounds:
         if s.center.z + s.radius > bb_max.z: bb_max.z = s.center.z + s.radius
 
     for b in model.boxes:
-        if b.min.x < bb_min.x: bb_min.x = b.min.x
-        if b.min.y < bb_min.y: bb_min.y = b.min.y
-        if b.min.z < bb_min.z: bb_min.z = b.min.z
-        if b.max.x > bb_max.x: bb_max.x = b.max.x
-        if b.max.y > bb_max.y: bb_max.y = b.max.y
-        if b.max.z > bb_max.z: bb_max.z = b.max.z
+        if b.bb_min.x < bb_min.x: bb_min.x = b.bb_min.x
+        if b.bb_min.y < bb_min.y: bb_min.y = b.bb_min.y
+        if b.bb_min.z < bb_min.z: bb_min.z = b.bb_min.z
+        if b.bb_max.x > bb_max.x: bb_max.x = b.bb_max.x
+        if b.bb_max.y > bb_max.y: bb_max.y = b.bb_max.y
+        if b.bb_max.z > bb_max.z: bb_max.z = b.bb_max.z
 
     # Bounding sphere
     center = Vec3(
@@ -226,7 +265,7 @@ def export_col(filepath: str, objects, version: int = 3, model_name: str = ""):
                 _collect_mesh(obj, model)
 
         elif obj.type == 'EMPTY':
-            _collect_sphere(obj, model)
+            _collect_empty(obj, model)
 
     model.bounds = _compute_bounds(model)
     write_col_file(filepath, [model])
@@ -250,7 +289,7 @@ def build_col_model(objects, version: int = 3, model_name: str = "") -> ColModel
                 _collect_mesh(obj, model)
 
         elif obj.type == 'EMPTY':
-            _collect_sphere(obj, model)
+            _collect_empty(obj, model)
 
     model.bounds = _compute_bounds(model)
     return model
@@ -335,7 +374,7 @@ def export_col_library(filepath: str, objects, version: int = 3) -> int:
                 else:
                     _collect_mesh(obj, model)
             elif obj.type == 'EMPTY':
-                _collect_sphere(obj, model)
+                _collect_empty(obj, model)
         model.bounds = _compute_bounds(model)
         models.append(model)
 
