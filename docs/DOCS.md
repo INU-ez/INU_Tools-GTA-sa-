@@ -8,6 +8,8 @@
 
 - [Installation](#installation)
 - [Quick Start](#quick-start)
+  - [Floating windows](#floating-windows)
+- [Multi-game support (III / VC / SA)](#multi-game-support-iii--vc--sa)
 - [Export / Import](#export--import)
   - [DFF (Models)](#dff-models)
   - [COL (Collision)](#col-collision)
@@ -32,22 +34,25 @@
   - [Baking](#baking)
   - [Fill Colors](#fill-colors)
   - [Scatter Light](#scatter-light)
-  - [Scatter Color](#scatter-color-new-in-190)
+  - [Scatter Color](#scatter-color)
   - [Post-Processing](#post-processing)
   - [COL Light](#col-light)
   - [Presets](#presets)
-  - [Adjust Color (per-attribute V-offset)](#adjust-color-per-attribute-v-offset-updated-in-190)
+  - [Adjust Color (per-attribute V-offset)](#adjust-color-per-attribute-v-offset)
 - [2DFX Effects](#2dfx-effects)
-- [Particle Effects (effects.fxp)](#particle-effects-effectsfxp-new-in-163)
+- [Particle Effects (effects.fxp)](#particle-effects-effectsfxp)
 - [UV Tools](#uv-tools)
 - [Check](#check)
-  - [File Scanner](#file-scanner-new-in-190)
+  - [File Scanner](#file-scanner)
+  - [Lint Profiles](#lint-profiles)
+  - [Map Analyzer (Game Validator)](#map-analyzer-game-validator)
+- [Texture Browser](#texture-browser)
 - [Characters (Skinned DFF)](#characters-skinned-dff)
 - [Water IO](#water-io)
 - [Path IO](#path-io)
 - [LightMap (beta_MTA)](#lightmap-beta_mta)
 - [Integrations](#integrations)
-- [Asset Library](#asset-library-new-in-190)
+- [Asset Library](#asset-library)
 - [Advanced](#advanced)
   - [Map Export](#map-export)
   - [Binary IPL Write](#binary-ipl-write)
@@ -110,6 +115,80 @@
 |-----|--------|
 | `Shift+T` | Toggle UV Editor |
 | `Shift+A` | Add GTA SA model (Army.dff / Admiral.dff) |
+
+### Floating windows
+
+Five free-floating GPU-rendered windows give one-click access to the most-used operations without scrolling the N-sidebar:
+
+| Window | What it holds | Toggle |
+|---|---|---|
+| **Info** | Active object readout (vert/face/material counts, format-limit warnings), IDE flag checkboxes, DFF/LOD/COL triplet jumps | Click 🪟 in any N-panel's `Object IDE / IPL` header |
+| **Import / Export** | Selection diagnostic, Import / Export menus, Auto TXD + DXT backend, Pipeline picker (Vehicle/D/N/Building/Ped), DFF Flags collapsible | Click 🪟 in **Export** panel header |
+| **Validation** | Pre-export sweep results (quaternions, paintjob, modulate color, _ok/_dam pairs) with one-click fixes | Click 🪟 in **Check** panel header |
+| **Lighting** | Prelight preset picker, 8-lamps toggle, Day/Night vcol controls, bake, copy, LightMap row | Click 🪟 in **Prelight** panel header |
+| **IDE / IPL / IMG** | Fused 2×2 Add/Del/Import/Export per format, IPL Sections row, Replace Empty, IMG header with toggles | Click 🪟 in **IDE / IPL / IMG** panel header |
+
+Each floater is **draggable** (any non-button area), **collapsible** to the title bar, **dockable per-workspace** (Lock icon — appears only in pinned workspace), and uses your current Blender theme palette. Position survives `.blend` save/load.
+
+---
+
+## Multi-game support (III / VC / SA)
+
+The active game is picked from the top of the **GTA Tools** N-sidebar — three buttons **San Andreas / Vice City / GTA III**. Every exporter, validator, and lint check routes through this choice. Default = San Andreas (the addon's primary target). Import auto-detects the file's game and either flips the scene (when fresh) or shows a warning suggesting to switch the tab manually.
+
+### Format matrix
+
+| Format | III (RW 3.3) | VC (RW 3.5) | SA (RW 3.6) |
+|---|:-:|:-:|:-:|
+| **DFF** read | ✅ auto-detect by RW version | ✅ | ✅ |
+| **DFF** write | ✅ (skips SA-only Night vcols, Pipeline chunk, UV anim) | ✅ (skips Night vcols, Pipeline) | ✅ |
+| **COL** | ✅ `COLL` v1 | ✅ `COL2` v2 | ✅ `COL3` v3 |
+| **TXD** | ✅ (RW lib_id per game) | ✅ | ✅ |
+| **IDE** | ✅ (5-field OBJS, no `txdp`/`2dfx`) | ✅ (5-field, no `2dfx`) | ✅ (multi-mesh, `txdp`, `2dfx`) |
+| **IDE cars cols** | 12 | 13 (+ `anims`) | 15 (+ flags, wheel split) |
+| **IDE peds cols** | 7 | 10 (+ anim_file, radio×2) | 14 (+ flags, voice×3) |
+| **IPL inst cols** | 12 (scale, no interior) | 13 (interior + scale) | 11 (lod_index, no scale) |
+| **IPL binary** | — | — | ✅ `bnry` |
+| **IMG** | ✅ VER1 (split `.dir` + `.img`) | ✅ VER1 | ✅ VER2 |
+| **IFP** | ✅ ANPK chunked | ✅ ANPK | ✅ ANPK + ANP3 compressed |
+| **2DFX storage** | IDE `2dfx` section | IDE `2dfx` section | DFF chunk 0x253F2F8 |
+| **2DFX types** | Light, Particle, Strobe | + PedAttractor, SunGlare | + Type 5 (special-IDE) |
+| **Surface IDs** | 0–84 (clamp on write) | 0–85 | 0–178 |
+| **model_id ceiling** | 6500 | 8500 | 19999 |
+
+### Switching games
+
+**Manual:** click III / VC / SA in the GTA Tools header.
+
+**Automatic on import:** the import operators (DFF/COL/IPL/TXD/IMG) have a "Game" dropdown in the file browser sidebar with **Auto** as the default. Auto reads the file's header/columns and stamps the right game on imported objects. If the detected game differs from the active scene's:
+
+- **Fresh scene (game=SA + 0 INU-tagged objects):** scene auto-flips to detected.
+- **Populated scene:** WARNING shown — `Импортированный файл = VC, но активная игра сцены = SA. Переключи вкладку GTA Tools на «VC»`. Tab switch is manual to avoid surprise flips in mixed-game projects.
+
+### Cross-game translation (lossy)
+
+When you import a III file and export it as SA (or vice versa), the writer routes data through canonical-category tables so the bytes match the target engine's expectations.
+
+- **COL surface IDs** — 12 canonical categories (TARMAC, GRASS, WOOD, METAL, GLASS, …) via `core/surface_translate.py`. SA's 178 surfaces collapse to ~12 categories on cross-game; SA → VC → SA loses sub-type distinctions like `GRASS_SHORT` vs `GRASS_LONG`. Each material carries `inu.col_source_game` so this only fires on actual game mismatch.
+- **IDE objs.flags** — bit values mean different things per game. Example: bit `0x20` is `IGNORE_LIGHTING` in III/VC but anim-only in SA. `core/ide_flag_translate.py` translates via 19 categories. UI shows only the checkboxes valid for the active game (III=6, VC=10, SA=15).
+- **PEDS cars_can_drive** — VC inserted `normal` at bit 0, shifting III's positions by 1. `core/ped_mask_translate.py` re-maps via canonical class names. `IdePed.source_game` tags imported peds.
+
+### Validate Scene — cross-game warnings
+
+When the scene targets III/VC but objects still carry SA-only features, **Проверка перед экспортом** flags them:
+
+- `model_id > vanilla_max` (would need FLA)
+- `has_night_vcols` (SA-only RW extension)
+- `has_multi_mesh_lod` (downgrades to single-mesh)
+- `has_uv_anim_material` (III-only; UV anim is RW 3.5+)
+- `fx_2dfx_ids` outside per-game allowlist
+
+### Known limitations
+
+- **Full map round-trip is SA-only.** III/VC modders can import vanilla DFF/COL/TXD/IDE/IPL/IMG individually, but the Map Import pipeline (district auto-split, bulk IMG rebuild) was authored for SA's data layout.
+- **Asset Library Builder is SA-only.** Future work — needs III/VC source parsers.
+- **IFP** — ANP3 (compressed int16) is SA-native; III/VC auto-downgrade to ANPK with a warning if you forget to switch the export format.
+- **2DFX import for III/VC IDE** creates placeholder Empties (position + type + color), with raw type_params stashed on the Empty for byte-identical re-export. Per-type Blender prop mapping (corona texture, particle name, attractor behaviour) is partial — Light and Particle are wired; PedAttractor / SunGlare / Strobe re-emit via stashed params only.
 
 ---
 
@@ -296,7 +375,7 @@ Stage names worth knowing in the report:
 
 ### IDE (Definitions)
 
-> **Per-object properties** *(new in 1.6.3):* Model ID, Draw Distance, LOD Distance, IDE Flags, Interior, LOD index now live in **Properties → Object → "GTA SA: IDE / IPL"** (previously in N-panel). The same panel shows **ID conflict detection** — if multiple objects share the same Model ID, the addon highlights the error with names of conflicting objects.
+> **Per-object properties:** Model ID, Draw Distance, LOD Distance, IDE Flags, Interior, LOD index live in **Properties → Object → "GTA SA: IDE / IPL"**. The same panel shows **ID conflict detection** — if multiple objects share the same Model ID, the addon highlights the error with names of conflicting objects.
 
 
 IDE files define model properties: ID, texture dictionary, draw distance, flags.
@@ -624,7 +703,7 @@ Distribute light from selected faces outward. Parameters:
 
 > 💡 **Example — glowing neon:** select the neon sign faces → Fill Color pink → **Scatter from selected** (Intensity 0.8, Radius 2m, Iterations 3) → neighboring faces around the sign pick up a pinkish hue, mimicking the neon glow spilling onto the building wall.
 
-### Scatter Color *(new in 1.9.0)*
+### Scatter Color
 
 **Sub-panel:** Prelight → Tools → Scatter Color
 
@@ -671,7 +750,7 @@ Stored as `.json` in `INU_Preset/` folder. A preset captures everything bake-rel
 - **Adjust Color** — V-offset
 - **Scatter Color** — strength, distance
 - **Post-Processing** — smooth iterations/factor, contrast, brightness, gamma
-- **Per-object Day/Night** *(new in 1.9.0)* — V-offset per attribute, plus a flag whether to auto-create missing Day/Night attributes on Load
+- **Per-object Day/Night** — V-offset per attribute, plus a flag whether to auto-create missing Day/Night attributes on Load
 
 | Button | Action |
 |---|---|
@@ -682,7 +761,7 @@ Stored as `.json` in `INU_Preset/` folder. A preset captures everything bake-rel
 
 > 💡 **Example workflow:** craft your night look — Modulate Color = Night, Day V = +30, Night V = −20 → **+ Save** → name `my_night`. Tweak Modulate Mix from 0.002 to 0.005 → **✓** overwrites `my_night`, status bar shows `modulate_mix: 0.002 → 0.005`. Switch to a different scene → pick `my_night` → **⬇ Load** → all settings restored on whichever mesh you're working on.
 
-### Adjust Color (per-attribute V-offset) *(updated in 1.9.0)*
+### Adjust Color (per-attribute V-offset)
 
 Each Day/Night row in the colour-attribute selector has its own V-offset slider:
 
@@ -812,7 +891,7 @@ Create and configure 2DFX effects that export into DFF files.
 
 **Attach to Model:** parent 2DFX Empty to mesh object. Coordinates auto-recalculate on export.
 
-**Detach All from Mesh** *(new in 1.6.3):* batch detach all 2DFX from selected mesh. The mesh's UI shows a list of all attached 2DFX with individual detach buttons.
+**Detach All from Mesh:** batch detach all 2DFX from selected mesh. The mesh's UI shows a list of all attached 2DFX with individual detach buttons.
 
 **Preview:** real-time corona/shadow visualization in viewport. Billboard tracking implemented via **draw handler** *(1.6.3)* — works reliably across scene switches.
 
@@ -822,7 +901,7 @@ Create and configure 2DFX effects that export into DFF files.
 
 ---
 
-## Particle Effects (effects.fxp) *(new in 1.6.3)*
+## Particle Effects (effects.fxp)
 
 Full GTA SA `effects.fxp` editor — text file with 82 particle systems (fire, smoke, blood, sparks, water, etc.).
 
@@ -977,7 +1056,7 @@ Materials: 12/3 | Textures: 8/2 | Skipped (different paths): 1
 ```
 Format — `merged_slots/removed_duplicates`.
 
-### File Scanner *(new in 1.9.0)*
+### File Scanner
 
 **Sub-panel:** View3D → Sidebar (N) → GTA Tools → Check → File Scanner
 
@@ -1036,6 +1115,70 @@ Three destinations:
 - 🟠 **Custom folder** — file picker.
 
 Output: `inu_lint_<timestamp>.txt` with grouped results.
+
+### Lint Profiles
+
+**Sub-panel:** View3D → Sidebar (N) → GTA Tools → Check → Lint Profile
+
+Single EnumProperty `gtatools_lint_profile` switches the threshold/severity ruleset used by both **File Scanner** and **Map Analyzer**.
+
+| Profile | What it does |
+|---|---|
+| **STANDARD** | Default — thresholds calibrated against vanilla SA assets (zero false positives on `F:\AllDFF` reference set) |
+| **FLA** | Assumes [Fastman92 Limit Adjuster](https://fastman92.com/) is installed — silences FLA-required warnings (Model ID > 19999, surface ID > 178, etc.) |
+| **STRICT** | Tighter thresholds (e.g. material limit 50 instead of 100), useful for QA passes before shipping a mod |
+| **LENIENT** | Drops all INFO-level diagnostics — useful when auditing legacy projects where minor warnings are noise |
+
+The active profile applies to both **on-disk** (File Scanner) and **cross-file** (Map Analyzer) checks. Switching profile re-evaluates currently-loaded scan results — no need to re-scan.
+
+### Map Analyzer (Game Validator)
+
+**Sub-panel:** View3D → Sidebar (N) → GTA Tools → Check → Map Analyzer
+
+Cross-references **IDE** files (definitions) against **IPL** files (placements) to catch consistency errors before they crash the game.
+
+**Input modes** (one of three):
+1. **From game** — uses `gtatools_game_root` + `gta.dat` resolution to collect every active IDE/IPL pair.
+2. **From folder** — pick a directory; walks it recursively for `.ide` and `.ipl` files.
+3. **Manual lists** — UIList of IDE files + UIList of IPL files; «Add file» picker for each.
+
+**Optional IMG verification** — if a list of files inside the archive is provided, IDE entries are cross-checked against actual DFF/TXD presence.
+
+**Checks performed:**
+- **Orphan placements** — IPL `INST` line references a model not defined in any IDE
+- **Unused IDs** — IDE entry never placed in any IPL (won't crash, but bloats stream slots)
+- **Duplicate IDs** — same model_id defined in two different IDEs
+- **NaN coordinates** — position/rotation contains NaN or Inf
+- **Interior range** — `inst.interior_id` outside the valid `[0, 256]` window
+- **Draw distance sanity** — IDE's `drawdist` ≤ 0 or absurdly large
+- **Missing TXD** — IDE references a TXD that isn't in the IMG archive (only when IMG-verify mode is on)
+- **Field count** — IPL line has the wrong number of comma-separated tokens
+
+**Results UIList** groups issues by severity (Critical / Warning / Info) with the `LintIssue` shape shared from File Scanner. Click a row → full description + «Open IDE/IPL file» button.
+
+**Save report** — same 3-destination picker as File Scanner.
+
+---
+
+## Texture Browser
+
+**Sub-panel:** View3D → Sidebar (N) → GTA Tools → Texture Browser
+
+Inventory tool for browsing every texture across one or more sources without importing them. Useful when:
+- you're hunting for a specific texture by name across multiple TXDs;
+- you need to know «which TXD contains `roof_tile_03`?»;
+- you're cross-referencing what gets used by what before exporting a TXD batch.
+
+**Sources** (radio-selector):
+1. **From IMG** — picks every `.txd` inside a chosen `.img` archive.
+2. **From folder** — walks a directory recursively for `.txd` files.
+3. **From IDE list** — reads the IDE files' `txd` column and resolves them against `gtatools_game_root`.
+
+**UIList row**: thumbnail preview · `texture_name` · `WxH` · `format` · source `.txd`. Click a row to load the full-resolution texture into the preview pane. Search box filters by name (substring match).
+
+**Cross-reference** («used by» — toggle): for the selected texture, scans all materials in the current `.blend` and lists which objects reference it. Click an object name to jump-select it in the viewport.
+
+Decoding is lazy — texture headers (name + dimensions + format) are read upfront, pixel data only when the row is selected. ~1000 textures in a folder typically scan in under 1 s.
 
 ---
 
@@ -1229,7 +1372,7 @@ The **Normals** toggle controls vertex normal export in DFF:
 
 ---
 
-## Asset Library *(new in 1.9.0)*
+## Asset Library
 
 **Panel:** View3D → Sidebar (N) → GTA Tools → Asset Library
 

@@ -20,9 +20,7 @@ from bpy.props import BoolProperty, StringProperty
 # in the parent __init__.py than this import — pull them lazily inside
 # each method so registration order doesn't matter.
 from .. import T
-from ..tools.compat import safe_icon
-
-
+from ..tools.compat import safe_icon, inu_icon
 # ──────────────────────────── helpers ─────────────────────────────────
 
 def _read_png_dimensions(path):
@@ -601,6 +599,21 @@ class GTATOOLS_OT_import_from_img(bpy.types.Operator):
             self.report({'ERROR'}, T("Укажите путь к IMG архиву в INU Tools"))
             return {'CANCELLED'}
 
+        # Auto-detect game from the IMG archive's format (VER2 magic →
+        # SA, sibling .dir present → VC fallback). Auto-flips scene
+        # game on fresh scenes, otherwise warns about mismatch so the
+        # user can manually switch the GTA Tools tab.
+        try:
+            from ..core import game_versions as gv
+            detected = gv.detect_game_from_img(img_path)
+            switched = gv.maybe_set_game_from_import(scene, detected)
+            if not switched:
+                warn = gv.check_game_mismatch_warning(scene, detected)
+                if warn:
+                    self.report({'WARNING'}, warn)
+        except Exception:
+            pass
+
         ide_models = {}
         instances = []
 
@@ -969,8 +982,8 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
 
         info = layout.box()
         info.label(text=f"{T('IMG:')} {os.path.basename(bpy.path.abspath(scn.inu_settings.gtatools_img_path))}",
-                   icon=safe_icon('PACKAGE'))
-        info.label(text=f"{T('Моделей:')} {len(wm.gtatools_txd_export_plan)}", icon=safe_icon('INFO'))
+                   **inu_icon(safe_icon('PACKAGE')))
+        info.label(text=f"{T('Моделей:')} {len(wm.gtatools_txd_export_plan)}", **inu_icon(safe_icon('INFO')))
 
         # Format pick moved here from the main panel — same scene
         # props the «To folder» path uses, so toggling here also
@@ -984,7 +997,7 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
         if scn.inu_settings.gtatools_export_all_col:
             row = layout.row(align=True)
             row.prop(scn, "gtatools_export_all_col_library",
-                     text="", icon=safe_icon('PACKAGE'))
+                     text="", **inu_icon(safe_icon('PACKAGE')))
             row.prop(scn, "gtatools_export_all_col_library_name",
                      text="", placeholder="collision")
 
@@ -998,7 +1011,7 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
         box.active = not self.shared_txd
         box.label(text=T("TXD имя на модель:") if not self.shared_txd
                        else T("Общий TXD включён — список игнорируется"),
-                  icon=safe_icon('TEXTURE'))
+                  **inu_icon(safe_icon('TEXTURE')))
         box.template_list(
             "GTATOOLS_UL_txd_export_plan", "",
             wm, "gtatools_txd_export_plan",
@@ -1082,6 +1095,16 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
                 if _models['COL']:
                     library_col_objects.append(_models['COL'])
 
+        # Pick the DFF RW version + IMG archive version once for this
+        # whole bulk export — scene's gtatools_game drives III/VC/SA
+        # dispatch (RW 3.3/3.5/3.6 for DFF, COL v1/v2/v3, IMG VER1/VER2).
+        from .dff_export import _resolve_export_version
+        from .col_export import _resolve_col_version
+        dff_rw_version = _resolve_export_version(context)
+        col_version = _resolve_col_version(context)
+        dff_target_platform = getattr(scene.inu_settings,
+                                      'gtatools_platform', 'PC')
+
         # Progress estimate. Exact TXD-bucket count is only known after
         # the per-group pass, but counting each write op (LOD/DFF/COL per
         # group, one tick per bucket, plus the optional library COL)
@@ -1112,8 +1135,17 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
 
         context.workspace.status_text_set(T("Экспорт в IMG..."))
 
+        # IMG archive version: SA writes VER2 (single .img), III/VC
+        # write VER1 (split .dir + .img). Read game off the scene via
+        # GameProfile.img_version — keeps the existing op signature
+        # untouched while still routing III/VC users to the right
+        # archive layout.
+        from ..core import game_versions as gv
+        _img_version = gv.profile_for(
+            gv.game_of_scene(context.scene)).img_version
+
         try:
-            with tempfile.TemporaryDirectory() as tmpdir, ImgWriter(img_path) as writer:
+            with tempfile.TemporaryDirectory() as tmpdir, ImgWriter(img_path, version=_img_version) as writer:
                 # Bucket DFF/LOD objects by their resolved TXD name so every
                 # bucket produces exactly one .txd containing merged textures.
                 txd_buckets = defaultdict(list)
@@ -1126,7 +1158,12 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
                     if export_lod_flag and models['LOD']:
                         lod_name = 'LOD' + base_name
                         try:
-                            clump = build_dff_clump([models['LOD']], version=GTA_SA_VERSION, col_model_name=lod_name)
+                            clump = build_dff_clump([models['LOD']], version=dff_rw_version, col_model_name=lod_name)
+                            if dff_target_platform == 'MOBILE':
+                                for g in clump.geometries:
+                                    if not g.raw_native_data_plg:
+                                        g.is_native_ogl = True
+                                clump.is_mobile = True
                             encode_jobs.append((lod_name + '.dff', clump.to_bytes, f"{lod_name}.dff"))
                         except Exception as e:
                             results.append(f"{lod_name}.dff error: {e}")
@@ -1138,7 +1175,12 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
                             for child in models['DFF'].children:
                                 if child.type == 'EMPTY' and getattr(child, 'inu', None) and child.inu.type == '2DFX':
                                     dff_objs.append(child)
-                            clump = build_dff_clump(dff_objs, version=GTA_SA_VERSION, col_model_name=base_name)
+                            clump = build_dff_clump(dff_objs, version=dff_rw_version, col_model_name=base_name)
+                            if dff_target_platform == 'MOBILE':
+                                for g in clump.geometries:
+                                    if not g.raw_native_data_plg:
+                                        g.is_native_ogl = True
+                                clump.is_mobile = True
                             encode_jobs.append((base_name + '.dff', clump.to_bytes, f"{base_name}.dff"))
                         except Exception as e:
                             results.append(f"{base_name}.dff error: {e}")
@@ -1146,7 +1188,7 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
 
                     if write_col_per_group and models['COL']:
                         try:
-                            col_model = build_col_model([models['COL']], version=3, model_name=base_name)
+                            col_model = build_col_model([models['COL']], version=col_version, model_name=base_name)
                             encode_jobs.append((base_name + '.col', (lambda m=col_model: write_col([m])), f"{base_name}.col"))
                         except Exception as e:
                             results.append(f"{base_name}.col error: {e}")
@@ -1208,7 +1250,7 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
                         for obj in library_col_objects:
                             original_locations[obj.name] = obj.location.copy()
                             obj.location = (0, 0, 0)
-                        count = export_col_library(lib_path, library_col_objects, version=3)
+                        count = export_col_library(lib_path, library_col_objects, version=col_version)
                         with open(lib_path, 'rb') as f:
                             status = writer.add(lib_filename, f.read())
                         results.append(f"{lib_filename} {status} ({count} records)")

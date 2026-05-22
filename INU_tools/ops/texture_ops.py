@@ -801,16 +801,37 @@ class GTATOOLS_OT_reset_transform(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        objects = context.selected_objects
-        if not objects:
-            objects = [o for o in context.scene.objects if o.type == 'MESH']
-        count = 0
-        for obj in objects:
-            if obj.type == 'MESH':
-                obj.location = (0.0, 0.0, 0.0)
-                obj.rotation_euler = (0.0, 0.0, 0.0)
-                count += 1
-        self.report({'INFO'}, f"{T('Сброшено объектов:')} {count}")
+        sel_meshes = [o for o in context.selected_objects if o.type == 'MESH']
+        targets = sel_meshes if sel_meshes else [
+            o for o in context.scene.objects if o.type == 'MESH'
+        ]
+        if not targets:
+            self.report({'WARNING'},
+                        T("Нет mesh-объектов для сброса"))
+            return {'CANCELLED'}
+
+        # Direct property writes (no sub-ops). Avoids the multi-undo
+        # explosion that `bpy.ops.object.location_clear` + co. produce
+        # when called from inside another operator's execute(): each
+        # sub-op may push its own step, leaving the user to mash
+        # Ctrl+Z five times to roll back what should be one action.
+        for obj in targets:
+            # Quaternion / axis-angle don't react to rotation_euler
+            # writes visually; switch to XYZ so the reset is visible.
+            if obj.rotation_mode != 'XYZ':
+                obj.rotation_mode = 'XYZ'
+            obj.location = (0.0, 0.0, 0.0)
+            obj.rotation_euler = (0.0, 0.0, 0.0)
+
+        # Force depsgraph re-eval inside the operator scope. Without
+        # this the viewport doesn't refresh until the next user
+        # interaction (matrix_world is a lazy-evaluated cache).
+        try:
+            context.view_layer.update()
+        except Exception:
+            pass
+
+        self.report({'INFO'}, f"{T('Сброшено объектов:')} {len(targets)}")
         return {'FINISHED'}
 
 
@@ -895,7 +916,7 @@ class GTATOOLS_OT_apply_lightmap_uv2(bpy.types.Operator):
                 # 3.4+ или ShaderNodeMixRGB на 2.80-3.3).
                 mix = nodes.new(compat.MIX_NODE_TYPE)
                 compat.setup_mix_rgba_node(mix, blend='MULTIPLY')
-                mix.inputs[compat.MIX_INPUT_FACTOR].default_value = 1.0
+                compat.mix_input_factor(mix).default_value = 1.0
                 in_a, in_b, out_r = (
                     compat.MIX_INPUT_A, compat.MIX_INPUT_B, compat.MIX_OUTPUT_RESULT)
                 mix.name = "LM_Mix"

@@ -21,9 +21,30 @@ from ..core.dff import (
     BreakableData,
     GTA_SA_VERSION, write_dff_file,
 )
+from ..core import game_versions
 
 
 # ── Helpers ──────────────────────────────────────────────────────
+
+def _resolve_export_version(context=None) -> int:
+    """Pick the RW version for DFF export based on the scene's active
+    game (gtatools_game). Falls back to GTA_SA_VERSION when context
+    is None / scene has no inu_settings (e.g. unit-test paths).
+
+    Centralised here so every DFF-write call-site uses the same logic
+    — operators, IMG-export, INU Export, animated-map-object, etc.
+    """
+    if context is None:
+        try:
+            import bpy as _bpy
+            context = _bpy.context
+        except Exception:
+            return GTA_SA_VERSION
+    scene = getattr(context, 'scene', None)
+    if scene is None:
+        return GTA_SA_VERSION
+    game = game_versions.game_of_scene(scene)
+    return game_versions.rw_version_for_game(game)
 
 def _load_user_data(target) -> UserData:
     """Load UserData from Blender custom property 'inu_user_data'.
@@ -307,20 +328,48 @@ def _get_obj_export_flags(obj) -> dict:
         return defaults
 
     result = {}
+    # Detect scene-level «Ped» preset — applies ped-friendly overrides
+    # on top of per-object DFF flags so the user can hit one button
+    # and get a skinned character export without manually toggling
+    # day_cols/night_cols/matfx off.
+    import bpy as _bpy
+    _scene_pipe = getattr(_bpy.context.scene, 'gtatools_export_pipeline', 'NONE')
+    _is_ped_preset = (_scene_pipe == 'PED')
+    # Ped-preset overrides for DFF flags. None = no override (keep
+    # per-object value). False = force off, True = force on.
+    # Must mirror the forbidden set used by the UI hint highlighter
+    # (panels.py:_PIPE_FORBIDDEN['PED']).
+    _PED_OVERRIDES = {
+        # Core ped structure
+        'has_skin':          True,    # SkinPLG обязателен
+        'geom_native':       False,   # peds морфятся runtime, NOT native
+        'matfx':             False,   # skinned не поддерживает reflection/spec
+        'export_normals':    True,    # для in-game lighting/shading
+        'export_binsplit':   True,    # vanilla peds имеют Bin Mesh PLG
+        # Не нужны на ped'е (это map-object features):
+        'day_cols':          False,
+        'night_cols':        False,
+        'modulate_color':    False,
+        'set_material_alpha': False,
+        'uv_map2':           False,   # ped только UV1
+        'light_beam_asi':    False,   # SA_Light.asi — для зданий
+    } if _is_ped_preset else {}
+
     for key, default in defaults.items():
         if key == 'pipeline':
             pipe_val = getattr(inu, 'pipeline', 'NONE')
             # If per-object pipeline is NONE, use scene-level setting
             if pipe_val == 'NONE' or pipe_val == '0':
-                import bpy as _bpy
-                scene_pipe = getattr(_bpy.context.scene, 'gtatools_export_pipeline', 'NONE')
-                if scene_pipe != 'NONE':
+                if _scene_pipe in ('NONE', 'PED'):
+                    # Ped has no RenderWare pipeline ID — peds use the
+                    # default RW pipeline (0); the «PED» enum value is
+                    # only a preset trigger for the flag overrides above.
+                    result['pipeline'] = 0
+                else:
                     try:
-                        result['pipeline'] = int(scene_pipe, 0)
+                        result['pipeline'] = int(_scene_pipe, 0)
                     except ValueError:
                         result['pipeline'] = 0
-                else:
-                    result['pipeline'] = 0
             elif pipe_val == 'CUSTOM':
                 custom = getattr(inu, 'custom_pipeline', '0')
                 try:
@@ -333,7 +382,11 @@ def _get_obj_export_flags(obj) -> dict:
                 except ValueError:
                     result['pipeline'] = 0
         else:
-            result[key] = getattr(inu, key, default)
+            # Ped-preset override wins over per-object inu.* defaults.
+            if key in _PED_OVERRIDES:
+                result[key] = _PED_OVERRIDES[key]
+            else:
+                result[key] = getattr(inu, key, default)
 
     return result
 
@@ -387,9 +440,49 @@ def _needs_split(bm, vert, uv_layers, color_layers):
     return groups
 
 
-def _process_mesh(obj, clump: DffClump, frame_index: int):
+def _classify_skin(obj, arm_obj):
+    """Identify whether ``obj`` is rigidly attached to a single armature
+    bone (animated map object pattern) or truly multi-bone skinned (ped).
+
+    Returns the bone INDEX when rigid (or 0 = root when there are no
+    weights at all but an armature is still present), or ``None`` when
+    the mesh is truly skinned across multiple bones.
+
+    Used by build_dff_clump to decide:
+      * rigid → atomic.frame_index = that bone's frame, skip SkinPLG
+      * real  → atomic.frame_index = mesh's own frame, emit SkinPLG
+    """
+    if arm_obj is None or not obj.vertex_groups:
+        # No armature data — caller treats as "no skin info available",
+        # which downstream handles as rigid attach to root.
+        return 0 if (arm_obj and arm_obj.data.bones) else None
+    bone_list = list(arm_obj.data.bones)
+    if not bone_list:
+        return None
+    bone_name_to_idx = {b.name: i for i, b in enumerate(bone_list)}
+    unique_bones = set()
+    for v in obj.data.vertices:
+        for g in v.groups:
+            vg = obj.vertex_groups[g.group]
+            if vg.name in bone_name_to_idx and g.weight > 0.0001:
+                unique_bones.add(bone_name_to_idx[vg.name])
+        if len(unique_bones) > 1:
+            return None    # truly skinned
+    if len(unique_bones) == 1:
+        return next(iter(unique_bones))
+    # No real weights → still rigid, default to root bone.
+    return 0
+
+
+def _process_mesh(obj, clump: DffClump, frame_index: int, *,
+                  force_no_skin: bool = False):
     """
     Convert a Blender mesh object into DffGeometry + DffAtomic.
+
+    ``force_no_skin`` skips the SkinPLG emission path even when the
+    mesh has an armature modifier — used by the animated-map-object
+    flow where mesh is rigidly attached to one bone (atomic links
+    directly to that bone's frame; no per-vertex skin data).
     """
     import mathutils
 
@@ -679,7 +772,29 @@ def _process_mesh(obj, clump: DffClump, frame_index: int):
             armature_mod = mod
             break
 
-    if armature_mod:
+    # An armature modifier alone doesn't imply skinning — animated map
+    # objects (windmills, cranes, doors) carry an armature solely to
+    # hold the frame hierarchy for IFP, with the mesh rigidly attached
+    # to one frame. They have no vertex groups with real weights. Emit
+    # SkinPLG only when there are bone-weighted vertex groups; otherwise
+    # the mesh is exported as a rigid attachment to its frame.
+    has_skin_weights = False
+    if armature_mod and obj.vertex_groups:
+        arm_obj_probe = armature_mod.object
+        bone_names_probe = {b.name for b in arm_obj_probe.data.bones}
+        # Any non-zero weight in a vertex group that matches a bone
+        # name is enough — the full skin pass below builds the
+        # per-vertex table.
+        for v in obj.data.vertices:
+            for g in v.groups:
+                vg = obj.vertex_groups[g.group]
+                if vg.name in bone_names_probe and g.weight > 0.0:
+                    has_skin_weights = True
+                    break
+            if has_skin_weights:
+                break
+
+    if armature_mod and has_skin_weights and not force_no_skin:
         arm_obj = armature_mod.object
         bones = arm_obj.data.bones
         bone_names = [b.name for b in bones]
@@ -851,6 +966,14 @@ def _build_frame(obj, parent_index: int = -1) -> DffFrame:
 
     # User Data PLG (from object custom property)
     frame.user_data = _load_user_data(obj)
+
+    # HAnim PLG for Empty-based animobj rigs (Kams-style). Each Empty
+    # with inu_bone_id gets a minimal HAnim entry; the rig ROOT
+    # additionally carries the full bone tree (collected by the
+    # caller after all frames are built — see _attach_empty_rig_hanim).
+    if obj.type == 'EMPTY' and 'inu_bone_id' in obj:
+        bone_id_int = int(obj['inu_bone_id'])
+        frame.hanim = HAnimData(bone_id=bone_id_int)
 
     return frame
 
@@ -1176,6 +1299,25 @@ def _build_dff_clump_inner(objects, version: int, col_model_name: str) -> DffClu
             else:
                 mesh_frame_idx = frame_idx
 
+            # Animated map object detection: when every weighted vertex
+            # group targets a single bone, the mesh is rigidly attached
+            # to that bone (typical of windmill/crane/door pattern). We
+            # route the atomic at the BONE's frame instead of the mesh
+            # frame and skip SkinPLG — engine drives the mesh via the
+            # bone frame's IFP-animated transform, not per-vertex skin.
+            rigid_bone_idx = _classify_skin(obj, arm_obj)
+            if rigid_bone_idx is not None and arm_obj and not clump.raw_frame_list:
+                # Bones appear after the mesh frame: frame_idx is mesh,
+                # bones start at frame_idx + 1.
+                target_frame_idx = frame_idx + 1 + rigid_bone_idx
+                if target_frame_idx < len(clump.frames):
+                    print(f"[DFF Export] Rigid attach to bone[{rigid_bone_idx}] "
+                          f"({clump.frames[target_frame_idx].name}) — "
+                          f"atomic frame={target_frame_idx}, no SkinPLG")
+                    _process_mesh(obj, clump, target_frame_idx,
+                                  force_no_skin=True)
+                    continue
+
             _process_mesh(obj, clump, mesh_frame_idx)
     else:
         # Static DFF: walk Blender hierarchy, write Empty→dummy frames
@@ -1194,6 +1336,38 @@ def _build_dff_clump_inner(objects, version: int, col_model_name: str) -> DffClu
 
         print(f"[DFF Export] Static hierarchy: {len(clump.frames)} frames "
               f"({sum(1 for o, _ in ordered if o.type == 'EMPTY')} dummies)")
+
+        # Empty-rig animobj (Kams-style): once all frames are built,
+        # populate the root rig Empty's HAnim with the full bone tree —
+        # the engine looks at the root frame's HAnimBone list to map
+        # bone_id → child frame index when applying IFP tracks.
+        for obj, _parent_obj in ordered:
+            if obj.type != 'EMPTY' or not obj.get('inu_animobj_empty_root'):
+                continue
+            root_frame_idx = obj_to_frame_idx.get(obj)
+            if root_frame_idx is None:
+                continue
+            root_frame = clump.frames[root_frame_idx]
+            # Walk descendants in pre-order and append HAnimBone entries.
+            rig_bones = []
+            stack = [obj]
+            while stack:
+                node = stack.pop(0)
+                if 'inu_bone_id' in node:
+                    fi = obj_to_frame_idx.get(node)
+                    if fi is not None:
+                        # Frame index relative to the rig root (the engine
+                        # uses absolute frame indices in HAnim — match).
+                        rig_bones.append(HAnimBone(
+                            bone_id=int(node['inu_bone_id']),
+                            index=fi,
+                            bone_type=0,
+                        ))
+                stack.extend(list(node.children))
+            if root_frame.hanim is None:
+                root_frame.hanim = HAnimData(
+                    bone_id=int(obj.get('inu_bone_id', 0)))
+            root_frame.hanim.bones = rig_bones
 
     # If no frames were created, add a default one
     if not clump.frames:
@@ -1236,13 +1410,24 @@ def _build_dff_clump_inner(objects, version: int, col_model_name: str) -> DffClu
                 )
                 clump.lights.append(rw_light)
 
-    # Embed collision data in DFF (CHUNK_COLLISION_MODEL)
+    # Embed collision data in DFF (CHUNK_COLLISION_MODEL). COL version
+    # is derived from the same RW version: SA writes COL3, VC writes
+    # COL2, III writes COL1. Map: rw 0x36003=COL3, 0x35000=COL2,
+    # 0x33002=COL1. Inline rather than calling _resolve_col_version()
+    # since build_dff_clump receives `version` directly and we want
+    # the COL version to track the requested DFF version exactly.
     col_objects = [obj for obj in objects if obj.type == 'MESH'
                    and getattr(getattr(obj, 'inu', None), 'type', '') in ('COL', 'SHA')]
     if col_objects:
         from .col_export import export_col_bytes
+        if version >= 0x36000:
+            col_ver = 3
+        elif version >= 0x35000:
+            col_ver = 2
+        else:
+            col_ver = 1
         clump.collision_data = export_col_bytes(
-            col_objects, version=3, model_name=col_model_name)
+            col_objects, version=col_ver, model_name=col_model_name)
 
     # Collect UV animations from materials used across all exported meshes
     uv_mats = []
@@ -1260,7 +1445,8 @@ def _build_dff_clump_inner(objects, version: int, col_model_name: str) -> DffClu
     return clump
 
 
-def export_dff(filepath: str, objects, version: int = GTA_SA_VERSION):
+def export_dff(filepath: str, objects, version: int = GTA_SA_VERSION,
+               target_platform: str = 'PC'):
     """
     Export Blender objects as a DFF file.
 
@@ -1268,9 +1454,19 @@ def export_dff(filepath: str, objects, version: int = GTA_SA_VERSION):
         filepath: Output .dff file path.
         objects: Iterable of Blender objects (MESH, EMPTY, ARMATURE).
         version: RenderWare version. Default GTA SA (0x36003).
+        target_platform: 'PC' (default) or 'MOBILE'. Mobile flips each
+            geometry's is_native_ogl flag so the writer emits Native
+            Data PLG (War Drum OpenGL) instead of inline Struct verts.
     """
     model_name = os.path.splitext(os.path.basename(filepath))[0]
     clump = build_dff_clump(objects, version=version, col_model_name=model_name)
+    if target_platform == 'MOBILE':
+        for g in clump.geometries:
+            # Round-tripped non-OGL natives keep their own raw bytes —
+            # don't overwrite those by setting is_native_ogl.
+            if not g.raw_native_data_plg:
+                g.is_native_ogl = True
+        clump.is_mobile = True
     write_dff_file(filepath, clump)
 
 
@@ -1339,7 +1535,11 @@ class GTATOOLS_OT_export_dff(bpy.types.Operator, ExportHelper):
             print(f"[DFF Export] selector: selected={len(selected)}, total={len(dff_objects)} objects → {self.filepath}")
             for o in dff_objects[:20]:
                 print(f"  - {o.name} ({o.type})")
-            export_dff(filepath=self.filepath, objects=dff_objects)
+            target_platform = getattr(context.scene.inu_settings,
+                                      'gtatools_platform', 'PC')
+            export_dff(filepath=self.filepath, objects=dff_objects,
+                       version=_resolve_export_version(context),
+                       target_platform=target_platform)
 
             for obj in prelight_was_on:
                 setup_prelight_preview(obj, enable=True)

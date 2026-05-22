@@ -8,7 +8,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/Blender-2.83%E2%80%935.1-orange?logo=blender" alt="Blender">
-  <img src="https://img.shields.io/badge/Version-1.9.0-green" alt="Version">
+  <img src="https://img.shields.io/badge/Version-2.0.0-green" alt="Version">
   <img src="https://img.shields.io/badge/License-GPL--3.0-blue" alt="License">
 </p>
 
@@ -51,24 +51,28 @@
 
 Ideas being considered. Not all of these will ship — some may turn out impractical, deprioritised, or just not worth it on closer inspection.
 
-- 🔍 **Game Validator** — cross-file IDE / IPL / IMG / COL / TXD checks: missing references, duplicate IDs, broken LOD chains, coordinates out of map bounds. Single report grouped Critical / Warning / Info
 - 💾 **Game Folder Backup** — auto-snapshot `gta3.img` and key `.ide` files before destructive ops (Map Export, IMG rebuild)
-- 🧪 **Lint Profiles** — strict / lenient / FLA toggle for File Scanner and Game Validator (FLA builds have different limits)
 - 🔁 **IPL Mass Replace** — swap all INST entries with model X for model Y by coordinates / radius / tag
-- 🔍 **Texture Browser** — UIList with all textures from all TXDs in the game folder, with search and cross-ref «used by»
 - 🎬 **IFP Library Viewer** — preview any of the 294 animations on a temporary armature without creating a ped
+- 🎆 **Auto-LOD generation** — when no paired `_L0` is found, Map Export auto-generates a decimated copy (EMAPTool-style)
 
-## 🆕 What's New in 1.9.0
+## 🆕 What's New in 2.0.0
 
-- 📦 **Single unified build** — one `.zip` works on GitHub release and on extensions.blender.org. NVTT subprocess path replaced by bundled pure-numpy DXT encoder (`core/dxt.py`, ~7× faster than NVTT, no external binaries)
-- 🔍 **Binary File Linter** — sub-panel «File Scanner» inside Check. Walks DFF/COL/TXD on disk, finds crash-prone patterns (shadow-mesh corruption, NPOT textures, GEOM_NATIVE on PC, atomic/triangle indices out of range, etc.) with explanatory description for every issue code
-- 📚 **Asset Library builder** — turns any IDE/IPL/IMG set (vanilla SA, custom map, modded archive) into a Blender Asset Library with thumbnails, ready to drop into the **Asset Browser**
-- 🎨 **Day/Night V-offset inline** — per-attribute brightness slider directly in the Day/Night row (auto-applies on Enter), survives bake
-- 💡 **Prelight tweaks** — preset selector moved into the Prelight header with a one-click ✓ overwrite button (reports diff of changed fields), Modulate Color values saved per preset, new **Scatter Color** sub-panel paints chosen color around selected polygons with KDTree falloff
-- 🔄 **DFF round-trip for special files** — parser now handles DFFs that start with non-Clump RW chunks (e.g. UV Animation Dictionary 0x2B). Vanilla files like `chinafurn1.dff` import/export byte-identical
-- 🧹 Cleanup: removed `dff2gltf.py`, `extras/nvtt_compress.py`, dropped FULL/STORE build split
+- 🪟 **Floater windows** — 5 free-floating GPU-rendered windows for frequent operations without scrolling the N-sidebar: **Info / Import-Export / Validation / Lighting / IDE-IPL-IMG**. SDF shaders, custom anti-aliasing, theme-adaptive palette, drag/resize/collapse/dock across workspaces. Click the header icon in any N-panel to open its floater
+- 🌐 **GTA III / VC / SA support** — auto-detect the game from file content, separate IDE flag / surface ID / ped mask translation tables per game, correct read/write of III/VC formats (IMG / DFF / COL / IPL / IDE)
+- 🔍 **Game Validator** — cross-file IDE/IPL checks: missing references, duplicate IDs, conflicts, IMG cross-check. «Map Analyzer» sub-panel with Critical / Warning / Info grouping
+- 🧪 **Lint Profiles** — **STANDARD / FLA / STRICT / LENIENT** toggle for File Scanner and Game Validator (FLA builds have different limits, LENIENT drops INFO-level for legacy projects)
+- 🖼️ **Texture Browser** — UIList with all textures from a selected source (IMG / folder / IDE list), with preview, search, and «used by» cross-reference
+- 🎬 **Empty-based animated objects** — rewritten animobj pipeline, sidesteps the rest_quat bug of the bone-flow. IFP export now works reliably with custom animations
+- 🛠️ **Light Master** — five lighting sub-panels (Prelight, Prelight COL, Vertex Paint, LightMap, Itera) folded under one master panel, collapsible with a single click
+- 🎨 **Unified Material panel** — three material panels (SURFACE / EFFECTS / PIPELINE) merged into one with an internal tab row
+- 🦴 **IK Rig + IFP fixes** — bone-based controls with documented pitfall fixes (POSE vs REST, brute-force pole_angle, FK bake on Add, visual_key at union, FLOOR constraint)
+- 🇪🇸 **Spanish locale** — full UI translation (819+ strings)
+- 🧱 **Architecture** — `__init__.py` split into 22 ops modules (~140 operators extracted, −64% file size), `ui/registry.py` with zone-based panel order
+- 💡 **2DFX** — each effect type (Light / Particle / Ped Attractor / Sun Glare) got a detailed tooltip. IDE/IPL/IMG buttons in the floater read as a single fused cluster
+- 🐛 **Hotfixes from main** — all 14 post-1.9.0 fixes folded in: col empty support, light col day/night, anim object rest_quat, path nodes parser, install extension, particle save, etc.
 
-→ [Full release notes](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v1.9.0) · [Version history](../../releases)
+→ [Release notes 2.0.0](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v2.0.0) · [Version history](../../releases)
 
 ## 🧰 Features
 
@@ -140,8 +144,39 @@ A **GTA SA** entry is added to Blender's standard `Shift+A` (Add) menu — quick
 | | |
 |---|---|
 | **Blender** | 2.83 – 5.1 ✅ (4.2+ for extensions.blender.org install) |
-| **Game** | GTA San Andreas (also compatible with MTA:SA) |
+| **Game** | GTA San Andreas (primary), GTA Vice City + GTA III (experimental, see below) |
+| **MTA** | MTA:SA compatible (GTA SA fork) |
 | **OS** | Windows / Linux / macOS |
+
+### 🎮 Multi-game support
+
+INU Tools targets **GTA San Andreas** by default but can read and write the older RenderWare games. Set the target game from the **GTA Tools** N-sidebar header dropdown (SA / VC / III) — every exporter then routes through the right format dispatch.
+
+| Format | III (RW 3.3) | VC (RW 3.5) | SA (RW 3.6) |
+|---|:-:|:-:|:-:|
+| **DFF** read | ✅ auto-detect by RW version | ✅ auto-detect | ✅ |
+| **DFF** write | ✅ (skips SA-only Night vcols, Pipeline chunk, UV anim) | ✅ (skips Night vcols, Pipeline) | ✅ |
+| **COL** read | ✅ `COLL` | ✅ `COL2` | ✅ `COL3` |
+| **COL** write | ✅ `COLL` v1 | ✅ `COL2` v2 | ✅ `COL3` v3 |
+| **TXD** read | ✅ | ✅ | ✅ |
+| **TXD** write | ✅ (RW lib_id per game) | ✅ | ✅ |
+| **IDE** read | ✅ | ✅ | ✅ |
+| **IDE** write | ✅ (5-field OBJS, no `txdp` / `2dfx`) | ✅ (5-field OBJS, no `2dfx`) | ✅ (multi-mesh, `txdp`, `2dfx`) |
+| **IPL** read | ✅ (12 cols, scale, no interior) | ✅ (13 cols, scale + interior) | ✅ (11 cols, lod_index) |
+| **IPL** write | ✅ text only | ✅ text only | ✅ text + binary |
+| **IMG** read | ✅ VER1 (split `.dir` + `.img`) | ✅ VER1 | ✅ VER2 |
+| **IMG** write | ✅ VER1 | ✅ VER1 | ✅ VER2 |
+| **IFP** anim | ✅ ANPK (chunked) | ✅ ANPK | ✅ ANPK + ANP3 compressed |
+| **2DFX** | Light + Particle | + PedAttractor | + SunGlare |
+| **Surface IDs** | 0–84 (clamp on write) | 0–85 | 0–178 |
+
+**Known limitations:**
+- **Lossy surface translation** — cross-game COL export collapses ~12 categories from SA's 179 surfaces. SA → VC → SA loses sub-types (e.g. `GRASS_SHORT` ↔ `GRASS_LONG`).
+- **Validate Scene cross-game checks** — warn if scene targets III/VC but objects still carry SA-only features (Night vcols, Multi-mesh LOD, UV anim, SunGlare 2DFX).
+- **Map editor flow** — main pipeline is SA. III/VC modders can import vanilla assets and export individual DFF/COL/TXD; full map round-trip is currently SA-only.
+- **IFP**: ANP3 (compressed int16) is SA-only — exporting to III/VC auto-downgrades to ANPK with a warning.
+
+The scene's active game also affects File Scanner / Map Analyzer thresholds — `model_id_max` (III=6500, VC=8500, SA=19999) and `surface_id_max` are checked against the target game's limits.
 
 ## 🙏 Credits
 

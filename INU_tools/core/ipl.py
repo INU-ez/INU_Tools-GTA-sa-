@@ -50,6 +50,14 @@ class IplInstance:
     rot_w: float = 1.0
     lod_index: int = -1
     real_interior: int = 0
+    # Per-instance scale — only emitted in III/VC IPL line format (12/13
+    # columns). SA dropped scale from IPL in favour of a single uniform
+    # transform inside the model. Default 1.0 keeps SA round-trips a
+    # no-op: scale is written for VC/III when ≠ (1,1,1), parsed for
+    # both, ignored on SA emit.
+    scale_x: float = 1.0
+    scale_y: float = 1.0
+    scale_z: float = 1.0
 
 
 @dataclass
@@ -270,10 +278,50 @@ def _ps(parts: list, idx: int, default: str = "") -> str:
 
 
 def _parse_inst_line(line: str) -> Optional[IplInstance]:
+    """Parse one ``inst`` line from any of III / VC / SA. Detects the
+    game by token count:
+
+    * 11 tokens → SA:  id, name, interior, pos×3, rot×4, lodIndex
+    * 12 tokens → III: id, name, pos×3, scale×3, rot×4 (no interior, no lod)
+                    OR SA + FLA-realInterior (11 + 1 extra column)
+    * 13 tokens → VC:  id, name, interior, pos×3, scale×3, rot×4 (no lod)
+                    OR SA + FLA-realInterior on a 12-col HD-IPL (rare)
+
+    For 12 tokens we disambiguate III-vs-SA-FLA by checking whether
+    token[2] parses as an int (SA's interior) AND token[10] also parses
+    as int (SA's lod_index). III's token[2] is pos_x (float).
+    """
     parts = [p.strip() for p in line.split(',')]
+    n = len(parts)
+    if n < 11:
+        return None
     try:
-        if len(parts) < 11:
-            return None
+        # ── III: 12 cols, no interior, no lod, has scale ─────────
+        # Disambiguate from SA+FLA by checking that token[10] parses
+        # as float (III rot_z) rather than int (SA lod_index — would
+        # be -1 or a small positive int).
+        if n == 12 and '.' in parts[2]:
+            return IplInstance(
+                model_id=int(parts[0]), model_name=parts[1],
+                interior=0,
+                pos_x=float(parts[2]), pos_y=float(parts[3]), pos_z=float(parts[4]),
+                scale_x=float(parts[5]), scale_y=float(parts[6]), scale_z=float(parts[7]),
+                rot_x=float(parts[8]), rot_y=float(parts[9]),
+                rot_z=float(parts[10]), rot_w=float(parts[11]),
+                lod_index=-1,
+            )
+        # ── VC: 13 cols, has interior + scale, no lod ────────────
+        if n == 13:
+            return IplInstance(
+                model_id=int(parts[0]), model_name=parts[1],
+                interior=int(parts[2]),
+                pos_x=float(parts[3]), pos_y=float(parts[4]), pos_z=float(parts[5]),
+                scale_x=float(parts[6]), scale_y=float(parts[7]), scale_z=float(parts[8]),
+                rot_x=float(parts[9]), rot_y=float(parts[10]),
+                rot_z=float(parts[11]), rot_w=float(parts[12]),
+                lod_index=-1,
+            )
+        # ── SA: 11 cols (FLA may append 12th = realInterior) ─────
         inst = IplInstance(
             model_id=int(parts[0]), model_name=parts[1],
             interior=int(parts[2]),
@@ -282,10 +330,7 @@ def _parse_inst_line(line: str) -> Optional[IplInstance]:
             rot_z=float(parts[8]), rot_w=float(parts[9]),
             lod_index=int(parts[10]),
         )
-        # FLA extension: optional 12th token = realInterior. Tolerate
-        # garbage gracefully — we just leave default 0 if the token
-        # isn't a clean int. Vanilla SA files won't have this column.
-        if len(parts) >= 12:
+        if n >= 12:
             try:
                 inst.real_interior = int(parts[11])
             except ValueError:
@@ -491,11 +536,29 @@ def _ff(v: float) -> str:
     return f'{v:.6f}'
 
 
-def _format_inst_line(i: IplInstance, *, fla_extended: bool = False) -> str:
-    """Vanilla SA ``inst`` line is 11 fields. With ``fla_extended=True``
-    we append the 12th ``realInterior`` column for FLA installs. Vanilla
-    SA reads only the first 11 tokens, so the extra column is ignored
-    by plain installs and parsed only by Fastman-Limit-Adjuster builds."""
+def _format_inst_line(i: IplInstance, *, fla_extended: bool = False,
+                      game: str = 'SA') -> str:
+    """Format an ``inst`` line for the target game's IPL column layout.
+
+    * ``SA`` (default): 11 fields (id, name, interior, pos×3, rot×4, lod).
+      With ``fla_extended=True`` append the optional 12th realInterior
+      column — vanilla SA ignores it, FLA installs parse it.
+    * ``VC``: 13 fields (id, name, interior, pos×3, scale×3, rot×4).
+      No lod_index — VC IPLs don't reference LOD partners by index.
+    * ``III``: 12 fields (id, name, pos×3, scale×3, rot×4). No interior
+      column either — III predates the interior streaming system.
+    """
+    if game == 'III':
+        return (f'{i.model_id}, {i.model_name}, '
+                f'{_ff(i.pos_x)}, {_ff(i.pos_y)}, {_ff(i.pos_z)}, '
+                f'{_ff(i.scale_x)}, {_ff(i.scale_y)}, {_ff(i.scale_z)}, '
+                f'{_ff(i.rot_x)}, {_ff(i.rot_y)}, {_ff(i.rot_z)}, {_ff(i.rot_w)}')
+    if game == 'VC':
+        return (f'{i.model_id}, {i.model_name}, {i.interior}, '
+                f'{_ff(i.pos_x)}, {_ff(i.pos_y)}, {_ff(i.pos_z)}, '
+                f'{_ff(i.scale_x)}, {_ff(i.scale_y)}, {_ff(i.scale_z)}, '
+                f'{_ff(i.rot_x)}, {_ff(i.rot_y)}, {_ff(i.rot_z)}, {_ff(i.rot_w)}')
+    # SA — default
     base = (f'{i.model_id}, {i.model_name}, {i.interior}, '
             f'{_ff(i.pos_x)}, {_ff(i.pos_y)}, {_ff(i.pos_z)}, '
             f'{_ff(i.rot_x)}, {_ff(i.rot_y)}, {_ff(i.rot_z)}, {_ff(i.rot_w)}, '
@@ -880,27 +943,34 @@ def write_binary_ipl(filepath: str, ipl: IplFile) -> None:
 
 
 def write_ipl(filepath: str, ipl: IplFile, *, binary: bool = False,
-              fla_extended: bool = False) -> None:
+              fla_extended: bool = False, game: str = 'SA') -> None:
     """Write a text IPL file with all populated sections.
 
     If ``binary=True`` the file is emitted in the binary ``bnry`` format
-    instead (only inst + cars sections are preserved).
+    instead (only inst + cars sections are preserved). Binary IPL is
+    SA-only — the call is downgraded to text for game ∈ {III, VC}.
 
-    If ``fla_extended=True`` the ``inst`` section adds a 12th
-    ``realInterior`` column per row — Fastman92 Limit Adjuster reads
-    it, vanilla SA ignores. Other sections are unaffected.
+    ``game`` (III/VC/SA) controls the ``inst`` line column layout.
+    Default SA is the 11-column vanilla format with optional FLA 12th
+    column when ``fla_extended=True``.
     """
     if binary:
-        write_binary_ipl(filepath, ipl)
-        return
+        # Binary IPL ('bnry' format) is a SA-only feature added for the
+        # streaming-IMG layout. III/VC engines don't read it — silently
+        # fall back to text IPL when targeting those games.
+        if game == 'SA':
+            write_binary_ipl(filepath, ipl)
+            return
     with open(filepath, 'w', encoding='utf-8', newline='\r\n') as f:
         # Standard GTA SA IPL layout — all 12 sections are emitted, even
         # when empty, to match the vanilla file structure expected by
-        # most tools (MEd, IPL Editor, etc.).
+        # most tools (MEd, IPL Editor, etc.). III/VC use only a subset
+        # of the sections but tolerate empty unknown blocks on read.
 
         f.write('inst\n')
         for i in ipl.instances:
-            f.write(_format_inst_line(i, fla_extended=fla_extended) + '\n')
+            f.write(_format_inst_line(i, fla_extended=fla_extended,
+                                       game=game) + '\n')
         f.write('end\n')
 
         f.write('cull\n')

@@ -46,21 +46,111 @@ class GTATOOLS_OT_export_txd(bpy.types.Operator, ExportHelper):
         return super().invoke(context, event)
 
     def execute(self, context):
+        import os
         # Shared TXD implies selected-only collection
         sel_only = self.selected_only or self.shared_txd
+        backend = getattr(context.scene.inu_settings, 'gtatools_dxt_backend', 'numpy')
+        is_mobile = getattr(context.scene.inu_settings, 'gtatools_platform', 'PC') == 'MOBILE'
 
+        # ── Per-mesh split: «selected only» + multiple selected meshes
+        # without «shared TXD» → one .txd per mesh, named after the
+        # mesh (suffix-stripped), all written to the chosen directory.
+        # Mirrors the per-model TXD layout the full Export pipeline
+        # produces, instead of bundling everything into one file.
+        if self.selected_only and not self.shared_txd:
+            selected_meshes = [o for o in context.selected_objects
+                               if o.type == 'MESH']
+            if len(selected_meshes) > 1:
+                return self._export_per_mesh(
+                    context, selected_meshes, backend, is_mobile)
+
+        # ── Single-file paths (legacy behaviour) ─────────────────────
         target = self.filepath
         if self.shared_txd and self.shared_name.strip():
-            import os
             name = self.shared_name.strip()
             if not name.lower().endswith('.txd'):
                 name += '.txd'
             target = os.path.join(os.path.dirname(target), name)
 
-        backend = getattr(context.scene.inu_settings, 'gtatools_dxt_backend', 'numpy')
-        result, message, transparent_list = export_txd(target, context, sel_only, backend=backend)
-        self.report({'INFO'} if result == {'FINISHED'} else {'ERROR'}, message)
+        result, message, _ = export_txd(target, context, sel_only, backend=backend)
+        # Mobile target: we still write a PC-format TXD (PVRTC/ETC1
+        # codecs aren't shipped). Surface a WARNING so the user knows
+        # to run TxdGen for PC → mobile conversion.
+        if result == {'FINISHED'} and is_mobile:
+            self.report({'WARNING'},
+                        T("TXD сохранён в PC формате. Для mobile конвертируй через TxdGen (PVRTC/ETC1)."))
+        else:
+            self.report({'INFO'} if result == {'FINISHED'} else {'ERROR'}, message)
         return result
+
+    def _export_per_mesh(self, context, selected_meshes, backend, is_mobile):
+        """Write one .txd per selected mesh, named after the mesh with
+        common suffixes stripped (``_dff``, ``.dff``, ``_LOD``, ``_dam``,
+        ``_ok``). Output directory comes from the file dialog. Restores
+        the original selection on exit even if encoding fails."""
+        import os
+        out_dir = os.path.dirname(self.filepath) or '.'
+        prev_active = context.view_layer.objects.active
+        prev_selected = list(context.selected_objects)
+
+        # Suffixes lowercased once — keep order long-first so `_LOD_dff`
+        # gets the longer strip before the shorter token is considered.
+        SUFFIXES = ('_lod_dff', '_dam_dff', '_ok_dff',
+                    '_dff', '.dff', '_lod', '_dam', '_ok')
+
+        def _basename_for(obj):
+            n = obj.name
+            ln = n.lower()
+            for s in SUFFIXES:
+                if ln.endswith(s):
+                    return n[:-len(s)]
+            return n
+
+        written = []
+        errors = []
+        try:
+            for obj in selected_meshes:
+                bpy.ops.object.select_all(action='DESELECT')
+                obj.select_set(True)
+                context.view_layer.objects.active = obj
+                base = _basename_for(obj)
+                txd_path = os.path.join(out_dir, f"{base}.txd")
+                try:
+                    result, msg, _ = export_txd(
+                        txd_path, context, True, backend=backend)
+                    if result == {'FINISHED'}:
+                        written.append(f"{base}.txd")
+                    else:
+                        errors.append(f"{base}.txd: {msg}")
+                except Exception as e:
+                    errors.append(f"{base}.txd: {e}")
+        finally:
+            bpy.ops.object.select_all(action='DESELECT')
+            for o in prev_selected:
+                try:
+                    o.select_set(True)
+                except Exception:
+                    pass
+            if prev_active is not None:
+                try:
+                    context.view_layer.objects.active = prev_active
+                except Exception:
+                    pass
+
+        if not written:
+            self.report({'ERROR'},
+                        f"{T('Не удалось экспортировать ни одного TXD')}: "
+                        + "; ".join(errors[:3]))
+            return {'CANCELLED'}
+
+        summary = (f"{len(written)} {T('TXD записано в')} {out_dir}"
+                   + (f" ({len(errors)} {T('с ошибками')})" if errors else ""))
+        self.report({'WARNING'} if (errors or is_mobile) else {'INFO'},
+                    summary)
+        if is_mobile:
+            self.report({'WARNING'},
+                        T("TXD сохранён в PC формате. Для mobile конвертируй через TxdGen (PVRTC/ETC1)."))
+        return {'FINISHED'}
 
     def draw(self, context):
         layout = self.layout
@@ -99,7 +189,12 @@ class GTATOOLS_OT_export_shared_txd(bpy.types.Operator, ExportHelper):
         backend = getattr(context.scene.inu_settings, 'gtatools_dxt_backend', 'numpy')
         # Force selected_only=True for shared TXD (collects from all selected DFFs)
         result, message, transparent_list = export_txd(self.filepath, context, True, backend=backend)
-        self.report({'INFO'} if result == {'FINISHED'} else {'ERROR'}, message)
+        if result == {'FINISHED'} and getattr(
+                context.scene.inu_settings, 'gtatools_platform', 'PC') == 'MOBILE':
+            self.report({'WARNING'},
+                        T("TXD сохранён в PC формате. Для mobile конвертируй через TxdGen (PVRTC/ETC1)."))
+        else:
+            self.report({'INFO'} if result == {'FINISHED'} else {'ERROR'}, message)
         return result
 
 

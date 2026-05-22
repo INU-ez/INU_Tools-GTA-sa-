@@ -1,0 +1,168 @@
+name: Bug report (English)
+description: Something doesn't work as expected — please fill in the fields so it can be reproduced
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting!  Please fill in every field — without reproduction steps and source files most issues cannot be fixed.
+
+        If you prefer **Russian** or **Spanish** — pick the matching template instead.
+
+  - type: input
+    id: inu_version
+    attributes:
+      label: INU Tools version
+      description: From `Edit → Preferences → Add-ons → INU_tools(gta_sa)` or the file name of the installed zip
+      placeholder: "1.9.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install_source
+    attributes:
+      label: Where did you install from
+      options:
+        - GitHub release (.zip from /releases)
+        - main branch (git clone or Code → Download ZIP)
+        - extensions.blender.org
+        - Other (specify in steps)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: blender_version
+    attributes:
+      label: Blender version
+      options:
+        - "5.1"
+        - "5.0"
+        - "4.5 LTS"
+        - "4.4"
+        - "4.3"
+        - "4.2 LTS"
+        - "4.1"
+        - "4.0"
+        - "3.6 LTS"
+        - "3.x (other)"
+        - "2.83 LTS"
+        - "Other (specify in steps)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: game_build
+    attributes:
+      label: Game build
+      description: Which SA build are the affected files from?
+      options:
+        - Vanilla SA 1.0 (US/EU PC)
+        - Vanilla SA 1.01 / 2.00
+        - SA with FLA (Fastman92 Limit Adjuster)
+        - SAMP / open.mp
+        - MTA:SA
+        - Other / Unknown
+
+    validations:
+      required: true
+
+  - type: dropdown
+    id: feature
+    attributes:
+      label: Affected area
+      description: Which feature / format is involved?
+      options:
+        - DFF (import / export / edit)
+        - COL (import / export / edit)
+        - TXD (import / export / edit)
+        - IDE (import / export / edit)
+        - IPL (import / export / binary)
+        - IMG (import / export / archive)
+        - IFP (animation import / export / batch)
+        - FXP (effects.fxp editor / viewport simulation)
+        - Map (full Map Import / Map Export round-trip)
+        - Asset Library builder
+        - File Scanner (binary linter)
+        - Prelight (vcols / scatter / LightMap UV2)
+        - 2DFX (Light / Particle / Ped Attractor / Sun Glare)
+        - Skinned DFF / IK Rig / Frame Hierarchy
+        - Vehicle Paintjob / Animated Map Object
+        - Paths (paths.ipl / tracks.dat / NODES.dat / flight.dat)
+        - water.dat
+        - X Radar Maker
+        - ID Manager
+        - Profile System / UI / panels
+        - Materials (Env Map / Bump / Specular / UV Anim)
+        - CST (Steve's COL Editor format)
+        - Other (specify in steps)
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: |
+        Be specific.  «Doesn't work» is not enough — say exactly which button you pressed and with what file selected.
+      placeholder: |
+        1. Open Blender, enable INU Tools
+        2. Sidebar (N) → GTA Tools → Import → DFF → select `airport.dff` from vanilla SA gta3.img
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+      placeholder: The mesh imports with all materials and 2DFX lights attached
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      placeholder: Materials import but 2DFX lights are missing.  Console shows a `KeyError` traceback.
+    validations:
+      required: true
+
+  - type: textarea
+    id: files
+    attributes:
+      label: Source files
+      description: |
+        **Attach the offending file(s)** — drag-drop `.dff` / `.col` / `.txd` / `.ide` / `.ipl` / `.blend` directly into this field, or upload a zip.
+        Without source files most issues are not reproducible.
+        If the file is from a paid mod / NDA-locked — name it but skip the upload, and we'll discuss in comments.
+      placeholder: Drag-drop files here, or paste a download link
+    validations:
+      required: false
+
+  - type: textarea
+    id: console
+    attributes:
+      label: Error message / Blender console output
+      description: |
+        **If you saw any red text, error code or popup — paste it in full here.**
+        Open `Window → Toggle System Console` on Windows, or launch Blender from a terminal on Linux/macOS, to see the full traceback.
+        Error codes / tracebacks are the single biggest clue for fixing the bug — please don't skip this if anything is shown.
+      render: shell
+      placeholder: |
+        Traceback (most recent call last):
+          File "...", line 123, in execute
+            ...
+        KeyError: 'expected_chunk_0x2B'
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched [open and closed issues](../../issues?q=) for a similar report
+          required: true
+        - label: I'm using the latest release (or `main` and have noted it above)
+          required: true

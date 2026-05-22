@@ -13,9 +13,7 @@ import os
 import bpy
 
 from .. import T
-from ..tools.compat import safe_icon
-
-
+from ..tools.compat import safe_icon, inu_icon
 class GTATOOLS_PT_library_panel(bpy.types.Panel):
     """Asset Library Builder — turns extracted .inu_cache contents into a
     portable Blender asset library (one .blend per category, with
@@ -50,7 +48,7 @@ class GTATOOLS_PT_library_panel(bpy.types.Panel):
         # editing it here updates there and vice versa.
         gr_box = layout.box()
         gr_box.label(text=T("Корневая папка GTA SA"),
-                     icon=safe_icon('FILE_FOLDER'))
+                     **inu_icon(safe_icon('FILE_FOLDER')))
         gr_box.prop(settings, "gtatools_game_root", text="")
 
         # ── Step 1: Extract Resources ──────────────────────────
@@ -60,35 +58,35 @@ class GTATOOLS_PT_library_panel(bpy.types.Panel):
         # hopping (ALL = full game).
         step1 = layout.box()
         step1.label(text=T("1. Извлечь ресурсы"),
-                    icon=safe_icon('PACKAGE'))
+                    **inu_icon(safe_icon('PACKAGE')))
         step1.prop(settings, "gtatools_map_region",
                    text=T("Регион"))
         if saved and game_root_set:
             step1.operator("gtatools.extract_textures",
                            text=T("Извлечь ресурсы"),
-                           icon=safe_icon('PACKAGE'))
+                           **inu_icon(safe_icon('PACKAGE')))
         else:
             warn = step1.row(align=True)
             warn.enabled = False
             warn.operator("gtatools.extract_textures",
                           text=T("Извлечь ресурсы"),
-                          icon=safe_icon('PACKAGE'))
+                          **inu_icon(safe_icon('PACKAGE')))
 
         # ── Status header ──
         # Four chips reflecting the prerequisites for the build step.
         # Green = ready, red = missing — clearer than relying on the
         # disabled-button gray-out alone.
         status = layout.box()
-        status.label(text=T("Готовность"), icon=safe_icon('INFO'))
+        status.label(text=T("Готовность"), **inu_icon(safe_icon('INFO')))
 
         def _chip(ok: bool, ok_text: str, fail_text: str):
             row = status.row(align=True)
             if ok:
-                row.label(text=ok_text, icon=safe_icon('CHECKMARK'))
+                row.label(text=ok_text, **inu_icon(safe_icon('CHECKMARK')))
             else:
                 sub = row.row(align=True)
                 sub.alert = True
-                sub.label(text=fail_text, icon=safe_icon('ERROR'))
+                sub.label(text=fail_text, **inu_icon(safe_icon('ERROR')))
 
         _chip(saved, T(".blend сохранён"), T("Сцена не сохранена"))
         _chip(game_root_set, T("Game Root указан"),
@@ -104,11 +102,11 @@ class GTATOOLS_PT_library_panel(bpy.types.Panel):
         # ── Step 2: Build options ──────────────────────────────
         step2 = layout.box()
         step2.label(text=T("2. Папка библиотеки"),
-                    icon=safe_icon('FILE_FOLDER'))
+                    **inu_icon(safe_icon('FILE_FOLDER')))
         step2.prop(settings, "gtatools_library_output_path", text="")
 
         opt_box = layout.box()
-        opt_box.label(text=T("Параметры"), icon=safe_icon('PREFERENCES'))
+        opt_box.label(text=T("Параметры"), **inu_icon(safe_icon('PREFERENCES')))
         col = opt_box.column(align=True)
         col.prop(settings, "gtatools_library_skip_existing",
                  text=T("Пропускать готовые .blend"))
@@ -148,7 +146,7 @@ class GTATOOLS_PT_library_panel(bpy.types.Panel):
         btn_row.operator(
             "gtatools.build_asset_library",
             text=T("Собрать Asset Library"),
-            icon=safe_icon('ASSET_MANAGER'))
+            **inu_icon(safe_icon('ASSET_MANAGER')))
 
         # ── Regenerate previews ──
         # Secondary action — only relevant when the library already
@@ -171,12 +169,12 @@ class GTATOOLS_PT_library_panel(bpy.types.Panel):
         regen_row.operator(
             "gtatools.regenerate_previews",
             text=T("Перегенерировать превью"),
-            icon=safe_icon('RENDER_STILL'))
+            **inu_icon(safe_icon('RENDER_STILL')))
 
         # ── Info / hints ──
         layout.separator()
         info = layout.box()
-        info.label(text=T("Как пользоваться"), icon=safe_icon('QUESTION'))
+        info.label(text=T("Как пользоваться"), **inu_icon(safe_icon('QUESTION')))
         col = info.column(align=True)
         col.scale_y = 0.85
         col.label(text=T("1. Сохрани .blend"))

@@ -15,7 +15,7 @@ import bpy
 from typing import Dict, List, Set, Tuple
 
 from .. import T
-from .compat import safe_icon
+from .compat import safe_icon, inu_icon
 from ..core.bitmap_diff import (
     collect_used as _collect_used_from,
     diff_unused_images as _diff_unused_images,
@@ -432,18 +432,18 @@ class GTATOOLS_OT_bitmaps_remove_unused(bpy.types.Operator):
     def draw(self, context):
         layout = self.layout
         box = layout.box()
-        box.label(text=T("Будет удалено:"), icon=safe_icon('TRASH'))
-        box.label(text=f"{T('Текстуры')}: {self._img_count}", icon=safe_icon('IMAGE_DATA'))
+        box.label(text=T("Будет удалено:"), **inu_icon(safe_icon('TRASH')))
+        box.label(text=f"{T('Текстуры')}: {self._img_count}", **inu_icon(safe_icon('IMAGE_DATA')))
         if self.remove_materials:
             box.label(text=f"{T('Материалы')}: {self._mat_count}",
-                      icon=safe_icon('MATERIAL'))
+                      **inu_icon(safe_icon('MATERIAL')))
         else:
             box.label(text=f"{T('Материалы')}: {self._mat_count} "
                            f"({T('пропущены')})",
-                      icon=safe_icon('MATERIAL'))
+                      **inu_icon(safe_icon('MATERIAL')))
         layout.prop(self, "remove_materials")
         layout.label(text=T("use_fake_user-помеченные пропускаются"),
-                     icon=safe_icon('FAKE_USER_ON'))
+                     **inu_icon(safe_icon('FAKE_USER_ON')))
 
     def execute(self, context):
         img_removed, mat_removed = remove_unused_textures(
@@ -495,16 +495,16 @@ class GTATOOLS_MT_textures_menu(bpy.types.Menu):
     def draw(self, context):
         layout = self.layout
         layout.operator("gtatools.bitmaps_resolve",
-                        text=T("Найти в папке…"), icon=safe_icon('FILE_REFRESH'))
+                        text=T("Найти в папке…"), **inu_icon(safe_icon('FILE_REFRESH')))
         layout.operator("gtatools.bitmaps_copy",
-                        text=T("Скопировать в папку…"), icon=safe_icon('COPY_ID'))
+                        text=T("Скопировать в папку…"), **inu_icon(safe_icon('COPY_ID')))
         layout.operator("gtatools.bitmaps_find_dupes",
-                        text=T("Найти дубликаты"), icon=safe_icon('DUPLICATE'))
+                        text=T("Найти дубликаты"), **inu_icon(safe_icon('DUPLICATE')))
         layout.separator()
         layout.operator("gtatools.bitmaps_find_unused",
-                        text=T("Найти неиспользуемые"), icon=safe_icon('ZOOM_PREVIOUS'))
+                        text=T("Найти неиспользуемые"), **inu_icon(safe_icon('ZOOM_PREVIOUS')))
         layout.operator("gtatools.bitmaps_remove_unused",
-                        text=T("Удалить неиспользуемые…"), icon=safe_icon('TRASH'))
+                        text=T("Удалить неиспользуемые…"), **inu_icon(safe_icon('TRASH')))
 
 
 class GTATOOLS_MT_materials_menu(bpy.types.Menu):
@@ -514,15 +514,15 @@ class GTATOOLS_MT_materials_menu(bpy.types.Menu):
     def draw(self, context):
         layout = self.layout
         layout.operator("gtatools.check_materials",
-                        text=T("Проверка материалов"), icon=safe_icon('MATERIAL'))
+                        text=T("Проверка материалов"), **inu_icon(safe_icon('MATERIAL')))
         layout.operator("gtatools.cleanup_materials",
-                        text=T("Очистка материалов"), icon=safe_icon('BRUSH_DATA'))
+                        text=T("Очистка материалов"), **inu_icon(safe_icon('BRUSH_DATA')))
         layout.operator("gtatools.sort_materials",
-                        text=T("Сортировка материалов"), icon=safe_icon('SORTALPHA'))
+                        text=T("Сортировка материалов"), **inu_icon(safe_icon('SORTALPHA')))
 
 
 class GTATOOLS_PT_bitmaps_panel(bpy.types.Panel):
-    bl_label = T("Менеджер текстур")
+    bl_label = "Менеджер текстур"
     bl_idname = "GTATOOLS_PT_bitmaps_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
@@ -530,7 +530,7 @@ class GTATOOLS_PT_bitmaps_panel(bpy.types.Panel):
     bl_options = {'DEFAULT_CLOSED'}
 
     def draw_header(self, context):
-        self.layout.label(text="", icon=safe_icon('IMAGE_DATA'))
+        self.layout.label(text="", **inu_icon(safe_icon('IMAGE_DATA')))
 
     def draw(self, context):
         layout = self.layout
@@ -538,31 +538,31 @@ class GTATOOLS_PT_bitmaps_panel(bpy.types.Panel):
 
         row = layout.row(align=True)
         row.operator("gtatools.bitmaps_scan",
-                     text=T("Сканировать"), icon=safe_icon('VIEWZOOM'))
+                     text=T("Сканировать"), **inu_icon(safe_icon('VIEWZOOM')))
         from .compat import ICON_CHECK
         miss = scene.get('bitmaps_missing_count', None)
         if miss is not None:
             row.label(text=f"{T('Пропущено')}: {miss}",
-                      icon=safe_icon('ERROR') if miss else ICON_CHECK)
+                      **inu_icon(safe_icon('ERROR') if miss else ICON_CHECK))
 
         # Текстуры dropdown — file ops + unused cleanup all live here.
         # Unused-count badge sits next to the menu since «Найти/Удалить
         # неиспользуемые» are the ops that produce/consume that count.
         row = layout.row(align=True)
         row.menu("GTATOOLS_MT_textures_menu",
-                 text=T("Текстуры"), icon=safe_icon('IMAGE_DATA'))
+                 text=T("Текстуры"), **inu_icon(safe_icon('IMAGE_DATA')))
         unused_imgs = scene.get('bitmaps_unused_image_count')
         unused_mats = scene.get('bitmaps_unused_material_count')
         if unused_imgs is not None:
             total = unused_imgs + (unused_mats or 0)
             row.label(
                 text=f"{T('Неисп.')}: {unused_imgs}/{unused_mats or 0}",
-                icon=safe_icon('INFO') if total else ICON_CHECK)
+                **inu_icon(safe_icon('INFO') if total else ICON_CHECK))
 
         # Материалы dropdown — Check / Cleanup / Sort consolidated here
         # for the same scene-wide asset-management scope as bitmaps.
         layout.menu("GTATOOLS_MT_materials_menu",
-                    text=T("Материалы"), icon=safe_icon('MATERIAL'))
+                    text=T("Материалы"), **inu_icon(safe_icon('MATERIAL')))
 
 
 classes = (

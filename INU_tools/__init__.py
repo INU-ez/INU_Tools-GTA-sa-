@@ -28,7 +28,7 @@
 bl_info = {
     "name": "INU_tools(gta_sa)",
     "author": "INU",
-    "version": (1, 9, 0),
+    "version": (2, 0, 0),
     # Минимум 2.83 LTS — поддержка через tools/compat.py:
     # • bake / preview / DFF I/O работают через legacy mesh.vertex_colors
     # • prelight preview shader использует ShaderNodeMixRGB на ≤3.3
@@ -324,46 +324,60 @@ import numpy as np
 from bpy.props import StringProperty, BoolProperty, FloatProperty, FloatVectorProperty, IntProperty, CollectionProperty, EnumProperty, PointerProperty
 from bpy.app.handlers import persistent
 
-from .tools.compat import safe_icon
-
-
+from .tools.compat import safe_icon, inu_icon
 # =============================================================================
 # LOCALIZATION SYSTEM
 # =============================================================================
 
 def get_locale():
-    """Get current Blender UI language"""
+    """Return Blender's current UI locale, e.g. 'ru_RU', 'es_ES', 'en_US'."""
     try:
-        locale = bpy.app.translations.locale
-        if locale and locale.startswith('ru'):
-            return 'ru'
-    except:
-        pass
-    return 'en'
+        return bpy.app.translations.locale or 'en_US'
+    except Exception:
+        return 'en_US'
 
-# Translation dictionary: Russian -> English
+
+# Map Blender locale prefix → locale/<code>.py filename
+_LOCALE_TO_LANG = {
+    'ru': None,   # Russian = source language, no translation needed
+    'en': 'eng',
+    'es': 'spa',
+}
+
+# Translation dictionary: Russian -> target language
 from .locale import get_translation
 
 
 def T(text):
-    """Translate text based on Blender UI language.
-    Code uses Russian strings as keys. For Russian UI — returns as-is.
-    For other languages — looks up translation in locale/<lang>.py files.
-    Falls back to English (eng.py) if current language not found.
+    """Translate a Russian source string to the current Blender UI language.
+
+    Code uses Russian strings as canonical keys. For Russian UI — returns
+    the input as-is. For other languages — looks up translation in
+    ``locale/<lang>.py``. Falls back to English (eng.py) if the current
+    locale has no dedicated file.
+
+    Note: when used in ``bl_label`` / ``bl_description`` class attributes,
+    ``T()`` runs ONCE at class-definition time and the result is baked in.
+    For dynamic translation (Blender re-translates on UI-language switch)
+    rely on the ``bpy.app.translations`` registration in
+    ``_register_blender_translations()`` and leave the raw Russian source
+    in ``bl_label`` directly.
     """
     locale = get_locale()
-    if locale and locale.startswith('ru'):
-        return text
-    # Try exact locale first, then fall back to English
-    tr = get_translation(locale)
+    prefix = locale[:2].lower() if locale else 'en'
+    lang_code = _LOCALE_TO_LANG.get(prefix, 'eng')
+    if lang_code is None:
+        return text  # Russian source — return verbatim
+    tr = get_translation(lang_code)
     if tr:
         result = tr.get(text)
         if result:
             return result
-    # Fallback to English
-    eng = get_translation('eng')
-    if eng:
-        return eng.get(text, text)
+    # Fallback to English if target language file is missing the key
+    if lang_code != 'eng':
+        eng = get_translation('eng')
+        if eng:
+            return eng.get(text, text)
     return text
 
 
@@ -428,6 +442,9 @@ from .ui.panels import (  # noqa: E501
     GTATOOLS_PT_check_panel,
     GTATOOLS_UL_lint_issues,
     GTATOOLS_PT_file_scanner,
+    GTATOOLS_UL_map_lint_issues,
+    GTATOOLS_PT_texture_browser,
+    GTATOOLS_UL_texture_browser,
     GTATOOLS_PT_vehicle_panel,
     GTATOOLS_PT_frame_hierarchy,
     GTATOOLS_PT_2dfx_panel,
@@ -448,6 +465,7 @@ from .ui.panels import (  # noqa: E501
     GTATOOLS_PT_anim_panel,
     GTATOOLS_PT_radar_panel,
     GTATOOLS_PT_paths_panel,
+    GTATOOLS_PT_footer_panel,
 )
 # Material context-menu hook — register/unregister append/remove it.
 from .ui.panels import _draw_sort_materials_menu
@@ -457,6 +475,8 @@ from .scene_settings import (
     GTATOOLS_BinaryIplEntry,
     GTATOOLS_ImgFileEntry,
     GTATOOLS_LintIssueItem,
+    GTATOOLS_PathItem,
+    GTATOOLS_TextureBrowserItem,
 )
 from .ops.ifp_import import (
     GTATOOLS_OT_ifp_batch_import,
@@ -492,7 +512,20 @@ from .ops.animobj_ops import (
     GTATOOLS_OT_animobj_setup,
     GTATOOLS_OT_animobj_validate,
     GTATOOLS_OT_animobj_export,
-    INUAnimObjProps,
+    GTATOOLS_OT_animobj_parent_to_pivot,
+    GTATOOLS_OT_animobj_parent_to_root,
+    GTATOOLS_OT_animobj_add_pivot,
+    INUAnimObjEmptyProps,
+    INUAnimObjRigSettings,
+)
+from .ops.weight_paint_ops import (
+    GTATOOLS_OT_weight_merge_start,
+    GTATOOLS_OT_weight_merge_apply,
+    GTATOOLS_OT_weight_merge_cancel,
+)
+from .ops.graph_keys_ops import (
+    GTATOOLS_OT_thin_keyframes,
+    GTATOOLS_PT_graph_thin_keys,
 )
 from .tools.profiles import (
     GTATOOLS_OT_profile_save,
@@ -826,6 +859,11 @@ def _make_inu_flag_update(attr_name):
     Only fires when the user edits the flag on the active object's panel — guards against
     recursion and against runs from import/export where properties are set programmatically
     on non-active objects.
+
+    Также после ручного тогла авто-сохраняет текущий набор флагов как
+    глобальный default для активного пайплайна (в user_data JSON) —
+    чтобы при создании нового объекта или открытии другого .blend
+    флаги в этом пайплайне применились автоматически.
     """
     def _update(self, context):
         global _inu_flag_propagating
@@ -836,17 +874,179 @@ def _make_inu_flag_update(attr_name):
             return
         selected = [o for o in context.selected_objects
                     if o.type == 'MESH' and o != active and hasattr(o, 'inu')]
-        if not selected:
-            return
         value = getattr(self, attr_name)
-        _inu_flag_propagating = True
+        if selected:
+            _inu_flag_propagating = True
+            try:
+                for obj in selected:
+                    if getattr(obj.inu, attr_name) != value:
+                        setattr(obj.inu, attr_name, value)
+            finally:
+                _inu_flag_propagating = False
+        # Global default snapshot (cross-.blend persistence)
         try:
-            for obj in selected:
-                if getattr(obj.inu, attr_name) != value:
-                    setattr(obj.inu, attr_name, value)
-        finally:
-            _inu_flag_propagating = False
+            settings = getattr(context.scene, 'inu_settings', None)
+            pipe = settings.gtatools_export_pipeline if settings else None
+            if pipe in _PIPE_TO_SNAP:
+                snap = {p: bool(getattr(self, p)) for p in _INU_FLAG_PROPS}
+                _save_global_pipe_defaults(pipe, snap)
+        except Exception:
+            pass
     return _update
+
+
+# ── Per-pipeline DFF-flag memory ────────────────────────────────────
+# Each mesh object remembers its own ON/OFF combination of DFF flags
+# для каждого из 4 трэкаемых пайплайнов. Когда юзер переключает
+# scene.inu_settings.gtatools_export_pipeline, мы:
+#   1) пакуем текущие live-флаги в JSON-snap для СТАРОГО пайплайна;
+#   2) распаковываем snap НОВОГО пайплайна (если был) обратно
+#      в live-флаги, иначе оставляем как есть.
+# Snap'ы хранятся как hidden StringProperty на obj.inu, по одному
+# на пайплайн. Список пайплайнов и список флагов — единая правда
+# здесь, чтобы UI/export/restore не разъезжались.
+_INU_FLAG_PROPS = (
+    "export_normals", "light", "modulate_color", "set_material_alpha",
+    "light_beam_asi", "export_binsplit", "uv_map1", "uv_map2",
+    "day_cols", "night_cols",
+)
+
+_PIPE_TO_SNAP = {
+    '0x53F2009A': 'flags_snap_vehicle',
+    '0x53F20098': 'flags_snap_dn',
+    '0x53F2009C': 'flags_snap_building',
+    'PED':        'flags_snap_ped',
+}
+
+# ── Global per-pipeline flag defaults (cross-.blend persistence) ────
+# Лежат в user_data/dff_pipeline_flag_defaults.json. Файл версионирован
+# по bl_info['version'] — при апдейте аддона версия меняется, файл
+# игнорируется → дефолты сбрасываются к code-defaults.
+_PIPE_DEFAULTS_FILENAME = 'dff_pipeline_flag_defaults.json'
+
+
+def _get_pipe_defaults_path():
+    try:
+        from .tools.user_data import get_user_data_dir
+        return os.path.join(get_user_data_dir(), _PIPE_DEFAULTS_FILENAME)
+    except Exception:
+        return None
+
+
+def _addon_version_key():
+    return list(bl_info.get('version', (0, 0, 0)))
+
+
+def _load_global_pipe_defaults():
+    """Return ``{pipeline_id: {flag_name: bool}}`` or ``{}`` on miss /
+    version mismatch."""
+    import json as _json
+    path = _get_pipe_defaults_path()
+    if not path or not os.path.exists(path):
+        return {}
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = _json.load(f)
+        if data.get('addon_version') != _addon_version_key():
+            return {}
+        pipes = data.get('pipelines', {})
+        return pipes if isinstance(pipes, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_global_pipe_defaults(pipe_id, snap):
+    """Merge one pipeline's snapshot into the global defaults JSON file."""
+    import json as _json
+    path = _get_pipe_defaults_path()
+    if not path:
+        return
+    data = {}
+    try:
+        if os.path.exists(path):
+            with open(path, 'r', encoding='utf-8') as f:
+                data = _json.load(f)
+    except Exception:
+        data = {}
+    if not isinstance(data, dict) or data.get('addon_version') != _addon_version_key():
+        data = {'addon_version': _addon_version_key(), 'pipelines': {}}
+    data.setdefault('pipelines', {})[pipe_id] = snap
+    try:
+        with open(path, 'w', encoding='utf-8') as f:
+            _json.dump(data, f, indent=2)
+    except Exception:
+        pass
+
+
+def _inu_pipeline_changed(self, context):
+    """Scene-settings update callback for ``gtatools_export_pipeline``.
+
+    ``self`` is the INUSceneSettings group. ``self.inu_prev_pipeline_internal``
+    tracks the value we last saw; on transition we snapshot live flags
+    into the previous pipeline's slot and restore the new pipeline's
+    slot back onto the live properties for every mesh object in the
+    scene that has ``obj.inu``.
+
+    Только пайплайны из ``_PIPE_TO_SNAP`` участвуют в save/restore —
+    NONE / Custom не имеют своего слота, чтобы не плодить пустые
+    snapshots для дефолтного состояния."""
+    global _inu_flag_propagating
+    new_pipe = self.gtatools_export_pipeline
+    old_pipe = self.inu_prev_pipeline_internal
+    if old_pipe == new_pipe:
+        return
+    # update first so re-entrant draw/update calls see the new tag
+    self.inu_prev_pipeline_internal = new_pipe
+
+    import json as _json
+    old_field = _PIPE_TO_SNAP.get(old_pipe)
+    new_field = _PIPE_TO_SNAP.get(new_pipe)
+    if old_field is None and new_field is None:
+        return  # NONE→Custom or similar — nothing to snapshot
+
+    scn = getattr(context, 'scene', None)
+    if scn is None:
+        return
+
+    # Global cross-.blend defaults — fallback when per-object snap empty
+    global_defaults = _load_global_pipe_defaults().get(new_pipe) if new_field else None
+    if not isinstance(global_defaults, dict):
+        global_defaults = None
+
+    # Suppress _make_inu_flag_update's selection-propagation while we
+    # mass-write flags: restoring snap on object X must not bleed into
+    # selected siblings.
+    prev_guard = _inu_flag_propagating
+    _inu_flag_propagating = True
+    try:
+        for obj in scn.objects:
+            if obj.type != 'MESH':
+                continue
+            inu = getattr(obj, 'inu', None)
+            if inu is None:
+                continue
+            if old_field is not None:
+                snap = {p: bool(getattr(inu, p)) for p in _INU_FLAG_PROPS}
+                setattr(inu, old_field, _json.dumps(snap))
+            if new_field is not None:
+                raw = getattr(inu, new_field, "")
+                snap = None
+                if raw:
+                    try:
+                        snap = _json.loads(raw)
+                    except (ValueError, TypeError):
+                        snap = None
+                if not isinstance(snap, dict):
+                    snap = global_defaults  # may be None — leaves live as-is
+                if isinstance(snap, dict):
+                    for p in _INU_FLAG_PROPS:
+                        if p in snap:
+                            try:
+                                setattr(inu, p, bool(snap[p]))
+                            except Exception:
+                                pass
+    finally:
+        _inu_flag_propagating = prev_guard
 
 
 class INUObjectProps(bpy.types.PropertyGroup):
@@ -866,10 +1066,35 @@ class INUObjectProps(bpy.types.PropertyGroup):
 
     effect_2dfx : EnumProperty(
         items=[
-            ('LIGHT', 'Свет', 'Street light / neon / corona effect'),
-            ('PARTICLE', 'Частица', 'Particle effect (smoke, fire, etc.)'),
-            ('PED_ATTRACTOR', 'Ped Attractor', 'Ped attractor point (ATM, bench, etc.)'),
-            ('SUN_GLARE', 'Sun Glare', 'Sun glare reflection on surface'),
+            ('LIGHT', 'Свет',
+             "Точечный источник света / корона / неон.\n"
+             "Уличные фонари, фары машин, светящиеся окна зданий, "
+             "неоновые вывески. В игре рисуется как 2D-корона с альфа-"
+             "блендингом, видна на расстоянии. Поддерживает цвет, "
+             "затухание, мерцание, типы (street/lamp/police), "
+             "вкл/выкл по времени суток."),
+            ('PARTICLE', 'Частица',
+             "Точка привязки эмиттера частиц из models/effects.fxp.\n"
+             "Дым из труб, всплески воды у причалов, искры на "
+             "электрических столбах, огонь в бочках, пар из "
+             "вентиляции. Сама система частиц выбирается по имени "
+             "(prt_smoke_huge, water_splash, prt_fire и т.д.) из "
+             "effects.fxp — там 82 системы."),
+            ('PED_ATTRACTOR', 'Ped Attractor',
+             "Точка интереса для NPC.\n"
+             "Пешеходы подходят к этой точке и проигрывают "
+             "анимацию: банкомат (ATM), скамейка, продавец у ларька, "
+             "граффити, точка «осмотреться». Имеет тип поведения "
+             "(SCRIPTED/SEAT/STOP/TRIGGER_SCRIPT/LOOK_AT/SCRIPTED_2/"
+             "PARK/STEP), направление куда поворачиваться, "
+             "опционально model_id определённого ped'а."),
+            ('SUN_GLARE', 'Блик солнца',
+             "Точка отражения солнца на поверхности.\n"
+             "Яркий блик когда камера смотрит в сторону солнца через "
+             "эту точку. Используется на крышах автомобилей, стёклах "
+             "окон, металлических деталях. Рисуется как корона с "
+             "альфа-блендингом, размер и яркость зависят от угла "
+             "между направлением точки и солнцем."),
         ],
         name="2DFX Effect Type",
         default='LIGHT',
@@ -1396,6 +1621,15 @@ class INUObjectProps(bpy.types.PropertyGroup):
         update=_make_inu_flag_update("set_material_alpha"))
     light_beam_asi : BoolProperty(default=False, description="", update=_make_inu_flag_update("light_beam_asi"))
 
+    # ── Per-pipeline flag snapshots (hidden) ──
+    # JSON dict {prop_name: bool, ...} запоминающий какие DFF-флаги
+    # были ON/OFF в последний раз когда этот пайплайн был активным.
+    # Записывается/читается _inu_pipeline_changed при смене пайплайна.
+    flags_snap_vehicle  : StringProperty(default="", options={'HIDDEN'})
+    flags_snap_dn       : StringProperty(default="", options={'HIDDEN'})
+    flags_snap_building : StringProperty(default="", options={'HIDDEN'})
+    flags_snap_ped      : StringProperty(default="", options={'HIDDEN'})
+
     # ── IDE / IPL properties ──
     model_id : IntProperty(
         name="Model ID",
@@ -1455,12 +1689,29 @@ class INUObjectProps(bpy.types.PropertyGroup):
         default=1.0, min=0.0,
     )
 
-    # IDE flag checkboxes with auto-sync to ide_flags
+    # IDE flag checkboxes with auto-sync to ide_flags.
+    #
+    # Bit values are verified against gtamods.com/wiki/Item_Definition.
+    # Each property carries a "supported games" hint in its description
+    # so the UI panel can filter the list per ``scene.gtatools_game``
+    # (see ``IDE_FLAG_GAMES`` mapping in ui/panels.py).
     def _update_ide_flag(self, context):
         _FLAG_BITS = [
-            ('flag_is_road', 1), ('flag_draw_last', 4), ('flag_additive', 8),
-            ('flag_no_zbuffer', 64), ('flag_no_shadows', 128),
+            # Stable across all 3 games:
+            ('flag_draw_last', 4), ('flag_additive', 8),
+            ('flag_no_zbuffer', 64),
+            # III + VC (deprecated in SA):
+            ('flag_do_not_fade', 2),
+            ('flag_ignore_lighting', 32),
+            # III only:
+            ('flag_is_subway', 16),
+            # VC + SA (not III):
+            ('flag_is_road', 1),
+            ('flag_no_shadows', 128),
             ('flag_glass_1', 512), ('flag_glass_2', 1024),
+            # VC only:
+            ('flag_ignore_draw_dist', 256),
+            # SA only:
             ('flag_garage_door', 2048), ('flag_damagable', 4096),
             ('flag_is_tree', 8192), ('flag_is_palm', 16384),
             ('flag_no_flyer_col', 32768), ('flag_is_tag', 1048576),
@@ -1472,21 +1723,43 @@ class INUObjectProps(bpy.types.PropertyGroup):
                 val |= bit
         self['ide_flags'] = val
 
-    flag_is_road : BoolProperty(name="IS_ROAD", description=T("Дорога (1)"), default=False, update=_update_ide_flag)
-    flag_draw_last : BoolProperty(name="DRAW_LAST", description=T("Прозрачный, рисовать последним (4)"), default=False, update=_update_ide_flag)
-    flag_additive : BoolProperty(name="ADDITIVE", description=T("Аддитивный блендинг (8)"), default=False, update=_update_ide_flag)
-    flag_no_zbuffer : BoolProperty(name="NO_ZBUFFER_WRITE", description=T("Не писать в Z-буфер (64)"), default=False, update=_update_ide_flag)
-    flag_no_shadows : BoolProperty(name="NO_SHADOWS", description=T("Не получать тени (128)"), default=False, update=_update_ide_flag)
-    flag_glass_1 : BoolProperty(name="GLASS_TYPE_1", description=T("Стекло разбиваемое (512)"), default=False, update=_update_ide_flag)
-    flag_glass_2 : BoolProperty(name="GLASS_TYPE_2", description=T("Стекло с трещинами (1024)"), default=False, update=_update_ide_flag)
-    flag_garage_door : BoolProperty(name="GARAGE_DOOR", description=T("Дверь гаража (2048)"), default=False, update=_update_ide_flag)
-    flag_damagable : BoolProperty(name="DAMAGABLE", description=T("Разрушаемый (4096)"), default=False, update=_update_ide_flag)
-    flag_is_tree : BoolProperty(name="IS_TREE", description=T("Дерево, качается на ветру (8192)"), default=False, update=_update_ide_flag)
-    flag_is_palm : BoolProperty(name="IS_PALM", description=T("Пальма, качается на ветру (16384)"), default=False, update=_update_ide_flag)
-    flag_no_flyer_col : BoolProperty(name="NO_FLYER_COL", description=T("Нет коллизии с летающим (32768)"), default=False, update=_update_ide_flag)
-    flag_is_tag : BoolProperty(name="IS_TAG", description=T("Граффити тег (1048576)"), default=False, update=_update_ide_flag)
-    flag_no_backface : BoolProperty(name="NO_BACKFACE_CULL", description=T("Рисовать обе стороны (2097152)"), default=False, update=_update_ide_flag)
-    flag_breakable : BoolProperty(name="BREAKABLE_STATUE", description=T("Разрушаемая статуя (4194304)"), default=False, update=_update_ide_flag)
+    # Stable across III/VC/SA — show in every game's UI.
+    flag_draw_last : BoolProperty(name="DRAW_LAST", description=T("Прозрачный, рисовать последним (4) · III/VC/SA"), default=False, update=_update_ide_flag)
+    flag_additive : BoolProperty(name="ADDITIVE", description=T("Аддитивный блендинг (8) · III/VC/SA"), default=False, update=_update_ide_flag)
+    flag_no_zbuffer : BoolProperty(name="NO_ZBUFFER_WRITE", description=T("Не писать в Z-буфер (64) · III/VC/SA"), default=False, update=_update_ide_flag)
+
+    # III + VC (SA ignores these bits — checkbox hidden in SA scene).
+    flag_do_not_fade : BoolProperty(name="DO_NOT_FADE", description=T("Без затухания на дистанции (2) · III/VC"), default=False, update=_update_ide_flag)
+    flag_ignore_lighting : BoolProperty(name="IGNORE_LIGHTING", description=T("Динамическое освещение вместо статического (32) · III/VC"), default=False, update=_update_ide_flag)
+
+    # III only.
+    flag_is_subway : BoolProperty(name="IS_SUBWAY", description=T("Туннель, видим только в cull-зоне (16) · III only"), default=False, update=_update_ide_flag)
+
+    # VC + SA (III lacks 0x1 IS_ROAD semantics — bit 0 was «ignored»).
+    flag_is_road : BoolProperty(name="IS_ROAD", description=T("Дорога, wet reflections (1) · VC/SA"), default=False, update=_update_ide_flag)
+    flag_no_shadows : BoolProperty(name="NO_SHADOWS", description=T("Не получать тени (128) · VC/SA"), default=False, update=_update_ide_flag)
+    flag_glass_1 : BoolProperty(name="GLASS_TYPE_1", description=T("Стекло разбиваемое (512) · VC/SA"), default=False, update=_update_ide_flag)
+    flag_glass_2 : BoolProperty(name="GLASS_TYPE_2", description=T("Стекло с трещинами (1024) · VC/SA"), default=False, update=_update_ide_flag)
+
+    # VC only.
+    flag_ignore_draw_dist : BoolProperty(name="IGNORE_DRAW_DIST", description=T("Игнорировать draw distance (256) · VC only — typical для LOD-моделей"), default=False, update=_update_ide_flag)
+
+    # SA only.
+    flag_garage_door : BoolProperty(name="GARAGE_DOOR", description=T("Дверь гаража (2048) · SA only"), default=False, update=_update_ide_flag)
+    flag_damagable : BoolProperty(name="DAMAGABLE", description=T("Разрушаемый ok/dam (4096) · SA only"), default=False, update=_update_ide_flag)
+    flag_is_tree : BoolProperty(name="IS_TREE", description=T("Дерево, качается на ветру (8192) · SA only"), default=False, update=_update_ide_flag)
+    flag_is_palm : BoolProperty(name="IS_PALM", description=T("Пальма, качается на ветру (16384) · SA only"), default=False, update=_update_ide_flag)
+    flag_no_flyer_col : BoolProperty(name="NO_FLYER_COL", description=T("Нет коллизии с летающим (32768) · SA only"), default=False, update=_update_ide_flag)
+    flag_is_tag : BoolProperty(name="IS_TAG", description=T("Граффити тег (1048576) · SA only"), default=False, update=_update_ide_flag)
+    flag_no_backface : BoolProperty(name="NO_BACKFACE_CULL", description=T("Рисовать обе стороны (2097152) · SA only"), default=False, update=_update_ide_flag)
+    flag_breakable : BoolProperty(name="BREAKABLE_STATUE", description=T("Разрушаемая статуя (4194304) · SA only"), default=False, update=_update_ide_flag)
+
+    # Source game for the loaded IDE flags — set by ide_import when
+    # known (defaults to '' = unknown). Read by export to decide
+    # whether translate_flags() needs to run.
+    ide_flags_source_game : StringProperty(name="IDE Flags Source",
+        default="",
+        description=T("Игра-источник IDE flags (III/VC/SA). Используется при экспорте для перевода битов между играми"))
     interior_id : IntProperty(
         name="Interior ID",
         default=0,
@@ -1588,6 +1861,14 @@ class INUMaterialProps(bpy.types.PropertyGroup):
     col_light : IntProperty(name="Light", default=0)
     col_day_light : IntProperty(name="Day Light", default=0, min=0, max=15)
     col_night_light : IntProperty(name="Night Light", default=0, min=0, max=15)
+    # Source game for surface IDs — set by COL import to the detected
+    # game (III/VC/SA). Read by COL export when target game differs:
+    # surface_id is routed through core.surface_translate to map a III
+    # asphalt to SA asphalt rather than writing the same byte unchanged
+    # (which would point at a different material in SA's larger table).
+    # Empty string = unknown source, writer falls back to clamp-only.
+    col_source_game : StringProperty(name="Source Game", default="",
+        description=T("Игра-источник Surface ID (III/VC/SA). Использует core.surface_translate при экспорте в другую игру"))
 
     # Environment Map
     export_env_map : BoolProperty(name="Environment Map")
@@ -1958,8 +2239,10 @@ class GTATOOLS_OT_info_tooltip(bpy.types.Operator):
         return {'CANCELLED'}
 
 
-def _draw_label_with_info(layout, text, tooltip, icon='NONE'):
-    """Draw info icon before label text."""
+def _draw_label_with_info(layout, text, tooltip, **icon_kw):
+    """Draw info icon before label text. Pass icon via ``**inu_icon(...)``
+    so either ``icon=`` (native) or ``icon_value=`` (Lucide PNG) reaches
+    the label."""
     row = layout.row(align=True)
     sub = row.row(align=True)
     # ui_units_x added in Blender 2.83 — guard for 2.80–2.82 fallback
@@ -1968,9 +2251,9 @@ def _draw_label_with_info(layout, text, tooltip, icon='NONE'):
         sub.ui_units_x = 1.3
     except AttributeError:
         pass
-    op = sub.operator("gtatools.info_tooltip", text="", icon=safe_icon('INFO'))
+    op = sub.operator("gtatools.info_tooltip", text="", **inu_icon('INFO'))
     op.tooltip = tooltip
-    row.label(text=text, icon=icon)
+    row.label(text=text, **icon_kw)
 
 
 # Light/Lightmap/Itera/VertexPaint/Scatter operators moved to
@@ -1983,6 +2266,7 @@ from .ops.light_ops import (
     GTATOOLS_OT_lightmap_clear,
     GTATOOLS_OT_create_prelight_lights,
     GTATOOLS_OT_remove_prelight_lights,
+    GTATOOLS_OT_toggle_prelight_lights,
     GTATOOLS_OT_bake_vertex_colors,
     GTATOOLS_OT_bake_vertex_colors_simple,
     GTATOOLS_OT_reset_bake_settings,
@@ -1993,6 +2277,7 @@ from .ops.light_ops import (
     GTATOOLS_OT_vc_contrast,
     GTATOOLS_OT_vc_brightness,
     GTATOOLS_OT_vc_gamma,
+    GTATOOLS_OT_lift_shadows,
     GTATOOLS_OT_vc_smooth_between,
     GTATOOLS_OT_load_lightmap,
     GTATOOLS_OT_remove_lightmap,
@@ -2060,6 +2345,7 @@ from .ops.world_ops import (
     GTATOOLS_OT_export_track,
     GTATOOLS_OT_import_nodes,
     GTATOOLS_OT_export_nodes,
+    GTATOOLS_OT_toggle_nodes_viz,
     GTATOOLS_OT_import_paths_ipl,
     GTATOOLS_OT_export_paths_ipl,
     GTATOOLS_OT_convert_to_path,
@@ -2068,6 +2354,21 @@ from .ops.world_ops import (
     GTATOOLS_OT_add_vehicle_path,
     GTATOOLS_OT_add_ped_path,
     GTATOOLS_OT_mark_station,
+)
+from .ops.path_curves import (
+    GTATOOLS_OT_nodes_to_curves,
+    GTATOOLS_OT_curves_to_nodes,
+    GTATOOLS_OT_select_path_peds,
+    GTATOOLS_OT_select_path_vehs,
+    GTATOOLS_OT_select_path_all,
+    GTATOOLS_OT_refresh_path_colors,
+    GTATOOLS_OT_pick_path_props,
+    GTATOOLS_OT_apply_path_props,
+    GTATOOLS_OT_bulk_set_path_props,
+    GTATOOLS_OT_add_path_accessory,
+    GTATOOLS_OT_remove_path_accessory,
+    GTATOOLS_OT_start_accessory_sync,
+    GTATOOLS_OT_toggle_path_debug,
 )
 # Operators moved to ops/object_utils_ops.py in Phase 3.
 from .ops.object_utils_ops import (
@@ -2214,9 +2515,9 @@ def _draw_id_manager(layout, scene, context):
     # ── 1. Preset row ──────────────────────────────────
     preset_row = layout.row(align=True)
     preset_row.prop(scene.inu_settings, "gtatools_id_preset", text="")
-    preset_row.operator("gtatools.id_preset_new", text="", icon=safe_icon('ADD'))
-    preset_row.operator("gtatools.id_preset_rename", text="", icon=safe_icon('GREASEPENCIL'))
-    preset_row.operator("gtatools.id_preset_delete", text="", icon=safe_icon('REMOVE'))
+    preset_row.operator("gtatools.id_preset_new", text="", **inu_icon(safe_icon('ADD')))
+    preset_row.operator("gtatools.id_preset_rename", text="", **inu_icon(safe_icon('GREASEPENCIL')))
+    preset_row.operator("gtatools.id_preset_delete", text="", **inu_icon(safe_icon('REMOVE')))
 
     free = get_free_ids()
     used = get_used_ids()
@@ -2227,16 +2528,16 @@ def _draw_id_manager(layout, scene, context):
     from .tools.compat import ICON_CHECK
     stats_row.label(
         text=f"{T('Свободных:')} {len(free)}",
-        icon=ICON_CHECK)
+        **inu_icon(ICON_CHECK))
     stats_row.label(
         text=f"{T('Занятых:')} {len(used)}",
-        icon=safe_icon('OBJECT_DATA'))
+        **inu_icon(safe_icon('OBJECT_DATA')))
     if free:
         stats_box.label(
             text=f"{T('Следующий свободный:')} {free[0]}",
-            icon=safe_icon('FORWARD'))
+            **inu_icon(safe_icon('FORWARD')))
 
-    layout.prop(scene.inu_settings, "gtatools_id_search", text="", icon=safe_icon('VIEWZOOM'))
+    layout.prop(scene.inu_settings, "gtatools_id_search", text="", **inu_icon(safe_icon('VIEWZOOM')))
     search = getattr(scene.inu_settings, 'gtatools_id_search', '').strip()
     page = getattr(scene.inu_settings, 'gtatools_id_page', 0)
     per_page = 20
@@ -2263,7 +2564,7 @@ def _draw_id_manager(layout, scene, context):
         if total == 0 and search:
             layout.label(
                 text=T("Ничего не найдено"),
-                icon=safe_icon('ERROR'))
+                **inu_icon(safe_icon('ERROR')))
         else:
             # 2 columns, COLUMN-major (top-to-bottom in col 1, then
             # top-to-bottom in col 2). Old layout was row-major
@@ -2273,7 +2574,7 @@ def _draw_id_manager(layout, scene, context):
             # bouncing across rows.
             sub = layout.box()
             sub.label(text=T("Используются:"),
-                      icon=safe_icon('OUTLINER_OB_GROUP_INSTANCE'))
+                      **inu_icon(safe_icon('OUTLINER_OB_GROUP_INSTANCE')))
             n = len(page_items)
             half = (n + 1) // 2  # rows per column (col 1 ≥ col 2)
             col = sub.column(align=True)
@@ -2284,7 +2585,7 @@ def _draw_id_manager(layout, scene, context):
                 row.label(text=f"{id_num} {name}")
                 op = row.operator(
                     "gtatools.id_manager_release",
-                    text="", icon='X')
+                    text="", **inu_icon('X'))
                 op.model_id = id_num
                 # Column 2 entry — present unless we hit odd-count tail
                 idx2 = r + half
@@ -2293,7 +2594,7 @@ def _draw_id_manager(layout, scene, context):
                     row.label(text=f"{id_num2} {name2}")
                     op2 = row.operator(
                         "gtatools.id_manager_release",
-                        text="", icon='X')
+                        text="", **inu_icon('X'))
                     op2.model_id = id_num2
                 else:
                     # Filler so single tail entry doesn't take the
@@ -2309,7 +2610,7 @@ def _draw_id_manager(layout, scene, context):
 
     if free:
         sub = layout.box()
-        sub.label(text=T("Свободные ID:"), icon=safe_icon('LIBRARY_DATA_DIRECT'))
+        sub.label(text=T("Свободные ID:"), **inu_icon(safe_icon('LIBRARY_DATA_DIRECT')))
         text = ", ".join(str(i) for i in sorted(free)[:20])
         if len(free) > 20:
             text += "..."
@@ -2323,29 +2624,29 @@ def _draw_id_manager(layout, scene, context):
     col = layout.column(align=True)
     row = col.row(align=True)
     row.operator("gtatools.id_manager_auto_assign",
-                 text=T("Назначить"), icon=safe_icon('ADD'))
+                 text=T("Назначить"), **inu_icon(safe_icon('ADD')))
     row.operator("gtatools.id_manager_assign_from",
-                 text=T("С ID..."), icon=safe_icon('SEQUENCE'))
+                 text=T("С ID..."), **inu_icon(safe_icon('SEQUENCE')))
     row = col.row(align=True)
     row.operator("gtatools.id_manager_sync_scene",
-                 text=T("Sync"), icon=safe_icon('FILE_REFRESH'))
+                 text=T("Sync"), **inu_icon(safe_icon('FILE_REFRESH')))
     row.operator("gtatools.id_manager_clear_selected",
-                 text=T("Очистить"), icon=safe_icon('REMOVE'))
+                 text=T("Очистить"), **inu_icon(safe_icon('REMOVE')))
     row = col.row(align=True)
     row.operator("gtatools.id_manager_create",
-                 text=T("Создать ID"), icon=safe_icon('FILE_NEW'))
+                 text=T("Создать ID"), **inu_icon(safe_icon('FILE_NEW')))
     row.operator("gtatools.id_manager_clear",
-                 text=T("Очистить всё"), icon=safe_icon('TRASH'))
+                 text=T("Очистить всё"), **inu_icon(safe_icon('TRASH')))
     row = col.row(align=True)
     row.operator("gtatools.id_manager_from_game",
-                 text=T("Из игры"), icon=safe_icon('IMPORT'))
+                 text=T("Из игры"), **inu_icon(safe_icon('IMPORT')))
     row.operator("gtatools.id_manager_extend",
-                 text=T("Расширить FLA"), icon=safe_icon('ADD'))
+                 text=T("Расширить FLA"), **inu_icon(safe_icon('ADD')))
     col.operator("gtatools.id_manager_gc",
                  text=T("Освободить фантомы"),
-                 icon=safe_icon('ORPHAN_DATA'))
+                 **inu_icon(safe_icon('ORPHAN_DATA')))
     col.operator("gtatools.id_manager_open_file",
-                 text=T("Открыть файл ID"), icon=safe_icon('FILE_TEXT'))
+                 text=T("Открыть файл ID"), **inu_icon(safe_icon('FILE_TEXT')))
 
 
 # Operators moved to ops/id_manager_ops.py in Phase 3.
@@ -2375,9 +2676,39 @@ def _presets_dir():
     return d
 
 
+# Built-in Default preset — read-only, always first in the dropdown.
+# Lives in code (not on disk) so it cannot be deleted or accidentally
+# overwritten. Save/Apply/Rename operators reject the name "Default".
+_DEFAULT_PRELIGHT_PRESET = {
+    "name": "Default",
+    "ambient": 0.10,
+    "intensity": 0.05,
+    "gamma": 0.50,
+    "shadows": True,
+    "modulate_mode": "OFF",
+    "modulate_mix": 0.002,
+    "modulate_contrast": 0.0,
+    "modulate_gamma": 0.8,
+    "v_offset": 0.0,
+    "scatter_strength": 1.0,
+    "scatter_distance": 0.3,
+    "vc_smooth_iter": 1,
+    "vc_smooth_factor": 0.5,
+    "vc_contrast": 1.0,
+    "vc_brightness": 0.0,
+    "vc_gamma": 1.0,
+    "lift_shadows": 0.5,
+    "v_offset_day": 0.0,
+    "v_offset_night": 0.0,
+    "has_day_attr": True,
+    "has_night_attr": True,
+    "lights": [],
+}
+
+
 def _load_prelight_presets():
     import json
-    presets = []
+    presets = [dict(_DEFAULT_PRELIGHT_PRESET)]  # always first
     d = _presets_dir()
     if not os.path.isdir(d):
         os.makedirs(d, exist_ok=True)
@@ -2386,11 +2717,15 @@ def _load_prelight_presets():
             try:
                 with open(os.path.join(d, f), 'r', encoding='utf-8') as fh:
                     p = json.load(fh)
-                    if 'name' in p:
-                        presets.append(p)
+                    name = p.get('name')
+                    if not name or name == _DEFAULT_PRELIGHT_PRESET['name']:
+                        # Skip user-written file with the reserved name
+                        # so the in-code Default always wins.
+                        continue
+                    presets.append(p)
             except:
                 pass
-    return presets if presets else [{"name": "Default", "ambient": 0.10, "intensity": 0.05, "gamma": 0.50, "shadows": True}]
+    return presets
 
 
 def _save_preset_file(preset):
@@ -2438,6 +2773,21 @@ from .ops.file_scanner_ops import (
     GTATOOLS_OT_scan_reveal_file,
     GTATOOLS_OT_scan_clear,
 )
+from .ops.map_analyzer_ops import (
+    GTATOOLS_OT_analyze_map,
+    GTATOOLS_OT_map_analyzer_add_ide,
+    GTATOOLS_OT_map_analyzer_add_ipl,
+    GTATOOLS_OT_map_analyzer_remove_ide,
+    GTATOOLS_OT_map_analyzer_remove_ipl,
+    GTATOOLS_OT_map_analyzer_clear,
+    GTATOOLS_OT_map_analyzer_save_report,
+)
+from .ops.texture_browser_ops import (
+    GTATOOLS_OT_scan_textures,
+    GTATOOLS_OT_clear_texture_browser,
+    GTATOOLS_OT_texture_browser_add_file,
+    GTATOOLS_OT_texture_browser_remove_file,
+)
 # =============================================================================
 # IFP (ANIMATION) OPERATORS
 # =============================================================================
@@ -2451,6 +2801,7 @@ from .ops.ifp_ops import (
     GTATOOLS_OT_ifp_preview_toggle,
     GTATOOLS_OT_apply_ifp,
     GTATOOLS_OT_fix_quat_signs,
+    GTATOOLS_OT_smooth_between_anchors,
     GTATOOLS_OT_delete_active_action,
 )
 from .ops.ik_rig import (
@@ -2467,6 +2818,10 @@ from .ops.radar_ops import (
     GTATOOLS_OT_radar_generate,
     GTATOOLS_OT_radar_pack_txd,
 )
+from .ops.viewport_floater import (
+    GTATOOLS_OT_floater_modal,
+    GTATOOLS_OT_floater_toggle,
+)
 # =============================================================================
 # =============================================================================
 # REGISTRATION
@@ -2479,6 +2834,8 @@ classes = (
     GTATOOLS_ImgFileEntry,
     GTATOOLS_BinaryIplEntry,
     GTATOOLS_LintIssueItem,
+    GTATOOLS_PathItem,
+    GTATOOLS_TextureBrowserItem,
     GTATOOLS_TxdExportEntry,
     GTATOOLS_UL_txd_export_plan,
     GTATOOLS_UL_img_files,
@@ -2501,6 +2858,8 @@ classes = (
     GTATOOLS_OT_export_col,
     GTATOOLS_OT_export_all,
     GTATOOLS_OT_inu_export,
+    GTATOOLS_OT_floater_modal,
+    GTATOOLS_OT_floater_toggle,
     GTATOOLS_OT_info_tooltip,
     GTATOOLS_OT_detect_models,
     GTATOOLS_OT_average_colors,
@@ -2509,6 +2868,7 @@ classes = (
     GTATOOLS_OT_lightmap_clear,
     GTATOOLS_OT_create_prelight_lights,
     GTATOOLS_OT_remove_prelight_lights,
+    GTATOOLS_OT_toggle_prelight_lights,
     GTATOOLS_OT_bake_vertex_colors,
     GTATOOLS_OT_bake_vertex_colors_simple,
     GTATOOLS_OT_reset_bake_settings,
@@ -2524,6 +2884,7 @@ classes = (
     GTATOOLS_OT_vc_contrast,
     GTATOOLS_OT_vc_brightness,
     GTATOOLS_OT_vc_gamma,
+    GTATOOLS_OT_lift_shadows,
     GTATOOLS_OT_vc_smooth_between,
     GTATOOLS_OT_load_lightmap,
     GTATOOLS_OT_remove_lightmap,
@@ -2611,10 +2972,35 @@ classes = (
     GTATOOLS_OT_scan_save_report,
     GTATOOLS_OT_scan_reveal_file,
     GTATOOLS_OT_scan_clear,
+    GTATOOLS_OT_analyze_map,
+    GTATOOLS_OT_map_analyzer_add_ide,
+    GTATOOLS_OT_map_analyzer_add_ipl,
+    GTATOOLS_OT_map_analyzer_remove_ide,
+    GTATOOLS_OT_map_analyzer_remove_ipl,
+    GTATOOLS_OT_map_analyzer_clear,
+    GTATOOLS_OT_map_analyzer_save_report,
+    GTATOOLS_OT_scan_textures,
+    GTATOOLS_OT_clear_texture_browser,
+    GTATOOLS_OT_texture_browser_add_file,
+    GTATOOLS_OT_texture_browser_remove_file,
     GTATOOLS_OT_import_track,
     GTATOOLS_OT_export_track,
     GTATOOLS_OT_import_nodes,
     GTATOOLS_OT_export_nodes,
+    GTATOOLS_OT_toggle_nodes_viz,
+    GTATOOLS_OT_nodes_to_curves,
+    GTATOOLS_OT_curves_to_nodes,
+    GTATOOLS_OT_select_path_peds,
+    GTATOOLS_OT_select_path_vehs,
+    GTATOOLS_OT_select_path_all,
+    GTATOOLS_OT_refresh_path_colors,
+    GTATOOLS_OT_pick_path_props,
+    GTATOOLS_OT_apply_path_props,
+    GTATOOLS_OT_bulk_set_path_props,
+    GTATOOLS_OT_add_path_accessory,
+    GTATOOLS_OT_remove_path_accessory,
+    GTATOOLS_OT_start_accessory_sync,
+    GTATOOLS_OT_toggle_path_debug,
     GTATOOLS_OT_import_ifp,
     GTATOOLS_OT_export_ifp,
     GTATOOLS_OT_merge_ifp,
@@ -2622,6 +3008,7 @@ classes = (
     GTATOOLS_OT_ifp_preview_toggle,
     GTATOOLS_OT_apply_ifp,
     GTATOOLS_OT_fix_quat_signs,
+    GTATOOLS_OT_smooth_between_anchors,
     GTATOOLS_OT_delete_active_action,
     GTATOOLS_OT_add_ik_rig,
     GTATOOLS_OT_bake_ik_rig,
@@ -2656,6 +3043,9 @@ classes = (
     GTATOOLS_PT_check_panel,
     GTATOOLS_UL_lint_issues,
     GTATOOLS_PT_file_scanner,
+    GTATOOLS_UL_map_lint_issues,
+    GTATOOLS_PT_texture_browser,
+    GTATOOLS_UL_texture_browser,
     GTATOOLS_PT_vehicle_panel,
     GTATOOLS_PT_frame_hierarchy,
     GTATOOLS_OT_apply_2dfx_preset,
@@ -2705,6 +3095,7 @@ classes = (
     GTATOOLS_OT_radar_pack_txd,
     GTATOOLS_PT_radar_panel,
     GTATOOLS_PT_paths_panel,
+    GTATOOLS_PT_footer_panel,
     GTATOOLS_PT_uv_tools_panel,
     GTATOOLS_OT_add_gtasa_model,
     VIEW3D_MT_gtasa_add_menu,
@@ -2759,7 +3150,16 @@ classes = (
     GTATOOLS_OT_animobj_setup,
     GTATOOLS_OT_animobj_validate,
     GTATOOLS_OT_animobj_export,
-    INUAnimObjProps,
+    INUAnimObjEmptyProps,
+    INUAnimObjRigSettings,
+    GTATOOLS_OT_animobj_parent_to_pivot,
+    GTATOOLS_OT_animobj_parent_to_root,
+    GTATOOLS_OT_animobj_add_pivot,
+    GTATOOLS_OT_weight_merge_start,
+    GTATOOLS_OT_weight_merge_apply,
+    GTATOOLS_OT_weight_merge_cancel,
+    GTATOOLS_OT_thin_keyframes,
+    GTATOOLS_PT_graph_thin_keys,
     GTATOOLS_OT_profile_save,
     GTATOOLS_OT_profile_delete,
     GTATOOLS_OT_profile_pick_panel,
@@ -3244,20 +3644,41 @@ def _register_blender_translations():
     most common contexts so any UI element looking up our message
     finds it regardless of the context Blender picks.
     """
-    from .locale import get_translation
-    eng_dict = get_translation('eng')
-    if not eng_dict:
-        return
+    from .locale import get_translation, available_languages
 
     # Mirror every entry across the contexts Blender consults for
     # different UI element kinds. Costs a few KiB of dict — negligible.
     contexts = ('*', 'Operator', 'Property', 'WindowManager')
-    en_us_entries = {}
-    for k, v in eng_dict.items():
-        for ctx in contexts:
-            en_us_entries[(ctx, k)] = v
 
-    blender_dict = {'en_US': en_us_entries}
+    # Map our locale/<code>.py to Blender locale identifiers.
+    # Blender 4.x lists Spanish as both 'es' (generic / Latin America) and
+    # 'es_ES' (Spain) — when the user picks "Spanish" in the language
+    # dropdown, ``bpy.app.translations.locale`` returns one or the other
+    # depending on the OS / Blender build, so register under BOTH. Same
+    # idea for English: en_US / en_GB / bare 'en'.
+    # Extend this dict when adding new language files.
+    LANG_TO_BLENDER_LOCALES = {
+        'eng': ('en_US', 'en_GB', 'en'),
+        'spa': ('es_ES', 'es'),
+    }
+
+    blender_dict = {}
+    for lang_code in available_languages():
+        blender_locales = LANG_TO_BLENDER_LOCALES.get(lang_code)
+        if not blender_locales:
+            continue
+        lang_dict = get_translation(lang_code)
+        if not lang_dict:
+            continue
+        entries = {}
+        for k, v in lang_dict.items():
+            for ctx in contexts:
+                entries[(ctx, k)] = v
+        for blender_locale in blender_locales:
+            blender_dict[blender_locale] = entries
+
+    if not blender_dict:
+        return
 
     # Idempotent — addon reload may otherwise hit «already registered».
     try:
@@ -3284,6 +3705,11 @@ def register():
     # Blender at draw time when the user is on a non-Russian UI.
     _register_blender_translations()
 
+    # Load our PNG icons into a bpy.utils.previews collection so
+    # `icon_value=icon_previews.get('NAME')` works in panel draw().
+    from .data import icon_previews
+    icon_previews.register()
+
     # Auto-fill operator tooltip from the class docstring when one
     # isn't explicitly set. We assign the *raw* Russian text rather
     # than T(...) — Blender's translation system above handles the
@@ -3303,11 +3729,15 @@ def register():
     # INU property groups
     bpy.types.Object.inu = bpy.props.PointerProperty(type=INUObjectProps)
     bpy.types.Material.inu = bpy.props.PointerProperty(type=INUMaterialProps)
-    # Per-rig settings for Animated Map Object — exposes the live-edit
-    # sliders (turns, duration, axis) on armatures tagged with
-    # obj['inu_animobj']. Created/populated by GTATOOLS_OT_animobj_setup.
-    bpy.types.Object.inu_animobj_props = bpy.props.PointerProperty(
-        type=INUAnimObjProps)
+    # Per-pivot settings for Empty-based animated map object (Kams-style).
+    # Lives on each pivot Empty alongside inu_animobj_empty_pivot=True flag.
+    bpy.types.Object.inu_animobj_empty_props = bpy.props.PointerProperty(
+        type=INUAnimObjEmptyProps)
+    # Rig-level settings (lives on root Empty) — holds the «pick a mesh»
+    # eyedropper picker + the target enum so users can attach further
+    # meshes with one click.
+    bpy.types.Object.inu_animobj_rig_settings = bpy.props.PointerProperty(
+        type=INUAnimObjRigSettings)
 
     # Sort materials button in material context menu
     bpy.types.MATERIAL_MT_context_menu.append(_draw_sort_materials_menu)
@@ -3316,6 +3746,14 @@ def register():
     # See scene_settings.py for the full field list.
     bpy.utils.register_class(INUSceneSettings)
     bpy.types.Scene.inu_settings = bpy.props.PointerProperty(type=INUSceneSettings)
+
+    # Floater framework — populate the registry of floater instances now
+    # that INUSceneSettings is live (instances read scene props by name).
+    try:
+        from .ops.viewport_floater import register_floaters
+        register_floaters()
+    except Exception as e:
+        print(f"[INU Floater] register_floaters failed: {e}")
 
     # CollectionProperty fields on non-Scene types stay outside the PG:
     #   - Object.gtatools_fill_colors      — per-object fill history
@@ -3377,6 +3815,20 @@ def register():
     bpy.types.WindowManager.gtatools_scan_results = CollectionProperty(
         type=GTATOOLS_LintIssueItem)
     bpy.types.WindowManager.gtatools_scan_results_index = IntProperty(default=0)
+    # Map analyzer results — same shape as scanner, separate collection
+    # so the two panels filter / clear independently.
+    bpy.types.WindowManager.gtatools_map_analyzer_results = CollectionProperty(
+        type=GTATOOLS_LintIssueItem)
+    bpy.types.WindowManager.gtatools_map_analyzer_results_index = IntProperty(default=0)
+    bpy.types.WindowManager.gtatools_map_analyzer_stats_summary = StringProperty(default="")
+    # Texture Browser results — UIList of TextureBrowserItem. Index
+    # carries an update callback that lazily decodes the selected
+    # texture's pixels into a Blender Image for in-panel preview.
+    from .ops.texture_browser_ops import on_index_update as _tb_idx_update
+    bpy.types.WindowManager.gtatools_texture_browser_results = CollectionProperty(
+        type=GTATOOLS_TextureBrowserItem)
+    bpy.types.WindowManager.gtatools_texture_browser_results_index = IntProperty(
+        default=0, update=_tb_idx_update)
 
     # Keymap: Shift+T — toggle UV Editor
     wm = bpy.context.window_manager
@@ -3409,9 +3861,12 @@ def register():
     start_billboard_timer()
     bpy.app.handlers.load_post.append(_on_file_load_restart_timer)
     bpy.app.handlers.load_post.append(_on_file_load_restore_paths)
+    bpy.app.handlers.load_post.append(_on_file_load_resume_toggles)
     bpy.app.handlers.load_post.append(_on_file_load_migrate_modulate)
     bpy.app.handlers.load_post.append(_on_file_load_migrate_2dfx_size)
     bpy.app.handlers.load_post.append(_on_file_load_migrate_scene_settings)
+    bpy.app.handlers.load_post.append(_on_file_load_sync_pipeline_prev)
+    bpy.app.handlers.load_post.append(_on_file_load_floater)
     # Run migration once at register too — для уже открытой сцены.
     try:
         _on_file_load_migrate_modulate(None)
@@ -3529,6 +3984,35 @@ def _on_file_load_restore_paths(dummy):
     _load_paths(bpy.context.scene)
 
 
+@persistent
+def _on_file_load_resume_toggles(dummy):
+    """Re-arm the «Проверка» panel's stateful toggles after a .blend
+    load. The toggle Bool flags survive in scene properties, but two
+    pieces of runtime state don't:
+      * Module globals in object_utils_ops mirror the hide-DFF/LOD/COL/
+        SHA Bool flags — refresh them from scene state.
+      * The DFF↔LOD↔COL links viewport overlay needs its draw handler
+        re-registered if the user saved with it active.
+    Without this hook the panel buttons still light up correctly (UI
+    reads scene props) but the overlay stays invisible until the user
+    clicks the toggle off-and-on again.
+    """
+    try:
+        from .ops import object_utils_ops as _obj
+        _obj._sync_module_globals(bpy.context.scene)
+    except Exception:
+        pass
+    try:
+        from .ops import map_ops as _map
+        s = bpy.context.scene.inu_settings
+        _map._links_active = bool(s.gtatools_links_active)
+        if _map._links_active and _map._links_draw_handler is None:
+            _map._links_draw_handler = bpy.types.SpaceView3D.draw_handler_add(
+                _map._draw_model_links, (), 'WINDOW', 'POST_VIEW')
+    except Exception:
+        pass
+
+
 # ── Migrate stale Modulate Color defaults ────────────────────────
 # Property defaults применяются только к новым сценам. Если в .blend
 # было сохранено значение со старым дефолтом, оно останется. Этот
@@ -3591,6 +4075,23 @@ def _on_file_load_migrate_scene_settings(dummy):
 
 
 @persistent
+def _on_file_load_sync_pipeline_prev(dummy):
+    """Sync ``inu_prev_pipeline_internal`` со значением ``gtatools_export_pipeline``
+    при загрузке .blend, чтобы первое переключение пайплайна в старой
+    сцене корректно зафиксировало «откуда» сохранять flag-snapshot.
+    Без этого save-в-старый-slot пропускается, и юзер теряет first-time
+    edits при возврате на исходный пайплайн."""
+    for scene in bpy.data.scenes:
+        settings = getattr(scene, 'inu_settings', None)
+        if settings is None:
+            continue
+        try:
+            settings.inu_prev_pipeline_internal = settings.gtatools_export_pipeline
+        except Exception:
+            pass
+
+
+@persistent
 def _on_file_load_migrate_2dfx_size(dummy):
     """Migrate legacy ``obj['2dfx_corona_size']`` and ``obj['2dfx_shadow_size']``
     custom IDProperties to the new ``inu.corona_size_2dfx`` /
@@ -3632,10 +4133,42 @@ def _on_file_load_restart_timer(dummy):
     bpy.app.timers.register(_delayed_start, first_interval=1.0)
 
 
+@persistent
+def _on_file_load_floater(dummy):
+    """Re-invoke the viewport floater modal if the saved scene had it on.
+
+    Delayed via timer because at load_post fire-time the window manager
+    may not yet have its VIEW_3D areas hooked up — invoking the modal
+    immediately occasionally drops the registration.
+    """
+    def _delayed():
+        from .ops.viewport_floater import restore_floater_if_visible
+        restore_floater_if_visible()
+        return None
+    bpy.app.timers.register(_delayed, first_interval=0.5)
+
+
 def unregister():
     # Drop our locale dict before any classes go away — keeps Blender's
     # translation table clean across addon reloads.
     _unregister_blender_translations()
+
+    # Release the custom icon preview collection.
+    try:
+        from .data import icon_previews
+        icon_previews.unregister()
+    except Exception as e:
+        print(f"[INU] icon_previews unregister failed: {e}")
+
+    # Drop the floater GPU icon texture cache. Without this, a
+    # disable/enable cycle leaves stale textures (and the dict-non-empty
+    # short-circuit in _load_icons()) so new PNGs in data/icons/native/
+    # never get loaded — user has to fully restart Blender.
+    try:
+        from .ops.floater import gpu_shaders as _gs
+        _gs._free_icons()
+    except Exception as e:
+        print(f"[INU] floater _free_icons failed: {e}")
 
     # Unregister the addon's user data dir from Blender's preset path
     # registry (paired with register_preset_path call in register()).
@@ -3663,12 +4196,18 @@ def unregister():
         bpy.app.handlers.load_post.remove(_on_file_load_restart_timer)
     if _on_file_load_restore_paths in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(_on_file_load_restore_paths)
+    if _on_file_load_resume_toggles in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_on_file_load_resume_toggles)
     if _on_file_load_migrate_modulate in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(_on_file_load_migrate_modulate)
     if _on_file_load_migrate_2dfx_size in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(_on_file_load_migrate_2dfx_size)
     if _on_file_load_migrate_scene_settings in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(_on_file_load_migrate_scene_settings)
+    if _on_file_load_sync_pipeline_prev in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_on_file_load_sync_pipeline_prev)
+    if _on_file_load_floater in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_on_file_load_floater)
 
     # File > Export / Import menus
     bpy.types.TOPBAR_MT_file_export.remove(menu_func_export)
@@ -3679,8 +4218,10 @@ def unregister():
 
     del bpy.types.Object.inu
     del bpy.types.Material.inu
-    if hasattr(bpy.types.Object, 'inu_animobj_props'):
-        del bpy.types.Object.inu_animobj_props
+    if hasattr(bpy.types.Object, 'inu_animobj_empty_props'):
+        del bpy.types.Object.inu_animobj_empty_props
+    if hasattr(bpy.types.Object, 'inu_animobj_rig_settings'):
+        del bpy.types.Object.inu_animobj_rig_settings
 
     bpy.types.MATERIAL_MT_context_menu.remove(_draw_sort_materials_menu)
 
@@ -3711,6 +4252,13 @@ def unregister():
         _uv._uv_grid_draw_handler = None
     _uv._uv_grid_visible = False
 
+    # Viewport Floater — drop draw handler + reset module state
+    try:
+        from .ops.viewport_floater import floater_cleanup
+        floater_cleanup()
+    except Exception as e:
+        print(f"[INU Floater] cleanup failed: {e}")
+
     # Scene properties — single PointerProperty + PropertyGroup class.
     try:
         del bpy.types.Scene.inu_settings
@@ -3730,6 +4278,17 @@ def unregister():
     try:
         del bpy.types.WindowManager.gtatools_scan_results
         del bpy.types.WindowManager.gtatools_scan_results_index
+    except Exception:
+        pass
+    try:
+        del bpy.types.WindowManager.gtatools_map_analyzer_results
+        del bpy.types.WindowManager.gtatools_map_analyzer_results_index
+        del bpy.types.WindowManager.gtatools_map_analyzer_stats_summary
+    except Exception:
+        pass
+    try:
+        del bpy.types.WindowManager.gtatools_texture_browser_results
+        del bpy.types.WindowManager.gtatools_texture_browser_results_index
     except Exception:
         pass
     try:

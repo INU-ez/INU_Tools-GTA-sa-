@@ -8,7 +8,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/Blender-2.83%E2%80%935.1-orange?logo=blender" alt="Blender">
-  <img src="https://img.shields.io/badge/Version-1.9.0-green" alt="Version">
+  <img src="https://img.shields.io/badge/Version-2.0.0-green" alt="Version">
   <img src="https://img.shields.io/badge/License-GPL--3.0-blue" alt="License">
 </p>
 
@@ -51,24 +51,28 @@
 
 Список идей на будущее. Не всё обязательно дойдёт до релиза — какие-то фичи могут отвалиться при ближайшем рассмотрении (нет смысла / нет приоритета / технически непрактично).
 
-- 🔍 **Game Validator** — кросс-файловые проверки IDE / IPL / IMG / COL / TXD: пропущенные ссылки, дубликаты ID, битые LOD-цепочки, координаты вне map bounds, единый отчёт с группировкой Critical / Warning / Info
 - 💾 **Game Folder Backup** — авто-снапшот `gta3.img` и важных `.ide` перед destructive ops (Map Export, IMG rebuild)
-- 🧪 **Lint Profiles** — переключатель strict / lenient / FLA для File Scanner и Game Validator (FLA-сборки имеют другие лимиты)
 - 🔁 **IPL Mass Replace** — заменить все INST с model X на model Y по координатам / радиусу / тегу
-- 🔍 **Texture Browser** — UIList со всеми текстурами из всех TXD папки игры, с поиском и cross-ref «где используется»
 - 🎬 **IFP Library Viewer** — превью любой из 294 анимаций на временном armature без создания ped'а
+- 🎆 **Auto-LOD generation** — при отсутствии парного `_L0` Map Export генерит decimate-копию автоматически (по примеру EMAPTool)
 
-## 🆕 Что нового в 1.9.0
+## 🆕 Что нового в 2.0.0
 
-- 📦 **Единая сборка** — один `.zip` работает и для GitHub-release, и для extensions.blender.org. NVTT subprocess заменён на встроенный pure-numpy DXT-энкодер (`core/dxt.py`, ~×7 быстрее NVTT, без внешних бинарников)
-- 🔍 **Линтер бинарных файлов** — sub-panel «Скан файлов» внутри Check. Парсит DFF/COL/TXD на диске, ловит crash-prone паттерны (битый shadow mesh, NPOT-текстуры, GEOM_NATIVE на PC, atomic/triangle indices вне диапазона и др.) с описанием для каждого кода
-- 📚 **Сборщик Asset Library** — превращает любой набор IDE/IPL/IMG (vanilla SA, кастомная карта, модовый архив) в Blender Asset Library с превьюшками, готово drop'ать прямо в **Asset Browser**
-- 🎨 **Day/Night V-offset инлайн** — слайдер яркости рядом с самой кнопкой Day/Night (auto-apply на Enter), переживает повторное запекание
-- 💡 **Prelight-улучшения** — селектор пресета перенесён в шапку Prelight + кнопка ✓ перезаписывает выбранный пресет (с диффом изменённых полей), Modulate Color теперь часть пресетов, новая sub-panel **Scatter Color** заливает выбранный цвет вокруг выделенных полигонов с KDTree-falloff
-- 🔄 **Round-trip для особых DFF** — парсер теперь умеет файлы где Clump (0x10) идёт после других чанков (например UV Animation Dictionary 0x2B). Vanilla `chinafurn1.dff` импортируется/экспортируется байт-в-байт
-- 🧹 Удалено: `dff2gltf.py`, `extras/nvtt_compress.py`, разделение FULL/STORE сборок
+- 🪟 **Floater окна** — 5 свободно-плавающих GPU-окон для частых операций без скролла N-панели: **Info / Import-Export / Validation / Lighting / IDE-IPL-IMG**. SDF-шейдеры, своё AA, тема-адаптивная палитра, drag/resize/collapse/dock между workspace'ами. Кликабельная иконка в шапке каждой панели открывает соответствующий floater.
+- 🌐 **Поддержка GTA III / VC / SA** — авто-детект игры по содержимому файла, отдельные таблицы IDE flags / surface IDs / ped masks для каждой игры, корректное чтение/запись III/VC форматов IMG / DFF / COL / IPL / IDE
+- 🔍 **Game Validator** — кросс-файловые проверки IDE/IPL: пропущенные ссылки, дубликаты ID, конфликты, IMG-cross-check. Sub-panel «Анализ карты» с группировкой Critical / Warning / Info
+- 🧪 **Lint Profiles** — переключатель **STANDARD / FLA / STRICT / LENIENT** для File Scanner и Game Validator (FLA-сборки имеют другие лимиты, LENIENT для legacy-проектов)
+- 🖼️ **Texture Browser** — UIList со всеми текстурами из выбранного источника (IMG/папка/IDE-список), с превью, поиском и cross-ref «где используется»
+- 🎬 **Анимированные объекты на эмпти** — переписан animobj-пайплайн, обходит rest_quat баг бонового флоу. IFP экспорт стабильно работает с custom анимациями
+- 🛠️ **Light Master** — 5 lighting-панелей (Prelight, Prelight COL, Vertex Paint, LightMap, Itera) теперь подпанели одной мастер-панели, collapsible одним кликом
+- 🎨 **Material панель унифицирована** — 3 материальные панели (SURFACE / EFFECTS / PIPELINE) объединены в одну с внутренним табом
+- 🦴 **IK Rig + IFP фиксы** — bone-based controls с фиксами POSE vs REST, brute-force pole_angle, FK bake on Add, visual_key at union, FLOOR constraint
+- 🇪🇸 **Локализация ES** — полный испанский перевод UI (819+ строк)
+- 🧱 **Архитектура** — `__init__.py` разбит на 22 ops-модуля (~140 операторов вынесены, −64% размера файла), `ui/registry.py` с zone-based порядком панелей
+- 💡 **2DFX** — каждый тип эффекта (Свет / Частица / Ped Attractor / Блик солнца) получил развёрнутые описания. Свободные кнопки IDE/IPL/IMG в floater'е читаются как fused-кластер
+- 🐛 **Hotfix'ы из main** — все 14 пост-1.9.0 фиксов включены: col empty, light col day/night, anim object rest_quat, path nodes parser, install extension, particle save и др.
 
-→ [Полные release notes](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v1.9.0) · [История версий](../../../releases)
+→ [Полные release notes](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v2.0.0) · [История версий](../../../releases)
 
 ## 🧰 Возможности
 

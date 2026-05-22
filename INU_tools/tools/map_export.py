@@ -19,7 +19,7 @@ from dataclasses import dataclass
 import bpy
 
 from .model_utils import get_model_type
-from .compat import safe_icon
+from .compat import safe_icon, inu_icon
 from .. import T
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -670,8 +670,19 @@ def iter_export_map(context, target_dir: str, *, objects=None,
     # ── Lazy imports (so the generator doesn't pull bpy heavy modules
     # in until it's actually run) ──
     if export_dff:
-        from ..ops.dff_export import export_dff as _export_dff
+        from ..ops.dff_export import export_dff as _export_dff, _resolve_export_version
+        # Resolve RW version + platform once for the whole map export —
+        # bulk export honours scene's gtatools_game + gtatools_platform.
+        _map_export_rw_version = _resolve_export_version()
+        try:
+            import bpy as _bpy
+            _map_export_platform = getattr(
+                _bpy.context.scene.inu_settings, 'gtatools_platform', 'PC')
+        except Exception:
+            _map_export_platform = 'PC'
     if export_col:
+        from ..ops.col_export import _resolve_col_version
+        _map_export_col_version = _resolve_col_version()
         if col_library:
             from ..ops.col_export import export_col_library as _export_col_lib
         else:
@@ -705,7 +716,9 @@ def iter_export_map(context, target_dir: str, *, objects=None,
                     group_objs.append(g.lod)
                 group_objs.extend(g.col_objects)
                 try:
-                    _export_dff(dff_path, group_objs)
+                    _export_dff(dff_path, group_objs,
+                                version=_map_export_rw_version,
+                                target_platform=_map_export_platform)
                     stats['dff'] += 1
                 except Exception as e:
                     print(f"[map_export] DFF {g.base} failed: {e}")
@@ -713,7 +726,8 @@ def iter_export_map(context, target_dir: str, *, objects=None,
             if export_col and not col_library and g.col_objects:
                 col_path = os.path.join(cell_dir, f"{g.base}.col")
                 try:
-                    _export_col(col_path, g.col_objects)
+                    _export_col(col_path, g.col_objects,
+                                version=_map_export_col_version)
                     stats['col'] += 1
                 except Exception as e:
                     print(f"[map_export] COL {g.base} failed: {e}")
@@ -727,7 +741,8 @@ def iter_export_map(context, target_dir: str, *, objects=None,
             for g in cell_groups:
                 all_col_objs.extend(g.col_objects)
             try:
-                count = _export_col_lib(lib_path, all_col_objs)
+                count = _export_col_lib(lib_path, all_col_objs,
+                                        version=_map_export_col_version)
                 stats['col'] += count
             except Exception as e:
                 print(f"[map_export] COL library failed: {e}")
@@ -972,13 +987,13 @@ class GTATOOLS_OT_map_export(bpy.types.Operator):
         # auto-detection fails to capture the user's Ctrl-clicked set
         # (Blender's selected_ids context is brittle from sidebar buttons).
         box = layout.box()
-        box.label(text=T("Целевые коллекции:"), icon=safe_icon('OUTLINER_COLLECTION'))
+        box.label(text=T("Целевые коллекции:"), **inu_icon(safe_icon('OUTLINER_COLLECTION')))
         col = box.column(align=True)
         col.prop(self, "target_collections", expand=True)
         if not self.target_collections:
             box.label(
                 text=T("(пусто = выделение из outliner на момент нажатия)"),
-                icon=safe_icon('INFO'),
+                **inu_icon(safe_icon('INFO')),
             )
 
         layout.separator()

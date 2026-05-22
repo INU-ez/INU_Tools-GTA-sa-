@@ -276,6 +276,7 @@ def _build_animation(action, armature, fps: float) -> Animation:
         bone = AnimBone(name=bone_name)
 
         has_rot = 'rotation_quaternion' in props
+        has_euler = 'rotation_euler' in props and not has_rot
         has_loc = 'location' in props
 
         # Strip the translation channel for bones that never actually
@@ -343,8 +344,20 @@ def _build_animation(action, armature, fps: float) -> Animation:
             if not rot_active:
                 has_rot = False
 
+        if has_euler:
+            euler_active = False
+            for fc in props['rotation_euler']:
+                for kp in fc.keyframe_points:
+                    if abs(kp.co[1]) > 1e-5:
+                        euler_active = True
+                        break
+                if euler_active:
+                    break
+            if not euler_active:
+                has_euler = False
+
         bone.key_type = 0
-        if has_rot:
+        if has_rot or has_euler:
             bone.key_type |= HAS_ROT
         if has_loc:
             bone.key_type |= HAS_TRANS
@@ -377,11 +390,38 @@ def _build_animation(action, armature, fps: float) -> Animation:
         # the ground — every bone was rotated by rest^-1.
         rest_quat, rest_mat = _bone_rest_local(armature, bone_name)
 
+        # Collect all keyed timestamps across location/rotation channels.
         times = set()
         for prop_curves in props.values():
             for fc in prop_curves:
                 for kp in fc.keyframe_points:
                     times.add(kp.co[0])
+
+        # rotation_euler can store a full 0→2π turn between just two
+        # keyframes (start + end). Quaternion conversion of those two
+        # endpoints alone is identity → identity, so an IFP keyed only
+        # at those frames would have the engine slerp between two
+        # identities (no rotation in-game). Densify between every pair
+        # of adjacent timestamps so the in-IFP shortest-arc slerp can
+        # actually traverse the full turn. 4 splits per interval =
+        # max 90° between adjacent IFP keys (slerp short-arc OK up to
+        # 180°, picking 90° gives us safety margin).
+        if has_euler and len(times) >= 2:
+            sorted_times = sorted(times)
+            for a, b in zip(sorted_times, sorted_times[1:]):
+                step = (b - a) / 4.0
+                for k in range(1, 4):
+                    times.add(a + step * k)
+
+        # Pose-bone rotation_mode determines how the euler triplet is
+        # composed into a quaternion. Default XYZ works for animobj_setup
+        # rigs; preserve whatever the user set if they tweaked it.
+        euler_rotation_mode = 'XYZ'
+        if has_euler and armature is not None:
+            pb = armature.pose.bones.get(bone_name)
+            if pb is not None and pb.rotation_mode in (
+                    'XYZ', 'XZY', 'YXZ', 'YZX', 'ZXY', 'ZYX'):
+                euler_rotation_mode = pb.rotation_mode
 
         for frame in sorted(times):
             kf = KeyFrame(time=frame / fps)
@@ -404,6 +444,23 @@ def _build_animation(action, armature, fps: float) -> Animation:
                 gta_quat = rest_quat @ bl_quat
                 kf.rotation = (
                     gta_quat.x, gta_quat.y, gta_quat.z, gta_quat.w)
+            elif has_euler:
+                # Sample the euler triplet at this frame, build a
+                # quaternion, then apply the rest_quat the same way the
+                # quaternion path does. Lets animobj_setup keep its
+                # natural 2-keyframe euler representation (0° → 360°)
+                # while still producing a valid IFP rotation track.
+                euler_vals = [0.0, 0.0, 0.0]
+                for fc in props['rotation_euler']:
+                    euler_vals[fc.array_index] = fc.evaluate(frame)
+                bl_quat = mathutils.Euler(
+                    (euler_vals[0], euler_vals[1], euler_vals[2]),
+                    euler_rotation_mode).to_quaternion()
+                if bl_quat.magnitude > 0:
+                    bl_quat.normalize()
+                gta_quat = rest_quat @ bl_quat
+                kf.rotation = (
+                    gta_quat.x, gta_quat.y, gta_quat.z, gta_quat.w)
 
             if has_loc:
                 loc_fcs = props['location']
@@ -418,6 +475,190 @@ def _build_animation(action, armature, fps: float) -> Animation:
         anim.bones.append(bone)
 
     return anim
+
+
+def _empty_action_keyframes(action) -> set:
+    """All keyframe timestamps in an Empty's Action across all fcurves.
+
+    Empty Actions key ``rotation_quaternion``/``location``/``scale``
+    directly on the object — fcurve.data_path is bare (no
+    ``pose.bones[...]`` prefix), so we just iterate fcurves and
+    collect keyframe X coords.
+    """
+    times = set()
+    for fc in _iter_action_fcurves(action):
+        for kp in fc.keyframe_points:
+            times.add(kp.co[0])
+    return times
+
+
+def _build_animation_from_empty_rig(action_name: str, root_empty, fps: float) -> Animation:
+    """Build one IFP Animation from a Kams-style Empty rig hierarchy.
+
+    Walks every descendant Empty of *root_empty* that has ``inu_bone_id``
+    set, samples its own action's rotation_quaternion + location at
+    every keyed frame, and emits an AnimBone track per Empty.
+
+    Unlike the armature path we DON'T apply ``rest_quat @ bl_quat`` —
+    Empty's rotation_quaternion is already absolute in parent space,
+    which is what IFP encodes natively. This is the main reason the
+    Empty flow sidesteps the stepping bug.
+    """
+    from .animobj_ops import _collect_empty_rig_descendants
+
+    anim = Animation(name=action_name)
+    if root_empty is None:
+        return anim
+
+    for emp in _collect_empty_rig_descendants(root_empty):
+        bone_id = int(emp.get('inu_bone_id', 0))
+        ad = emp.animation_data
+        if ad is None or ad.action is None:
+            # Static frame (root with BoneID=0, no animation) — no track needed.
+            continue
+        action = ad.action
+
+        # Collect timed samples from this Empty's own action.
+        times = _empty_action_keyframes(action)
+        if not times:
+            continue
+
+        # Group fcurves by property — Empty's data_paths are bare.
+        prop_fcs = {}
+        for fc in _iter_action_fcurves(action):
+            prop = fc.data_path.rsplit('.', 1)[-1] if '.' in fc.data_path else fc.data_path
+            prop_fcs.setdefault(prop, []).append(fc)
+
+        has_rot = 'rotation_quaternion' in prop_fcs
+        has_euler = 'rotation_euler' in prop_fcs and not has_rot
+        has_loc = 'location' in prop_fcs
+
+        # Drop dead tracks (all zero/identity) — same logic as armature path.
+        if has_loc:
+            loc_active = False
+            for fc in prop_fcs['location']:
+                for kp in fc.keyframe_points:
+                    if abs(kp.co[1]) > 1e-5:
+                        loc_active = True
+                        break
+                if loc_active:
+                    break
+            if not loc_active:
+                has_loc = False
+
+        if has_rot:
+            rot_active = False
+            sample_frames = set()
+            for fc in prop_fcs['rotation_quaternion']:
+                for kp in fc.keyframe_points:
+                    sample_frames.add(kp.co[0])
+            for sf in sample_frames:
+                q_w, q_x, q_y, q_z = 1.0, 0.0, 0.0, 0.0
+                for fc in prop_fcs['rotation_quaternion']:
+                    val = fc.evaluate(sf)
+                    if fc.array_index == 0: q_w = val
+                    elif fc.array_index == 1: q_x = val
+                    elif fc.array_index == 2: q_y = val
+                    elif fc.array_index == 3: q_z = val
+                if (abs(abs(q_w) - 1.0) > 1e-4
+                        or abs(q_x) > 1e-4 or abs(q_y) > 1e-4 or abs(q_z) > 1e-4):
+                    rot_active = True
+                    break
+            if not rot_active:
+                has_rot = False
+
+        bone = AnimBone(name=emp.name)
+        bone.bone_id = bone_id
+        bone.key_type = 0
+        if has_rot or has_euler:
+            bone.key_type |= HAS_ROT
+        if has_loc:
+            bone.key_type |= HAS_TRANS
+        if not bone.key_type:
+            continue
+
+        # Densify euler intervals — same as armature path.
+        if has_euler and len(times) >= 2:
+            sorted_times = sorted(times)
+            for a, b in zip(sorted_times, sorted_times[1:]):
+                step = (b - a) / 4.0
+                for k in range(1, 4):
+                    times.add(a + step * k)
+
+        euler_rotation_mode = emp.rotation_mode if emp.rotation_mode in (
+            'XYZ', 'XZY', 'YXZ', 'YZX', 'ZXY', 'ZYX') else 'XYZ'
+
+        for frame in sorted(times):
+            kf = KeyFrame(time=frame / fps)
+
+            if has_rot:
+                quat = [0.0, 0.0, 0.0, 1.0]  # W, X, Y, Z indices
+                for fc in prop_fcs['rotation_quaternion']:
+                    quat[fc.array_index] = fc.evaluate(frame)
+                bl_quat = mathutils.Quaternion(
+                    (quat[0], quat[1], quat[2], quat[3]))
+                if bl_quat.magnitude > 0:
+                    bl_quat.normalize()
+                # NO rest_quat composition — Empty's transform is
+                # already in parent space, exactly what IFP wants.
+                kf.rotation = (bl_quat.x, bl_quat.y, bl_quat.z, bl_quat.w)
+            elif has_euler:
+                euler_vals = [0.0, 0.0, 0.0]
+                for fc in prop_fcs['rotation_euler']:
+                    euler_vals[fc.array_index] = fc.evaluate(frame)
+                bl_quat = mathutils.Euler(
+                    tuple(euler_vals), euler_rotation_mode).to_quaternion()
+                if bl_quat.magnitude > 0:
+                    bl_quat.normalize()
+                kf.rotation = (bl_quat.x, bl_quat.y, bl_quat.z, bl_quat.w)
+
+            if has_loc:
+                loc = [0.0, 0.0, 0.0]
+                for fc in prop_fcs['location']:
+                    loc[fc.array_index] = fc.evaluate(frame)
+                kf.translation = (loc[0], loc[1], loc[2])
+
+            bone.keyframes.append(kf)
+
+        anim.bones.append(bone)
+
+    return anim
+
+
+def build_ifp_from_empty_rig(root_empty, action_name: str = "",
+                              package_name: str = "anim",
+                              decimate: bool = False,
+                              decimate_tol_rot: float = 1e-3,
+                              decimate_tol_trans: float = 1e-3) -> IFPFile:
+    """Kams-style entry: build a single-Animation IFPFile from a root
+    Empty's rig hierarchy.
+
+    The animation name is taken from *action_name* if non-empty, else
+    falls back to the pivot's action.name (first pivot in pre-order),
+    else to *package_name*. One IFPFile per root rig — separate rigs
+    each produce their own .ifp via separate calls.
+    """
+    fps = bpy.context.scene.render.fps
+    ifp = IFPFile(name=package_name)
+
+    # Resolve animation name from the first animated pivot if not provided.
+    if not action_name:
+        from .animobj_ops import _collect_empty_rig_descendants
+        for emp in _collect_empty_rig_descendants(root_empty):
+            ad = emp.animation_data
+            if ad and ad.action:
+                action_name = ad.action.name
+                break
+        if not action_name:
+            action_name = package_name
+
+    anim = _build_animation_from_empty_rig(action_name, root_empty, fps)
+    if anim.bones:
+        ifp.animations.append(anim)
+
+    if decimate and ifp.animations:
+        decimate_ifp(ifp, decimate_tol_rot, decimate_tol_trans)
+    return ifp
 
 
 def build_ifp_from_actions(actions=None, armature=None,

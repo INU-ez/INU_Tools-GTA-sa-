@@ -17,6 +17,8 @@ import os
 import struct
 from typing import List, Literal
 
+from . import lint_profile
+
 
 Severity = Literal['ERROR', 'WARN', 'INFO']
 
@@ -159,6 +161,10 @@ EXPLANATIONS = {
     'DFF_ATOMIC_GEOM_OOR':
         "Atomic ссылается на geometry_index за пределами geometries. Тоже "
         "вызовет out-of-bounds при инициализации меша.",
+    'DFF_ATOMIC_FRAME_NOT_ROOT':
+        "Skinned clump: atomic.frame_index указывает внутрь иерархии костей "
+        "(на потомка корня скелета), а должен быть корнем или его родителем. "
+        "SA streaming вылетит при попытке прицепить атомик к листу скелета.",
     'DFF_FRAME_PARENT_OOR':
         "Frame.parent указывает на несуществующий frame или на самого себя. "
         "Ломает иерархию костей и трансформов.",
@@ -391,15 +397,24 @@ def _lint_col_raw_header(path: str, raw: bytes) -> List[LintIssue]:
     return out
 
 
-def lint_col(path: str) -> List[LintIssue]:
+def lint_col(path: str, profile: str = lint_profile.STANDARD,
+             game: str = 'SA') -> List[LintIssue]:
     """Lint a single .col file. Returns a list of LintIssue (may be empty).
 
     Reuses core/col.py reader; on parse failure, emits a single
     PARSE_FAIL issue and stops. Successful parse is followed by a
     series of structural checks (bounds, sphere radii, face indices,
     surface IDs, shadow consistency).
+
+    ``game`` (III/VC/SA) selects the vanilla surface-ID ceiling for
+    the COL_SURFACE_ID_FLA_ONLY check: III=84, VC=85, SA=178. Above
+    those, Fastman92 Limit Adjuster is required.
     """
     issues: List[LintIssue] = []
+    # Per-game surface-ID range. III/VC have far fewer surface types
+    # than SA's 178 — a surface 100 in a III .col loads as garbage.
+    from . import game_versions as _gv
+    _surface_vanilla_max = _gv.profile_for(game).surface_id_max
 
     try:
         size_on_disk = os.path.getsize(path)
@@ -491,14 +506,14 @@ def lint_col(path: str) -> List[LintIssue]:
                         f"index {which}={idx} >= vertex count {nv}"))
                     break  # one report per face
 
-        # Surface IDs. Vanilla SA: 0..178. FLA: 0..254.
+        # Surface IDs. Vanilla per game: III=84, VC=85, SA=178. FLA: 254.
         bad_vanilla = []
         bad_fla = []
         for fi, fc in enumerate(m.faces):
             sid = fc.surface.material
             if sid > _COL_SURFACE_FLA_MAX:
                 bad_fla.append((fi, sid))
-            elif sid > _COL_SURFACE_VANILLA_MAX:
+            elif sid > _surface_vanilla_max:
                 bad_vanilla.append((fi, sid))
         if bad_fla:
             fi, sid = bad_fla[0]
@@ -510,7 +525,7 @@ def lint_col(path: str) -> List[LintIssue]:
             fi, sid = bad_vanilla[0]
             issues.append(LintIssue('WARN', 'COL_SURFACE_ID_FLA_ONLY',
                 path, f"{prefix}.face[{fi}]",
-                f"surface ID {sid} > {_COL_SURFACE_VANILLA_MAX} (needs FLA to load)"
+                f"surface ID {sid} > {_surface_vanilla_max} (needs FLA to load)"
                 + (f"; +{len(bad_vanilla)-1} more" if len(bad_vanilla) > 1 else "")))
 
         # Shadow mesh sanity (COL3+). Note: model.flags bit 1 ("has
@@ -559,7 +574,7 @@ def lint_col(path: str) -> List[LintIssue]:
                 path, prefix,
                 f"{nv} collision vertices — close to u16 limit (65 535)"))
 
-    return issues
+    return lint_profile.apply_filter(issues, profile)
 
 
 # ── DFF / TXD stubs (Phase 2/3) ──────────────────────────────────
@@ -583,13 +598,22 @@ _DFF_BONES_HARD = 255           # u8
 _DFF_2DFX_SOFT = 200
 
 
-def lint_dff(path: str) -> List[LintIssue]:
+def lint_dff(path: str, profile: str = lint_profile.STANDARD) -> List[LintIssue]:
     """Lint a single .dff: per-geometry limits (vertices/triangles/
     materials/UV/skin/2DFX) and atomic/frame index validity.
 
     Reuses core/dff.py reader. On parse failure emits PARSE_FAIL.
+
+    ``profile`` selects threshold overrides + post-filter:
+    STANDARD keeps module defaults, STRICT tightens vert/tri/mat/2dfx
+    soft limits, FLA / LENIENT only affect the post-filter step.
     """
     issues: List[LintIssue] = []
+    _cfg = lint_profile.get_profile(profile)
+    _vert_soft = _cfg.dff_vert_soft if _cfg.dff_vert_soft is not None else _DFF_VERT_SOFT
+    _tri_soft = _cfg.dff_tri_soft if _cfg.dff_tri_soft is not None else _DFF_TRI_SOFT
+    _mat_vanilla = _cfg.dff_mat_vanilla if _cfg.dff_mat_vanilla is not None else _DFF_MAT_VANILLA
+    _2dfx_soft = _cfg.dff_2dfx_soft if _cfg.dff_2dfx_soft is not None else _DFF_2DFX_SOFT
 
     try:
         size = os.path.getsize(path)
@@ -644,6 +668,51 @@ def lint_dff(path: str) -> List[LintIssue]:
                 path, f"atomic[{ai}]",
                 f"geometry_index={atom.geometry_index} but only {n_geoms} geometries"))
 
+    # ── Skinned clump: atomic must attach at skeleton root, not a child bone ──
+    # Find the skeleton root: the frame whose HAnim plugin carries the bone
+    # array (only the root frame has a non-empty bones list — all others
+    # have boneCount=0 placeholders). For SA peds this is normally frame[1]
+    # ("Normal") with frame[0] being the absolute scene root above it.
+    #
+    # Soldier.dff at the reference site had atomic.frame_index = 32 (= last
+    # bone "L Toe0"), causing a streaming crash. SA's clump-setup code reads
+    # atomic.frame as the model's attach point — when it lands deep inside
+    # the bone tree the skin matrices and parent transforms are computed
+    # against the wrong basis and the loader dies before the ped spawns.
+    skel_root_idx = None
+    for fi, frame in enumerate(clump.frames):
+        hanim = getattr(frame, 'hanim', None)
+        if hanim is not None and getattr(hanim, 'bones', None):
+            skel_root_idx = fi
+            break
+    if skel_root_idx is not None:
+        for ai, atom in enumerate(clump.atomics):
+            if not (0 <= atom.frame_index < n_frames):
+                continue   # already reported as OOR above
+            if atom.frame_index <= skel_root_idx:
+                continue   # at-or-above skeleton root — valid attachment
+            # Walk parent chain from the atomic's frame upward — if it
+            # passes through the skeleton root, the atomic is anchored
+            # inside the bone hierarchy.
+            cur = atom.frame_index
+            seen = set()
+            inside_skeleton = False
+            while cur != -1 and cur not in seen and 0 <= cur < n_frames:
+                seen.add(cur)
+                if cur == skel_root_idx:
+                    inside_skeleton = True
+                    break
+                cur = clump.frames[cur].parent
+            if inside_skeleton:
+                bone_name = clump.frames[atom.frame_index].name or '?'
+                root_name = clump.frames[skel_root_idx].name or '?'
+                issues.append(LintIssue('ERROR', 'DFF_ATOMIC_FRAME_NOT_ROOT',
+                    path, f"atomic[{ai}]",
+                    f"frame_index={atom.frame_index} ('{bone_name}') is a "
+                    f"descendant of skeleton root frame[{skel_root_idx}] "
+                    f"('{root_name}'). Set it to {skel_root_idx} (root) "
+                    f"or {clump.frames[skel_root_idx].parent} (parent of root)."))
+
     # Frame parents form a tree — each parent index must be < own index
     # or -1 (root). Cyclic / forward refs corrupt the bone hierarchy.
     for fi, frame in enumerate(clump.frames):
@@ -665,28 +734,28 @@ def lint_dff(path: str) -> List[LintIssue]:
             issues.append(LintIssue('ERROR', 'DFF_GEOM_VERT_COUNT_HARD',
                 path, prefix,
                 f"{nv} vertices — u16 limit is {_DFF_VERT_HARD}"))
-        elif nv > _DFF_VERT_SOFT:
+        elif nv > _vert_soft:
             issues.append(LintIssue('WARN', 'DFF_GEOM_VERT_COUNT_HIGH',
                 path, prefix,
-                f"{nv} vertices — close to u16 limit, glitches likely past 32k"))
+                f"{nv} vertices — close to u16 limit, glitches likely past {_vert_soft}"))
 
         if nt > _DFF_VERT_HARD:
             issues.append(LintIssue('ERROR', 'DFF_GEOM_TRI_COUNT_HARD',
                 path, prefix,
                 f"{nt} triangles — u16 index limit is {_DFF_VERT_HARD}"))
-        elif nt > _DFF_TRI_SOFT:
+        elif nt > _tri_soft:
             issues.append(LintIssue('WARN', 'DFF_GEOM_TRI_COUNT_HIGH',
                 path, prefix,
-                f"{nt} triangles — vanilla SA stable up to ~30-40k"))
+                f"{nt} triangles — vanilla SA stable up to ~{_tri_soft}"))
 
         if nm > _DFF_MAT_HARD:
             issues.append(LintIssue('ERROR', 'DFF_GEOM_MAT_COUNT_HARD',
                 path, prefix,
                 f"{nm} materials — u16 limit is {_DFF_MAT_HARD}"))
-        elif nm > _DFF_MAT_VANILLA:
+        elif nm > _mat_vanilla:
             issues.append(LintIssue('WARN', 'DFF_GEOM_MAT_COUNT_VANILLA',
                 path, prefix,
-                f"{nm} materials — vanilla SA renders max {_DFF_MAT_VANILLA}"))
+                f"{nm} materials — practical cap is {_mat_vanilla}"))
 
         if nu > _DFF_UV_LAYERS_HARD:
             issues.append(LintIssue('ERROR', 'DFF_GEOM_UV_LAYERS_HARD',
@@ -745,10 +814,10 @@ def lint_dff(path: str) -> List[LintIssue]:
         # 2DFX count
         if g.ext_2dfx is not None:
             n2 = len(g.ext_2dfx.entries)
-            if n2 > _DFF_2DFX_SOFT:
+            if n2 > _2dfx_soft:
                 issues.append(LintIssue('WARN', 'DFF_2DFX_COUNT_HIGH',
                     path, prefix,
-                    f"{n2} 2DFX entries — practical cap is {_DFF_2DFX_SOFT}"))
+                    f"{n2} 2DFX entries — practical cap is {_2dfx_soft}"))
 
         # GEOM_NATIVE flag — data is in a platform-extension, not in
         # the standard struct. PC engine doesn't know how to read PS2
@@ -806,7 +875,7 @@ def lint_dff(path: str) -> List[LintIssue]:
             f"RW version 0x{clump.version:X} — vanilla SA writes 0x36003. "
             "Loader may misroute or refuse the file."))
 
-    return issues
+    return lint_profile.apply_filter(issues, profile)
 
 
 _TXD_NAME_HARD = 32          # u8-length textures buffer (32 bytes incl. null)
@@ -896,15 +965,22 @@ def _scan_txd_natives(raw: bytes) -> list:
     return out
 
 
-def lint_txd(path: str) -> List[LintIssue]:
+def lint_txd(path: str, profile: str = lint_profile.STANDARD) -> List[LintIssue]:
     """Lint a single .txd: per-texture name length, dimensions, POT,
     DXT block alignment, platform_id, depth, mipmap consistency.
 
     Uses a lightweight raw-bytes chunk walker (does not decode pixels).
     Catches platform mismatches (PS2/Xbox dropped into PC TXD) that
     would silently fail in the decoder fallback path.
+
+    ``profile`` selects threshold overrides: STRICT tightens
+    TXD_TEX_TOO_LARGE from 1024 to 512 px.
     """
     issues: List[LintIssue] = []
+    _cfg = lint_profile.get_profile(profile)
+    _size_vanilla = (_cfg.txd_size_vanilla
+                     if _cfg.txd_size_vanilla is not None
+                     else _TXD_SIZE_VANILLA)
 
     try:
         size = os.path.getsize(path)
@@ -982,10 +1058,10 @@ def lint_txd(path: str) -> List[LintIssue]:
                 f"{w}x{h} — размеры не степень двойки. "
                 "Допустимы только 1/2/4/8/16/32/64/128/256/512/1024/2048/4096"))
 
-        if w > _TXD_SIZE_VANILLA or h > _TXD_SIZE_VANILLA:
+        if w > _size_vanilla or h > _size_vanilla:
             issues.append(LintIssue('WARN', 'TXD_TEX_TOO_LARGE',
                 path, prefix,
-                f"{w}x{h} > {_TXD_SIZE_VANILLA} — stream budget spike"))
+                f"{w}x{h} > {_size_vanilla} — stream budget spike"))
 
         # Bit depth — must be a sane RW value.
         if depth not in _TXD_DEPTH_VALID:
@@ -1026,16 +1102,23 @@ def lint_txd(path: str) -> List[LintIssue]:
                 path, prefix,
                 f"num_levels={num_levels} > max possible {max_levels} for {w}x{h}"))
 
-    return issues
+    return lint_profile.apply_filter(issues, profile)
 
 
 # ── Folder scanner ───────────────────────────────────────────────
 
 def scan_folder(folder: str, *, scan_dff=True, scan_col=True, scan_txd=True,
-                recursive=False, progress_cb=None) -> List[LintIssue]:
+                recursive=False, progress_cb=None,
+                profile: str = lint_profile.STANDARD,
+                game: str = 'SA') -> List[LintIssue]:
     """Walk a folder, lint matching files, return all issues.
 
     progress_cb(i, n, path) — optional callback for UI progress bars.
+    profile — see core.lint_profile; propagated to every per-file
+    linter so STRICT thresholds + FLA/LENIENT silencing apply
+    uniformly.
+    game — III/VC/SA target; drives per-game ceilings inside the
+    per-file linters (surface_id_max, etc.).
     """
     if not os.path.isdir(folder):
         return [LintIssue('ERROR', 'SCAN_NOT_A_DIR', folder, '',
@@ -1059,9 +1142,9 @@ def scan_folder(folder: str, *, scan_dff=True, scan_col=True, scan_txd=True,
         if progress_cb:
             progress_cb(i, len(targets), path)
         if kind == 'col':
-            issues.extend(lint_col(path))
+            issues.extend(lint_col(path, profile=profile, game=game))
         elif kind == 'dff':
-            issues.extend(lint_dff(path))
+            issues.extend(lint_dff(path, profile=profile))
         elif kind == 'txd':
-            issues.extend(lint_txd(path))
+            issues.extend(lint_txd(path, profile=profile))
     return issues

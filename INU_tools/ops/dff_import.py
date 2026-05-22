@@ -15,7 +15,7 @@ import mathutils
 import numpy as np
 
 from .. import T
-from ..tools.compat import safe_icon
+from ..tools.compat import safe_icon, inu_icon
 from bpy.props import (
     StringProperty, CollectionProperty,
 )
@@ -656,17 +656,29 @@ def _build_armature(clump: DffClump, name: str):
                 matrix.to_3x3() @ mathutils.Vector((0, 0, 1))
             )
         else:
-            # Fallback: frame rotation/position
+            # Fallback: frame rotation/position (animated map objects —
+            # rigs without SkinPLG). DFF stores frame.rotation row-major
+            # with rows = axis vectors (RW convention), so the Matrix
+            # constructor below — which takes ROW tuples — must read
+            # (rot[0],rot[1],rot[2]) as row 0, NOT a column.
+            #
+            # The earlier "build as columns, then .transposed()" path
+            # was equivalent in pure linear algebra (transpose twice =
+            # identity) BUT for a bone authored with tail=(0,0,1) it
+            # flipped the head→tail vector to -Z, because the export
+            # side writes matrix_local.transposed() and we have to read
+            # it back row-major to get matrix_local — not its transpose.
+            # Symptoms before the fix: animated mesh imported lying on
+            # its side (X+90°) and IFP application rotated 180° around Y.
             rot = frame.rotation
             pos = frame.position
             matrix = mathutils.Matrix((
-                (rot[0], rot[3], rot[6]),
-                (rot[1], rot[4], rot[7]),
-                (rot[2], rot[5], rot[8]),
+                (rot[0], rot[1], rot[2]),
+                (rot[3], rot[4], rot[5]),
+                (rot[6], rot[7], rot[8]),
             ))
             e_bone.matrix = (
-                mathutils.Matrix.Translation(pos) @
-                matrix.transposed().to_4x4()
+                mathutils.Matrix.Translation(pos) @ matrix.to_4x4()
             )
 
         # Parent relationship (like DragonFF: frame.parent >= root frame_index and in bone_list)
@@ -784,6 +796,16 @@ def import_dff(filepath: str, context=None, *, skip_2dfx=None,
                    для замера под-стадий parse/build/link.
     """
     clump = read_dff_file(filepath)
+    # Mobile DFFs use Native Data PLG (War Drum OpenGL) for vertex
+    # storage — flip the scene's platform switch so the user sees that
+    # the loaded file is mobile, not PC. Best-effort: don't break import
+    # if the scene isn't reachable for any reason.
+    if getattr(clump, 'is_mobile', False):
+        try:
+            import bpy as _bpy
+            _bpy.context.scene.inu_settings.gtatools_platform = 'MOBILE'
+        except Exception:
+            pass
     base_name = os.path.splitext(os.path.basename(filepath))[0]
     # Always thread a material cache through — even single-DFF imports
     # benefit. A vehicle.dff has 30+ parts but typically only ~5 unique
@@ -960,9 +982,22 @@ def import_dff_from_clump(clump, base_name: str, *, skip_2dfx=None,
         # matrix_basis — внутреннее хранилище trans/rot/scale объекта, обходит
         # любые «умные» пересчёты Blender'а. При matrix_parent_inverse=identity
         # matrix_local == matrix_basis, а matrix_world = parent.matrix_world @ matrix_basis.
+        #
+        # ВАЖНО: для animated map objects atomic.frame_index указывает на
+        # bone frame (HAnim), и frame.rotation там — это matrix_local
+        # кости (например 90°X для bone с tail=+Z). Если этот transform
+        # применить к самому MESH-объекту, меш визуально ляжет на бок
+        # ровно на bone rest-pose поворот, потому что armature modifier
+        # ещё раз развернёт меш на тот же угол при rest pose. Меш живёт
+        # в armature-local space с identity transform, а ориентация
+        # прихватывается через vertex group → armature modifier.
         for fi, frame in enumerate(clump.frames):
             obj = frame_to_obj.get(fi)
             if obj is None:
+                continue
+            if obj.type == 'MESH' and frame.hanim is not None:
+                # rigid-attached to bone — transform приходит через
+                # armature modifier, не через matrix_basis объекта.
                 continue
             rot = frame.rotation
             pos = frame.position
@@ -976,33 +1011,78 @@ def import_dff_from_clump(clump, base_name: str, *, skip_2dfx=None,
         if not bulk_mode:
             bpy.context.view_layer.update()
 
-    # Skeleton: create Armature + apply skin weights if DFF has bones.
-    # Two guards:
-    #   1. bulk_mode (map import) — skip armatures entirely. Vanilla
-    #      map DFFs occasionally carry HAnim chunks with skin=no, and
-    #      we don't want a ``<name>_Armature`` object per such model
-    #      cluttering the outliner and bloating depsgraph.
-    #   2. require an actual skin somewhere — HAnim without skin is
-    #      just animation metadata, no armature-bound mesh to pair with.
-    has_skin = any(geom.skin for geom in clump.geometries)
-    if not bulk_mode and _has_skeleton(clump) and has_skin:
+    # Skeleton: create Armature + apply skin weights / rigid-attach
+    # if DFF has bones. Single guard:
+    #   bulk_mode (map import) — skip armatures entirely. Vanilla map
+    #   DFFs occasionally carry HAnim chunks with skin=no, and we don't
+    #   want a ``<name>_Armature`` object per such model cluttering the
+    #   outliner and bloating depsgraph.
+    # Animated map objects (windmills, cranes, doors) have HAnim WITHOUT
+    # skin and DO need an armature for IFP playback in Blender — so we
+    # don't gate on ``has_skin`` here.
+    if not bulk_mode and _has_skeleton(clump):
         try:
             arm_obj, bone_names = _build_armature(clump, base_name)
             imported_objects.append(arm_obj)
 
-            # Apply skin weights to skinned mesh objects
             for atomic in clump.atomics:
                 gi = atomic.geometry_index
                 if gi >= len(clump.geometries):
                     continue
                 geom = clump.geometries[gi]
+                fi = atomic.frame_index
+                frame = clump.frames[fi] if fi < len(clump.frames) else None
+                obj = frame_to_obj.get(fi)
+                if not (obj and obj.type == 'MESH'):
+                    continue
+
                 if geom.skin:
-                    fi = atomic.frame_index
-                    frame = clump.frames[fi] if fi < len(clump.frames) else None
-                    obj_name = frame.name if (frame and frame.name) else _fallback_name(gi)
-                    obj = bpy.data.objects.get(obj_name)
-                    if obj and obj.type == 'MESH':
-                        _apply_skin_weights(obj, geom, arm_obj, bone_names)
+                    # Skinned mesh (peds, skinned vehicles) — per-vertex
+                    # bone weights wire the mesh to the armature.
+                    _apply_skin_weights(obj, geom, arm_obj, bone_names)
+                elif frame and frame.hanim:
+                    # Animated map object — mesh rigidly follows ONE
+                    # bone via Armature modifier + all-weight vertex
+                    # group (NOT parent_type='BONE', which would
+                    # re-align the mesh under the bone's tail and tip
+                    # it 90° around X for a tail=+Z bone).
+                    target_bone = frame.name
+                    if target_bone and target_bone in bone_names:
+                        obj.parent = arm_obj
+                        obj.parent_type = 'OBJECT'
+                        obj.matrix_parent_inverse.identity()
+                        # Reset the mesh's own transform — the matrix_basis
+                        # loop above skipped writing here, but be defensive
+                        # in case a future code path wires it differently.
+                        obj.matrix_basis = mathutils.Matrix.Identity(4)
+
+                        vg = obj.vertex_groups.get(target_bone)
+                        if vg is None:
+                            vg = obj.vertex_groups.new(name=target_bone)
+                        vg.add(
+                            list(range(len(obj.data.vertices))),
+                            1.0, 'REPLACE')
+
+                        mod = next(
+                            (m for m in obj.modifiers
+                             if m.type == 'ARMATURE'), None)
+                        if mod is None:
+                            mod = obj.modifiers.new("Armature", 'ARMATURE')
+                        mod.object = arm_obj
+
+                        # Tag the rig so panels/animobj_export pick it
+                        # up exactly like a freshly-built one from
+                        # animobj_setup. Без маркера live-edit sliders
+                        # и auto-rebuild-before-export молча no-op на
+                        # импортированных рiгaх.
+                        arm_obj['inu_animobj'] = True
+
+                        print(f"[INU] mesh '{obj.name}' rigidly attached to "
+                              f"bone '{target_bone}' via armature modifier "
+                              f"(frame_idx={fi})")
+                    else:
+                        print(f"[INU] WARN: cannot parent mesh '{obj.name}' to "
+                              f"bone '{target_bone}' — not in bone_names={bone_names}")
         except Exception as e:
             import traceback
             print(f"[INU_tools] Skeleton import error: {e}")
@@ -1022,6 +1102,32 @@ def import_dff_from_clump(clump, base_name: str, *, skip_2dfx=None,
                         bpy.context.scene.collection.children.link(fx_col)
                 fx_objects = _import_2dfx(geom.ext_2dfx, fx_col, base_name)
                 imported_objects.extend(fx_objects)
+
+    # Embedded collision — vehicles and skinned characters store COL
+    # primitives (spheres + boxes + meshes) INSIDE the .dff as a
+    # CHUNK_COLLISION_MODEL bytes blob, not as a separate .col file.
+    # `read_dff_file` already preserved those bytes on
+    # `clump.collision_data`. Parse them here and feed through the
+    # normal COL importer so the user sees the same sphere empties /
+    # col mesh objects that DragonFF creates — without this step
+    # the col data was bit-perfect preserved for round-trip but
+    # entirely invisible in viewport.
+    if clump.collision_data:
+        try:
+            from ..core.col import read_col
+            from .col_import import import_col_from_models
+            col_models = read_col(clump.collision_data)
+            if col_models:
+                col_objs = import_col_from_models(
+                    col_models,
+                    bulk_mode=bulk_mode,
+                    target_collection=target_collection,
+                    skip_position_match=True,
+                )
+                imported_objects.extend(col_objs)
+        except Exception as e:
+            print(f"[INU] embedded COL parse failed for "
+                  f"{base_name}: {e}")
 
     # Выделяем импортированные объекты. При bulk_mode пропускаем
     # select_all — это O(scene_size) операция, которая для импорта
@@ -1053,10 +1159,14 @@ def import_dff_from_clump(clump, base_name: str, *, skip_2dfx=None,
 # headers (no pixel decode) — sub-millisecond per file even on big TXDs.
 
 def _collect_recent_dff_texture_names() -> set:
-    """Names recorded as ``mat['dff_texture_name']`` across all current
-    materials. After a DFF import this includes every texture the just-
-    imported model references, which is exactly what we need to match
-    candidate TXD files against."""
+    """Names recorded as ``mat['dff_texture_name']`` across **all**
+    materials in scene. After a DFF import this includes every texture
+    the just-imported model references — but ALSO every previously
+    imported one. Use `_collect_new_dff_texture_names(mats_before)`
+    instead during batch import to keep the set scoped to the current
+    DFF only; otherwise the auto-TXD picker drifts (sees more "needed"
+    names with every import) and `name_filter` to `import_txd` over-
+    decodes shared textures."""
     out = set()
     for mat in bpy.data.materials:
         n = mat.get('dff_texture_name')
@@ -1065,10 +1175,54 @@ def _collect_recent_dff_texture_names() -> set:
     return out
 
 
+def _collect_new_dff_texture_names(mat_names_before: set) -> set:
+    """Texture names from materials that did NOT exist before the
+    snapshot. Pass the set captured from `{m.name for m in
+    bpy.data.materials}` BEFORE calling `import_dff` — we diff after
+    and return only the brand-new materials' texture refs."""
+    out = set()
+    for mat in bpy.data.materials:
+        if mat.name in mat_names_before:
+            continue
+        n = mat.get('dff_texture_name')
+        if n:
+            out.add(n.lower())
+    return out
+
+
+# Module-level cache for `read_txd_texture_names` results. Batch
+# character/ped import walks the same folder of .txd files for every
+# DFF and re-parses each header set from disk every time — O(N×M).
+# Caching by (path, mtime) collapses that to O(M) per session;
+# mtime check keeps the cache safe if the user re-saves a .txd
+# between imports.
+_TXD_NAMES_CACHE: dict = {}
+
+
+def _read_txd_names_cached(path: str) -> set:
+    """Return lowercase texture names for `path`, reading the file
+    once per session and reusing the result on subsequent calls."""
+    from ..core.txd import read_txd_texture_names
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        mtime = 0.0
+    cached = _TXD_NAMES_CACHE.get(path)
+    if cached is not None and cached[0] == mtime:
+        return cached[1]
+    try:
+        names = {n.lower() for n in read_txd_texture_names(path)}
+    except Exception:
+        names = set()
+    _TXD_NAMES_CACHE[path] = (mtime, names)
+    return names
+
+
 _PICK_BEST_TXD_MIN_COVERAGE = 0.5  # 50% of DFF textures must be in TXD
 
 
-def _pick_best_txd(search_dirs: list, dff_basename: str) -> Optional[str]:
+def _pick_best_txd(search_dirs: list, dff_basename: str,
+                   needed_names: set = None) -> Optional[str]:
     """Pick the most relevant .txd file for the just-imported DFF.
 
     Strategy:
@@ -1108,15 +1262,19 @@ def _pick_best_txd(search_dirs: list, dff_basename: str) -> Optional[str]:
     if not candidates:
         return None
 
-    # Pass 2: coverage-based scoring
-    needed = _collect_recent_dff_texture_names()
+    # Pass 2: coverage-based scoring. `needed_names` should be the
+    # JUST-imported DFF's referenced texture set; falling back to the
+    # full scene-wide collection works for one-shot import but
+    # drifts badly across a batch.
+    needed = needed_names if needed_names is not None else _collect_recent_dff_texture_names()
     if needed:
         # Build (coverage, txd_size, path) tuples for every candidate.
         # coverage = fraction of DFF textures that exist in this TXD.
         # txd_size used as tie-breaker (smaller = more specific).
+        # `_read_txd_names_cached` reads each .txd once per session.
         scored = []
         for c in candidates:
-            names_in_txd = {n.lower() for n in read_txd_texture_names(c)}
+            names_in_txd = _read_txd_names_cached(c)
             matched = needed & names_in_txd
             coverage = len(matched) / len(needed)
             scored.append((coverage, len(names_in_txd), c, len(matched)))
@@ -1149,6 +1307,23 @@ class GTATOOLS_OT_import_dff(bpy.types.Operator):
     filepath: StringProperty(subtype='FILE_PATH')
     filter_glob: StringProperty(default="*.dff", options={'HIDDEN'})
 
+    # User-overridable game source for this import. Default 'AUTO'
+    # delegates to game_versions.detect_game_from_dff (RW-version
+    # header read). Explicit III/VC/SA bypasses detection and tags
+    # the imported objects with that source_game — useful when the
+    # file's RW version was misset by the original packager and
+    # detection would land on the wrong game.
+    import_game: bpy.props.EnumProperty(
+        name=T("Игра"),
+        description=T("Из какой игры импортируем. Auto — определить по RW-версии файла"),
+        items=[
+            ('AUTO', T("Авто-определение"), T("Прочитать RW версию и угадать игру")),
+            ('III',  "GTA III",  T("Принудительно III")),
+            ('VC',   "Vice City", T("Принудительно VC")),
+            ('SA',   "San Andreas", T("Принудительно SA")),
+        ],
+        default='AUTO')
+
     def invoke(self, context, event):
         context.window_manager.fileselect_add(self)
         return {'RUNNING_MODAL'}
@@ -1161,15 +1336,20 @@ class GTATOOLS_OT_import_dff(bpy.types.Operator):
         layout = self.layout
         scene = context.scene
 
+        # Game-source override — sits at the top so user sees it
+        # before the TXD-help block.
+        layout.prop(self, "import_game")
+        layout.separator()
+
         layout.prop(scene.inu_settings, "gtatools_txd_auto_import", text=T("Авто TXD"))
 
         if not getattr(scene.inu_settings, 'gtatools_txd_auto_import', True):
             layout.label(text=T("TXD не будет загружаться автоматически"),
-                         icon=safe_icon('INFO'))
+                         **inu_icon(safe_icon('INFO')))
             return
 
         box = layout.box()
-        box.label(text=T("Как ищется TXD:"), icon=safe_icon('QUESTION'))
+        box.label(text=T("Как ищется TXD:"), **inu_icon(safe_icon('QUESTION')))
         col = box.column(align=True)
         col.scale_y = 0.85
         col.label(text=T("1. <имя_dff>.txd в той же папке"))
@@ -1182,13 +1362,34 @@ class GTATOOLS_OT_import_dff(bpy.types.Operator):
         custom_dir = getattr(scene.inu_settings, 'gtatools_txd_import_path', '')
         if custom_dir:
             box.label(text=f"+ {T('доп. папка')}: {custom_dir}",
-                      icon=safe_icon('FILE_FOLDER'))
+                      **inu_icon(safe_icon('FILE_FOLDER')))
 
     def execute(self, context):
         from .txd_import import import_txd as inu_import_txd
+        # Snapshot existing materials BEFORE the import so we can
+        # tell which materials this DFF actually adds. Batch character
+        # imports would otherwise see the "needed textures" set grow
+        # with every prior DFF, causing the TXD picker to drift and
+        # `name_filter` to over-decode shared textures.
+        mats_before = {m.name for m in bpy.data.materials}
         try:
             import_dff(filepath=self.filepath, context=context)
-            self.report({'INFO'}, f"Imported DFF: {self.filepath}")
+            # Source-game resolution: explicit user choice overrides
+            # auto-detection. AUTO falls through to RW-version-based
+            # detection (Phase 8). Either way the picked game drives
+            # scene-flip-or-warn below + tags imported objects.
+            from ..core import game_versions as gv
+            if self.import_game == 'AUTO':
+                detected = gv.detect_game_from_dff(self.filepath)
+            else:
+                detected = self.import_game
+            switched = gv.maybe_set_game_from_import(context.scene, detected)
+            tag = f" → game={detected}" if switched else ""
+            self.report({'INFO'}, f"Imported DFF: {self.filepath}{tag}")
+            if not switched:
+                warn = gv.check_game_mismatch_warning(context.scene, detected)
+                if warn:
+                    self.report({'WARNING'}, warn)
         except Exception as e:
             self.report({'ERROR'}, f"DFF import error: {str(e)}")
             return {'CANCELLED'}
@@ -1206,7 +1407,10 @@ class GTATOOLS_OT_import_dff(bpy.types.Operator):
             search_dirs.append(custom_dir)
         search_dirs.append(os.path.dirname(self.filepath))
 
-        txd_file = _pick_best_txd(search_dirs, dff_name)
+        # Compute the just-imported DFF's texture set once, reuse it
+        # for both the TXD picker and `name_filter`.
+        needed = _collect_new_dff_texture_names(mats_before)
+        txd_file = _pick_best_txd(search_dirs, dff_name, needed_names=needed)
 
         if txd_file:
             try:
@@ -1214,9 +1418,9 @@ class GTATOOLS_OT_import_dff(bpy.types.Operator):
                 # actually references. Loading every texture in a
                 # 150-texture vehicle.txd for one car door used to
                 # spawn dozens of orphan images and freeze Blender on
-                # the DXT decode pass. The filter narrows the work to
-                # ~5-10 actually-used textures.
-                needed = _collect_recent_dff_texture_names()
+                # the DXT decode pass. `needed` (computed above) is
+                # scoped to the new materials this DFF added — keeps
+                # `name_filter` accurate even across batch imports.
                 images = inu_import_txd(
                     filepath=txd_file,
                     name_filter=needed if needed else None)
@@ -1279,6 +1483,9 @@ class GTATOOLS_OT_drop_dff(bpy.types.Operator):
             if not (os.path.isfile(path)
                     and path.lower().endswith('.dff')):
                 continue
+            # Per-file material snapshot — see `GTATOOLS_OT_import_dff`
+            # for why this matters during a batch import.
+            mats_before = {m.name for m in bpy.data.materials}
             try:
                 import_dff(filepath=path, context=context)
                 imported += 1
@@ -1298,13 +1505,13 @@ class GTATOOLS_OT_drop_dff(bpy.types.Operator):
                 search_dirs.append(custom_dir)
             search_dirs.append(os.path.dirname(path))
 
-            txd_file = _pick_best_txd(search_dirs, dff_name)
+            needed = _collect_new_dff_texture_names(mats_before)
+            txd_file = _pick_best_txd(search_dirs, dff_name, needed_names=needed)
             if txd_file:
                 try:
                     # Same name-filter trick as in import_dff — avoid
                     # loading 100+ unrelated textures from shared
                     # archives like vehicle.txd.
-                    needed = _collect_recent_dff_texture_names()
                     inu_import_txd(
                         filepath=txd_file,
                         name_filter=needed if needed else None)

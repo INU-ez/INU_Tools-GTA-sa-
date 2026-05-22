@@ -6,7 +6,7 @@ import bpy
 from ..core.col import ColModel
 from ..core.cst import write_cst
 from .col_export import (
-    _collect_mesh, _collect_shadow_mesh, _collect_sphere,
+    _collect_mesh, _collect_shadow_mesh, _collect_empty,
     _is_shadow_mesh, _compute_bounds,
 )
 
@@ -23,7 +23,10 @@ def export_cst(filepath: str, objects, version: int = 3,
             else:
                 _collect_mesh(obj, model)
         elif obj.type == 'EMPTY':
-            _collect_sphere(obj, model)
+            # Same sphere/box dispatcher as col_export — picks by
+            # `empty_display_type`. CST is the text-format twin of
+            # COL so it serialises the same `model.boxes` structure.
+            _collect_empty(obj, model)
     model.bounds = _compute_bounds(model)
     write_cst(filepath, [model])
     return model

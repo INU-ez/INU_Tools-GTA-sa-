@@ -1,0 +1,128 @@
+name: Solicitud de función (Español)
+description: Sugerir una nueva función, formato, operador o mejora de interfaz
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ¡Gracias por la sugerencia! Las propuestas concretas con un caso de uso claro se implementan más rápido que las ideas abstractas tipo «sería bueno».
+
+  - type: input
+    id: inu_version
+    attributes:
+      label: Versión de INU Tools
+      description: Visible en `Edit → Preferences → Add-ons → INU_tools(gta_sa)` — para saber si la función ya existe en una build más reciente
+      placeholder: "1.9.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: feature_area
+    attributes:
+      label: Área afectada
+      description: ¿Qué función / formato tocaría esto?
+      options:
+        - DFF (importar / exportar / editar)
+        - COL (importar / exportar / editar)
+        - TXD (importar / exportar / editar)
+        - IDE (importar / exportar / editar)
+        - IPL (importar / exportar / binario)
+        - IMG (importar / exportar / archivo)
+        - IFP (importación / exportación de animación / batch)
+        - FXP (editor effects.fxp / simulación en viewport)
+        - Map (Map Import / Map Export round-trip completo)
+        - Asset Library builder
+        - File Scanner (binary linter)
+        - Prelight (vcols / scatter / LightMap UV2)
+        - 2DFX (Light / Particle / Ped Attractor / Sun Glare)
+        - Skinned DFF / IK Rig / Frame Hierarchy
+        - Vehicle Paintjob / Animated Map Object
+        - Paths (paths.ipl / tracks.dat / NODES.dat / flight.dat)
+        - water.dat
+        - X Radar Maker
+        - ID Manager
+        - Profile System / UI / paneles
+        - Materials (Env Map / Bump / Specular / UV Anim)
+        - CST (formato Steve's COL Editor)
+        - Nuevo formato / área (describir abajo)
+    validations:
+      required: true
+
+  - type: input
+    id: summary
+    attributes:
+      label: Resumen en una línea
+      placeholder: ej. «Agregar operador batch de retarget IFP para múltiples esqueletos»
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problema / motivación
+      description: ¿Qué es incómodo, lento o imposible hoy? Describa el workflow de modding que se topa con el muro.
+      placeholder: |
+        Ahora hacer retarget de más de 100 animaciones una por una con el panel IFP toma ~2 horas. No hay forma de renombrar nombres de huesos en batch — cada archivo debe re-importarse y re-exportarse manualmente.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Solución propuesta
+      description: ¿Cómo debería funcionar desde la perspectiva del usuario? Mencione botones, ubicación en panel, nombres de operadores, diálogos de archivo, etc.
+      placeholder: |
+        Agregar un nuevo operador en Animation → IFP → «Retarget Folder»: elegir una carpeta fuente de archivos .ifp y un mapa de renombrado de huesos (.csv o tabla inline), generar una carpeta de archivos .ifp renombrados preservando el timing original.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternativas consideradas
+      description: ¿Probó workarounds? Otras herramientas (Kams, DragonFF, IFP Editor) — ¿cómo lo manejan?
+      placeholder: Intenté con IFP Editor — solo soporta un archivo a la vez. DragonFF no soporta IFP en absoluto.
+    validations:
+      required: false
+
+  - type: textarea
+    id: usecase
+    attributes:
+      label: Ejemplo de workflow / caso de uso
+      description: Describa un escenario concreto donde lo usaría. Números y nombres de archivo reales ayudan.
+      placeholder: |
+        Estoy portando animaciones de peds de GTA IV a SA. ~340 archivos .ifp, todos usando nombres de huesos de GTA IV. Necesito remapear a nombres de huesos de SA y guardar como ANP3.
+    validations:
+      required: false
+
+  - type: textarea
+    id: refs
+    attributes:
+      label: Referencias / mockups / implementaciones similares
+      description: |
+        Capturas, mockups, enlaces a cómo otra herramienta lo hace (Kams, DragonFF, ZModeler, plug-ins de Maya, GIMS Evo), hilos de foro, etc.
+      placeholder: Arrastre imágenes aquí o pegue enlaces
+    validations:
+      required: false
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: ¿Qué tan crítico es esto para usted?
+      options:
+        - "Nice-to-have — ahorraría tiempo pero tengo workarounds"
+        - "Importante — actualmente bloquea una parte de mi proyecto"
+        - "Crítico — sin esto no puedo completar mi mod"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Antes de enviar
+      options:
+        - label: Busqué en los [issues abiertos y cerrados](../../issues?q=) una propuesta similar
+          required: true
+        - label: Verifiqué la última versión y la función no está ya disponible
+          required: true

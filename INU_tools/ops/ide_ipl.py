@@ -265,6 +265,31 @@ class GTATOOLS_OT_remove_ipl(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _ensure_extension(filepath: str, ext: str) -> str:
+    """Append ``ext`` (e.g. '.ide') to ``filepath`` if it isn't already
+    there (case-insensitive). Operators here don't use ExportHelper so
+    Blender's file dialog happily accepts ``hospital_1a`` without the
+    extension and we'd silently write an extensionless file — which the
+    user has to rename by hand before the game / IMG editor will load
+    it.
+
+    Edge cases:
+      * Empty / None input → returned as-is (caller already handles
+        empty paths elsewhere).
+      * Path already ends with ``ext`` (any casing) → unchanged.
+      * Path ends with a different extension (e.g. user typed
+        ``foo.txt``) → still appended so we get ``foo.txt.ide``. The
+        ``filter_glob='*.ide'`` makes that unlikely in practice but
+        keeping the rule simple beats "smart" replacement that could
+        mangle filenames with dots in them.
+    """
+    if not filepath:
+        return filepath
+    if filepath.lower().endswith(ext.lower()):
+        return filepath
+    return filepath + ext
+
+
 class GTATOOLS_OT_export_ide(bpy.types.Operator):
     """Экспорт IDE (определение объектов GTA SA)"""
     bl_idname = "gtatools.export_ide"
@@ -282,6 +307,7 @@ class GTATOOLS_OT_export_ide(bpy.types.Operator):
 
     def execute(self, context):
         from .ide_export import export_ide as inu_export_ide
+        self.filepath = _ensure_extension(self.filepath, ".ide")
         try:
             objs = [o for o in context.selected_objects if o.type == 'MESH']
             inu_export_ide(filepath=self.filepath, objects=objs)
@@ -319,6 +345,7 @@ class GTATOOLS_OT_export_ipl(bpy.types.Operator):
 
     def execute(self, context):
         from .ipl_export import export_ipl as inu_export_ipl
+        self.filepath = _ensure_extension(self.filepath, ".ipl")
         try:
             objs = [o for o in context.selected_objects if o.type == 'MESH']
             inu_export_ipl(filepath=self.filepath, objects=objs, binary=self.binary)
@@ -375,6 +402,7 @@ class GTATOOLS_OT_export_ipl_sections(bpy.types.Operator):
     def execute(self, context):
         from ..core.ipl import IplFile, write_ipl
         from .ipl_sections import export_ipl_sections
+        self.filepath = _ensure_extension(self.filepath, ".ipl")
         try:
             sections = export_ipl_sections()
             ipl = IplFile(
@@ -388,7 +416,9 @@ class GTATOOLS_OT_export_ipl_sections(bpy.types.Operator):
                 occls=sections.get('occl', []),
                 zones=sections.get('zone', []),
             )
-            write_ipl(self.filepath, ipl)
+            from ..core import game_versions as gv
+            write_ipl(self.filepath, ipl,
+                      game=gv.game_of_scene(context.scene))
             total = sum(len(v) for v in sections.values())
             self.report({'INFO'}, f"Exported {total} IPL section entries")
             return {'FINISHED'}
@@ -430,15 +460,40 @@ class GTATOOLS_OT_import_ipl(bpy.types.Operator):
     filepath: StringProperty(subtype='FILE_PATH')
     filter_glob: StringProperty(default="*.ipl", options={'HIDDEN'})
 
+    import_game: bpy.props.EnumProperty(
+        name=T("Игра"),
+        description=T("Из какой игры импортируем IPL. Auto — по числу колонок в inst-секции"),
+        items=[
+            ('AUTO', T("Авто-определение"), ""),
+            ('III',  "GTA III",  ""),
+            ('VC',   "Vice City", ""),
+            ('SA',   "San Andreas", ""),
+        ],
+        default='AUTO')
+
     def invoke(self, context, event):
         context.window_manager.fileselect_add(self)
         return {'RUNNING_MODAL'}
+
+    def draw(self, context):
+        self.layout.prop(self, "import_game")
 
     def execute(self, context):
         from .ipl_import import import_ipl as inu_import_ipl
         try:
             placed = inu_import_ipl(filepath=self.filepath, context=context)
-            self.report({'INFO'}, f"IPL: {len(placed)} objects placed")
+            from ..core import game_versions as gv
+            if self.import_game == 'AUTO':
+                detected = gv.detect_game_from_ipl(self.filepath)
+            else:
+                detected = self.import_game
+            switched = gv.maybe_set_game_from_import(context.scene, detected)
+            tag = f" → game={detected}" if switched else ""
+            self.report({'INFO'}, f"IPL: {len(placed)} objects placed{tag}")
+            if not switched:
+                warn = gv.check_game_mismatch_warning(context.scene, detected)
+                if warn:
+                    self.report({'WARNING'}, warn)
             return {'FINISHED'}
         except Exception as e:
             self.report({'ERROR'}, f"IPL import error: {str(e)}")

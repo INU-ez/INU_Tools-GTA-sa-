@@ -18,9 +18,7 @@ from bpy.props import (
 from bpy_extras.io_utils import ImportHelper, ExportHelper
 
 from .. import T
-from ..tools.compat import safe_icon
-
-
+from ..tools.compat import safe_icon, inu_icon
 class GTATOOLS_OT_inu_import(bpy.types.Operator, ImportHelper):
     """Импорт GTA SA файлов (.dff/.col/.txd/.ide/.ipl) с авто-определением формата"""
     bl_idname = "gtatools.inu_import"
@@ -211,13 +209,13 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
         if scn.inu_settings.gtatools_export_all_col:
             row = layout.row(align=True)
             row.prop(scn.inu_settings, "gtatools_export_all_col_library",
-                     text="", icon=safe_icon('PACKAGE'))
+                     text="", **inu_icon(safe_icon('PACKAGE')))
             row.prop(scn.inu_settings, "gtatools_export_all_col_library_name",
                      text="", placeholder="collision")
         if scn.inu_settings.gtatools_export_all_txd:
             row = layout.row(align=True)
             row.prop(scn.inu_settings, "gtatools_export_all_txd_shared",
-                     text="", icon=safe_icon('PACKAGE'))
+                     text="", **inu_icon(safe_icon('PACKAGE')))
             row.prop(scn.inu_settings, "gtatools_export_all_txd_shared_name",
                      text="", placeholder="textures")
 
@@ -230,23 +228,29 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
         if models['DFF'] and not skip_dff:
             dff_path = os.path.join(self.directory, f"{base_name}.dff")
             try:
-                from .dff_export import export_dff as inu_export_dff
+                from .dff_export import export_dff as inu_export_dff, _resolve_export_version
+                rw_ver = _resolve_export_version(context)
+                tp = getattr(context.scene.inu_settings, 'gtatools_platform', 'PC')
                 # Collect mesh + attached 2DFX objects
                 dff_objects = [models['DFF']]
                 for child in models['DFF'].children:
                     if child.type == 'EMPTY' and getattr(child, 'inu', None) and child.inu.type == '2DFX':
                         dff_objects.append(child)
-                inu_export_dff(filepath=dff_path, objects=dff_objects)
+                inu_export_dff(filepath=dff_path, objects=dff_objects,
+                               version=rw_ver, target_platform=tp)
                 exported.append(f"{base_name}.dff")
             except Exception as e:
                 errors.append(f"{base_name}.dff: {str(e)}")
 
-        # Экспорт LOD (с префиксом LOD, версия GTA SA)
+        # Экспорт LOD (с префиксом LOD, RW-версия = из сцены)
         if models['LOD'] and not skip_lod:
             lod_path = os.path.join(self.directory, f"LOD{base_name}.dff")
             try:
-                from .dff_export import export_dff as inu_export_dff
-                inu_export_dff(filepath=lod_path, objects=[models['LOD']])
+                from .dff_export import export_dff as inu_export_dff, _resolve_export_version
+                rw_ver = _resolve_export_version(context)
+                tp = getattr(context.scene.inu_settings, 'gtatools_platform', 'PC')
+                inu_export_dff(filepath=lod_path, objects=[models['LOD']],
+                               version=rw_ver, target_platform=tp)
                 exported.append(f"LOD{base_name}.dff")
             except Exception as e:
                 errors.append(f"LOD{base_name}.dff: {str(e)}")
@@ -256,7 +260,7 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
             col_path = os.path.join(self.directory, f"{base_name}.col")
             original_col_loc = models['COL'].location.copy()
             try:
-                from .col_export import export_col as inu_export_col
+                from .col_export import export_col as inu_export_col, _resolve_col_version
 
                 # COL всегда экспортируется в центре (0,0,0)
                 models['COL'].location = (0, 0, 0)
@@ -264,7 +268,7 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
                 inu_export_col(
                     filepath=col_path,
                     objects=[models['COL']],
-                    version=3,
+                    version=_resolve_col_version(context),
                     model_name=base_name,
                 )
 
@@ -411,10 +415,12 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
                 # COL exports expect objects at origin — temporarily centre them
                 original_locations = {}
                 try:
+                    from .col_export import _resolve_col_version
                     for obj in library_col_objects:
                         original_locations[obj.name] = obj.location.copy()
                         obj.location = (0, 0, 0)
-                    count = export_col_library(lib_path, library_col_objects, version=3)
+                    count = export_col_library(lib_path, library_col_objects,
+                                               version=_resolve_col_version(context))
                     all_exported.append(f"{col_library_name}.col ({count} records)")
                 except Exception as e:
                     all_errors.append(f"{col_library_name}.col: {e}")
@@ -461,7 +467,7 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
         # Result
         num_groups = len(model_groups)
         if all_exported:
-            self.report({'INFO'}, f"{T('Экспортировано:')} {len(all_exported)} файлов ({num_groups} моделей)")
+            self.report({'INFO'}, f"{T('Экспортировано:')} {len(all_exported)}{T(' файлов (')}{num_groups}{T(' моделей)')}")
         if all_errors:
             preview = '; '.join(all_errors[:5])
             more = f" (+{len(all_errors) - 5})" if len(all_errors) > 5 else ""
@@ -532,7 +538,7 @@ class GTATOOLS_OT_inu_export(bpy.types.Operator, ExportHelper):
 
         # Format
         box = layout.box()
-        box.label(text=T("Формат:"), icon=safe_icon('EXPORT'))
+        box.label(text=T("Формат:"), **inu_icon(safe_icon('EXPORT')))
         col = box.column(align=True)
         col.prop(self, "export_dff")
         col.prop(self, "export_col")
@@ -542,13 +548,13 @@ class GTATOOLS_OT_inu_export(bpy.types.Operator, ExportHelper):
 
         # Source
         box = layout.box()
-        box.label(text=T("Источник:"), icon=safe_icon('OBJECT_DATA'))
+        box.label(text=T("Источник:"), **inu_icon(safe_icon('OBJECT_DATA')))
         box.prop(self, "source", text="")
 
         # DFF settings
         if self.export_dff:
             box = layout.box()
-            box.label(text="DFF:", icon=safe_icon('MESH_DATA'))
+            box.label(text="DFF:", **inu_icon(safe_icon('MESH_DATA')))
             box.prop(self, "dff_include_2dfx")
             box.prop(self, "dff_auto_lod")
             # Pipeline
@@ -557,7 +563,7 @@ class GTATOOLS_OT_inu_export(bpy.types.Operator, ExportHelper):
         # COL settings
         if self.export_col:
             box = layout.box()
-            box.label(text="COL:", icon=safe_icon('MESH_ICOSPHERE'))
+            box.label(text="COL:", **inu_icon(safe_icon('MESH_ICOSPHERE')))
             box.prop(self, "col_library")
             if self.col_library:
                 box.prop(self, "col_library_name")
@@ -565,7 +571,7 @@ class GTATOOLS_OT_inu_export(bpy.types.Operator, ExportHelper):
         # TXD settings
         if self.export_txd:
             box = layout.box()
-            box.label(text="TXD:", icon=safe_icon('IMAGE_DATA'))
+            box.label(text="TXD:", **inu_icon(safe_icon('IMAGE_DATA')))
             box.prop(self, "txd_selected_only")
             backend = getattr(context.scene.inu_settings, 'gtatools_dxt_backend', 'numpy')
             backend_label = {
@@ -573,12 +579,12 @@ class GTATOOLS_OT_inu_export(bpy.types.Operator, ExportHelper):
                 'numpy_fast': "Numpy fast (bbox-int)",
                 'gpu':        "GPU compute",
             }.get(backend, backend)
-            box.label(text=f"DXT: {backend_label}", icon=safe_icon('INFO'))
+            box.label(text=f"DXT: {backend_label}", **inu_icon(safe_icon('INFO')))
 
         # IDE/IPL settings
         if self.export_ide or self.export_ipl:
             box = layout.box()
-            box.label(text="IDE / IPL:", icon=safe_icon('TEXT'))
+            box.label(text="IDE / IPL:", **inu_icon(safe_icon('TEXT')))
             box.prop(self, "ide_ipl_upsert")
             if self.ide_ipl_upsert:
                 if self.export_ide:
@@ -668,13 +674,16 @@ class GTATOOLS_OT_inu_export(bpy.types.Operator, ExportHelper):
             if self.export_dff and models['DFF']:
                 dff_path = os.path.join(directory, f"{base_name}.dff")
                 try:
-                    from .dff_export import export_dff as inu_export_dff
+                    from .dff_export import export_dff as inu_export_dff, _resolve_export_version
+                    rw_ver = _resolve_export_version(context)
+                    tp = getattr(context.scene.inu_settings, 'gtatools_platform', 'PC')
                     dff_objects = [models['DFF']]
                     if self.dff_include_2dfx:
                         for child in models['DFF'].children:
                             if child.type == 'EMPTY' and getattr(child, 'inu', None) and child.inu.type == '2DFX':
                                 dff_objects.append(child)
-                    inu_export_dff(filepath=dff_path, objects=dff_objects)
+                    inu_export_dff(filepath=dff_path, objects=dff_objects,
+                                   version=rw_ver, target_platform=tp)
                     all_exported.append(f"{base_name}.dff")
                 except Exception as e:
                     all_errors.append(f"{base_name}.dff: {e}")
@@ -683,8 +692,11 @@ class GTATOOLS_OT_inu_export(bpy.types.Operator, ExportHelper):
             if self.export_dff and self.dff_auto_lod and models['LOD']:
                 lod_path = os.path.join(directory, f"LOD{base_name}.dff")
                 try:
-                    from .dff_export import export_dff as inu_export_dff
-                    inu_export_dff(filepath=lod_path, objects=[models['LOD']])
+                    from .dff_export import export_dff as inu_export_dff, _resolve_export_version
+                    rw_ver = _resolve_export_version(context)
+                    tp = getattr(context.scene.inu_settings, 'gtatools_platform', 'PC')
+                    inu_export_dff(filepath=lod_path, objects=[models['LOD']],
+                                   version=rw_ver, target_platform=tp)
                     all_exported.append(f"LOD{base_name}.dff")
                 except Exception as e:
                     all_errors.append(f"LOD{base_name}.dff: {e}")
@@ -693,10 +705,11 @@ class GTATOOLS_OT_inu_export(bpy.types.Operator, ExportHelper):
             if write_col_per_group and models['COL']:
                 col_path = os.path.join(directory, f"{base_name}.col")
                 try:
-                    from .col_export import export_col as inu_export_col
+                    from .col_export import export_col as inu_export_col, _resolve_col_version
                     original_loc = models['COL'].location.copy()
                     models['COL'].location = (0, 0, 0)
-                    inu_export_col(filepath=col_path, objects=[models['COL']], version=3, model_name=base_name)
+                    inu_export_col(filepath=col_path, objects=[models['COL']],
+                                   version=_resolve_col_version(context), model_name=base_name)
                     models['COL'].location = original_loc
                     all_exported.append(f"{base_name}.col")
                 except Exception as e:
@@ -786,14 +799,15 @@ class GTATOOLS_OT_inu_export(bpy.types.Operator, ExportHelper):
             context.workspace.status_text_set(
                 f"{T('INU Export:')} library COL ({len(library_col_objects)} models)")
             try:
-                from .col_export import export_col_library
+                from .col_export import export_col_library, _resolve_col_version
                 lib_name = self.col_library_name or 'collision'
                 lib_path = os.path.join(directory, f"{lib_name}.col")
                 original_locations = {}
                 for obj in library_col_objects:
                     original_locations[obj.name] = obj.location.copy()
                     obj.location = (0, 0, 0)
-                count = export_col_library(lib_path, library_col_objects, version=3)
+                count = export_col_library(lib_path, library_col_objects,
+                                           version=_resolve_col_version(context))
                 for obj in library_col_objects:
                     if obj.name in original_locations:
                         obj.location = original_locations[obj.name]

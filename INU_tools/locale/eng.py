@@ -721,6 +721,9 @@ LANG = {
     "Пути (paths.ipl):": "Paths (paths.ipl):",
     "Создать путь": "Add Path",
     "Скомпилированные (NODES):": "Compiled (NODES):",
+    "Геометрия путей": "Path geometry",
+    "Создать или скрыть геометрию визуализации путей":
+        "Create or hide path visualisation geometry",
     "Путь IPL": "Path IPL",
     "Авто": "Vehicle",
     "Пешеходный": "Pedestrian",
@@ -2193,9 +2196,995 @@ LANG = {
     "Root motion (walk/run)": "Root motion (walk/run)",
     "Настройка анимации": "Animation setup",
     "Исправить кватернионы (sign-flip)": "Fix quaternions (sign-flip)",
+    "Сгладить между выделенными ключами":
+        "Smooth between selected anchor keys",
+    "Сгладить ключей":
+        "Smoothed keys",
+    "Выдели минимум 2 ключа в Dope Sheet как опорные":
+        "Select at least 2 keyframes in the Dope Sheet to use as anchors",
     "Размер тени / интенсивность света":
         "Shadow size / light intensity",
     "VC Layers System": "VC Layers System",
     "Выдели объект чтобы увидеть иерархию":
         "Select an object to see the hierarchy",
+    # === Added 2026-05-18 (parity sync with spa.py + new NEW-only strings) ===
+
+    # --- 44 keys imported from SA eng.py ---
+    'Auto: ползунки сами пересчитывают keyframes цикла.\nManual: ползунки заморожены, ты сам ставишь keyframes в Action Editor / Pose Mode. Переключение Manual→Auto перезапишет твои ключи значениями ниже':
+        'Auto: sliders auto-recompute cycle keyframes.\nManual: sliders are frozen — you set keyframes yourself in Action Editor / Pose Mode. Switching Manual→Auto will overwrite your keys with the values below',
+    'ID модели для IDE — должен быть свободен в карте.\n0 = не задан (исправь в Object Properties → INU Tools → Model ID)':
+        'Model ID for IDE — must be free on the map.\n0 = not set (fix in Object Properties → INU Tools → Model ID)',
+    'Library Output не указан или не существует':
+        'Library Output is not set or does not exist',
+    'Model ID = 0 — задай в Object Properties → INU Tools → Model ID':
+        'Model ID = 0 — set it in Object Properties → INU Tools → Model ID',
+    'Scene → INU Tools → IDE Path не задан — anim-запись не будет дописана':
+        'Scene → INU Tools → IDE Path is not set — anim entry will not be appended',
+    'Автоматически ставить material.alpha = 254 при наличии\nvertex alpha < 255 хоть на одной вершине меша.\n\nВКЛЮЧАТЬ: для прозрачных мешей (стёкла, дым, листва)\nесли хочешь чтобы движок воспринял геометрию как\nalpha-blended объект и сортировал её правильно.\n\nВЫКЛЮЧАТЬ (по умолчанию): материал остаётся opaque,\nvertex alpha не задаёт прозрачность всего объекта.\nПолезно когда vertex alpha используется для других\nцелей (vcol fade, light beam masking)':
+        'Automatically set material.alpha = 254 when at least one\nvertex of the mesh has vertex alpha < 255.\n\nENABLE: for transparent meshes (glass, smoke, foliage)\nif you want the engine to treat the geometry as an\nalpha-blended object and sort it correctly.\n\nDISABLE (default): material stays opaque,\nvertex alpha does not drive whole-object transparency.\nUseful when vertex alpha is used for other purposes\n(vcol fade, light beam masking)',
+    "Альтернативная текстура для Pay'n'Spray paintjob 1.\nБудет упакована в TXD как <base>_paintjob1, где <base> — имя основной текстуры этого материала.":
+        "Alternate texture for Pay'n'Spray paintjob 1.\nPacked into TXD as <base>_paintjob1, where <base> is the name of this material's main texture.",
+    "Альтернативная текстура для Pay'n'Spray paintjob 2.\nБудет упакована в TXD как <base>_paintjob2.":
+        "Alternate texture for Pay'n'Spray paintjob 2.\nPacked into TXD as <base>_paintjob2.",
+    "Базовое имя для .ifp (без расширения). Пусто = взять из «Базовое имя». Можно ввести общее имя типа 'myhood_anims' чтобы складывать анимации мельницы, крана и флюгера в один файл":
+        "Base name for .ifp (without extension). Empty = take from «Base name». You can enter a common name like 'myhood_anims' to pack windmill, crane and weathervane animations into a single file",
+    'Библиотека собрана за':
+        'Library built in',
+    'Библиотека:':
+        'Library:',
+    'В кеше нет DFF файлов — запустите «Извлечь ресурсы»':
+        'No DFF files in cache — run «Extract resources»',
+    'Длина цикла в кадрах. Скорость = обороты_за_цикл × fps_сцены / длительность':
+        'Cycle length in frames. Speed = rotations_per_cycle × scene_fps / duration',
+    'Длина цикла в кадрах. Скорость вращения = оборотов_за_цикл / длительность × fps_сцены':
+        'Cycle length in frames. Rotation speed = rotations_per_cycle / duration × scene_fps',
+    'Имя Blender Action — попадёт в IFP как имя анимации. Игра ищет анимацию по этому имени из IDE anim entry':
+        'Blender Action name — written into IFP as animation name. Game looks up the animation by this name from the IDE anim entry',
+    'Имя кости которую крутит rig. Меняется только если ты переименовал кость вручную в Edit Mode скелета':
+        'Name of the bone driven by the rig. Change only if you renamed the bone manually in skeleton Edit Mode',
+    'Имя кости — попадёт в DFF Frame name и в IFP bone-track. Принято использовать что-то описательное: blades, propeller, gear...':
+        'Bone name — written into DFF Frame name and IFP bone-track. Convention is something descriptive: blades, propeller, gear...',
+    'Кеш пуст — будут расставлены только Empty по IPL без геометрии. Для полной карты сначала запустите «Извлечь ресурсы»':
+        'Cache is empty — only Empties will be placed per IPL without geometry. For a full map, run «Extract resources» first',
+    'Крутить против часовой стрелки (с точки зрения +оси). Удобно если меш вышел зеркальным или физика подразумевает вращение в другую сторону':
+        'Rotate counter-clockwise (looking down the +axis). Useful if the mesh ended up mirrored or the physics implies the opposite rotation direction',
+    "Не найден исполняемый файл Blender'а":
+        'Blender executable not found',
+    'Перевёрнуто ключей':
+        'Keys flipped',
+    'Перезаписан:':
+        'Overwritten:',
+    'Подгрузить существующий, добавить новые анимации, заменить с тем же именем':
+        'Load existing, add new animations, replace those with the same name',
+    'Подгрузить существующий, заменить ТОЛЬКО анимации с совпадающим именем, новые НЕ добавлять':
+        'Load existing, replace ONLY animations with a matching name, do NOT add new ones',
+    'Превью обновлены за':
+        'Previews refreshed in',
+    'Сборка библиотеки (headless)…':
+        'Building library (headless)…',
+    'Сборка завершена':
+        'Build finished',
+    'Сначала сохраните сцену (.blend) — кеш создаётся рядом с ней':
+        'Save the scene (.blend) first — cache is created next to it',
+    'Сначала сохраните сцену (.blend) — кеш создаётся рядом с ней. Без сохранения извлечение уйдёт во временную папку и пропадёт':
+        'Save the scene (.blend) first — cache is created next to it. Without saving, extraction will go to a temp folder and be lost',
+    'Собрать все текстуры из выделенных DFF в один общий TXD.\nАвто-включает «Только выделенное» и подставляет имя ниже.':
+        'Collect all textures from selected DFFs into one shared TXD.\nAuto-enables «Selected only» and fills in the name below.',
+    'Сохрани текущую сцену — оператор открывает .blend файлы библиотеки в этом окне Blender и потеряет несохранённые изменения':
+        'Save the current scene — the operator opens library .blend files in this Blender window and will lose unsaved changes',
+    'Удалить кеш после сборки':
+        'Delete cache after build',
+    'Укажите папку для библиотеки в INU настройках (Library Output Path)':
+        'Set the library folder in INU settings (Library Output Path)',
+    'Флаг rpGEOMETRYLIGHT — геометрия принимает\nдинамическое освещение от движка (sun + ambient).\n\nБез флага: меш рендерится как unlit, виден только\nvertex prelight × matCol. Используется для\nself-illuminated объектов (вывески, окна с\nзапечённым свечением)':
+        'rpGEOMETRYLIGHT flag — geometry receives\ndynamic lighting from the engine (sun + ambient).\n\nWithout the flag: mesh is rendered as unlit, visible\nonly via vertex prelight × matCol. Used for\nself-illuminated objects (signs, windows with\nbaked glow)',
+    'Флаг rpGEOMETRYMODULATEMATERIALCOLOR — vertex prelight\nумножается на material color и ambient_obj в runtime.\n\nВЫКЛЮЧИ если хочешь чтобы prelight использовался «как\nесть» без модуляции (нужно для запечённого ночного\nосвещения, эффектов flicker от prelight). Стандарт\nу ванильных зданий — включён':
+        'rpGEOMETRYMODULATEMATERIALCOLOR flag — vertex prelight\nis multiplied by material color and ambient_obj at runtime.\n\nDISABLE if you want prelight used «as-is» without\nmodulation (needed for baked night lighting, flicker\neffects from prelight). Standard for vanilla buildings —\nenabled',
+    'Целое число полных оборотов за анимацию. Игра проигрывает цикл повторно — модель возвращается в стартовую позицию точно (без визуального рывка на стыке)':
+        'Integer number of full rotations per animation. Game replays the cycle — model returns to start position exactly (no visual jerk at the seam)',
+    'Целое число полных оборотов за анимацию. Цикл проигрывается повторно — модель возвращается в стартовую позицию точно (без визуального рывка)':
+        'Integer number of full rotations per animation. Cycle is replayed — model returns to start position exactly (no visual jerk)',
+    "Экспорт chunk'а Bin Mesh PLG в DFF.\n\nСодержит индексы триангуляции в том виде в котором\nдвижок ожидает их у себя в RpAtomic. Без него:\n• MEd / DFF Viewer не показывает геометрию\n• некоторые версии движка не рендерят меш\n\nВыключать имеет смысл только при микро-оптимизации\nразмера DFF когда модель не идёт в игру":
+        "Export the Bin Mesh PLG chunk into DFF.\n\nContains triangulation indices in the form the\nengine expects on RpAtomic. Without it:\n• MEd / DFF Viewer doesn't show the geometry\n• some engine versions won't render the mesh\n\nOnly worth disabling to micro-optimize DFF size when\nthe model isn't shipped in the game",
+    "Экспорт второй UV-карты — используется для lightmap'ов\nи dual-pass материалов. Если меш без второй UV-карты,\nфлаг безопасно оставить включённым (DFF не получит\nлишний chunk)":
+        "Export the second UV map — used for lightmaps\nand dual-pass materials. If the mesh has no second UV map,\nit's safe to keep this flag on (DFF won't get an\nextra chunk)",
+    'Экспорт дневных vertex colors (атрибут «Day»).\nЭто ванильный prelight который игра умножает на\nambient_obj в runtime. Выключи только если хочешь\nDFF без vertex colors (редкий случай)':
+        'Export day vertex colors (attribute «Day»).\nThis is the vanilla prelight that the game multiplies\nby ambient_obj at runtime. Disable only if you want\na DFF without vertex colors (rare case)',
+    "Экспорт нормалей вершин в DFF.\n\nВКЛЮЧАТЬ: для скиннингованных объектов (peds, vehicles)\nи любых моделей у которых динамическое освещение должно\nкорректно реагировать на смену освещения сцены.\n\nВЫКЛЮЧАТЬ (по умолчанию для map-объектов): нормали\nудваивают размер vertex stream'а; статичные здания\nобычно полностью освещены через vertex prelight, и\nдвижок нормали не использует. Файл получается меньше":
+        'Export vertex normals into DFF.\n\nENABLE: for skinned objects (peds, vehicles)\nand any model whose dynamic lighting must respond\ncorrectly to changes in scene lighting.\n\nDISABLE (default for map objects): normals double\nthe vertex stream size; static buildings are usually\nfully lit via vertex prelight and the engine ignores\nnormals. File ends up smaller',
+    'Экспорт ночных vertex colors (атрибут «Night»,\nRpExtraVertColors chunk). Игра берёт их в ночное\nвремя через timecyc-blend. Если у меша нет «Night»\nслоя — chunk не пишется автоматически':
+        'Export night vertex colors (attribute «Night»,\nRpExtraVertColors chunk). Game uses them at night\nvia timecyc-blend. If the mesh has no «Night» layer,\nthe chunk is not written automatically',
+    'Экспорт первой UV-карты — основной набор текстурных\nкоординат. Должен быть включён почти всегда —\nвыключи только если меш специально без UV':
+        'Export the first UV map — the main set of texture\ncoordinates. Should be on almost always —\ndisable only if the mesh is intentionally without UV',
+    'изменено':
+        'changed',
+
+    # --- 84 keys new to NEW codebase (multi-game III/VC/SA, weight-merge, presets) ---
+    "'Default' read-only — сохрани под другим именем (Save)":
+        "'Default' is read-only — save under a different name (Save)",
+    "'Default' зарезервирован — выбери другое имя":
+        "'Default' is reserved — pick another name",
+    "'Default' нельзя переименовать — это встроенный пресет":
+        "Cannot rename 'Default' — it's a built-in preset",
+    "'Default' нельзя удалить — это встроенный пресет":
+        "Cannot delete 'Default' — it's a built-in preset",
+    "Backup идентичен текущему mesh'у (Undo схлопнул). Тэг очищен.":
+        'Backup is identical to current mesh (Undo collapsed it). Tag cleared.',
+    "Backup идентичен текущему mesh'у. Тэг очищен.":
+        'Backup is identical to current mesh. Tag cleared.',
+    'Cross-ref с IDE (used by)':
+        'Cross-ref with IDE (used by)',
+    'IDE cross-ref активен':
+        'IDE cross-ref active',
+    'IDE файлы:':
+        'IDE files:',
+    'IPL файлы:':
+        'IPL files:',
+    'Merge откатан, веса восстановлены':
+        'Merge rolled back, weights restored',
+    'Merged для weight paint:':
+        'Merged for weight paint:',
+    'Weight Paint: швы':
+        'Weight Paint: seams',
+    "cluster'ов,":
+        'clusters,',
+    'Авто-определение':
+        'Auto-detect',
+    'Аддитивный блендинг (8) · III/VC/SA':
+        'Additive blending (8) · III/VC/SA',
+    'Анализ завершён: проблем не найдено':
+        'Analysis complete: no issues found',
+    'Анализ карты завершён':
+        'Map analysis complete',
+    'Анализ карты/файлов':
+        'Map/file analysis',
+    'Архив':
+        'Archive',
+    'Без затухания на дистанции (2) · III/VC':
+        'No distance fade (2) · III/VC',
+    'Веса применены к':
+        'Weights applied to',
+    'Выдели минимум 2 ключа .location в Dope Sheet как опорные':
+        'Select at least 2 .location keys in the Dope Sheet as anchors',
+    'Граффити тег (1048576) · SA only':
+        'Graffiti tag (1048576) · SA only',
+    'Дверь гаража (2048) · SA only':
+        'Garage door (2048) · SA only',
+    'Дерево, качается на ветру (8192) · SA only':
+        'Tree, sways in wind (8192) · SA only',
+    'Динамическое освещение вместо статического (32) · III/VC':
+        'Dynamic lighting instead of static (32) · III/VC',
+    'Дорога, wet reflections (1) · VC/SA':
+        'Road, wet reflections (1) · VC/SA',
+    'Игнорировать draw distance (256) · VC only — typical для LOD-моделей':
+        'Ignore draw distance (256) · VC only — typical for LOD models',
+    'Игра':
+        'Game',
+    'Игра-источник IDE flags (III/VC/SA). Используется при экспорте для перевода битов между играми':
+        'Source game for IDE flags (III/VC/SA). Used at export to translate bits between games',
+    'Игра-источник Surface ID (III/VC/SA). Использует core.surface_translate при экспорте в другую игру':
+        'Source game for Surface ID (III/VC/SA). Uses core.surface_translate when exporting to another game',
+    'Из какой игры импортируем COL. Auto — по magic header':
+        'Which game to import COL from. Auto — by magic header',
+    'Из какой игры импортируем IPL. Auto — по числу колонок в inst-секции':
+        'Which game to import IPL from. Auto — by column count in inst section',
+    'Из какой игры импортируем. Auto — определить по RW-версии файла':
+        'Which game to import from. Auto — detect by file RW version',
+    'Использует gta.dat':
+        'Uses gta.dat',
+    'Лампы удалены':
+        'Lights removed',
+    'Между объектами:':
+        'Between objects:',
+    'Найдено':
+        'Found',
+    'Не жми Ctrl+Z — Undo ломает backup-mesh!':
+        "Don't press Ctrl+Z — Undo breaks the backup-mesh!",
+    'Не найдено translation-каналов для смещения в мировом пространстве':
+        'No translation channels found for world-space offset',
+    'Не писать в Z-буфер (64) · III/VC/SA':
+        'No write to Z-buffer (64) · III/VC/SA',
+    'Не получать тени (128) · VC/SA':
+        'Do not receive shadows (128) · VC/SA',
+    'Неизвестный режим input':
+        'Unknown input mode',
+    'Неизвестный режим источника':
+        'Unknown source mode',
+    'Нет mesh-объектов для сброса':
+        'No mesh objects to reset',
+    'Нет коллизии с летающим (32768) · SA only':
+        'No collision with flying (32768) · SA only',
+    'Нет результатов для сохранения — сначала запустите анализ':
+        'No results to save — run the analysis first',
+    'Объединить для покраски':
+        'Merge for painting',
+    'Откатить':
+        'Roll back',
+    'Пальма, качается на ветру (16384) · SA only':
+        'Palm, sways in wind (16384) · SA only',
+    'Поддержка':
+        'Support',
+    'Подтянуть тени':
+        'Pull up shadows',
+    'Применить и вернуть швы':
+        'Apply and restore seams',
+    'Принудительно III':
+        'Force III',
+    'Принудительно SA':
+        'Force SA',
+    'Принудительно VC':
+        'Force VC',
+    'Проанализировать':
+        'Analyze',
+    'Проверять модели в IMG':
+        'Check models in IMG',
+    'Прозрачный, рисовать последним (4) · III/VC/SA':
+        'Transparent, draw last (4) · III/VC/SA',
+    'Прочитать RW версию и угадать игру':
+        'Read RW version and guess game',
+    'РЕЖИМ MERGE: не меняй геометрию!':
+        "MERGE MODE: don't modify geometry!",
+    'Разрушаемая статуя (4194304) · SA only':
+        'Breakable statue (4194304) · SA only',
+    'Разрушаемый ok/dam (4096) · SA only':
+        'Breakable ok/dam (4096) · SA only',
+    'Рассеять цвет:':
+        'Scatter color:',
+    'Рисовать обе стороны (2097152) · SA only':
+        'Draw both sides (2097152) · SA only',
+    'Свет (8 ламп)':
+        'Light (8 lamps)',
+    'Сглажено ключей':
+        'Keys smoothed',
+    'Слить co-located вершины для покраски:':
+        'Merge co-located vertices for painting:',
+    "Список IDE/IPL пуст — добавь файлы кнопкой '+'":
+        "IDE/IPL list is empty — add files with the '+' button",
+    "Список файлов пуст — добавь .img / .txd кнопкой '+'":
+        "File list is empty — add .img / .txd with the '+' button",
+    'Стекло разбиваемое (512) · VC/SA':
+        'Breakable glass (512) · VC/SA',
+    'Стекло с трещинами (1024) · VC/SA':
+        'Cracked glass (1024) · VC/SA',
+    'Сцена не сохранена — сохраните .blend, отчёт пишется рядом':
+        'Scene not saved — save the .blend, report is written next to it',
+    'Текстур найдено':
+        'Textures found',
+    'Текстуры (TXD)':
+        'Textures (TXD)',
+    'Туннель, видим только в cull-зоне (16) · III only':
+        'Tunnel, visible only in cull zone (16) · III only',
+    'Укажите gta.dat файл в Map Analyzer':
+        'Specify gta.dat file in Map Analyzer',
+    'Укажите существующий .dat файл':
+        'Specify an existing .dat file',
+    'Файлы (.img / .txd):':
+        'Files (.img / .txd):',
+    'вершин. Не меняй геометрию!':
+        "vertices. Don't change the geometry!",
+    'вершинам, split-геометрия восстановлена':
+        'vertices, split geometry restored',
+    'ламп':
+        'lights',
+    'сглажено ключей':
+        'keys smoothed',
+
+    # Operator bl_label / bl_description (raw — no T()) — found 2026-05-18
+    "INU: Импорт": "INU: Import",
+    "INU: Экспорт": "INU: Export",
+    "INU: Материалы": "INU: Materials",
+    "INU: Текстуры": "INU: Textures",
+    "INU: Создать 2DFX": "INU: Create 2DFX",
+    "INU: Сохранить пресет": "INU: Save Preset",
+    "INU: Удалить пресет": "INU: Delete Preset",
+    "INU: Генерировать радар": "INU: Generate Radar",
+    "INU: Светофор": "INU: Traffic Light",
+    "Инструменты": "Tools",
+    "Проредить ключи": "Thin keyframes",
+    # === Wrapped at 2026-05-18 (display strings via T()) ===
+    ' ключей':
+        'keys',
+    ' ключей записано':
+        'keys written',
+    ' материал(ов)':
+        'material(s)',
+    ' моделей)':
+        'models)',
+    ' уже _dam — выбери _ok вариант':
+        'already _dam — pick the _ok variant',
+    ' уже есть в сцене — связана пара':
+        'already in scene — pair linked',
+    ' файлов (':
+        'files (',
+    "' не найден в effects.fxp":
+        "' not found in effects.fxp",
+    "' не найдена":
+        "' not found",
+    "' не найдена — нечего клонировать":
+        "' not found — nothing to clone",
+    "' нет эмиттеров":
+        "' has no emitters",
+    "' уже существует":
+        "' already exists",
+    "' уже существует (снимите галку 'Overwrite' нельзя, включите её)":
+        "' already exists (you cannot uncheck 'Overwrite' — turn it on)",
+    ', интерполяция применена к ':
+        ', interpolation applied to ',
+    'ALL удалить нельзя':
+        'Cannot delete ALL',
+    'Auto-decimate выполнен, интерполяция применена к ':
+        'Auto-decimate done, interpolation applied to ',
+    'Game Root не задан':
+        'Game Root is not set',
+    'Lightmap не найден в материалах':
+        'Lightmap not found in materials',
+    'Lightmap удалён из ':
+        'Lightmap removed from ',
+    'effects.fxp не найден: ':
+        'effects.fxp not found: ',
+    'Автобусный':
+        'Bus',
+    'Без светофора':
+        'No traffic light',
+    'Блик солнца':
+        'Sun Glare',
+    'Выделено: ...':
+        'Selected: ...',
+    'Генерировать радар':
+        'Generate Radar',
+    'Железнодорожный':
+        'Railroad',
+    "Имя 'ALL' зарезервировано":
+        "The name 'ALL' is reserved",
+    'Имя содержит недопустимые символы или слишком длинное':
+        'Name contains invalid characters or is too long',
+    'Интерполяция оставшихся ключей:':
+        'Interpolation for remaining keys:',
+    "Исходная система '":
+        "Source system '",
+    'Меню радар (3x3)':
+        'Radar menu (3x3)',
+    "Не нашёл F-curve'ы — выбери анимированный объект.":
+        'No F-curves found — select an animated object.',
+    'Не удалось загрузить ':
+        'Failed to load ',
+    'Не удалось создать бэкап: ':
+        'Failed to create backup: ',
+    'Неверный ключ кривой: ':
+        'Invalid curve key: ',
+    'Нет выделенных ключей. Выдели нужные ключи в Graph Editor.':
+        'No selected keys. Select the keys you need in Graph Editor.',
+    'Обычный':
+        'Normal',
+    'Ошибка записи профиля':
+        'Profile write error',
+    'Ошибка записи: ':
+        'Write error: ',
+    'Ошибка парсинга effects.fxp: ':
+        'effects.fxp parse error: ',
+    'Ошибка парсинга: ':
+        'Parse error: ',
+    'Ошибка применения правок: ':
+        'Edit application error: ',
+    'Ошибка сохранения':
+        'Save error',
+    'Ошибка удаления':
+        'Delete error',
+    'Полный меню':
+        'Full Menu',
+    'Полный радар':
+        'Full Radar',
+    'Применить':
+        'Apply',
+    'Проредить выделенные ключи':
+        'Thin selected keys',
+    'Свет':
+        'Light',
+    "Система '":
+        "System '",
+    'Создан эффект: ':
+        'Effect created: ',
+    'Создан: ':
+        'Created: ',
+    'Сохранить как…':
+        'Save as…',
+    "У системы '":
+        "System '",
+    'Удалено ключей: ':
+        'Keys removed: ',
+    'Удалено: ':
+        'Removed: ',
+    'Удалить':
+        'Delete',
+    'Удалён: ':
+        'Deleted: ',
+    'Указанные тайлы':
+        'Specified tiles',
+    'Частица':
+        'Particle',
+    "Эффект '":
+        "Effect '",
+    'имя обязательно':
+        'name is required',
+    'не удалось удалить':
+        'failed to delete',
+    'нет выбранного пресета':
+        'no preset selected',
+    'ошибка сохранения':
+        'save error',
+    'сохранён: ':
+        'saved: ',
+    'удалён: ':
+        'deleted: ',
+
+    # === Docstring / prop translations added 2026-05-18 ===
+    'Создать рiг для animated map object (мельница, кран, флюгер):\n    Armature с одной костью + Action с цикличной Z-вращением.\n\n    Все вершины активного меша автоматически привязываются к\n    единственной кости (vertex group weight=1.0). Готово к экспорту в\n    DFF + IFP без ручной настройки скелета.':
+        'Create a rig for animated map object (windmill, crane, weathervane):\n    Armature with one bone + Action with a cyclic Z rotation.\n\n    All vertices of the active mesh are auto-bound to the single bone (vertex group weight=1.0). Ready to export to DFF + IFP without manual skeleton setup.',
+    'Проверить настройку animated map object перед экспортом:\n    есть ли armature, привязан ли меш, заданы ли веса, есть ли action,\n    цикличный ли он. Лог проблем в System Console.':
+        'Validate animated map object setup before export: armature presence, mesh binding, weights, action presence and cyclicity. Issues are logged to the System Console.',
+    'Экспортировать animated map object одним кликом: пишет\n    <base>.dff + <base>.ifp в выбранную папку. Опционально дописывает\n    или обновляет anim-запись в указанном IDE-файле.':
+        'Export the animated map object in one click: writes <base>.dff + <base>.ifp into the chosen folder. Optionally appends or updates the anim entry in the specified IDE file.',
+    "Собрать Blender Asset Library из извлечённых ресурсов.\n\n    Walks every IDE in gta.dat / default.dat, classifies every cached DFF\n    by category (Cars / Peds / Weapons / Map Objects per region / LOD /\n    Interiors), imports each into a Collection, marks as an asset, embeds\n    INU metadata (model_id, txd_name, draw_distance, ide_flags), and\n    optionally renders a thumbnail. Output is a folder with one .blend\n    per category plus blender_assets.cats.txt — point Blender's Asset\n    Library preferences at it and you're done.":
+        "Build a Blender Asset Library from extracted resources.\n\n    Walks every IDE in gta.dat / default.dat, classifies every cached DFF\n    by category (Cars / Peds / Weapons / Map Objects per region / LOD /\n    Interiors), imports each into a Collection, marks as an asset, embeds\n    INU metadata (model_id, txd_name, draw_distance, ide_flags), and\n    optionally renders a thumbnail. Output is a folder with one .blend\n    per category plus blender_assets.cats.txt — point Blender's Asset\n    Library preferences at it and you're done.",
+    "Перегенерировать превьюшки в существующей Asset Library.\n\n    Iterates every ``<output>/*.blend``, opens it in this Blender\n    instance, re-renders thumbnails for every asset-marked collection,\n    then saves the .blend back. The asset list / metadata / textures\n    are untouched — only the preview pixels are refreshed. Useful for\n    bumping ``preview_size`` from 128 to 256 (or vice-versa) without\n    waiting through a full DFF re-import.\n\n    Stays in-process (modal generator) — opens .blend files in the\n    current session, headless subprocess would lose that scene-state\n    integration with the asset browser. Speed-up isn't critical for\n    preview-only refresh anyway.":
+        "Regenerate previews in an existing Asset Library.\n\n    Iterates every ``<output>/*.blend``, opens it in this Blender\n    instance, re-renders thumbnails for every asset-marked collection,\n    then saves the .blend back. The asset list / metadata / textures\n    are untouched — only the preview pixels are refreshed. Useful for\n    bumping ``preview_size`` from 128 to 256 (or vice-versa) without\n    waiting through a full DFF re-import.\n\n    Stays in-process (modal generator) — opens .blend files in the\n    current session, headless subprocess would lose that scene-state\n    integration with the asset browser. Speed-up isn't critical for\n    preview-only refresh anyway.",
+    'Импорт COL коллизии GTA SA с прогресс-баром.\n    ESC прерывает импорт, уже созданные объекты остаются в сцене.':
+        'Import a GTA SA collision COL with progress bar.\n    ESC interrupts the import — already-created objects stay in the scene.',
+    'Импорт COL при перетаскивании во viewport (батч, прогресс + ESC).\n\n    Принимает несколько файлов сразу. Селекция игнорируется — COL\n    создаёт собственные mesh-объекты, не цепляется к существующим.':
+        "Import COL on drag-and-drop into the viewport (batch, progress + ESC).\n\n    Accepts multiple files at once. Selection is ignored — COL\n    creates its own mesh objects, it doesn't attach to existing ones.",
+    'Импорт DFF при перетаскивании во viewport.\n\n    Принимает несколько файлов сразу (батч), каждый импортируется\n    как отдельная модель. Та же логика автоматического подцепления\n    одноимённого .txd, что и в обычном импорте.':
+        'Import DFF on drag-and-drop into the viewport.\n\n    Accepts multiple files at once (batch); each is imported as a separate model. Same auto-attach logic for the matching .txd as the regular import.',
+    'Переключить один бит в 2dfx_flags1 / 2dfx_flags2 на активном объекте.':
+        'Toggle one bit in 2dfx_flags1 / 2dfx_flags2 on the active object.',
+    'Сканировать выбранную папку на crash-prone паттерны в DFF/COL/TXD':
+        'Scan selected folder for crash-prone patterns in DFF/COL/TXD',
+    'Сохранить результат скана в .txt':
+        'Save scan result to .txt',
+    'Открыть папку файла в Проводнике':
+        "Open file's folder in Explorer",
+    'Очистить список результатов':
+        'Clear results list',
+    'Сделать активным указанный фрейм (используется панелью при клике\n    на строку дерева).':
+        'Make the specified frame active (used by the panel when clicking\n    on a tree row).',
+    'Переименовать активный фрейм.':
+        'Rename the active frame.',
+    'Назначить parent: активный объект становится родителем для остальных\n    выделенных. Мировая позиция каждого ребёнка сохраняется, а\n    matrix_parent_inverse сбрасывается в identity (DFF requirement).':
+        'Set parent: active object becomes the parent of the other selected ones. World position of every child is preserved, and matrix_parent_inverse is reset to identity (DFF requirement).',
+    'Снять parent с выделенных объектов (parent → None). Мировая\n    позиция сохраняется.':
+        'Clear parent on selected objects (parent → None). World position is preserved.',
+    'Проверить иерархию активного объекта против vanilla SA шаблона.\n    Тип шаблона выбирается атрибутом ``template`` оператора.':
+        "Validate the active object's hierarchy against the vanilla SA template.\n    Template type is selected by the operator's ``template`` attribute.",
+    'Создать зеркальную копию выделенных фреймов: ``_lf`` → ``_rf``,\n    ``_lb`` → ``_rb`` (X отражается, остальные оси без изменений). Если\n    зеркальный близнец уже существует — оператор его не трогает.':
+        'Create a mirrored copy of selected frames: ``_lf`` → ``_rf``,\n    ``_lb`` → ``_rb`` (X is mirrored, other axes unchanged). If the\n    mirrored twin already exists — operator leaves it alone.',
+    'Прореживание выделенных ключей. Stride — оставить каждый N-ный\n    ключ. Auto — удалить ключи которые лежат на прямой между соседями\n    (избыточные).':
+        'Thin out selected keyframes. Stride — keep every Nth key. Auto — remove keys lying on the straight line between neighbours (redundant).',
+    'N-panel в Graph Editor с прореживанием ключей.':
+        'N-panel in the Graph Editor for thinning keyframes.',
+    'Диагностика round-trip для IFP — проверяет что read → write → read\n    не теряет анимации, не путает кости и не ломает квартернионы.\n\n    Выбранный файл не меняется: экспорт идёт во временный файл рядом,\n    результат сравнивается с оригиналом и удаляется. Отчёт показывает\n    счётчики и максимальные численные отклонения (dRot, dTrans, dTime)':
+        "Round-trip diagnostics for IFP — checks that read → write → read doesn't lose animations, mix up bones or break quaternions.\n\n    The selected file is not modified: export goes to a temp file next to it, the result is compared with the original and deleted. Report shows counters and maximum numerical deltas (dRot, dTrans, dTime)",
+    "Переключить живой preview IFP-анимации без коммита в Action.\n\n    Позволяет быстро пробежаться по 294 ванильным анимациям `ped.ifp`\n    простым переключением Action-dropdown'а без захламления Action\n    Editor'а. Handler frame_change_post напрямую пишет в pose bones\n    при скрабе Timeline. Повторный клик — выключает preview и\n    восстанавливает предыдущий Action арматуры":
+        "Toggle live IFP animation preview without committing to Action.\n\n    Lets you quickly browse through 294 vanilla `ped.ifp` animations\n    by simply switching the Action dropdown, without cluttering the\n    Action Editor. The frame_change_post handler writes directly to\n    pose bones when scrubbing the Timeline. A repeated click — turns\n    off preview and restores the armature's previous Action",
+    'Исправить sign-discontinuities кватернионов на диапазоне кадров.\n    Между двумя соседними ключами с dot < 0 кость крутится длинной\n    дорогой через 360°. Скрипт находит такие пары и инвертирует знак\n    кватерниона на втором ключе — q и -q описывают одинаковую ротацию,\n    но интерполяция между ними после флипа идёт коротким путём.\n\n    Идемпотентный — повторный прогон не ухудшит, иногда нужен 2-й\n    проход чтобы вылезли ранее скрытые разрывы.':
+        "Fix quaternion sign-discontinuities over a frame range.\n    Between two adjacent keys with dot < 0 the bone takes the long path through 360°. The script finds such pairs and flips the sign of the second key — q and -q describe the same rotation, but interpolation after the flip takes the short path.\n\n    Idempotent — a repeat run won't make things worse; sometimes a 2nd pass is needed for earlier-hidden discontinuities to surface.",
+    'Сгладить ключи между выделенными опорными.\n\n    Use-case: запечённая анимация с ключом на каждом кадре (например 700\n    ключей). Хочешь опустить кость на кадре 70 — двигаешь её там, потом\n    в Dope Sheet/Graph Editor выделяешь 3 ключа (50, 70, 90: первый,\n    редактированный, последний) и нажимаешь эту кнопку. Промежуточные\n    ключи (51-69 и 71-89) перезаписываются smooth-step интерполяцией\n    между соседними опорными — будто там никаких ключей и не было.\n\n    Режимы оси:\n    - ALL — обрабатывает ВСЕ F-curve (включая rotation, scale) в bone-\n      local координатах. Быстро.\n    - WORLD_X/Y/Z — обрабатывает только .location и считает в МИРОВЫХ\n      координатах. Учитывает поворот родительских костей и armature.\n      Медленнее (per-frame depsgraph eval), но даёт правильный «по Z\n      вниз» эффект независимо от ориентации кости.\n\n    Анкоры берутся из выделенных ключей, минимум 2.\n    Структура «ключ на каждом кадре» сохраняется (важно для round-trip\n    в IFP).':
+        'Smooth keys between selected anchors.\n\n    Use-case: a baked animation with a key on every frame (e.g. 700\n    keys). You want to lower the bone at frame 70 — you move it there, then\n    in Dope Sheet/Graph Editor you select 3 keys (50, 70, 90: first,\n    edited, last) and press this button. Intermediate\n    keys (51-69 and 71-89) are overwritten with smooth-step interpolation\n    between the adjacent anchors — as if no keys had been there at all.\n\n    Axis modes:\n    - ALL — processes ALL F-curves (including rotation, scale) in bone-\n      local coordinates. Fast.\n    - WORLD_X/Y/Z — processes only .location and computes in WORLD\n      coordinates. Takes parent bone rotation and armature into account.\n      Slower (per-frame depsgraph eval), but gives the correct «down\n      along Z» effect regardless of bone orientation.\n\n    Anchors are taken from the selected keys, minimum 2.\n    The «key on every frame» structure is preserved (important for IFP\n    round-trip).',
+    'Удалить активную Action арматуры из файла полностью.\n    В отличие от кнопки X в Action Editor (которая только отвязывает),\n    этот оператор стирает Action из bpy.data.actions — полезно чтобы\n    в IFP-экспорт не попадали забытые анимации.':
+        "Delete the armature's active Action from the file entirely.\n    Unlike the X button in Action Editor (which only unlinks),\n    this operator wipes the Action from bpy.data.actions — useful so\n    forgotten animations don't end up in the IFP export.",
+    'Накинуть bone-based IK на стандартные цепочки SA-педа.\n    Создаёт non-deform контрольные кости внутри армча: запястья,\n    ступни, голову и корень. На deform-кости — IK-constraint и\n    Copy Rotation/Location, target — соответствующая control-кость.\n    Контроллы окрашены зелёным (THEME09). Перед Export IFP — Bake\n    & Clear IK, которая всё снимет и удалит control-кости.':
+        'Apply bone-based IK to the standard SA-ped chains.\n    Creates non-deform control bones inside the armature: wrists,\n    feet, head and root. Deform bones get IK-constraints and\n    Copy Rotation/Location targeting the matching control bone.\n    Controls are coloured green (THEME09). Before Export IFP — Bake\n    & Clear IK, which removes everything and deletes the control bones.',
+    'Запечь визуальную позу с IK на deform-кости, удалить\n    IK-constraints и control-кости. Делать ПЕРЕД Export IFP —\n    иначе ифп получит сырые ротации без учёта IK.':
+        'Bake the visual IK pose onto the deform bones and remove\n    IK-constraints and control bones. Do this BEFORE Export IFP —\n    otherwise IFP would get raw rotations without IK applied.',
+    'Создать "пол" — плоскость 10×10м с dev_anim текстурой,\n    которая работает как ограничитель для ног IK-рига. После\n    Add IK Rig стопы автоматически получают Floor constraint\n    с этой плоскостью как target — двигаешь плоскость по Z,\n    стопы клемпятся выше неё. Зазор (offset над плоскостью)\n    настраивается слайдером "Зазор"':
+        'Create a "floor" — a 10×10m plane with dev_anim texture\n    that acts as a limiter for the IK rig\'s feet. After\n    Add IK Rig the feet automatically get a Floor constraint\n    targeting this plane — you move the plane along Z,\n    feet clamp above it. The gap (offset above the plane)\n    is tuned with the "Зазор" slider',
+    'Извлечь все DFF, COL и текстуры из IMG-архивов GTA SA.\n\n    Кеш создаётся в папке .inu_cache/ рядом с твоим .blend файлом,\n    поэтому сцену нужно сначала сохранить — без сохранённого .blend\n    кешу некуда лечь, и оператор откажется работать.\n\n    Региональный фильтр (если выбран) сужает извлечение до TXD/моделей,\n    реально используемых в этом регионе по IDE/IPL — экономит минуты\n    на больших картах. ALL = извлечь всё':
+        "Extract all DFF, COL and textures from GTA SA IMG archives.\n\n    The cache is created in the .inu_cache/ folder next to your .blend file,\n    so the scene must be saved first — without a saved .blend there's\n    nowhere to put the cache, and the operator will refuse to run.\n\n    The region filter (when chosen) narrows extraction to TXD/models\n    actually used in that region per IDE/IPL — saves minutes\n    on big maps. ALL = extract everything",
+    'Toggle 8-light setup: создать если ламп нет, удалить если есть':
+        'Toggle 8-light setup: create if no lamps exist, remove if they do',
+    'Подтянуть тёмные участки к ярким, сохраняя шаг между гранями':
+        'Lift dark areas towards the bright ones while preserving the step between faces',
+    'Рассеять выбранный цвет вокруг выделенных полигонов с убыванием по расстоянию':
+        'Scatter the chosen colour around the selected polygons with distance falloff',
+    'Добавить IDE файл в список Custom':
+        'Add IDE file to the Custom list',
+    'Добавить IPL файл в список Custom':
+        'Add IPL file to the Custom list',
+    'Удалить запись IDE из Custom списка':
+        'Remove an IDE entry from the Custom list',
+    'Удалить запись IPL из Custom списка':
+        'Remove an IPL entry from the Custom list',
+    'Очистить список результатов':
+        'Clear results list',
+    'Сохранить результаты анализа в .txt':
+        'Save analysis results to .txt',
+    'Открыть документацию аддона на GitHub. Язык подбирается\n    под текущую локаль Blender.':
+        "Open the addon's documentation on GitHub. Language is picked\n    to match the current Blender locale.",
+    'Открыть issues аддона на GitHub — для багрепортов и пожеланий.':
+        "Open the addon's issues on GitHub — for bug reports and feature requests.",
+    'Открыть страницу последнего релиза на GitHub — там полный\n    changelog текущей версии, рендерится из RELEASE_NOTES.':
+        'Open the latest release page on GitHub — full changelog of\n    the current version, rendered from RELEASE_NOTES.',
+    'Показать краткий обзор новых фич текущей версии.':
+        'Show a brief overview of the new features in this version.',
+    "Проверить все материалы со слотами Paintjob:\n    оба слота должны быть заполнены, и у материала должна быть основная\n    текстура — иначе игра не подхватит paintjob в Pay'n'Spray.":
+        "Validate all materials with Paintjob slots:\n    both slots must be filled, and the material must have a main\n    texture — otherwise the game won't pick up the paintjob in Pay'n'Spray.",
+    'Перезаписать выбранный пресет текущими настройками (без диалога имени)':
+        'Overwrite the selected preset with the current settings (no name dialog)',
+    'Переименовать выбранный пресет':
+        'Rename the selected preset',
+    'Просканировать TXD по выбранному источнику и заполнить\n    Texture Browser метаданными (без декодинга пикселей)':
+        'Scan TXD from the chosen source and populate\n    Texture Browser with metadata (without decoding pixels)',
+    'Очистить результаты Texture Browser':
+        'Clear Texture Browser results',
+    'Добавить .img / .txd в список Custom':
+        'Add .img / .txd to the Custom list',
+    'Удалить запись из Custom-списка':
+        'Remove an entry from the Custom list',
+    "Запустить полную проверку сцены: paintjob слоты, нормировку\n    кватернионов в Action'ах, Modulate Color на прилайтах и парность\n    _ok/_dam. Результаты пишутся в панель — кликом можно перейти к\n    проблемному объекту или починить автоматически.":
+        'Run a full scene check: paintjob slots, Action quaternion\n    normalisation, Modulate Color on prelight meshes and\n    _ok/_dam pairing. Results are written to the panel — a click\n    can jump to the problem object or fix it automatically.',
+    'Очистить список результатов.':
+        'Clear results list.',
+    'Сделать активным объект/материал из строки результата.':
+        'Make the object/material from the result row active.',
+    'Нормализовать все кватернионные ключи в указанном Action.\n    Идентично тому что делает IFP-экспортёр на лету, но пишет правку\n    обратно в Action — на след. экспорт уже нечего нормировать.':
+        'Normalise every quaternion key in the specified Action.\n    Identical to what the IFP exporter does on the fly, but writes the\n    fix back into the Action — next export has nothing left to normalise.',
+    "Переименовать объект, заменив неправильный разделитель в\n    суффиксе на тот, что задан в настройках суффиксов сцены.\n\n    Применимо только к мисматчу типа «.DFF при настройке _DFF» —\n    т.е. имя оканчивается на конфигурированный bare-token, но через\n    другой разделитель. Двойной суффикс (body_LOD_DFF) не трогаем —\n    там нет однозначного автоматического fix'а.":
+        "Rename the object, replacing the wrong separator in the\n    suffix with the one set in scene suffix preferences.\n\n    Applies only to mismatches like «.DFF when configured as _DFF» —\n    i.e. the name ends with the configured bare-token but via\n    a different separator. A double suffix (body_LOD_DFF) is left\n    alone — there's no unambiguous automatic fix.",
+    'Снять флаг Modulate Color у указанного объекта — устраняет\n    flicker на прилайтных мешах.':
+        'Clear the Modulate Color flag on the specified object —\n    fixes flicker on prelit meshes.',
+    "Временно слить co-located вершины для редактирования весов.\n\n    Backup'ит mesh datablock, усредняет веса между cluster-mate'ами,\n    делает bmesh remove_doubles. В Outliner'е остаётся один объект.":
+        'Temporarily merge co-located vertices for weight editing.\n\n    Backs up the mesh datablock, averages weights between cluster-mates,\n    runs bmesh remove_doubles. A single object remains in the Outliner.',
+    "Применить покрашенные веса обратно на оригинальную split-геометрию.\n\n    Считывает веса с merged-меша, swap'ает mesh datablock обратно на\n    backup (со split-вершинами), распределяет веса по cluster-mate'ам\n    через position-match.":
+        'Apply painted weights back to the original split geometry.\n\n    Reads weights from the merged mesh, swaps the mesh datablock back to\n    the backup (with split vertices), distributes the weights across the\n    cluster-mates via position-match.',
+    "Откатить merge без сохранения покрашенных весов.\n\n    Swap'ает mesh datablock обратно на backup, удаляет merged-копию.\n    Веса покрашенные в merged-режиме теряются.":
+        'Roll back the merge without saving painted weights.\n\n    Swaps the mesh datablock back to the backup, removes the merged copy.\n    Weights painted in merged mode are lost.',
+    "Фоновый модал — диспатчит события на все видимые floater'ы":
+        'Background modal — dispatches events to all visible floaters',
+    'Показать / скрыть плавающее окно INU Floater':
+        'Show / hide an INU Floater window',
+    'Найти неиспользуемые текстуры и материалы — те, на которые не ссылается ни один меш-слот в сцене':
+        'Find unused textures and materials — those not referenced by any mesh slot in the scene',
+    'Удалить неиспользуемые текстуры и (опционально) материалы из сцены.\n\n    use_fake_user-помеченные datablocks пропускаются — это явный знак\n    «оставить даже без ссылок». Действие необратимо без Ctrl+Z, поэтому\n    показывает подтверждение со счётчиками перед удалением':
+        "Remove unused textures and (optionally) materials from the scene.\n\n    use_fake_user-flagged datablocks are skipped — that's an explicit signal\n    «keep even with no references». The action is irreversible without Ctrl+Z, so it\n    shows a confirmation with counters before deleting",
+    'Сохранить текущие настройки материала как новый пресет':
+        'Save current material settings as a new preset',
+    'Удалить пользовательский пресет (встроенные удалить нельзя)':
+        "Delete a user preset (built-ins can't be deleted)",
+    'Создать новый профиль. Маленький popup только с именем и\n    описанием — все панели включаются по умолчанию, видимость и\n    порядок настраиваются после через кнопку ⚙ (Edit Profile).':
+        'Create a new profile. A small popup with just the name and\n    description — all panels are on by default; visibility and\n    order are tuned afterwards via the ⚙ button (Edit Profile).',
+    'Удалить активный пользовательский профиль (ALL удалить нельзя).':
+        'Delete the active user profile (ALL cannot be deleted).',
+    "Click-to-pick / click-to-place reorder: первый клик «берёт»\n    панель (она подсвечивается), второй клик по другой панели\n    «кладёт» её на это место. Эмулирует drag-and-drop через два\n    клика — Blender Python не отдаёт настоящий drag для custom\n    items в popup'е.":
+        "Click-to-pick / click-to-place reorder: first click «picks» a\n    panel (it highlights), second click on another panel\n    «places» it at that spot. Emulates drag-and-drop via two\n    clicks — Blender Python doesn't expose a real drag for custom\n    items in a popup.",
+    'Eye-toggle: переключает видимость одной панели в активном\n    профиле. Позиция панели в `order` не меняется — только\n    membership в `hidden` set.':
+        "Eye-toggle: flips visibility of a single panel in the active\n    profile. The panel's position in `order` isn't changed —\n    only membership in the `hidden` set.",
+    'Открыть редактор активного профиля в отдельном popup-окне.\n    Та же UI что и inline-список, но скрытая за одной кнопкой —\n    main panel остаётся чистой пока юзер не настраивает layout.':
+        'Open the editor for the active profile in a separate popup\n    window. Same UI as the inline list, but hidden behind one\n    button — the main panel stays clean until the user tunes layout.',
+    'Добавить новый слой в текущий стек (Day или Night).\n\n    Создаёт ``BYTE_COLOR``/``CORNER`` атрибут с префиксом ``VCL_D_`` или\n    ``VCL_N_`` и инициализирует его прозрачным (alpha=0). Стек ограничен\n    10 слоями — операция отказывает с предупреждением при переполнении':
+        'Add a new layer to the current stack (Day or Night).\n\n    Creates a ``BYTE_COLOR``/``CORNER`` attribute prefixed with ``VCL_D_`` or\n    ``VCL_N_`` and initialises it as transparent (alpha=0). Stack is capped\n    at 10 layers — operation refuses with a warning on overflow',
+    'Удалить активный слой и его color attribute. Действие undo-able':
+        'Remove the active layer and its color attribute. Action is undo-able',
+    'Переместить активный слой вверх/вниз в стеке (меняет порядок блендинга)':
+        'Move the active layer up/down in the stack (changes blend order)',
+    'Сделать слой полноценным прилайт-атрибутом (убрать VCL_<scope>_ префикс).\n\n    Атрибут останется на меше под коротким именем — но из стека VCL\n    исчезнет. Полезно когда заведомо «временный» слой пора зафиксировать\n    как новый базовый прилайт':
+        'Promote a layer to a full-fledged prelight attribute (strip the VCL_<scope>_ prefix).\n\n    The attribute stays on the mesh under the short name — but disappears\n    from the VCL stack. Useful when a deliberately «temporary» layer is ready\n    to be locked in as a new base prelight',
+    'Превратить произвольный color attribute в VCL-слой (добавить префикс).\n\n    Scope (Day или Night) определяется параметром оператора — на UI\n    кнопки «→ Day» / «→ Night» рядом с не-VCL атрибутами в секции «База»':
+        'Demote an arbitrary color attribute into a VCL layer (add the prefix).\n\n    Scope (Day or Night) is set by the operator parameter — in the UI\n    «→ Day» / «→ Night» buttons appear next to non-VCL attributes in the «База» section',
+    'Сделать атрибут Day или Night активным в Color Attributes.\n\n    В hijack-режиме (Live Preview ON) Day и Night содержат итоговую\n    композицию своего стека — клик на эту кнопку просто переключает\n    активный color attribute на нужный, чтобы viewport показал нужный\n    стек. Если Live Preview OFF — Day/Night содержат оригиналы, кнопки\n    работают как обычный «выбрать атрибут»':
+        'Make the Day or Night attribute active in Color Attributes.\n\n    In hijack mode (Live Preview ON) Day and Night contain the final\n    composition of their stack — clicking this button just switches the\n    active color attribute to the one you need so the viewport shows the\n    right stack. If Live Preview is OFF — Day/Night contain the originals,\n    the buttons behave like a regular «pick attribute»',
+    'Пересобрать composite в Day/Night вручную.\n\n    Используется когда нужно форсировать пересчёт без триггера через\n    слайдер — например после ручного редактирования атрибутов через\n    Mesh Data Properties':
+        'Rebuild the Day/Night composite manually.\n\n    Used when you need to force a recompute without triggering via a\n    slider — e.g. after manually editing the attributes via\n    Mesh Data Properties',
+    "Применить значение слайдера к выделенным слоям.\n\n    Режим 'ABSOLUTE' — всем выделенным присваивается одно и то же\n    значение. 'RELATIVE' — каждое значение сдвигается на дельту\n    относительно своего текущего":
+        "Apply the slider value to the selected layers.\n\n    Mode 'ABSOLUTE' — all selected get the same value. 'RELATIVE' —\n    each value is shifted by the delta relative to its current one",
+    'Перекрасить выделенные слои — заменить RGB всех окрашенных\n    пикселей на выбранный цвет (alpha сохраняется).\n\n    Полезно когда хочешь поменять оттенок группы слоёв, не трогая то\n    что под ними и не перерисовывая руками':
+        "Recolor selected layers — replace the RGB of every coloured\n    pixel with the chosen colour (alpha is preserved).\n\n    Useful when you want to change the tint of a group of layers without\n    touching what's underneath or repainting by hand",
+    "Сделать color attribute этого слоя активным на меше + (опционально) переключиться в Vertex Paint.\n\n    Используется UIList'ом — клик по строке слоя сразу даёт пользователю\n    рисовать в нужный атрибут без ручного переключения в Mesh Data\n    Properties → Color Attributes":
+        "Make this layer's color attribute active on the mesh + (optionally) switch to Vertex Paint.\n\n    Used by the UIList — clicking on a layer row lets the user paint into\n    the correct attribute without manually switching in Mesh Data\n    Properties → Color Attributes",
+    'Создать поврежденный (_dam) дубликат активного меша. Если у источника нет суффикса, ему присваивается _ok. Поврежденный вариант ставится в ту же иерархию и скрывается во viewport (но остаётся видим для DFF-экспорта)':
+        'Create a damaged (_dam) duplicate of the active mesh. If the source has no suffix, _ok is assigned to it. The damaged variant is placed in the same hierarchy and hidden in the viewport (but stays visible for DFF export)',
+    'Переключить отображение OK / Damaged частей машины во viewport. Сканирует иерархию активной машины (или всю сцену, если активного объекта нет) и скрывает _ok или _dam меши в зависимости от выбранного состояния. Не влияет на DFF-экспорт':
+        "Toggle OK / Damaged vehicle parts display in the viewport. Scans the active vehicle's hierarchy (or the whole scene if no active object) and hides _ok or _dam meshes depending on the chosen state. Does not affect DFF export",
+    'Найти и отчитаться о парах _ok / _dam в активной иерархии. Предупреждает если у меша есть _ok без _dam (или наоборот) — такой меш пропускается движком при повреждениях':
+        'Find and report _ok / _dam pairs in the active hierarchy. Warns when a mesh has _ok without _dam (or vice versa) — such a mesh is skipped by the engine on damage',
+    'Главная панель GTA Tools — root of the N-sidebar tab. Not in\n    PANELS registry: roots have no bl_order (they own the tab) and\n    Phase 5 will need one root per tab, handled separately.':
+        'Main GTA Tools panel — root of the N-sidebar tab. Not in\n    PANELS registry: roots have no bl_order (they own the tab) and\n    Phase 5 will need one root per tab, handled separately.',
+    'Pre-export sweep: paintjob slots, quaternion normalisation,\n    Modulate Color на прилайтах, парность _ok/_dam.\n\n    Sub-panel живёт внутри Export panel — pre-flight check рядом с\n    кнопкой экспорта, без отдельного слота в registry.':
+        'Pre-export sweep: paintjob slots, quaternion normalisation,\n    Modulate Color on prelight meshes, _ok/_dam pairing.\n\n    Sub-panel lives inside the Export panel — pre-flight check next\n    to the export button, no separate slot in the registry.',
+    'Scrollable list of binary file lint issues. Filters by severity\n    («Только ERROR» toggle) and free-text search via the standard\n    UIList search field.':
+        'Scrollable list of binary file lint issues. Filters by severity\n    («ERRORS only» toggle) and free-text search via the standard\n    UIList search field.',
+    'Combined sub-panel внутри «Проверка»: переключатель сверху между\n    двумя режимами анализа — DFF/COL/TXD файлы или IDE/IPL карта.\n\n    Историческое имя ``GTATOOLS_PT_file_scanner`` оставлено, чтобы\n    layouts с ``bl_parent_id`` не сломались — содержание расширено\n    на два подрежима.':
+        "Combined sub-panel inside «Validation»: top toggle between\n    two analysis modes — DFF/COL/TXD files or IDE/IPL map.\n\n    The historical name ``GTATOOLS_PT_file_scanner`` is kept so\n    layouts with ``bl_parent_id`` don't break — the content is\n    extended to two sub-modes.",
+    'Result list for the Map Analyzer panel. Same shape as the file\n    scanner list but reads its own «Только ERROR» toggle from\n    ``gtatools_map_analyzer_only_errors`` so the two panels filter\n    independently.':
+        'Result list for the Map Analyzer panel. Same shape as the file\n    scanner list but reads its own «ERRORS only» toggle from\n    ``gtatools_map_analyzer_only_errors`` so the two panels filter\n    independently.',
+    'Frame Hierarchy Editor — компактное дерево фреймов активного\n    объекта + операторы для безопасного rename / set-parent / validate\n    против vanilla SA шаблонов (vehicle, ped). DFF-frame-list пишется\n    точно по этим именам, так что любая опечатка ломает поведение в\n    игре — лучше отловить здесь, чем после копирования в IMG.':
+        'Frame Hierarchy Editor — compact tree of frames of the active\n    object + operators for safe rename / set-parent / validate against\n    vanilla SA templates (vehicle, ped). The DFF frame list is written\n    using exactly these names, so any typo breaks behavior in the\n    game — better caught here than after copying to IMG.',
+    'Менеджер ID моделей GTA SA':
+        'GTA SA Model ID Manager',
+    'Lighting — общий контейнер для всех инструментов по работе со светом\n    и vertex colors. Объединяет 5 подпанелей (Prelight, Prelight COL,\n    Vertex Paint, LightMap, Itera Tools 3) под одним заголовком, чтобы не\n    раздувать N-sidebar пятью отдельными top-level панелями. Все дети\n    свёрнуты по умолчанию — юзер раскрывает только нужный.':
+        "Lighting — common container for all light / vertex-color tools.\n    Bundles 5 sub-panels (Prelight, Prelight COL, Vertex Paint,\n    LightMap, Itera Tools 3) under one heading so the N-sidebar isn't\n    bloated with five separate top-level panels. All children are\n    collapsed by default — the user expands only what they need.",
+    'Sub-panel: инструменты для работы со светом / vertex colors.':
+        'Sub-panel: tools for working with light / vertex colors.',
+    "Документация, баг-репорты и What's New — внизу панели":
+        "Documentation, bug reports and What's New — at the bottom of the panel",
+    'V-offset для Day vcol — применяется автоматически при изменении':
+        'V-offset for Day vcol — applied automatically when changed',
+    'V-offset для Night vcol — применяется автоматически при изменении':
+        'V-offset for Night vcol — applied automatically when changed',
+    'Из какой игры импортируем TXD. Auto — по RW-версии в chunk header':
+        'Which game to import TXD from. Auto — by RW version in chunk header',
+    'Имя пресета (буквы, цифры, дефис, подчёркивание, пробел)':
+        'Preset name (letters, digits, hyphen, underscore, space)',
+    'Описание':
+        'Description',
+    'Короткое описание (необязательно)':
+        'Short description (optional)',
+    'Имя нового профиля. Заменит существующий с тем же именем':
+        'Name of the new profile. Replaces any existing one with the same name',
+    'Короткая подсказка для tooltip в dropdown':
+        'Short hint shown as tooltip in the dropdown',
+
+    # ── Mobile TXD warning (txd_export.py) ──
+    'TXD сохранён в PC формате. Для mobile конвертируй через TxdGen (PVRTC/ETC1).':
+        'TXD saved in PC format. For mobile use TxdGen (PVRTC/ETC1) to convert.',
+
+    # ── Empty-rig (Kams-style) animated map object (animobj_ops.py) ──
+    "Префикс для имени Empty'ев: <base>_root + <base>_pivot. Совпадает с именем модели DFF/IFP":
+        "Prefix for Empty names: <base>_root + <base>_pivot. Matches the DFF/IFP model name",
+    'Имя Blender Action на pivot Empty — попадёт в IFP. Игра ищет анимацию по этому имени из IDE anim entry':
+        "Blender Action name on the pivot Empty — written to IFP. The game looks up animations by this name in the IDE anim entry",
+    'После Setup припарентите статичный меш к <base>_root,':
+        'After Setup, parent the static mesh to <base>_root,',
+    'а анимируемый — к <base>_pivot':
+        'and the animated mesh to <base>_pivot',
+    'Empty rig: ни один pivot не дал ключей — IFP не записан':
+        'Empty rig: no pivot produced any keys — IFP was not written',
+    'Не нашли root Empty — запустите Setup (Empty rig)':
+        'No root Empty found — run Setup (Empty rig)',
+    'Rig содержит только root — нужен хотя бы один pivot Empty':
+        'Rig only contains a root — at least one pivot Empty is required',
+    'Ни один pivot не имеет Action с keyframes':
+        'No pivot has an Action with keyframes',
+    'В rig нет меша — припарентите DFF меш к root или pivot':
+        'Rig has no mesh — parent the DFF mesh to root or pivot',
+    "Выделите объект rig'а":
+        'Select an object in the rig',
+    'Auto: ползунки сами пересчитывают keyframes цикла.\nManual: ползунки заморожены, ты сам ставишь keyframes':
+        'Auto: sliders rebuild the cycle keyframes themselves.\nManual: sliders frozen, you place keyframes yourself',
+
+    # ── UI buttons for both rig flavours (ui/panels.py) ──
+    'Setup (skin)':
+        'Setup (skin)',
+    'Setup (Empty)':
+        'Setup (Empty)',
+    'Validate (skin)':
+        'Validate (skin)',
+    'Validate (Empty)':
+        'Validate (Empty)',
+    'Выдели MESH/Empty и нажми Setup (skin) или Setup (Empty)':
+        'Select MESH/Empty and press Setup (skin) or Setup (Empty)',
+
+    # ── Curve-based path workflow (path_curves.py + panels.py) ──
+    'Меш не содержит рёбер — путь не построен':
+        'Mesh has no edges — path was not built',
+    'Не нашли цепочек путей в меше':
+        'No path chains found in the mesh',
+    'кривых построено':
+        'curves built',
+    'Куда сохранить nodes*.dat':
+        'Where to save nodes*.dat',
+    'Записать в расширенном FLA4 формате (для Fastman92 limit adjuster)':
+        'Write in the extended FLA4 format (for Fastman92 limit adjuster)',
+    'Выделите хотя бы одну Curve':
+        'Select at least one Curve',
+    'нод записано в':
+        'nodes written to',
+    'Curve workflow (Kams / ZZPuma):':
+        'Curve workflow (Kams / ZZPuma):',
+    'Меш → Curves':
+        'Mesh → Curves',
+    'Curves → .dat':
+        'Curves → .dat',
+    'Атрибуты:':
+        'Attributes:',
+
+    # ── ZZPuma-style extras: pathset, selection, bulk, accessories ──
+    'Path set':
+        'Path set',
+    'Размер регионной сетки. 64 = vanilla SA. Большие значения требуют Fastman92 limit adjuster (FLA4)':
+        'Region grid size. 64 = vanilla SA. Larger values require the Fastman92 limit adjuster (FLA4)',
+    'Записать всю карту':
+        'Write entire map',
+    'Создать пустые nodes*.dat для всех регионов pathSet\'а, не только для тех где есть Curve\'ы. Vanilla SA требует наличия всех 64 файлов':
+        "Emit empty nodes*.dat for every region in the pathSet, not only those that have Curves. Vanilla SA requires all 64 files to exist",
+    'пустых':
+        'empty',
+    'ped Curve выделено':
+        'ped Curves selected',
+    'vehicle Curve выделено':
+        'vehicle Curves selected',
+    'Curve выделено':
+        'Curves selected',
+    'Curve перекрашено':
+        'Curves recoloured',
+    'Скопировано props:':
+        'Props copied:',
+    'Буфер пуст — сначала Pick на исходной Curve':
+        'Clipboard is empty — Pick from a source Curve first',
+    'Props применены к':
+        'Props applied to',
+    'Не менять':
+        'Keep',
+    'Включён':
+        'Enabled',
+    'Выключён':
+        'Disabled',
+    'Выключен':
+        'Disabled',
+    'Нет':
+        'No',
+    'Да':
+        'Yes',
+    'Spawn rate':
+        'Spawn rate',
+    'Spawn probability 0.0-1.0. Введи -1 чтобы не менять':
+        'Spawn probability 0.0-1.0. Enter -1 to skip',
+    'Width':
+        'Width',
+    'Path width. Введи -1 чтобы не менять':
+        'Path width. Enter -1 to skip',
+    'Highway':
+        'Highway',
+    'Boats':
+        'Boats',
+    'Parking':
+        'Parking',
+    'Traffic':
+        'Traffic',
+    'Bulk-set применён к':
+        'Bulk-set applied to',
+
+    # Accessories
+    'TrafficLight':
+        'TrafficLight',
+    'RoadBlock':
+        'RoadBlock',
+    'Connector':
+        'Connector',
+    'SpecialNode':
+        'SpecialNode',
+    'Светофор: spawn\'ится на сегменте между knot и knot+1':
+        'TrafficLight: spawned on the segment between knot and knot+1',
+    'Дорожный блок копов на самом knot':
+        'Police road block exactly at the knot',
+    'Connector нода (для inter-region путей FLA4)':
+        'Connector node (for inter-region paths in FLA4)',
+    'Универсальный маркер для special-логики':
+        'Universal marker for special-purpose logic',
+    'Knot index':
+        'Knot index',
+    'Индекс knot\'а на родительской Curve (0-based)':
+        'Knot index on the parent Curve (0-based)',
+    'Создан':
+        'Created',
+    'Удалено accessory:':
+        'Removed accessories:',
+
+    # Auto-sync + debug
+    'Auto-sync включён':
+        'Auto-sync enabled',
+    'Что показать':
+        'What to show',
+    'Node IDs':
+        'Node IDs',
+    'Navi IDs':
+        'Navi IDs',
+    'Выключить всё':
+        'Turn everything off',
+
+    # UI labels for new buttons
+    'Peds':
+        'Peds',
+    'Vehs':
+        'Vehs',
+    'Все':
+        'All',
+    'Pick':
+        'Pick',
+    'Apply':
+        'Apply',
+    'Bulk':
+        'Bulk',
+    'Colors':
+        'Colors',
+    '+TL/RB/CO':
+        '+TL/RB/CO',
+    'Удалить':
+        'Remove',
+    'Sync':
+        'Sync',
+    'Off':
+        'Off',
+    'Тип':
+        'Type',
+
+    # ── Operator tooltips (bl_description from docstrings) ──
+    'Выделить все Curve-пути типа Ped (sapath_type=1)':
+        'Select all Curve paths of type Ped (sapath_type=1)',
+    'Выделить все Curve-пути типа Vehicle (sapath_type=2)':
+        'Select all Curve paths of type Vehicle (sapath_type=2)',
+    'Выделить все Curve-пути с sapath_* свойствами':
+        'Select every Curve path that carries sapath_* properties',
+    'Перекрасить wireframe выделенных Curve-путей по их типу/флагам':
+        'Recolour wireframe of the selected Curve paths according to their type/flags',
+    'Скопировать sapath_* свойства активной Curve во внутренний буфер':
+        "Copy sapath_* properties of the active Curve into the addon's clipboard",
+    'Применить ранее скопированные sapath_* к выделенным Curve':
+        'Apply the previously picked sapath_* properties to every selected Curve',
+    'Bulk-set sapath_* свойств для всех выделенных Curve.\n\n    Опции с -1 / 0 значением «не менять». Полезно для разом установить\n    type=Vehicle + traffic=enabled + spawn=1.0 на массу путей после\n    импорта или ручной правки.':
+        "Bulk-set sapath_* properties on all selected Curves.\n\n    Options with a -1 / 0 value mean «keep as is». Handy for setting\n    type=Vehicle + traffic=enabled + spawn=1.0 on lots of paths after\n    import or manual edits in one go.",
+    'Добавить TrafficLight / RoadBlock / Connector / SpecialNode на\n    активный knot выделенной Curve.':
+        'Add a TrafficLight / RoadBlock / Connector / SpecialNode on the\n    active knot of the selected Curve.',
+    'Удалить выделенные path accessory объекты':
+        'Remove the selected path accessory objects',
+    "Включить фоновую синхронизацию позиций path accessory'ев\n    с их родительскими Curve'ами":
+        'Enable background sync of path accessory positions\n    with their parent Curves',
+    'Включить/выключить debug overlay для путей (NodeID/AreaID на нодах)':
+        'Toggle the path debug overlay (NodeID/AreaID labels on nodes)',
+    'Создать Empty-rig для animated map object в стиле Kams скриптов:\n    два Empty (root + pivot) с user-prop BoneID и циклической Action на\n    pivot. Меши парентится вручную — статичные к root, анимируемые к pivot.\n    Не требует armature/skin — обходит rest_quat баг bone-flow.':
+        "Build an Empty-based rig for an animated map object, Kams-style:\n    two Empty objects (root + pivot) with a BoneID user-prop and a cyclic\n    Action on the pivot. Meshes are parented manually — static to root,\n    animated to pivot. Skips the armature/skin path and side-steps the\n    rest_quat bug of the bone flow.",
+    'Проверить Empty-rig: есть ли root + pivot, корректные BoneID,\n    Action на pivot, припарентенные меши. Сообщает первую ошибку.':
+        'Validate an Empty-rig: presence of root + pivot, correct BoneIDs,\n    Action on the pivot, parented meshes. Reports the first issue found.',
+
+    # Pre-existing armature-rig animobj docstrings (English fill-ins)
+    'Создать рiг для animated map object (мельница, кран, флюгер):\n    Armature с одной костью + Action с цикличной Z-вращением.\n\n    Все вершины активного меша автоматически привязываются к\n    единственной кости (vertex group weight=1.0). Готово к экспорту в\n    DFF + IFP без ручной настройки скелета.':
+        'Build a rig for an animated map object (windmill, crane, vane):\n    a single-bone Armature + an Action with a cyclic Z rotation.\n\n    Every vertex of the active mesh is automatically weighted to the\n    sole bone (vertex group weight=1.0). Ready for DFF + IFP export\n    without any manual skeleton setup.',
+    'Проверить настройку animated map object перед экспортом:\n    есть ли armature, привязка ли все, единая ли кость, есть ли action,\n    нормальные ли ID. Все находки в System Console.':
+        'Validate the animated map object setup before export:\n    armature present, all vertices weighted, single bone, Action present,\n    sensible IDs. Findings are printed to the System Console.',
+    'Экспортировать animated map object одним кликом: пишет\n    <base>.dff + <base>.ifp в выбранную папку. Опционально дописывает\n    или обновляет anim-запись в указанном IDE-файле.':
+        'Export an animated map object in one click: writes\n    <base>.dff + <base>.ifp to the chosen folder. Optionally appends\n    or updates the anim entry in the specified IDE file.',
+
+    # ── Empty-rig setup: auto-parent option + sanity warnings ──
+    'Активный меш':
+        'Active mesh',
+    'Что сделать с активным меш-объектом после Setup:\n  Pivot — припарентить к pivot (будет крутиться вместе с rig\'ом)\n  Root  — припарентить к root (останется статичным как \'основание\')\n  Нет   — не трогать':
+        "What to do with the active mesh after Setup:\n  Pivot — parent to pivot (mesh follows the rotating rig)\n  Root  — parent to root (mesh stays static as a base)\n  Нет   — leave the mesh alone",
+    'Парентить к pivot':
+        'Parent to pivot',
+    'Парентить к root':
+        'Parent to root',
+    'Не парентить':
+        'Do not parent',
+    'Меш будет крутиться вместе с pivot':
+        'The mesh will rotate with the pivot',
+    'Меш остаётся статичным как основание':
+        'The mesh stays static as the base',
+    'Не трогать активный меш':
+        'Leave the active mesh alone',
+    'Этот меш скиннирован (Armature). Empty-rig для map-объектов, не персонажей':
+        'This mesh is skinned (Armature). Empty-rig is for map objects, not characters',
+    'Для персонажей используй Setup (skin) + Character Animation':
+        'For characters use Setup (skin) + Character Animation',
+
+    # ── Post-setup parenting helpers ──
+    "Припарентить выделенные меши к pivot Empty-rig'а — меш будет\n    крутиться вместе с rig'ом. Если rig'ов несколько, используется\n    тот в иерархии которого уже находится активный объект.":
+        'Parent selected meshes to the rig pivot — they will rotate with\n    the rig. If several rigs exist, the one containing the active\n    object is preferred.',
+    "Припарентить выделенные меши к root Empty-rig'а — они останутся\n    статичными как 'основание' (как корпус мельницы без лопастей).":
+        "Parent selected meshes to the rig root — they stay static as the\n    base (e.g. the windmill body without its blades).",
+    "В сцене нет Empty-rig'а — сначала Setup (Empty)":
+        'No Empty-rig in the scene — run Setup (Empty) first',
+    "У rig'а нет pivot Empty":
+        'The rig has no pivot Empty',
+    'меш(а) припарентено к':
+        'mesh(es) parented to',
+
+    # ── Panel labels for child counts + parenting buttons ──
+    'Меш под pivot:':
+        'Meshes under pivot:',
+    'под root:':
+        'under root:',
+    'Pivot пустой — анимация не будет видна. Выдели меш и нажми «К pivot»':
+        'Pivot has no mesh — animation will not be visible. Select a mesh and press «To pivot»',
+    'К pivot':
+        'To pivot',
+    'К root':
+        'To root',
+
+    # ── Add Pivot operator (multi-part rigs) ──
+    "Добавить ещё один pivot Empty в существующий Empty-rig — для\n    моделей с несколькими анимированными частями (например мельница +\n    противовес). Каждому pivot'у выдаётся свой BoneID и Action.\n\n    Если выделен меш — он сразу парентится к новому pivot'у.\n    Если выделена кость старого pivot'а или root — новый pivot\n    создаётся как ребёнок root'а того же rig'а.":
+        'Add another pivot Empty to an existing Empty-rig — for models\n    with several animated parts (e.g. windmill + counterweight). Each\n    pivot gets its own BoneID and Action.\n\n    If a mesh is active — it is parented to the new pivot immediately.\n    If a previous pivot or root is active — the new pivot is created\n    as a child of the same rig root.',
+    "Имя pivot'а":
+        'Pivot name',
+    "Суффикс для нового Empty: <rig>_<name>. Имя action автоматически берётся таким же":
+        'Suffix for the new Empty: <rig>_<name>. The Action name is taken from this too',
+    'Припарентить активный меш':
+        'Parent active mesh',
+    'Сразу подвесить активный меш под новый pivot':
+        'Immediately hang the active mesh under the new pivot',
+    '+Pivot':
+        '+Pivot',
+    "Структура rig'а:":
+        'Rig structure:',
+
+    # ── Orphan-mesh panel (when a non-rig mesh is active and a rig exists) ──
+    "Меш вне rig'а:":
+        'Mesh outside rig:',
+    "Этот меш не входит в иерархию rig'а. Прикрепи его:":
+        'This mesh is not part of any rig hierarchy. Attach it:',
+    'К pivot (анимирован)':
+        'To pivot (animated)',
+    'К root (статика)':
+        'To root (static)',
+    'Target rig:':
+        'Target rig:',
+
+    # ── Multi-select Setup hint ──
+    'Других мешей в выделении (→ root):':
+        'Other meshes in selection (→ root):',
+
+    # ── Cleaned-up Setup/Validate labels (armature flow removed) ──
+    'Setup':
+        'Setup',
+    'Validate':
+        'Validate',
+    'Выдели меш и нажми Setup':
+        'Select a mesh and press Setup',
+    'Выбери меш пипеткой выше — rig создастся автоматически':
+        'Pick a mesh with the eyedropper above — the rig will be created automatically',
+
+    'Статика:':
+        'Static:',
+    'Пипеткой выбери анимированную часть ↓':
+        'Pick the animated part with the eyedropper ↓',
+    'Выдели меш-основание (станет статикой)':
+        'Select a base mesh (will become the static part)',
+
+    # ── Eyedropper picker for adding meshes to rig ──
+    'Куда добавить':
+        'Where to add',
+    'Куда привесить выбранный меш:\n  К pivot — на первый pivot (анимация общая со всем pivot\'ом)\n  Новый pivot — создать отдельный pivot с собственной анимацией\n  К root — статичная часть без анимации':
+        "Where to attach the picked mesh:\n  To pivot — to the first pivot (shares animation with that pivot)\n  New pivot — create a fresh pivot with its own animation\n  To root — static part with no animation",
+    'Новый pivot':
+        'New pivot',
+    'Создать новый pivot и привесить меш к нему':
+        'Create a new pivot and parent the mesh to it',
+    'К существующему pivot':
+        'To existing pivot',
+    "Парентить к первому pivot'у (одна анимация на всех)":
+        'Parent to the first pivot (one shared animation)',
+    'К root (статика)':
+        'To root (static)',
+    'Статичная часть, не будет крутиться':
+        'Static part — will not rotate',
+    'Меш':
+        'Mesh',
+    'Кликни на пипетку и выбери меш в сцене или 3D-окне. Он автоматически добавится в rig согласно выбору «Куда добавить»':
+        'Click the eyedropper and pick a mesh in the scene or 3D viewport. It will be attached to the rig according to «Where to add»',
+    'Добавить меш в rig:':
+        'Add mesh to rig:',
+    'Или возьми пипеткой:':
+        'Or use the eyedropper:',
+    # === TXD per-mesh export strings (2026-05-18) ===
+    'Не удалось экспортировать ни одного TXD':
+        'Failed to export any TXD',
+    'TXD записано в':
+        'TXDs written to',
+    'с ошибками':
+        'with errors',
+
+    # === v2.0.0 misc gaps ===
+    'Action Editor':
+        'Action Editor',
+    'Damage variants:':
+        'Damage variants:',
+    'FLA4':
+        'FLA4',
+    'Ped':
+        'Ped',
+    'Used by':
+        'Used by',
+    'Vehicle':
+        'Vehicle',
+    "В сцене нет Empty-rig'а — сначала Setup":
+        "No Empty-rig in scene — run Setup first",
+    "Нет анимированных pivot'ов — IFP будет пустой":
+        "No animated pivots — IFP would be empty",
+
 }

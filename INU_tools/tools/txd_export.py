@@ -69,7 +69,12 @@ RW_TEXDICTIONARY = 0x16
 RW_TEXTURENATIVE = 0x15
 RW_STRUCT = 0x01
 RW_EXTENSION = 0x03
+# Encoded library-ID form (RW version + build): 0x1803FFFF = SA + 0xFFFF
+# build. III/VC use lower encodings — see ``_resolve_lib_id_for_scene``.
+# Kept as the historical name + value for backward compatibility with
+# any external callers; new code reads ``_active_lib_id`` instead.
 RW_VERSION = 0x1803FFFF
+_active_lib_id = RW_VERSION   # mutated transiently by export_txd
 PLATFORM_D3D9 = 9
 RASTER_565 = 0x0200
 RASTER_8888 = 0x0500
@@ -78,12 +83,27 @@ FILTER_LINEAR = 0x02
 ADDRESS_WRAP = 0x01
 
 
+def _resolve_lib_id_for_scene(scene) -> int:
+    """Compute the RW library-ID for TXD chunk headers based on the
+    scene's active game. Falls back to SA for missing/unknown values."""
+    try:
+        from ..core import game_versions as gv
+        from ..core.dff import make_library_id
+        game = gv.game_of_scene(scene)
+        return make_library_id(gv.rw_version_for_game(game))
+    except Exception:
+        return RW_VERSION
+
+
 def make_filter_flags():
     return FILTER_LINEAR | (ADDRESS_WRAP << 8) | (ADDRESS_WRAP << 12)
 
 
 def write_rw_section_header(data, section_type, size):
-    data.extend(struct.pack('<III', section_type, size, RW_VERSION))
+    # Reads the module-level ``_active_lib_id`` so per-texture helpers
+    # don't each need a lib_id parameter threaded through. export_txd
+    # sets it once at the top and restores in `finally`.
+    data.extend(struct.pack('<III', section_type, size, _active_lib_id))
 
 
 def is_texture_connected_to_alpha(tex_node):
@@ -634,6 +654,13 @@ def export_txd(filepath, context, selected_only=False, backend=None, **_legacy):
 
     scene = context.scene
 
+    # Resolve TXD lib-ID from scene's gtatools_game and stash it on the
+    # module-level slot read by write_rw_section_header. Restored in
+    # `finally` below so nested / concurrent exports don't leak state.
+    global _active_lib_id
+    _saved_lib_id = _active_lib_id
+    _active_lib_id = _resolve_lib_id_for_scene(scene)
+
     if backend is None:
         backend = getattr(scene.inu_settings, 'gtatools_dxt_backend', 'numpy')
 
@@ -769,6 +796,7 @@ def export_txd(filepath, context, selected_only=False, backend=None, **_legacy):
     wm.progress_end()
 
     if not tex_natives:
+        _active_lib_id = _saved_lib_id  # restore before bailing
         return {'CANCELLED'}, "No textures could be processed", []
 
     tex_natives_data = bytearray()
@@ -786,10 +814,17 @@ def export_txd(filepath, context, selected_only=False, backend=None, **_legacy):
 
     with open(filepath, 'wb') as f:
         content_size = len(struct_section) + len(tex_natives_data) + len(extension_data)
-        f.write(struct.pack('<III', RW_TEXDICTIONARY, content_size, RW_VERSION))
+        # Top-level Texture Dictionary header uses the same lib_id we
+        # stashed earlier — same value as every nested chunk.
+        f.write(struct.pack('<III', RW_TEXDICTIONARY, content_size, _active_lib_id))
         f.write(struct_section)
         f.write(tex_natives_data)
         f.write(extension_data)
+
+    # Restore the prior lib_id so nested / concurrent exports don't see
+    # this run's value bleed into theirs. Done after the file is closed
+    # so any tail logic in write_rw_section_header has already finished.
+    _active_lib_id = _saved_lib_id
 
     msg = f"Exported {len(tex_natives)} textures ({mode_name})"
     if skipped_textures:

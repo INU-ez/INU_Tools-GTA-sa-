@@ -1,0 +1,130 @@
+name: Feature request (English)
+description: Suggest a new feature, format, operator or UI improvement
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion! Concrete proposals with a clear use case get implemented faster than abstract «would be nice» ideas.
+
+        If you prefer **Russian** or **Spanish** — pick the matching template instead.
+
+  - type: input
+    id: inu_version
+    attributes:
+      label: INU Tools version
+      description: From `Edit → Preferences → Add-ons → INU_tools(gta_sa)` — so we know whether the feature already exists in a newer build
+      placeholder: "1.9.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: feature_area
+    attributes:
+      label: Affected area
+      description: Which feature / format would this touch?
+      options:
+        - DFF (import / export / edit)
+        - COL (import / export / edit)
+        - TXD (import / export / edit)
+        - IDE (import / export / edit)
+        - IPL (import / export / binary)
+        - IMG (import / export / archive)
+        - IFP (animation import / export / batch)
+        - FXP (effects.fxp editor / viewport simulation)
+        - Map (full Map Import / Map Export round-trip)
+        - Asset Library builder
+        - File Scanner (binary linter)
+        - Prelight (vcols / scatter / LightMap UV2)
+        - 2DFX (Light / Particle / Ped Attractor / Sun Glare)
+        - Skinned DFF / IK Rig / Frame Hierarchy
+        - Vehicle Paintjob / Animated Map Object
+        - Paths (paths.ipl / tracks.dat / NODES.dat / flight.dat)
+        - water.dat
+        - X Radar Maker
+        - ID Manager
+        - Profile System / UI / panels
+        - Materials (Env Map / Bump / Specular / UV Anim)
+        - CST (Steve's COL Editor format)
+        - New format / area (describe below)
+    validations:
+      required: true
+
+  - type: input
+    id: summary
+    attributes:
+      label: One-line summary
+      placeholder: e.g. "Add batch IFP retarget operator across multiple skeletons"
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+      description: What is awkward, slow, or impossible today? Describe the modding workflow that runs into the wall.
+      placeholder: |
+        Right now retargeting 100+ animations one-by-one through the IFP panel takes ~2 hours. There is no way to remap bone names in batch — every file has to be re-imported and re-exported manually.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How should this work from the user's perspective? Mention buttons, panel placement, operator names, file dialogs, etc.
+      placeholder: |
+        Add a new operator under Animation → IFP → "Retarget Folder": pick a source folder of .ifp files and a bone-rename map (.csv or inline table), output a folder of renamed .ifp files preserving original timing.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Did you try any workarounds? Other tools (Kams, DragonFF, IFP Editor) — how do they handle this?
+      placeholder: Tried doing it via IFP Editor — only supports one file at a time. DragonFF doesn't support IFP at all.
+    validations:
+      required: false
+
+  - type: textarea
+    id: usecase
+    attributes:
+      label: Example workflow / use case
+      description: Walk through a concrete scenario where you'd use this. Real numbers and file names help.
+      placeholder: |
+        I'm porting GTA IV ped animations to SA. ~340 .ifp files, all using GTA IV bone names. I need to remap to SA bone names and write back as ANP3.
+    validations:
+      required: false
+
+  - type: textarea
+    id: refs
+    attributes:
+      label: References / mockups / similar implementations
+      description: |
+        Screenshots, mockups, links to how another tool does it (Kams, DragonFF, ZModeler, Maya plug-ins, GIMS Evo), forum threads, etc.
+      placeholder: Drag-drop images here, or paste links
+    validations:
+      required: false
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: How critical is this for you?
+      options:
+        - "Nice-to-have — would save time but I have workarounds"
+        - "Important — currently blocking a part of my project"
+        - "Critical — without this I cannot complete my mod"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched [open and closed issues](../../issues?q=) for a similar proposal
+          required: true
+        - label: I checked the latest release and the feature isn't already there
+          required: true

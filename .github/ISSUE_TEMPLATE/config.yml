@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Discord — quick questions and chat
+    url: https://discord.gg/sqtGAVTGdy
+    about: For quick "how do I..." questions, screenshot-sharing and informal feedback.  For reproducible bugs please use the Bug report template above.

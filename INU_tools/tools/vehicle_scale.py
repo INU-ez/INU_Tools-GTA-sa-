@@ -155,7 +155,7 @@ class GTATOOLS_OT_vehicle_scale(bpy.types.Operator):
 class GTATOOLS_OT_vehicle_add_damage_variant(bpy.types.Operator):
     """Создать поврежденный (_dam) дубликат активного меша. Если у источника нет суффикса, ему присваивается _ok. Поврежденный вариант ставится в ту же иерархию и скрывается во viewport (но остаётся видим для DFF-экспорта)"""
     bl_idname = "gtatools.vehicle_add_damage_variant"
-    bl_label = T("Добавить _dam вариант")
+    bl_label = "Добавить _dam вариант"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -168,7 +168,7 @@ class GTATOOLS_OT_vehicle_add_damage_variant(bpy.types.Operator):
         base, suffix = _strip_damage_suffix(src.name)
         if suffix == _DAM_SUFFIX:
             self.report({'WARNING'},
-                        f"{src.name} уже _dam — выбери _ok вариант")
+                        f"{src.name}{T(' уже _dam — выбери _ok вариант')}")
             return {'CANCELLED'}
         if suffix == "":
             try:
@@ -182,7 +182,7 @@ class GTATOOLS_OT_vehicle_add_damage_variant(bpy.types.Operator):
         for obj in bpy.data.objects:
             if obj.name == new_name:
                 self.report({'WARNING'},
-                            f"{new_name} уже есть в сцене — связана пара")
+                            f"{new_name}{T(' уже есть в сцене — связана пара')}")
                 return {'CANCELLED'}
 
         new_mesh = src.data.copy()
@@ -216,7 +216,7 @@ class GTATOOLS_OT_vehicle_add_damage_variant(bpy.types.Operator):
 class GTATOOLS_OT_vehicle_show_damage(bpy.types.Operator):
     """Переключить отображение OK / Damaged частей машины во viewport. Сканирует иерархию активной машины (или всю сцену, если активного объекта нет) и скрывает _ok или _dam меши в зависимости от выбранного состояния. Не влияет на DFF-экспорт"""
     bl_idname = "gtatools.vehicle_show_damage"
-    bl_label = T("Состояние повреждений")
+    bl_label = "Состояние повреждений"
     bl_options = {'REGISTER', 'UNDO'}
 
     state: bpy.props.EnumProperty(
@@ -266,7 +266,7 @@ class GTATOOLS_OT_vehicle_show_damage(bpy.types.Operator):
 class GTATOOLS_OT_vehicle_pair_report(bpy.types.Operator):
     """Найти и отчитаться о парах _ok / _dam в активной иерархии. Предупреждает если у меша есть _ok без _dam (или наоборот) — такой меш пропускается движком при повреждениях"""
     bl_idname = "gtatools.vehicle_pair_report"
-    bl_label = T("Проверить _ok/_dam пары")
+    bl_label = "Проверить _ok/_dam пары"
     bl_options = {'REGISTER'}
 
     def execute(self, context):

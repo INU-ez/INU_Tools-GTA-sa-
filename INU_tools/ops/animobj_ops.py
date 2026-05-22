@@ -1,77 +1,63 @@
 # INU_tools.ops.animobj_ops
 # "Animated Map Object" workflow — windmills, cranes, wheels of fortune,
-# any static map prop with a single rotating part.
+# advertising signs, any static map prop with one or more rotating parts.
 #
 # In GTA SA an animated map object needs three coordinated artefacts:
-#   1. DFF with a 1-bone armature, all verts weighted to that bone
-#   2. IFP with one Action (e.g. cyclic Z-rotation 0°→360° over 60 frames)
+#   1. DFF with frame hierarchy + HAnim PLG marking each animated bone
+#   2. IFP with an Animation track per bone (cyclic rotation, IDE-named)
 #   3. IDE 'anim' entry: ID, modelname, txdname, animname, drawdist, flags
 #
-# The trio has to land on disk with matching names and the IDE entry has
-# to be wired up — easy to misconfigure step-by-step in Blender. This
-# module collapses the whole chain into three operators:
-#   - animobj_setup: builds the rig from scratch on the active mesh
-#   - animobj_export: writes DFF + IFP + upserts IDE anim row
-#   - animobj_validate: pre-flight checks (rig, weights, action, names)
+# Workflow (Kams 3ds Max style, single pivot pipette flow):
+#   1. animobj_setup → creates an Empty root with one pivot child;
+#      auto-parents active mesh to pivot, co-selected meshes go to root
+#      as static parts.
+#   2. Eyedropper on root → pick more meshes one by one, choosing target
+#      (NEW pivot for another animated part / existing pivot / root).
+#   3. animobj_export → writes <base>.dff + <base>.ifp + updates IDE.
 
 import bpy
 from bpy.props import StringProperty, IntProperty, FloatProperty, EnumProperty
 import math
+import mathutils
 import os
 
 from .. import T
-from ..tools.compat import safe_icon
+from ..tools.compat import safe_icon, inu_icon
 
 
-# ── Live-edit PropertyGroup ──────────────────────────────────────
-# After Setup-rig the user gets sliders in the Anim panel that
-# regenerate the action's keyframes on the fly. Each property has an
-# update callback that calls _rebuild_animobj_action — no Action
-# Editor / Graph Editor needed for routine speed/length tweaks.
+def _iter_action_fcurves(action):
+    """Yield every fcurve in an Action across both Blender APIs.
 
-def _rebuild_animobj_action(arm_obj):
-    """Idempotently rewrite the rig's action so it matches the props.
-    Clears the bone's existing rotation_euler keyframes first to avoid
-    leftover keyframes when ``duration_frames`` shrinks."""
-    if arm_obj is None or arm_obj.type != 'ARMATURE':
+    Pre-4.4 keeps fcurves on the Action root (``action.fcurves``).
+    4.4+ moved them into the layered system: Action → slots × layers
+    → strips → channelbag(slot) → fcurves. We unify both so callers
+    don't have to branch on bpy.app.version every time they want to
+    walk keyframes.
+
+    Re-exported from this module because validate_scene.py imports it
+    for character-anim quaternion normalisation checks (the IFP-IK
+    pipeline keeps its own private copy in ifp_export.py).
+    """
+    legacy = getattr(action, 'fcurves', None)
+    if legacy is not None:
+        for fc in legacy:
+            yield fc
         return
-    props = arm_obj.inu_animobj_props
-    if not props.bone_name:
+    slots = getattr(action, 'slots', None)
+    layers = getattr(action, 'layers', None)
+    if not slots or not layers:
         return
-
-    ad = arm_obj.animation_data
-    if ad is None or ad.action is None:
-        return
-    action = ad.action
-
-    pb = arm_obj.pose.bones.get(props.bone_name)
-    if pb is None:
-        return
-
-    # Drop every fcurve that targets this bone's rotation_euler. We can't
-    # rely on keyframe_insert overwriting because the user may have
-    # shrunk duration — old end-frame would linger as a stale keyframe.
-    target_path = f'pose.bones["{props.bone_name}"].rotation_euler'
-    _strip_fcurves_at_path(action, target_path)
-
-    # Re-insert the two boundary keyframes.
-    sign = -1.0 if props.reverse else 1.0
-    total_radians = sign * props.turns_per_cycle * 2.0 * math.pi
-    axis_idx = {'X': 0, 'Y': 1, 'Z': 2}[props.axis]
-
-    pb.rotation_mode = 'XYZ'
-    pb.rotation_euler = (0.0, 0.0, 0.0)
-    pb.keyframe_insert(data_path="rotation_euler",
-                       frame=1, group=props.bone_name)
-
-    end_rot = [0.0, 0.0, 0.0]
-    end_rot[axis_idx] = total_radians
-    pb.rotation_euler = tuple(end_rot)
-    pb.keyframe_insert(data_path="rotation_euler",
-                       frame=max(2, props.duration_frames),
-                       group=props.bone_name)
-
-    pb.rotation_euler = (0.0, 0.0, 0.0)
+    for layer in layers:
+        for strip in getattr(layer, 'strips', []):
+            cbag_fn = getattr(strip, 'channelbag', None)
+            if cbag_fn is None:
+                continue
+            for slot in slots:
+                cb = cbag_fn(slot)
+                if cb is None:
+                    continue
+                for fc in getattr(cb, 'fcurves', []):
+                    yield fc
 
 
 def _strip_fcurves_at_path(action, data_path):
@@ -110,434 +96,6 @@ def _strip_fcurves_at_path(action, data_path):
                             fcurves.remove(fc)
                         except Exception:
                             pass
-
-
-def _on_animobj_prop_update(self, context):
-    """Property update callback — fires when any slider in
-    INUAnimObjProps changes, rebuilds the action's keyframes and
-    syncs the scene's frame_end so the timeline shows the full loop.
-
-    No-op when the rig is in MANUAL mode — that mode hands keyframe
-    management entirely to the user, so a slider edit must NOT clobber
-    whatever they're hand-editing in Action Editor."""
-    obj = self.id_data  # The Object owning this PropertyGroup
-    if obj is None or not obj.get('inu_animobj'):
-        return
-    props = obj.inu_animobj_props
-    if not props.auto_mode:
-        return
-    _rebuild_animobj_action(obj)
-
-    # Stretch the scene timeline to fit the cycle. Without this the
-    # timeline ruler still ends at frame 250 even though the action
-    # now needs 207 frames — the user has to scrub past the end and
-    # gets confused why the animation "stops".
-    scene = context.scene
-    scene.frame_start = 1
-    scene.frame_end = max(2, props.duration_frames)
-
-
-def _on_auto_mode_toggle(self, context):
-    """Switching MANUAL → AUTO regenerates keyframes from the slider
-    values (effectively reverts hand-edits). MANUAL → AUTO never
-    happens silently — the user explicitly clicked the toggle, so we
-    treat their click as consent to overwrite. Switching AUTO → MANUAL
-    is harmless: keyframes stay where they are, sliders just stop
-    rebuilding on change."""
-    obj = self.id_data
-    if obj is None or not obj.get('inu_animobj'):
-        return
-    props = obj.inu_animobj_props
-    if props.auto_mode:
-        _rebuild_animobj_action(obj)
-        scene = context.scene
-        scene.frame_start = 1
-        scene.frame_end = max(2, props.duration_frames)
-
-
-class INUAnimObjProps(bpy.types.PropertyGroup):
-    """Per-rig settings persisted on the armature Object. Drives the
-    live keyframe regeneration on slider edits in the Anim panel."""
-    auto_mode: bpy.props.BoolProperty(
-        name=T("Auto"),
-        description=T(
-            "Auto: ползунки сами пересчитывают keyframes цикла.\n"
-            "Manual: ползунки заморожены, ты сам ставишь keyframes "
-            "в Action Editor / Pose Mode. Переключение Manual→Auto "
-            "перезапишет твои ключи значениями ниже"),
-        default=True,
-        update=_on_auto_mode_toggle,
-    )
-    bone_name: StringProperty(
-        name=T("Имя кости"),
-        description=T(
-            "Имя кости которую крутит rig. Меняется только если ты "
-            "переименовал кость вручную в Edit Mode скелета"),
-        default="blades_bone",
-        update=_on_animobj_prop_update,
-    )
-    axis: EnumProperty(
-        name=T("Ось"),
-        items=[('X', "X", ""), ('Y', "Y", ""), ('Z', "Z", "")],
-        default='Z',
-        update=_on_animobj_prop_update,
-    )
-    reverse: bpy.props.BoolProperty(
-        name=T("В обратную сторону"),
-        description=T(
-            "Крутить против часовой стрелки (с точки зрения +оси). "
-            "Удобно если меш вышел зеркальным или физика подразумевает "
-            "вращение в другую сторону"),
-        default=False,
-        update=_on_animobj_prop_update,
-    )
-    turns_per_cycle: IntProperty(
-        name=T("Оборотов за цикл"),
-        description=T(
-            "Целое число полных оборотов за анимацию. Цикл "
-            "проигрывается повторно — модель возвращается в "
-            "стартовую позицию точно (без визуального рывка)"),
-        default=1, min=1, soft_max=20,
-        update=_on_animobj_prop_update,
-    )
-    duration_frames: IntProperty(
-        name=T("Длительность (кадров)"),
-        description=T(
-            "Длина цикла в кадрах. Скорость = "
-            "обороты_за_цикл × fps_сцены / длительность"),
-        default=60, min=2, soft_max=600,
-        update=_on_animobj_prop_update,
-    )
-
-
-def _iter_action_fcurves(action):
-    """Yield every fcurve in an Action across both Blender APIs.
-
-    Pre-4.4 keeps fcurves on the Action root (``action.fcurves``).
-    4.4+ moved them into the layered system: Action → slots × layers
-    → strips → channelbag(slot) → fcurves. We unify both so callers
-    don't have to branch on bpy.app.version every time they want to
-    count keyframes.
-    """
-    legacy = getattr(action, 'fcurves', None)
-    if legacy is not None:
-        for fc in legacy:
-            yield fc
-        return
-    slots = getattr(action, 'slots', None)
-    layers = getattr(action, 'layers', None)
-    if not slots or not layers:
-        return
-    for layer in layers:
-        for strip in getattr(layer, 'strips', []):
-            cbag_fn = getattr(strip, 'channelbag', None)
-            if cbag_fn is None:
-                continue
-            for slot in slots:
-                cb = cbag_fn(slot)
-                if cb is None:
-                    continue
-                for fc in getattr(cb, 'fcurves', []):
-                    yield fc
-
-
-# ── Setup wizard ──────────────────────────────────────────────────
-
-class GTATOOLS_OT_animobj_setup(bpy.types.Operator):
-    """Создать рiг для animated map object (мельница, кран, флюгер):
-    Armature с одной костью + Action с цикличной Z-вращением.
-
-    Все вершины активного меша автоматически привязываются к
-    единственной кости (vertex group weight=1.0). Готово к экспорту в
-    DFF + IFP без ручной настройки скелета."""
-    bl_idname = "gtatools.animobj_setup"
-    bl_label = "INU: Animated Object Setup"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    bone_name: StringProperty(
-        name=T("Имя кости"),
-        description=T(
-            "Имя кости — попадёт в DFF Frame name и в IFP bone-track. "
-            "Принято использовать что-то описательное: blades, propeller, gear..."),
-        default="blades_bone",
-    )
-    action_name: StringProperty(
-        name=T("Имя action"),
-        description=T(
-            "Имя Blender Action — попадёт в IFP как имя анимации. Игра "
-            "ищет анимацию по этому имени из IDE anim entry"),
-        default="windmill",
-    )
-    axis: EnumProperty(
-        name=T("Ось вращения"),
-        items=[('X', "X", ""), ('Y', "Y", ""), ('Z', "Z", "")],
-        default='Z',
-    )
-    turns_per_cycle: IntProperty(
-        name=T("Оборотов за цикл"),
-        description=T(
-            "Целое число полных оборотов за анимацию. Игра проигрывает "
-            "цикл повторно — модель возвращается в стартовую позицию "
-            "точно (без визуального рывка на стыке)"),
-        default=1, min=1, soft_max=20,
-    )
-    duration_frames: IntProperty(
-        name=T("Длительность (кадров)"),
-        description=T(
-            "Длина цикла в кадрах. Скорость вращения = "
-            "оборотов_за_цикл / длительность × fps_сцены"),
-        default=60, min=2, soft_max=600,
-    )
-
-    @classmethod
-    def poll(cls, context):
-        return (context.active_object is not None
-                and context.active_object.type == 'MESH')
-
-    def invoke(self, context, event):
-        return context.window_manager.invoke_props_dialog(self, width=380)
-
-    def draw(self, context):
-        col = self.layout.column()
-        col.prop(self, "bone_name")
-        col.prop(self, "action_name")
-        col.prop(self, "axis")
-        col.prop(self, "turns_per_cycle")
-        col.prop(self, "duration_frames")
-
-        # Show derived RPM as a hint so the user can sanity-check the
-        # speed without doing the math themselves.
-        fps = max(1, context.scene.render.fps)
-        rpm = self.turns_per_cycle * fps / max(1, self.duration_frames)
-        col.label(
-            text=f"≈ {rpm:.2f} {T('оборотов/сек при FPS')} {fps}",
-            icon=safe_icon('INFO'))
-
-        col.label(
-            text=T("Все вершины меша получат weight=1.0 на эту кость"),
-            icon=safe_icon('INFO'))
-        col.label(
-            text=T("Цикл точно зацикливается (целое число оборотов)"),
-            icon=safe_icon('LOOP_BACK'))
-
-    def execute(self, context):
-        mesh_obj = context.active_object
-        if mesh_obj is None or mesh_obj.type != 'MESH':
-            self.report({'ERROR'}, T("Выделите MESH"))
-            return {'CANCELLED'}
-
-        # ── 1) Armature with one bone at mesh origin ──
-        arm_data = bpy.data.armatures.new(f"{mesh_obj.name}_armature")
-        arm_obj = bpy.data.objects.new(f"{mesh_obj.name}_armature", arm_data)
-        arm_obj.location = mesh_obj.location.copy()
-
-        # Same collection as the mesh
-        for col in mesh_obj.users_collection:
-            col.objects.link(arm_obj)
-
-        # Edit-mode bone creation
-        prev_active = context.view_layer.objects.active
-        context.view_layer.objects.active = arm_obj
-        bpy.ops.object.mode_set(mode='EDIT')
-        bone = arm_data.edit_bones.new(self.bone_name)
-        bone.head = (0.0, 0.0, 0.0)
-        # Pointing along Z so Z-rotation is the visual axis the user
-        # picked (most windmill rigs spin around Z).
-        bone.tail = (0.0, 0.0, 1.0)
-        bpy.ops.object.mode_set(mode='OBJECT')
-        context.view_layer.objects.active = prev_active
-
-        # ── 2) Vertex group on mesh, all verts → weight 1.0 ──
-        vg = mesh_obj.vertex_groups.get(self.bone_name)
-        if vg is None:
-            vg = mesh_obj.vertex_groups.new(name=self.bone_name)
-        vg.add(list(range(len(mesh_obj.data.vertices))), 1.0, 'REPLACE')
-
-        # Armature modifier (or update existing)
-        mod = next(
-            (m for m in mesh_obj.modifiers if m.type == 'ARMATURE'), None)
-        if mod is None:
-            mod = mesh_obj.modifiers.new("Armature", 'ARMATURE')
-        mod.object = arm_obj
-
-        # Parent mesh to armature (keep transform — armature is at mesh origin)
-        mesh_obj.parent = arm_obj
-        mesh_obj.matrix_parent_inverse.identity()
-
-        # ── 3) Cyclic rotation Action ──
-        # Blender 4.4+ moved fcurves out of Action root into the new
-        # layered animation system. action.fcurves.new() is gone in 5.x.
-        # Workaround: assign an empty action to the armature first, then
-        # use pose_bone.keyframe_insert() — that high-level path
-        # auto-creates whatever slot/layer/channelbag plumbing the
-        # current Blender version needs, in 4.x it just writes fcurves.
-        action = bpy.data.actions.new(self.action_name)
-        action.use_fake_user = True
-
-        if arm_obj.animation_data is None:
-            arm_obj.animation_data_create()
-        arm_obj.animation_data.action = action
-
-        # End-rotation = exactly N full turns. Integer turns → mesh
-        # ends at the same orientation it started → seamless loop.
-        total_radians = self.turns_per_cycle * 2.0 * math.pi
-
-        axis_idx = {'X': 0, 'Y': 1, 'Z': 2}[self.axis]
-
-        pb = arm_obj.pose.bones.get(self.bone_name)
-        if pb is None:
-            self.report({'ERROR'},
-                        f"{T('Не найдена кость')} {self.bone_name}")
-            return {'CANCELLED'}
-
-        # Frame 1: zero rotation
-        pb.rotation_mode = 'XYZ'
-        pb.rotation_euler = (0.0, 0.0, 0.0)
-        pb.keyframe_insert(data_path="rotation_euler",
-                           frame=1, group=self.bone_name)
-
-        # Last frame: total_radians on chosen axis
-        end_rot = [0.0, 0.0, 0.0]
-        end_rot[axis_idx] = total_radians
-        pb.rotation_euler = tuple(end_rot)
-        pb.keyframe_insert(data_path="rotation_euler",
-                           frame=self.duration_frames,
-                           group=self.bone_name)
-
-        # Reset back to zero so the bone visually starts at origin
-        pb.rotation_euler = (0.0, 0.0, 0.0)
-
-        # Tag for our IFP exporter so the action survives 'Save Materials'
-        # and similar bulk operations that strip metadata.
-        action['ifp_source'] = self.action_name
-
-        # Tag the rig so animobj_export can find it without UI guessing.
-        arm_obj['inu_animobj'] = True
-
-        # Mirror operator inputs onto the rig's PropertyGroup so the
-        # live-edit sliders in the Anim panel show the right starting
-        # values (and keep working even after the user closes / reopens
-        # Blender — the props persist on the Object).
-        # The .duration_frames assignment fires the update callback,
-        # which both rebuilds keyframes (already there from the manual
-        # keyframe_insert above — gets cleanly replaced) and syncs
-        # scene.frame_end. Order matters: bone_name first so the
-        # callback can find the pose bone.
-        props = arm_obj.inu_animobj_props
-        props.bone_name = self.bone_name
-        props.axis = self.axis
-        props.turns_per_cycle = self.turns_per_cycle
-        props.duration_frames = self.duration_frames
-
-        self.report({'INFO'},
-                    f"{T('Animated rig готов')}: armature={arm_obj.name}, "
-                    f"bone={self.bone_name}, action={self.action_name}")
-        return {'FINISHED'}
-
-
-# ── Validator ─────────────────────────────────────────────────────
-
-class GTATOOLS_OT_animobj_validate(bpy.types.Operator):
-    """Проверить настройку animated map object перед экспортом:
-    есть ли armature, привязан ли меш, заданы ли веса, есть ли action,
-    цикличный ли он. Лог проблем в System Console."""
-    bl_idname = "gtatools.animobj_validate"
-    bl_label = "INU: Validate Animated Object"
-    bl_options = {'REGISTER'}
-
-    @classmethod
-    def poll(cls, context):
-        return context.active_object is not None
-
-    def execute(self, context):
-        problems = []
-        warns = []
-
-        obj = context.active_object
-        # Find the armature: either active object IS one, or its parent is.
-        if obj.type == 'ARMATURE':
-            arm = obj
-            mesh = next(
-                (c for c in arm.children if c.type == 'MESH'), None)
-        elif obj.type == 'MESH':
-            mesh = obj
-            arm = (obj.parent if obj.parent and obj.parent.type == 'ARMATURE'
-                   else None)
-            if arm is None:
-                # Maybe the mesh has an Armature modifier instead
-                for m in mesh.modifiers:
-                    if m.type == 'ARMATURE' and m.object:
-                        arm = m.object
-                        break
-        else:
-            problems.append(T("Активный объект — не MESH и не ARMATURE"))
-            arm, mesh = None, None
-
-        if arm is None:
-            problems.append(T("Нет Armature — animated object без скелета не работает"))
-        if mesh is None:
-            problems.append(T("Нет MESH"))
-
-        if arm and mesh:
-            # Bones present?
-            bones = list(arm.data.bones)
-            if not bones:
-                problems.append(T("В скелете 0 костей"))
-
-            # Vertex groups cover the bones?
-            vg_names = {vg.name for vg in mesh.vertex_groups}
-            missing_vgs = [b.name for b in bones if b.name not in vg_names]
-            if missing_vgs:
-                warns.append(
-                    f"{T('Кости без vertex group:')} {', '.join(missing_vgs)}")
-
-            # Armature modifier present and pointing to arm?
-            mods = [m for m in mesh.modifiers if m.type == 'ARMATURE']
-            if not mods:
-                problems.append(T("На MESH нет Armature modifier"))
-            elif not any(m.object is arm for m in mods):
-                warns.append(T("Armature modifier указывает на другой скелет"))
-
-            # Action assigned?
-            ad = arm.animation_data
-            action = ad.action if ad else None
-            if action is None:
-                problems.append(T("К armature не привязан Action"))
-            else:
-                # Cyclic? (length > 1, more than one keyframe per fcurve)
-                non_trivial = any(
-                    len(fc.keyframe_points) >= 2
-                    for fc in _iter_action_fcurves(action))
-                if not non_trivial:
-                    problems.append(
-                        T("В Action меньше 2 keyframe — анимации нет"))
-
-                # Action name should match what IDE anim entry references
-                if not action.name.replace('_', '').isalnum():
-                    warns.append(T(
-                        "Имя Action содержит спецсимволы — IDE entry может не сработать"))
-
-        # Always log to console
-        print(f"[animobj_validate] obj={obj.name if obj else '<none>'}")
-        for p in problems:
-            print(f"  ! {p}")
-        for w in warns:
-            print(f"  ? {w}")
-        if not problems and not warns:
-            print("  OK — всё готово к экспорту")
-
-        if problems:
-            self.report({'ERROR'},
-                        f"{T('Ошибок')}: {len(problems)}, "
-                        f"{T('предупреждений')}: {len(warns)} "
-                        f"({T('см. System Console')})")
-        elif warns:
-            self.report({'WARNING'},
-                        f"{T('Предупреждений')}: {len(warns)} "
-                        f"({T('см. System Console')})")
-        else:
-            self.report({'INFO'}, T("Animated object готов к экспорту"))
-        return {'FINISHED'}
 
 
 # ── Combo export ──────────────────────────────────────────────────
@@ -619,75 +177,70 @@ class GTATOOLS_OT_animobj_export(bpy.types.Operator):
         return context.active_object is not None
 
     def invoke(self, context, event):
-        # Resolve the rig + its first mesh child the same way execute()
-        # does — keeps invoke pre-fill consistent with what gets used
-        # at write time.
+        # Resolve the rig the same way execute() does so invoke pre-fill
+        # stays consistent with what gets used at write time.
         active = context.active_object
-        arm = mesh = None
-        if active is not None:
-            if active.type == 'ARMATURE':
-                arm = active
-                mesh = next(
-                    (c for c in arm.children if c.type == 'MESH'), None)
-            elif active.type == 'MESH':
-                mesh = active
-                if (active.parent and active.parent.type == 'ARMATURE'):
-                    arm = active.parent
-                else:
-                    for m in mesh.modifiers:
-                        if m.type == 'ARMATURE' and m.object:
-                            arm = m.object
-                            break
+        root = _find_animobj_empty_root(active)
+        if root is None:
+            root = _animobj_find_first_rig()
 
-        # Pre-fill names from the rig's action (Setup wizard puts the
-        # action name in arm.animation_data.action — that's the IFP
-        # anim name and a sensible default file basename too).
-        if arm is not None:
-            ad = arm.animation_data
-            if ad and ad.action:
-                self.base_name = ad.action.name
-                self.txd_name = ad.action.name
-
-        # Pre-fill model-side fields from mesh.inu so the user's earlier
-        # choices in Object Properties (Model ID, Draw Distance, TXD
-        # Name) propagate without retyping. We copy unconditionally —
-        # even mesh defaults (model_id=0, draw_distance=299) are the
-        # user's truth; surfacing 18000 when the mesh says 0 was
-        # actively misleading.
-        if mesh is not None:
-            inu = getattr(mesh, 'inu', None)
-            if inu is not None:
-                self.model_id = inu.model_id
-                self.draw_distance = inu.draw_distance
-                if inu.txd_name:
-                    self.txd_name = inu.txd_name
+        # Pre-fill names from the first pivot's Action — that becomes
+        # the IFP animation name AND a sensible default base filename.
+        first_mesh = None
+        if root is not None:
+            for emp in _collect_empty_rig_descendants(root):
+                ad = emp.animation_data
+                if ad and ad.action:
+                    self.base_name = ad.action.name
+                    self.txd_name = ad.action.name
+                    break
+            # First mesh found anywhere in the rig hierarchy provides
+            # Model ID / Draw Distance / TXD Name defaults via inu props.
+            stack = [root]
+            while stack and first_mesh is None:
+                n = stack.pop(0)
+                for ch in n.children:
+                    if ch.type == 'MESH':
+                        first_mesh = ch
+                        break
+                    stack.append(ch)
+            if first_mesh is not None:
+                inu = getattr(first_mesh, 'inu', None)
+                if inu is not None:
+                    self.model_id = inu.model_id
+                    self.draw_distance = inu.draw_distance
+                    if inu.txd_name:
+                        self.txd_name = inu.txd_name
 
         return context.window_manager.invoke_props_dialog(self, width=400)
 
     def draw(self, context):
         col = self.layout.column()
 
-        # Show which Action will be exported as the IFP animation —
-        # the user otherwise has no visual confirmation that the right
-        # animation is selected (active armature could have a stale
-        # action assigned from a previous import).
+        # Show which Action(s) will be exported. For Empty rigs every
+        # animated pivot contributes one IFP bone track, all under a
+        # single Animation named after the first pivot's Action.
         active = context.active_object
+        root = _find_animobj_empty_root(active)
+        if root is None:
+            root = _animobj_find_first_rig()
         anim_name = None
-        for candidate in (active,
-                          active.parent if active else None):
-            if (candidate and candidate.type == 'ARMATURE'
-                    and candidate.animation_data
-                    and candidate.animation_data.action):
-                anim_name = candidate.animation_data.action.name
-                break
+        pivot_count = 0
+        if root is not None:
+            for emp in _collect_empty_rig_descendants(root):
+                ad = emp.animation_data
+                if ad and ad.action:
+                    if anim_name is None:
+                        anim_name = ad.action.name
+                    pivot_count += 1
         if anim_name:
-            col.label(
-                text=f"{T('Анимация')}: {anim_name}",
-                icon=safe_icon('ACTION'))
+            label = (f"{T('Анимация')}: {anim_name}"
+                     + (f"  ({pivot_count} pivots)" if pivot_count > 1 else ""))
+            col.label(text=label, **inu_icon(safe_icon('ACTION')))
         else:
             col.label(
-                text=T("Нет Action на armature — IFP будет пустой"),
-                icon=safe_icon('ERROR'))
+                text=T("Нет анимированных pivot'ов — IFP будет пустой"),
+                **inu_icon(safe_icon('ERROR')))
 
         col.separator()
         col.prop(self, "directory")
@@ -698,7 +251,7 @@ class GTATOOLS_OT_animobj_export(bpy.types.Operator):
             col.label(
                 text=T("Model ID = 0 — задай в Object Properties → "
                        "INU Tools → Model ID"),
-                icon=safe_icon('ERROR'))
+                **inu_icon(safe_icon('ERROR')))
         col.prop(self, "draw_distance")
 
         # ── IFP file naming + write strategy ──
@@ -707,14 +260,14 @@ class GTATOOLS_OT_animobj_export(bpy.types.Operator):
         # myhood_anims.ifp. Default mode APPEND lets every
         # subsequent export grow the file safely.
         ifp_box = col.box()
-        ifp_box.label(text=T("IFP файл"), icon=safe_icon('ACTION'))
+        ifp_box.label(text=T("IFP файл"), **inu_icon(safe_icon('ACTION')))
         # Show resolved filename next to the input — user can sanity-
         # check that it'll go where they expect.
         resolved = (self.ifp_name.strip() or self.base_name.strip()
                     or "<пусто>")
         ifp_box.prop(self, "ifp_name", text=T("Имя"))
         ifp_box.label(
-            text=f"→ {resolved}.ifp", icon=safe_icon('FILE_BLANK'))
+            text=f"→ {resolved}.ifp", **inu_icon(safe_icon('FILE_BLANK')))
         ifp_box.prop(self, "ifp_mode", text=T("Режим"))
         ifp_box.prop(self, "ifp_format")
 
@@ -722,12 +275,12 @@ class GTATOOLS_OT_animobj_export(bpy.types.Operator):
         if self.write_ide:
             ide_path = getattr(context.scene.inu_settings, 'gtatools_ide_path', '')
             if ide_path:
-                col.label(text=f"IDE: {ide_path}", icon=safe_icon('TEXT'))
+                col.label(text=f"IDE: {ide_path}", **inu_icon(safe_icon('TEXT')))
             else:
                 col.label(text=T(
                     "Scene → INU Tools → IDE Path не задан — "
                     "anim-запись не будет дописана"),
-                    icon=safe_icon('ERROR'))
+                    **inu_icon(safe_icon('ERROR')))
 
     def execute(self, context):
         if not self.directory or not os.path.isdir(self.directory):
@@ -738,46 +291,54 @@ class GTATOOLS_OT_animobj_export(bpy.types.Operator):
             self.report({'ERROR'}, T("Базовое имя не может быть пустым"))
             return {'CANCELLED'}
 
-        # Resolve mesh and armature like the validator does.
+        # Locate the Empty rig: prefer one in the active object's
+        # ancestor chain, fall back to any rig present in the scene.
         active = context.active_object
-        if active.type == 'ARMATURE':
-            arm = active
-            mesh = next(
-                (c for c in arm.children if c.type == 'MESH'), None)
-        elif active.type == 'MESH':
-            mesh = active
-            arm = (active.parent
-                   if active.parent and active.parent.type == 'ARMATURE'
-                   else None)
-            if arm is None:
-                for m in mesh.modifiers:
-                    if m.type == 'ARMATURE' and m.object:
-                        arm = m.object
-                        break
-        else:
-            self.report({'ERROR'}, T("Выделите MESH или ARMATURE"))
-            return {'CANCELLED'}
-
-        if mesh is None or arm is None:
+        empty_root = _find_animobj_empty_root(active) if active else None
+        if empty_root is None:
+            empty_root = _animobj_find_first_rig()
+        if empty_root is None:
             self.report({'ERROR'},
-                        T("Не нашли пару MESH+ARMATURE — запустите Validate"))
+                        T("В сцене нет Empty-rig'а — сначала Setup"))
             return {'CANCELLED'}
+        return self._execute_empty_rig(context, empty_root, base)
 
-        # IFP filename: user override wins, else fall back to base_name.
-        # Useful for shared "myhood_anims.ifp" across many rigs.
+    def _execute_empty_rig(self, context, root_empty, base):
+        """Export path for Kams-style Empty rig.
+
+        Collects: root Empty + all descendant Empties + all mesh children.
+        Writes DFF via gtatools.export_dff (the hierarchy path already
+        handles Empty parents and our `_build_frame` change emits HAnim).
+        Writes IFP via build_ifp_from_empty_rig.
+        """
         ifp_basename = self.ifp_name.strip() or base
         dff_path = os.path.join(self.directory, f"{base}.dff")
         ifp_path = os.path.join(self.directory, f"{ifp_basename}.ifp")
 
-        # ── DFF: select arm + mesh, run gtatools.export_dff with filepath ──
-        # We reuse the existing operator instead of duplicating its logic
-        # (skinning, MatFX, breakable, …) — it expects a non-empty
-        # selection and an active object, so we set both deterministically.
+        # Collect rig + meshes for the DFF selection.
+        rig_objs = [root_empty]
+        stack = [root_empty]
+        while stack:
+            n = stack.pop(0)
+            for ch in n.children:
+                rig_objs.append(ch)
+                stack.append(ch)
+
+        # Rebuild any auto-mode pivots so a slider drift doesn't ship
+        # stale keys. Mirrors the armature path's _rebuild_animobj_action.
+        for o in rig_objs:
+            if o.type == 'EMPTY' and o.get('inu_animobj_empty_pivot'):
+                try:
+                    _rebuild_animobj_empty_action(o)
+                except Exception as ex:
+                    print(f"[INU] empty rig rebuild skipped on {o.name}: {ex}")
+
+        # DFF export — select rig + meshes, reuse the file operator.
         for o in bpy.data.objects:
             o.select_set(False)
-        arm.select_set(True)
-        mesh.select_set(True)
-        context.view_layer.objects.active = arm
+        for o in rig_objs:
+            o.select_set(True)
+        context.view_layer.objects.active = root_empty
         try:
             bpy.ops.gtatools.export_dff(
                 'EXEC_DEFAULT', filepath=dff_path)
@@ -785,22 +346,17 @@ class GTATOOLS_OT_animobj_export(bpy.types.Operator):
             self.report({'ERROR'}, f"DFF: {ex}")
             return {'CANCELLED'}
 
-        # ── IFP: build directly from arm's action via core.ifp ──
-        # Bypass the file-dialog operator and call the helper module so
-        # we can pass a fixed path and skip user-prompts.
+        # IFP export — build a single-Animation pack from the rig.
         ifp_msg = ""
         try:
-            from .ifp_export import build_ifp_from_actions
+            from .ifp_export import build_ifp_from_empty_rig
             from ..core.ifp import write_ifp, read_ifp, IFPFile
-            new_ifp = build_ifp_from_actions(
-                armature=arm, package_name=ifp_basename)
+            new_ifp = build_ifp_from_empty_rig(
+                root_empty, package_name=ifp_basename)
             if not new_ifp.animations:
                 self.report({'WARNING'},
-                            T("В action нет ключей — IFP не записан"))
+                            T("Empty rig: ни один pivot не дал ключей — IFP не записан"))
             else:
-                # Merge strategy depends on ifp_mode + whether the
-                # target file already exists. APPEND/UPDATE need to
-                # load the old IFP first; NEW just overwrites.
                 target_ifp = new_ifp
                 file_exists = os.path.isfile(ifp_path)
                 if file_exists and self.ifp_mode in ('APPEND', 'UPDATE'):
@@ -808,44 +364,28 @@ class GTATOOLS_OT_animobj_export(bpy.types.Operator):
                         existing = read_ifp(ifp_path)
                     except Exception as ex:
                         self.report({'WARNING'},
-                                    f"IFP read failed, "
-                                    f"{T('перезаписываю')}: {ex}")
+                                    f"IFP read failed, {T('перезаписываю')}: {ex}")
                         existing = IFPFile(name=ifp_basename)
-
                     by_name = {a.name: a for a in existing.animations}
-
                     if self.ifp_mode == 'APPEND':
-                        # Replace anims with same name + add new ones
                         for a in new_ifp.animations:
                             by_name[a.name] = a
-                    else:  # UPDATE
-                        # Replace ONLY existing names — drop brand-new
+                    else:
                         for a in new_ifp.animations:
                             if a.name in by_name:
                                 by_name[a.name] = a
-                            # else silently skip — that's the contract
-
                     target_ifp = IFPFile(
                         name=existing.name or ifp_basename,
                         animations=list(by_name.values()),
                         source_format=existing.source_format,
                     )
-
-                # write_ifp param is `format`, not `fmt` — passing
-                # `fmt=` would TypeError. Be explicit.
-                write_ifp(ifp_path, target_ifp,
-                          format=self.ifp_format)
-
-                action_count = len(new_ifp.animations)
-                if file_exists and self.ifp_mode != 'NEW':
-                    ifp_msg = f" ({self.ifp_mode.lower()}, +{action_count})"
-                else:
-                    ifp_msg = f" ({action_count})"
+                write_ifp(ifp_path, target_ifp, format=self.ifp_format)
+                ifp_msg = f", IFP+{len(new_ifp.animations)}"
         except Exception as ex:
             self.report({'ERROR'}, f"IFP: {ex}")
             return {'CANCELLED'}
 
-        # ── IDE anim entry (optional) ──
+        # IDE entry — same logic as armature path.
         ide_msg = ""
         if self.write_ide and self.model_id == 0:
             self.report({'WARNING'},
@@ -855,11 +395,8 @@ class GTATOOLS_OT_animobj_export(bpy.types.Operator):
             ide_path = bpy.path.abspath(ide_path) if ide_path else ""
             if ide_path and os.path.isfile(ide_path):
                 try:
-                    from ..core.ide import (
-                        read_ide, write_ide, IdeAnim,
-                    )
+                    from ..core.ide import read_ide, write_ide, IdeAnim
                     ide = read_ide(ide_path)
-                    # Action-name as anim_file (game looks up by anim name)
                     anim_action_name = base
                     new_entry = IdeAnim(
                         model_id=self.model_id,
@@ -869,15 +406,16 @@ class GTATOOLS_OT_animobj_export(bpy.types.Operator):
                         draw_distance=self.draw_distance,
                         flags=0,
                     )
-                    # Replace existing entry with same model_id, else append
                     for i, a in enumerate(ide.anims):
                         if a.model_id == self.model_id:
                             ide.anims[i] = new_entry
                             break
                     else:
                         ide.anims.append(new_entry)
-                    write_ide(ide_path, ide)
-                    ide_msg = f", IDE+1"
+                    from ..core import game_versions as gv
+                    write_ide(ide_path, ide,
+                              game=gv.game_of_scene(context.scene))
+                    ide_msg = ", IDE+1"
                 except Exception as ex:
                     self.report({'WARNING'}, f"IDE: {ex}")
             else:
@@ -885,12 +423,1000 @@ class GTATOOLS_OT_animobj_export(bpy.types.Operator):
                             T("IDE path не задан — anim-запись пропущена"))
 
         self.report({'INFO'},
-                    f"{base}.dff + {ifp_basename}.ifp{ifp_msg}{ide_msg}")
+                    f"[Empty rig] {base}.dff + {ifp_basename}.ifp{ifp_msg}{ide_msg}")
+        return {'FINISHED'}
+
+
+# ══════════════════════════════════════════════════════════════════
+# ── Empty-based rig (Kams-style) ──────────────────────────────────
+# Parallel workflow to the armature-based one above. Mirrors Kam's
+# 3ds Max approach: dummies (Helper objects = Blender Empty) carry
+# the animation, meshes are parented to them without any skin. The
+# IFP exporter samples each animated Empty's transform directly,
+# which sidesteps the rest_quat / pose-bone path that produced the
+# stepping bug in the armature workflow.
+#
+# Scene layout after `animobj_setup_empty`:
+#     <base>_root        Empty   inu_bone_id=0   (BoneID=0, no anim)
+#     └── <base>_pivot   Empty   inu_bone_id=1   (BoneID=1, cyclic rotation)
+# The user parents:
+#   - the static mesh (base, frame) under <base>_root
+#   - the moving mesh (blades, arm) under <base>_pivot
+# IFP export walks selected rig, emits one ANP3 Object track per Empty
+# with inu_bone_id ≠ 0 (root is RT-only — no rotation track needed).
+# ══════════════════════════════════════════════════════════════════
+
+
+def _rebuild_animobj_empty_action(empty_obj):
+    """Idempotent rewrite of the pivot Empty's Action.
+
+    Two keyframes only: 0° at frame 1, ``turns_per_cycle × 360°`` at
+    duration_end. The IFP densifier handles the quaternion slerp
+    between them on its side; in-Blender we rely on euler linear
+    interpolation to actually traverse the full rotation.
+
+    *Critically uses ``rotation_euler``, not ``rotation_quaternion``.*
+    A full 360° turn keyed as quaternions has q_start = (1,0,0,0) and
+    q_end = (-1,0,0,0), which Blender's shortest-arc slerp treats as
+    the same orientation → ZERO rotation between the keys. Mirrors the
+    armature-flow which has used euler since day one for the same
+    reason.
+
+    Uses ``Object.keyframe_insert()`` so it works on both legacy and
+    layered (4.4+/5.x) Action storage.
+    """
+    if empty_obj is None or empty_obj.type != 'EMPTY':
+        return
+    props = empty_obj.inu_animobj_empty_props
+
+    ad = empty_obj.animation_data
+    if ad is None:
+        ad = empty_obj.animation_data_create()
+    if ad.action is None:
+        action = bpy.data.actions.new(name=f"{empty_obj.name}_anim")
+        ad.action = action
+    else:
+        action = ad.action
+
+    # Use XYZ euler, identical to the armature path's choice. The IFP
+    # exporter's empty-rig sampler handles euler tracks via its built-in
+    # densifier (4 intermediate samples per segment) so the in-game
+    # slerp can traverse the full 360° without snapping.
+    empty_obj.rotation_mode = 'XYZ'
+
+    _strip_fcurves_at_path(action, 'rotation_quaternion')
+    _strip_fcurves_at_path(action, 'rotation_euler')
+
+    sign = -1.0 if props.reverse else 1.0
+    total_radians = sign * props.turns_per_cycle * 2.0 * math.pi
+    axis_idx = {'X': 0, 'Y': 1, 'Z': 2}[props.axis]
+
+    duration = max(2, props.duration_frames)
+
+    # Start key: 0° on every axis.
+    empty_obj.rotation_euler = (0.0, 0.0, 0.0)
+    empty_obj.keyframe_insert(
+        data_path='rotation_euler', frame=1, group=empty_obj.name)
+
+    # End key: full rotation on the chosen axis. Linear interp between
+    # the two euler keyframes actually traverses the whole 0..2π range
+    # (no shortest-arc collapse like quaternions).
+    end_rot = [0.0, 0.0, 0.0]
+    end_rot[axis_idx] = total_radians
+    empty_obj.rotation_euler = tuple(end_rot)
+    empty_obj.keyframe_insert(
+        data_path='rotation_euler', frame=float(duration),
+        group=empty_obj.name)
+
+    # Reset viewport pose to start so the user doesn't see end-frame
+    # rotation when stepping off the timeline.
+    empty_obj.rotation_euler = (0.0, 0.0, 0.0)
+
+    # Force LINEAR interpolation — default Bezier ease-in/out would
+    # make the cycle stutter at boundaries.
+    _set_keyframes_linear_at_path(action, 'rotation_euler')
+
+
+def _set_keyframes_linear_at_path(action, data_path):
+    """Set every keyframe on *data_path* fcurves to LINEAR.
+
+    Walks legacy and layered Action storage — mirror of
+    ``_strip_fcurves_at_path`` but instead of removing the fcurve it
+    sets each keyframe_point's interpolation.
+    """
+    def _apply(fcurves):
+        for fc in fcurves:
+            if fc.data_path != data_path:
+                continue
+            for kp in fc.keyframe_points:
+                kp.interpolation = 'LINEAR'
+            fc.update()
+
+    legacy = getattr(action, 'fcurves', None)
+    if legacy is not None:
+        _apply(legacy)
+        return
+    slots = getattr(action, 'slots', None)
+    layers = getattr(action, 'layers', None)
+    if not slots or not layers:
+        return
+    for layer in layers:
+        for strip in getattr(layer, 'strips', []):
+            cbag_fn = getattr(strip, 'channelbag', None)
+            if cbag_fn is None:
+                continue
+            for slot in slots:
+                cb = cbag_fn(slot)
+                if cb is None:
+                    continue
+                fcurves = getattr(cb, 'fcurves', None)
+                if fcurves is not None:
+                    _apply(fcurves)
+
+
+def _on_animobj_empty_prop_update(self, context):
+    obj = self.id_data
+    if obj is None or not obj.get('inu_animobj_empty_pivot'):
+        return
+    if not self.auto_mode:
+        return
+    _rebuild_animobj_empty_action(obj)
+    scene = context.scene
+    scene.frame_start = 1
+    scene.frame_end = max(2, self.duration_frames)
+
+
+def _on_animobj_empty_auto_mode_toggle(self, context):
+    obj = self.id_data
+    if obj is None or not obj.get('inu_animobj_empty_pivot'):
+        return
+    if self.auto_mode:
+        _rebuild_animobj_empty_action(obj)
+        scene = context.scene
+        scene.frame_start = 1
+        scene.frame_end = max(2, self.duration_frames)
+
+
+class INUAnimObjEmptyProps(bpy.types.PropertyGroup):
+    """Per-pivot Empty settings — mirrors INUAnimObjProps but lives on
+    a pivot Empty instead of an armature Object. Same UX: slider-driven
+    cyclic rotation, Auto/Manual toggle."""
+    auto_mode: bpy.props.BoolProperty(
+        name=T("Auto"),
+        description=T(
+            "Auto: ползунки сами пересчитывают keyframes цикла.\n"
+            "Manual: ползунки заморожены, ты сам ставишь keyframes"),
+        default=True,
+        update=_on_animobj_empty_auto_mode_toggle,
+    )
+    axis: EnumProperty(
+        name=T("Ось"),
+        items=[('X', "X", ""), ('Y', "Y", ""), ('Z', "Z", "")],
+        default='Z',
+        update=_on_animobj_empty_prop_update,
+    )
+    reverse: bpy.props.BoolProperty(
+        name=T("В обратную сторону"),
+        default=False,
+        update=_on_animobj_empty_prop_update,
+    )
+    turns_per_cycle: IntProperty(
+        name=T("Оборотов за цикл"),
+        default=1, min=1, soft_max=20,
+        update=_on_animobj_empty_prop_update,
+    )
+    duration_frames: IntProperty(
+        name=T("Длительность (кадров)"),
+        default=60, min=2, soft_max=600,
+        update=_on_animobj_empty_prop_update,
+    )
+
+
+class GTATOOLS_OT_animobj_setup(bpy.types.Operator):
+    """Создать Empty-rig для animated map object в стиле Kams скриптов:
+    два Empty (root + pivot) с user-prop BoneID и циклической Action на
+    pivot. Меши парентится вручную — статичные к root, анимируемые к pivot.
+    Не требует armature/skin — обходит rest_quat баг bone-flow."""
+    bl_idname = "gtatools.animobj_setup"
+    bl_label = "INU: Animated Object Setup (Empty rig)"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    base_name: StringProperty(
+        name=T("Базовое имя"),
+        description=T(
+            "Префикс для имени Empty'ев: <base>_root + <base>_pivot. "
+            "Совпадает с именем модели DFF/IFP"),
+        default="mill",
+    )
+    action_name: StringProperty(
+        name=T("Имя action"),
+        description=T(
+            "Имя Blender Action на pivot Empty — попадёт в IFP. Игра ищет "
+            "анимацию по этому имени из IDE anim entry"),
+        default="windmill",
+    )
+    axis: EnumProperty(
+        name=T("Ось вращения"),
+        items=[('X', "X", ""), ('Y', "Y", ""), ('Z', "Z", "")],
+        default='Z',
+    )
+    turns_per_cycle: IntProperty(
+        name=T("Оборотов за цикл"),
+        default=1, min=1, soft_max=20,
+    )
+    duration_frames: IntProperty(
+        name=T("Длительность (кадров)"),
+        default=60, min=2, soft_max=600,
+    )
+    auto_parent: EnumProperty(
+        name=T("Активный меш"),
+        description=T(
+            "Что сделать с активным меш-объектом после Setup:\n"
+            "  Pivot — припарентить к pivot (будет крутиться вместе с rig'ом)\n"
+            "  Root  — припарентить к root (останется статичным как 'основание')\n"
+            "  Нет   — не трогать"),
+        items=[
+            ('PIVOT', T("Парентить к pivot"), T("Меш будет крутиться вместе с pivot")),
+            ('ROOT',  T("Парентить к root"),  T("Меш остаётся статичным как основание")),
+            ('NONE',  T("Не парентить"),       T("Не трогать активный меш")),
+        ],
+        default='PIVOT',
+    )
+
+    @classmethod
+    def poll(cls, context):
+        return True  # Setup doesn't require selection — works on empty scene
+
+    def invoke(self, context, event):
+        # Pre-fill base_name from selected mesh if any
+        active = context.active_object
+        if active is not None and active.type == 'MESH':
+            self.base_name = active.name
+        return context.window_manager.invoke_props_dialog(self, width=380)
+
+    def draw(self, context):
+        col = self.layout.column()
+        col.prop(self, "base_name")
+        col.prop(self, "action_name")
+        col.prop(self, "axis")
+        col.prop(self, "turns_per_cycle")
+        col.prop(self, "duration_frames")
+        col.separator()
+        col.prop(self, "auto_parent")
+        fps = max(1, context.scene.render.fps)
+        rpm = self.turns_per_cycle * fps / max(1, self.duration_frames)
+        col.label(
+            text=f"≈ {rpm:.2f} {T('оборотов/сек при FPS')} {fps}",
+            **inu_icon(safe_icon('INFO')))
+
+        # Show how many co-selected meshes will go to root as static
+        # parts — лучше юзеру видеть это до клика OK чем удивляться
+        # после.
+        active = context.active_object
+        co_selected = [o for o in context.selected_objects
+                       if o.type == 'MESH' and o is not active
+                       and _find_animobj_empty_root(o) is None]
+        if co_selected:
+            col.label(
+                text=f"{T('Других мешей в выделении (→ root):')} {len(co_selected)}",
+                **inu_icon(safe_icon('OUTLINER_OB_MESH')))
+
+        # Sanity-warn if the active mesh is skinned — Empty-rig is for
+        # static map props (windmill / door / gate / propeller), NOT for
+        # animated characters. Skinned ped/char models use the Armature
+        # rig + IFP character-animation flow.
+        active = context.active_object
+        if active is not None and active.type == 'MESH':
+            for m in active.modifiers:
+                if m.type == 'ARMATURE' and m.object is not None:
+                    col.label(
+                        text=T("Этот меш скиннирован (Armature). Empty-rig для map-объектов, не персонажей"),
+                        **inu_icon(safe_icon('ERROR')))
+                    col.label(
+                        text=T("Для персонажей используй Setup (skin) + Character Animation"),
+                        **inu_icon(safe_icon('INFO')))
+                    break
+
+    def execute(self, context):
+        base = self.base_name.strip()
+        if not base:
+            self.report({'ERROR'}, T("Базовое имя не может быть пустым"))
+            return {'CANCELLED'}
+
+        # Place rig at active object's location if there's one, else origin.
+        active = context.active_object
+        origin = active.location.copy() if active else mathutils.Vector((0.0, 0.0, 0.0))
+
+        # Re-link target collection so the rig lands next to the user's mesh.
+        target_coll = context.collection
+        if active and active.users_collection:
+            target_coll = active.users_collection[0]
+
+        # Root Empty: anchors the rig hierarchy. BoneID=0 — root frame in IFP.
+        root = bpy.data.objects.new(f"{base}_root", None)
+        root.empty_display_type = 'ARROWS'
+        root.empty_display_size = 0.5
+        root.location = origin
+        root['inu_animobj_empty_root'] = True
+        root['inu_bone_id'] = 0
+        target_coll.objects.link(root)
+
+        # Pivot Empty: carries the rotation animation. BoneID=1.
+        pivot = bpy.data.objects.new(f"{base}_pivot", None)
+        pivot.empty_display_type = 'SPHERE'
+        pivot.empty_display_size = 0.3
+        pivot.parent = root
+        # location relative to parent = identity — pivot at root origin.
+        pivot['inu_animobj_empty_pivot'] = True
+        pivot['inu_bone_id'] = 1
+        pivot['inu_animobj_action_name'] = self.action_name
+        target_coll.objects.link(pivot)
+
+        # Seed pivot props + build action.
+        props = pivot.inu_animobj_empty_props
+        props.axis = self.axis
+        props.turns_per_cycle = self.turns_per_cycle
+        props.duration_frames = self.duration_frames
+        props.reverse = False
+        props.auto_mode = True
+
+        ad = pivot.animation_data_create()
+        action = bpy.data.actions.new(name=self.action_name)
+        ad.action = action
+        _rebuild_animobj_empty_action(pivot)
+
+        # Auto-parent meshes per user's choice.
+        # The ACTIVE mesh becomes the animated part (parented to pivot
+        # by default). EVERY OTHER selected mesh is treated as a static
+        # part and goes under root automatically. This matches the
+        # common workflow: «выделил всё подряд → Setup → готово», no
+        # outliner dance required to wire base + blades + cap of a
+        # windmill into one rig.
+        parented_mesh = None
+        static_meshes = []
+        if self.auto_parent != 'NONE':
+            target_active = pivot if self.auto_parent == 'PIVOT' else root
+
+            def _do_parent(child, parent):
+                # matrix_parent_inverse preserves the mesh's world
+                # transform — without this the mesh would jump because
+                # pivot lives at the origin while the mesh may sit
+                # elsewhere.
+                try:
+                    mw = child.matrix_world.copy()
+                    child.parent = parent
+                    child.matrix_parent_inverse = parent.matrix_world.inverted()
+                    child.matrix_world = mw
+                    return True
+                except Exception as ex:
+                    print(f"[INU] auto-parent {child.name}: {ex}")
+                    return False
+
+            if active is not None and active.type == 'MESH':
+                if _do_parent(active, target_active):
+                    parented_mesh = active
+
+            # Co-selected meshes (other than active) → root as static parts.
+            for o in context.selected_objects:
+                if (o is active or o.type != 'MESH'
+                        or o.parent is root or o.parent is pivot):
+                    continue
+                # Skip meshes already inside any rig — don't yank them
+                # out of an unrelated hierarchy.
+                if _find_animobj_empty_root(o) is not None:
+                    continue
+                if _do_parent(o, root):
+                    static_meshes.append(o)
+
+        # Sync timeline.
+        scene = context.scene
+        scene.frame_start = 1
+        scene.frame_end = max(2, self.duration_frames)
+
+        # Leave pivot active so the sliders panel reflects the new rig.
+        for o in bpy.data.objects:
+            o.select_set(False)
+        root.select_set(True)
+        pivot.select_set(True)
+        context.view_layer.objects.active = pivot
+
+        # Human-readable report — show which mesh went where so the
+        # user doesn't have to verify in the outliner.
+        bits = []
+        if parented_mesh is not None:
+            target_label = "pivot" if self.auto_parent == 'PIVOT' else "root"
+            bits.append(f"{parented_mesh.name} → {target_label}")
+        if static_meshes:
+            bits.append(
+                f"{len(static_meshes)} static → root ("
+                + ", ".join(m.name for m in static_meshes[:3])
+                + ("…" if len(static_meshes) > 3 else "")
+                + ")")
+        suffix = (", " + ", ".join(bits)) if bits else ""
+        self.report({'INFO'},
+                    f"Empty rig: {root.name} + {pivot.name}, action='{self.action_name}'{suffix}")
+        return {'FINISHED'}
+
+
+def _find_animobj_empty_root(obj):
+    """Walk up from *obj* to find the rig's root Empty (the one with
+    inu_animobj_empty_root flag). Returns the root or None.
+    Used by validate / export to identify the rig regardless of which
+    Empty / mesh inside it is currently selected."""
+    while obj is not None:
+        if obj.type == 'EMPTY' and obj.get('inu_animobj_empty_root'):
+            return obj
+        obj = obj.parent
+    return None
+
+
+def _collect_empty_rig_descendants(root):
+    """Yield every descendant of *root* that has inu_bone_id set, in
+    pre-order (root first). The IFP exporter walks this list to build
+    AnimBone tracks; the DFF exporter to attach HAnim PLG."""
+    if root is None:
+        return
+    stack = [root]
+    while stack:
+        node = stack.pop(0)
+        if node.type == 'EMPTY' and 'inu_bone_id' in node:
+            yield node
+        stack.extend(list(node.children))
+
+
+class GTATOOLS_OT_animobj_validate(bpy.types.Operator):
+    """Проверить Empty-rig: есть ли root + pivot, корректные BoneID,
+    Action на pivot, припарентенные меши. Сообщает первую ошибку."""
+    bl_idname = "gtatools.animobj_validate"
+    bl_label = "INU: Animated Object Validate (Empty rig)"
+    bl_options = {'REGISTER'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.active_object is not None
+
+    def execute(self, context):
+        root = _find_animobj_empty_root(context.active_object)
+        if root is None:
+            self.report({'ERROR'},
+                        T("Не нашли root Empty — запустите Setup (Empty rig)"))
+            return {'CANCELLED'}
+
+        descendants = list(_collect_empty_rig_descendants(root))
+        if len(descendants) < 2:
+            self.report({'ERROR'},
+                        T("Rig содержит только root — нужен хотя бы один pivot Empty"))
+            return {'CANCELLED'}
+
+        # Pivot must have an animation_data + action with keyframes.
+        pivots_with_anim = []
+        for emp in descendants:
+            if emp is root:
+                continue
+            ad = emp.animation_data
+            if ad and ad.action:
+                pivots_with_anim.append(emp)
+
+        if not pivots_with_anim:
+            self.report({'ERROR'},
+                        T("Ни один pivot не имеет Action с keyframes"))
+            return {'CANCELLED'}
+
+        # Meshes should be parented to one of the rig empties — at
+        # least one direct mesh child somewhere is expected.
+        mesh_children = []
+        for emp in descendants:
+            for ch in emp.children:
+                if ch.type == 'MESH':
+                    mesh_children.append((emp, ch))
+        if not mesh_children:
+            self.report({'WARNING'},
+                        T("В rig нет меша — припарентите DFF меш к root или pivot"))
+            return {'FINISHED'}
+
+        self.report({'INFO'},
+                    f"OK: {len(descendants)} Empties, "
+                    f"{len(pivots_with_anim)} с анимацией, "
+                    f"{len(mesh_children)} меш(а)")
+        return {'FINISHED'}
+
+
+# ── Post-setup parenting helpers ──────────────────────────────────
+# Solves the typical «animation doesn't work» symptom: rig was built
+# but user's mesh sits next to it instead of inside it. These two
+# operators move the selected mesh under root (static) or pivot
+# (animated) of the nearest Empty-rig in the scene.
+
+def _animobj_find_first_rig():
+    """Return the first inu_animobj_empty_root Empty in bpy.data, or None.
+    Used when the operator is run from a mesh that isn't already inside
+    a rig — we pick whatever rig exists rather than asking the user."""
+    for o in bpy.data.objects:
+        if o.type == 'EMPTY' and o.get('inu_animobj_empty_root'):
+            return o
+    return None
+
+
+def _animobj_pivot_for_root(root):
+    """Find the first pivot Empty under *root*. Returns None if none."""
+    for ch in root.children:
+        if ch.type == 'EMPTY' and ch.get('inu_animobj_empty_pivot'):
+            return ch
+    return None
+
+
+def _parent_keep_transform(child, parent):
+    """Parent *child* to *parent* preserving its current world transform.
+    Skips re-parenting to the same target so undo history stays clean."""
+    if child.parent is parent:
+        return False
+    mw = child.matrix_world.copy()
+    child.parent = parent
+    child.matrix_parent_inverse = parent.matrix_world.inverted()
+    child.matrix_world = mw
+    return True
+
+
+class GTATOOLS_OT_animobj_parent_to_pivot(bpy.types.Operator):
+    """Припарентить выделенные меши к pivot Empty-rig'а — меш будет
+    крутиться вместе с rig'ом. Если rig'ов несколько, используется
+    тот в иерархии которого уже находится активный объект."""
+    bl_idname = "gtatools.animobj_parent_to_pivot"
+    bl_label = "INU: Parent Selected Meshes to Rig Pivot"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return any(o.type == 'MESH' for o in context.selected_objects)
+
+    def execute(self, context):
+        # Look for a rig in the active object's ancestor chain first
+        # (lets the user disambiguate by picking a sibling Empty); fall
+        # back to whatever rig exists in the scene.
+        rig = _find_animobj_empty_root(context.active_object)
+        if rig is None:
+            rig = _animobj_find_first_rig()
+        if rig is None:
+            self.report({'ERROR'},
+                        T("В сцене нет Empty-rig'а — сначала Setup (Empty)"))
+            return {'CANCELLED'}
+        pivot = _animobj_pivot_for_root(rig)
+        if pivot is None:
+            self.report({'ERROR'}, T("У rig'а нет pivot Empty"))
+            return {'CANCELLED'}
+
+        n = 0
+        for o in context.selected_objects:
+            if o.type == 'MESH' and _parent_keep_transform(o, pivot):
+                n += 1
+        self.report({'INFO'},
+                    f"{n} {T('меш(а) припарентено к')} {pivot.name}")
+        return {'FINISHED'}
+
+
+def _create_pivot_under_root(root, axis: str = 'Z', turns: int = 1,
+                              duration: int = 60, reverse: bool = False,
+                              name_suffix: str = ''):
+    """Spawn a new pivot Empty as a child of *root* and wire up its
+    Action. Used by both the explicit Add Pivot operator and the
+    eyedropper auto-attach when target mode is NEW_PIVOT.
+
+    Returns the new pivot Empty. BoneID is auto-allocated (max existing
+    + 1) so multiple pivots in the same rig never collide.
+    """
+    existing_ids = []
+    for emp in _collect_empty_rig_descendants(root):
+        existing_ids.append(int(emp.get('inu_bone_id', 0)))
+    next_bone_id = max(existing_ids + [0]) + 1
+
+    rig_base = root.name
+    if rig_base.endswith('_root'):
+        rig_base = rig_base[:-5]
+
+    suffix = name_suffix or f"pivot{next_bone_id}"
+    new_name = f"{rig_base}_{suffix}"
+    if new_name in bpy.data.objects:
+        counter = 2
+        while f"{new_name}.{counter:03d}" in bpy.data.objects:
+            counter += 1
+        new_name = f"{new_name}.{counter:03d}"
+
+    pivot = bpy.data.objects.new(new_name, None)
+    pivot.empty_display_type = 'SPHERE'
+    pivot.empty_display_size = 0.3
+    pivot.parent = root
+    pivot['inu_animobj_empty_pivot'] = True
+    pivot['inu_bone_id'] = next_bone_id
+    pivot['inu_animobj_action_name'] = suffix
+    for col in root.users_collection:
+        col.objects.link(pivot)
+
+    props = pivot.inu_animobj_empty_props
+    props.axis = axis
+    props.turns_per_cycle = turns
+    props.duration_frames = duration
+    props.reverse = reverse
+    props.auto_mode = True
+
+    ad = pivot.animation_data_create()
+    action = bpy.data.actions.new(name=suffix)
+    ad.action = action
+    _rebuild_animobj_empty_action(pivot)
+
+    return pivot
+
+
+def _create_default_rig(context, base_name='animobj'):
+    """Spawn a fresh root + pivot Empty pair at the world origin (or
+    at the active object's location if any). Returns the root Empty.
+
+    Used by the scene-level pipette: when the user picks the first
+    mesh and no rig exists yet, we silently build one — so the user
+    never has to click an explicit «Setup» button. Matches the «just
+    works» philosophy of the whole pipette workflow.
+    """
+    active = context.active_object
+    origin = (active.location.copy() if active
+              else mathutils.Vector((0.0, 0.0, 0.0)))
+
+    target_coll = context.collection
+    if active and active.users_collection:
+        target_coll = active.users_collection[0]
+
+    root_name = f"{base_name}_root"
+    if root_name in bpy.data.objects:
+        counter = 2
+        while f"{root_name}.{counter:03d}" in bpy.data.objects:
+            counter += 1
+        root_name = f"{root_name}.{counter:03d}"
+
+    root = bpy.data.objects.new(root_name, None)
+    root.empty_display_type = 'ARROWS'
+    root.empty_display_size = 0.5
+    root.location = origin
+    root['inu_animobj_empty_root'] = True
+    root['inu_bone_id'] = 0
+    target_coll.objects.link(root)
+    return root
+
+
+def attach_mesh_to_rig(context, mesh, target: str = 'NEW_PIVOT'):
+    """Attach *mesh* to an animobj rig in the scene, creating the rig
+    on the fly if none exists. Used by the scene-level pipette so the
+    user never has to «set up» anything — every pick either grows the
+    existing rig or starts a new one.
+
+    *target* ∈ {'NEW_PIVOT', 'PIVOT', 'ROOT'}:
+      * NEW_PIVOT — create a fresh pivot with its own Action, attach
+        mesh under it.
+      * PIVOT     — attach to the first existing pivot (or create one
+        if there isn't any yet).
+      * ROOT      — attach as a static part directly under root.
+
+    **Static-base auto-adopt**: when this call CREATES the rig (none
+    existed before), the context's active mesh — if any, and if it
+    isn't the picked mesh itself — is treated as the static base and
+    parented to the new root. Matches the user's mental model «у меня
+    уже выделена статичная часть, пипеткой я указываю что будет
+    крутиться» without an extra step.
+
+    Returns a tuple (rig_root, target_empty, created_rig: bool).
+    """
+    rig = _animobj_find_first_rig()
+    created_rig = False
+    if rig is None:
+        # Name the rig after the user's selected static base if there
+        # is one — that's a more identifying name than the rotating
+        # part. Falls back to picked_mesh.name then "animobj".
+        active = context.active_object
+        base = 'animobj'
+        if (active is not None and active.type == 'MESH'
+                and active is not mesh):
+            base = active.name
+        elif mesh is not None:
+            base = mesh.name
+        rig = _create_default_rig(context, base_name=base)
+        created_rig = True
+        # Adopt the active mesh as static base, but only if it's
+        # currently a top-level object (no parent / no existing rig
+        # ancestor). Avoids yanking it out of an unrelated hierarchy.
+        if (active is not None and active.type == 'MESH'
+                and active is not mesh
+                and active.parent is None
+                and _find_animobj_empty_root(active) is None):
+            _parent_keep_transform(active, rig)
+
+    if target == 'ROOT':
+        attach_target = rig
+    elif target == 'NEW_PIVOT':
+        attach_target = _create_pivot_under_root(rig)
+    else:  # 'PIVOT'
+        attach_target = None
+        for ch in rig.children:
+            if ch.type == 'EMPTY' and ch.get('inu_animobj_empty_pivot'):
+                attach_target = ch
+                break
+        if attach_target is None:
+            # First-time pick with target=PIVOT and no pivots yet —
+            # create one. Otherwise the mesh would silently go to root.
+            attach_target = _create_pivot_under_root(rig)
+
+    if mesh is not None:
+        _parent_keep_transform(mesh, attach_target)
+    return rig, attach_target, created_rig
+
+
+def _on_attach_mesh_picked(self, context):
+    """Update callback on the rig-root eyedropper PointerProperty.
+    Fires when the user picks a mesh either via the dropdown or the
+    viewport eyedropper. Auto-parents the mesh based on the sibling
+    `attach_target` enum (ROOT / first PIVOT / brand-new pivot), then
+    schedules a clear of the picker field so it's ready for the next
+    mesh in a row.
+    """
+    root_obj = self.id_data  # the Object owning this PropertyGroup
+    if root_obj is None or not root_obj.get('inu_animobj_empty_root'):
+        return
+    mesh = self.attach_mesh
+    if mesh is None or mesh.type != 'MESH':
+        return
+
+    # Resolve the target Empty per mode.
+    target = None
+    if self.attach_target == 'ROOT':
+        target = root_obj
+    elif self.attach_target == 'NEW_PIVOT':
+        try:
+            target = _create_pivot_under_root(root_obj)
+        except Exception as ex:
+            print(f"[INU] eyedropper new-pivot failed: {ex}")
+    else:  # 'PIVOT' — first existing pivot under root
+        for ch in root_obj.children:
+            if ch.type == 'EMPTY' and ch.get('inu_animobj_empty_pivot'):
+                target = ch
+                break
+        if target is None:
+            # No pivot yet — create one so the picked mesh has somewhere
+            # to land. Avoids «nothing happens» when user picks before
+            # building a pivot manually.
+            try:
+                target = _create_pivot_under_root(root_obj)
+            except Exception as ex:
+                print(f"[INU] eyedropper pivot-fallback failed: {ex}")
+
+    if target is not None:
+        _parent_keep_transform(mesh, target)
+
+    # Clear the picker field via a deferred timer — update() callbacks
+    # can't reliably mutate the property they fire from in the same
+    # event cycle; a 10ms timer dodges the issue and is invisible.
+    def _clear():
+        try:
+            self.attach_mesh = None
+        except Exception:
+            pass
+        return None
+    try:
+        bpy.app.timers.register(_clear, first_interval=0.01)
+    except Exception:
+        pass
+
+
+class INUAnimObjRigSettings(bpy.types.PropertyGroup):
+    """Rig-level settings stored on the root Empty. Holds the
+    eyedropper picker fields used by the «Add mesh» row in the panel.
+    Separate from per-pivot INUAnimObjEmptyProps because these settings
+    live on root, not on each pivot."""
+    attach_target: EnumProperty(
+        name=T("Куда добавить"),
+        description=T(
+            "Куда привесить выбранный меш:\n"
+            "  К pivot — на первый pivot (анимация общая со всем pivot'ом)\n"
+            "  Новый pivot — создать отдельный pivot с собственной анимацией\n"
+            "  К root — статичная часть без анимации"),
+        items=[
+            ('NEW_PIVOT', T("Новый pivot"),
+             T("Создать новый pivot и привесить меш к нему")),
+            ('PIVOT', T("К существующему pivot"),
+             T("Парентить к первому pivot'у (одна анимация на всех)")),
+            ('ROOT', T("К root (статика)"),
+             T("Статичная часть, не будет крутиться")),
+        ],
+        default='NEW_PIVOT',
+    )
+    attach_mesh: bpy.props.PointerProperty(
+        type=bpy.types.Object,
+        name=T("Меш"),
+        description=T(
+            "Кликни на пипетку и выбери меш в сцене или 3D-окне. "
+            "Он автоматически добавится в rig согласно выбору «Куда добавить»"),
+        poll=lambda self, obj: obj is not None and obj.type == 'MESH',
+        update=_on_attach_mesh_picked,
+    )
+
+
+class GTATOOLS_OT_animobj_add_pivot(bpy.types.Operator):
+    """Добавить ещё один pivot Empty в существующий Empty-rig — для
+    моделей с несколькими анимированными частями (например мельница +
+    противовес). Каждому pivot'у выдаётся свой BoneID и Action.
+
+    Если выделен меш — он сразу парентится к новому pivot'у.
+    Если выделена кость старого pivot'а или root — новый pivot
+    создаётся как ребёнок root'а того же rig'а.
+    """
+    bl_idname = "gtatools.animobj_add_pivot"
+    bl_label = "INU: Add Pivot to Empty Rig"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    pivot_name: StringProperty(
+        name=T("Имя pivot'а"),
+        description=T(
+            "Суффикс для нового Empty: <rig>_<name>. Имя action "
+            "автоматически берётся таким же"),
+        default="pivot2",
+    )
+    axis: EnumProperty(
+        name=T("Ось вращения"),
+        items=[('X', "X", ""), ('Y', "Y", ""), ('Z', "Z", "")],
+        default='Z',
+    )
+    turns_per_cycle: IntProperty(
+        name=T("Оборотов за цикл"),
+        default=1, min=1, soft_max=20,
+    )
+    duration_frames: IntProperty(
+        name=T("Длительность (кадров)"),
+        default=60, min=2, soft_max=600,
+    )
+    parent_active_mesh: bpy.props.BoolProperty(
+        name=T("Припарентить активный меш"),
+        description=T("Сразу подвесить активный меш под новый pivot"),
+        default=True,
+    )
+
+    @classmethod
+    def poll(cls, context):
+        # Allow when there's a rig anywhere in the scene, or active
+        # belongs to one. Setup wizard had no rig requirement; this op
+        # requires at least one root.
+        if _find_animobj_empty_root(context.active_object):
+            return True
+        return _animobj_find_first_rig() is not None
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, width=360)
+
+    def draw(self, context):
+        col = self.layout.column()
+        col.prop(self, "pivot_name")
+        col.prop(self, "axis")
+        col.prop(self, "turns_per_cycle")
+        col.prop(self, "duration_frames")
+        col.prop(self, "parent_active_mesh")
+
+    def execute(self, context):
+        # Find target rig — prefer active object's ancestor chain.
+        active = context.active_object
+        rig = _find_animobj_empty_root(active)
+        if rig is None:
+            rig = _animobj_find_first_rig()
+        if rig is None:
+            self.report({'ERROR'},
+                        T("В сцене нет Empty-rig'а — сначала Setup (Empty)"))
+            return {'CANCELLED'}
+
+        # Allocate next BoneID by scanning existing rig members.
+        # Skip BoneID=0 (root) and pick max+1 of the rest.
+        existing_ids = []
+        for emp in _collect_empty_rig_descendants(rig):
+            existing_ids.append(int(emp.get('inu_bone_id', 0)))
+        next_bone_id = max(existing_ids + [0]) + 1
+
+        # Strip base prefix off rig.name (<base>_root → <base>) so the
+        # new pivot reads as a sibling of the existing pivot rather
+        # than as a child of root.
+        rig_base = rig.name
+        if rig_base.endswith('_root'):
+            rig_base = rig_base[:-5]
+
+        suffix = self.pivot_name.strip() or f"pivot{next_bone_id}"
+        new_name = f"{rig_base}_{suffix}"
+
+        # Avoid name collision — bpy auto-suffixes anyway, but being
+        # explicit keeps the user's BoneID and action name in sync.
+        if new_name in bpy.data.objects:
+            counter = 2
+            while f"{new_name}.{counter:03d}" in bpy.data.objects:
+                counter += 1
+            new_name = f"{new_name}.{counter:03d}"
+
+        # Create the new pivot, parented to the rig root. Same display
+        # type as Setup (Empty) so all pivots in the rig look alike.
+        pivot = bpy.data.objects.new(new_name, None)
+        pivot.empty_display_type = 'SPHERE'
+        pivot.empty_display_size = 0.3
+        pivot.parent = rig
+        pivot['inu_animobj_empty_pivot'] = True
+        pivot['inu_bone_id'] = next_bone_id
+        pivot['inu_animobj_action_name'] = suffix
+        for col in rig.users_collection:
+            col.objects.link(pivot)
+
+        # Seed props + build action.
+        props = pivot.inu_animobj_empty_props
+        props.axis = self.axis
+        props.turns_per_cycle = self.turns_per_cycle
+        props.duration_frames = self.duration_frames
+        props.reverse = False
+        props.auto_mode = True
+
+        ad = pivot.animation_data_create()
+        action = bpy.data.actions.new(name=suffix)
+        ad.action = action
+        _rebuild_animobj_empty_action(pivot)
+
+        # Optionally pull the active mesh under the new pivot.
+        parented_mesh = None
+        if (self.parent_active_mesh and active is not None
+                and active.type == 'MESH'):
+            try:
+                _parent_keep_transform(active, pivot)
+                parented_mesh = active
+            except Exception as ex:
+                print(f"[INU] add_pivot parent failed: {ex}")
+
+        # Activate the new pivot so panel sliders bind to it immediately.
+        for o in bpy.data.objects:
+            o.select_set(False)
+        pivot.select_set(True)
+        context.view_layer.objects.active = pivot
+
+        suffix_msg = ""
+        if parented_mesh:
+            suffix_msg = f", {parented_mesh.name} → {pivot.name}"
+        self.report({'INFO'},
+                    f"Pivot {new_name} (BoneID={next_bone_id}){suffix_msg}")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_animobj_parent_to_root(bpy.types.Operator):
+    """Припарентить выделенные меши к root Empty-rig'а — они останутся
+    статичными как 'основание' (как корпус мельницы без лопастей)."""
+    bl_idname = "gtatools.animobj_parent_to_root"
+    bl_label = "INU: Parent Selected Meshes to Rig Root"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return any(o.type == 'MESH' for o in context.selected_objects)
+
+    def execute(self, context):
+        rig = _find_animobj_empty_root(context.active_object)
+        if rig is None:
+            rig = _animobj_find_first_rig()
+        if rig is None:
+            self.report({'ERROR'},
+                        T("В сцене нет Empty-rig'а — сначала Setup (Empty)"))
+            return {'CANCELLED'}
+
+        n = 0
+        for o in context.selected_objects:
+            if o.type == 'MESH' and _parent_keep_transform(o, rig):
+                n += 1
+        self.report({'INFO'},
+                    f"{n} {T('меш(а) припарентено к')} {rig.name}")
         return {'FINISHED'}
 
 
 classes = (
+    INUAnimObjEmptyProps,
+    INUAnimObjRigSettings,
     GTATOOLS_OT_animobj_setup,
     GTATOOLS_OT_animobj_validate,
     GTATOOLS_OT_animobj_export,
+    GTATOOLS_OT_animobj_setup,
+    GTATOOLS_OT_animobj_validate,
+    GTATOOLS_OT_animobj_parent_to_pivot,
+    GTATOOLS_OT_animobj_parent_to_root,
+    GTATOOLS_OT_animobj_add_pivot,
 )

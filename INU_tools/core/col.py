@@ -564,15 +564,58 @@ def _write_col2_body(w: BinaryWriter, model: ColModel):
     w.write_bytes(data.to_bytes())
 
 
+_COL_VERSION_TO_GAME = {1: 'III', 2: 'VC', 3: 'SA'}
+
+
+def _clamp_surfaces_for_target(model: 'ColModel', target_game: str) -> int:
+    """In-place clamp every Surface.material on the model into the
+    target game's valid range. Returns the count of clamped surfaces
+    (useful for the export report). Surfaces already within range are
+    left alone — this is *not* a full game-to-game translation, just a
+    safety net so the written byte never points at a non-existent
+    entry in the target's surface table.
+
+    Note: see ``core.surface_translate`` for the richer category-aware
+    mapping when the source game is known.
+    """
+    from . import surface_translate
+    count = 0
+    def _walk(surface):
+        nonlocal count
+        clamped = surface_translate.clamp_surface_for_game(
+            surface.material, target_game)
+        if clamped != surface.material:
+            surface.material = clamped
+            count += 1
+    for s in model.spheres:
+        _walk(s.surface)
+    for b in model.boxes:
+        _walk(b.surface)
+    for f in model.faces:
+        _walk(f.surface)
+    return count
+
+
 def write_col(models: list) -> bytes:
     """
     Write one or more ColModel to COL binary format.
     Returns bytes.
+
+    Each model's surface IDs are clamped to its version's vanilla
+    range as a final safety pass — writing a byte > target_max would
+    deref past the end of the engine's surface table and read
+    garbage material properties at load time.
     """
     out = BinaryWriter()
 
     for model in models:
         _validate_col_writable(model)
+        # Clamp surfaces against the version's game ceiling. If the
+        # model was built from a different game's source data and the
+        # caller didn't translate IDs explicitly, we still produce a
+        # file the target engine can read without corrupting state.
+        target_game = _COL_VERSION_TO_GAME.get(model.version, 'SA')
+        _clamp_surfaces_for_target(model, target_game)
 
         # Build body first to know its size
         body = BinaryWriter()

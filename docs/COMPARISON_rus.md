@@ -1,6 +1,6 @@
 # INU Tools vs Kams Script vs DragonFF
 
-Фокусное сравнение трёх актуальных тулчейнов для моддинга GTA San Andreas. Актуально для **INU Tools 1.7.0** (май 2026).
+Фокусное сравнение трёх актуальных тулчейнов для моддинга GTA San Andreas. Актуально для **INU Tools 2.0.0** (май 2026).
 
 > **[🇬🇧 English version](COMPARISON.md)**
 
@@ -10,7 +10,7 @@
 
 | Инструмент | Хост | Авторы | Лицензия | Версия |
 |---|---|---|---|---|
-| **INU Tools** | Blender 4.2 – 5.1 | INU | GPL-3.0 | 1.7.0 (2026) |
+| **INU Tools** | Blender 4.2 – 5.1 | INU | GPL-3.0 | 2.0.0 (2026) |
 | **Kams Script (GTA_Tools GF)** | 3ds Max | Kam, Goldfish, community | freeware (closed) | 2014–2018 |
 | **DragonFF** | Blender 2.8 – 4.x | Parik | GPL-3.0 | active |
 

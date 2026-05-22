@@ -46,6 +46,9 @@ class GTATOOLS_OT_scan_files(bpy.types.Operator):
             if n > 0:
                 wm.progress_update(int(i * 100 / n))
 
+        profile = getattr(s, 'gtatools_lint_profile', 'STANDARD')
+        from ..core import game_versions as gv
+        game = gv.game_of_scene(context.scene)
         try:
             issues = scan_folder(
                 folder,
@@ -54,6 +57,8 @@ class GTATOOLS_OT_scan_files(bpy.types.Operator):
                 scan_txd=s.gtatools_scan_txd,
                 recursive=s.gtatools_scan_recursive,
                 progress_cb=_progress,
+                profile=profile,
+                game=game,
             )
         finally:
             wm.progress_end()

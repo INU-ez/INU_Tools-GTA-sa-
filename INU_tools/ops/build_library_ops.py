@@ -192,6 +192,18 @@ class GTATOOLS_OT_build_asset_library(bpy.types.Operator):
                         T("Не найден исполняемый файл Blender'а"))
             return {'CANCELLED'}
 
+        # Полное имя модуля аддона. Legacy install → 'INU_tools',
+        # extension install (4.2+) → 'bl_ext.<repo>.<addon>'. Worker
+        # сам не знает — передаём своё __package__ minus '.ops'.
+        addon_module = __package__.rsplit('.', 1)[0] if __package__ else 'INU_tools'
+
+        # Scene's active game drives which .dat manifest the worker
+        # parses (gta.dat / gta_vc.dat / gta3.dat). Reader logic is
+        # game-agnostic per Phase 5/18/19; this just selects entry
+        # points.
+        from ..core import game_versions as _gv
+        target_game = _gv.game_of_scene(context.scene)
+
         cmd = [
             blender_exe, '--background',
             '--python', worker, '--',
@@ -199,6 +211,8 @@ class GTATOOLS_OT_build_asset_library(bpy.types.Operator):
             '--game-root', game_root,
             '--output', output_dir,
             '--preview-size', str(preview_size),
+            '--addon-module', addon_module,
+            '--game', target_game,
         ]
         if no_preview:
             cmd.append('--no-preview')

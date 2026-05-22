@@ -1,13 +1,21 @@
 """
-GTA SA IMG v2 archive reader/writer.
+GTA III / VC / SA IMG archive reader/writer.
 
-Format:
-  Header:  "VER2" (4 bytes) + num_entries (uint32 LE)
-  Directory: num_entries × 32 bytes:
-      offset  (uint32 LE)  — sector offset (sector = 2048 bytes)
-      size    (uint32 LE)  — file size in sectors
-      name    (24 bytes)   — null-padded ASCII filename
-  Data: files stored at sector-aligned offsets.
+Two on-disk formats:
+
+* **VER1** (GTA III + Vice City) — split:
+    - ``gta3.dir`` (directory only): num_entries × 32-byte records, no header
+    - ``gta3.img`` (raw data): files at sector-aligned offsets, no header
+  Reader auto-pairs by basename: a ``.img`` next to a same-named ``.dir``
+  is treated as VER1.
+
+* **VER2** (San Andreas) — single file:
+    - Header: ``"VER2"`` (4 bytes) + num_entries (uint32 LE)
+    - Directory: num_entries × 32 bytes (offset, size, name)
+    - Data: files at sector-aligned offsets.
+
+Directory record layout is identical between versions — only the
+location of the directory differs (inline vs sibling file).
 
 No Blender dependency — pure Python.
 """
@@ -21,6 +29,41 @@ SECTOR = 2048
 MAGIC = b'VER2'
 DIR_ENTRY_SIZE = 32
 NAME_SIZE = 24
+
+# Img-archive version IDs (also used in core.game_versions.GameProfile.img_version).
+IMG_VERSION_1 = 1   # III / VC: split .dir + .img
+IMG_VERSION_2 = 2   # SA: single .img with embedded header + directory
+
+
+def _sibling_dir_path(img_path: str) -> str:
+    """Return the ``.dir`` path that pairs with the given ``.img``.
+    Strips the trailing extension and replaces with ``.dir`` — case is
+    preserved on the suffix so vanilla ``gta3.img`` ↔ ``gta3.dir``
+    round-trips on case-sensitive filesystems."""
+    base, _ext = os.path.splitext(img_path)
+    return base + '.dir'
+
+
+def detect_img_version(filepath: str) -> int:
+    """Return ``IMG_VERSION_1`` or ``IMG_VERSION_2`` for the given path.
+
+    Probe order:
+      1. First 4 bytes == ``b'VER2'`` → VER2
+      2. Sibling ``.dir`` file exists → VER1
+      3. Otherwise → fall back to VER2 (most common; the caller's
+         downstream ``read_directory`` will raise a clear error if the
+         header turns out to be malformed)
+    """
+    try:
+        with open(filepath, 'rb') as f:
+            head = f.read(4)
+    except OSError:
+        return IMG_VERSION_2
+    if head == MAGIC:
+        return IMG_VERSION_2
+    if os.path.isfile(_sibling_dir_path(filepath)):
+        return IMG_VERSION_1
+    return IMG_VERSION_2
 
 
 # Filename sanitization for entry/texture names extracted from corrupt
@@ -51,22 +94,44 @@ def sectors_needed(byte_size: int) -> int:
 
 # ── Reading ─────────────────────────────────────────────────────────
 
+def _parse_dir_records(raw: bytes) -> list[ImgEntry]:
+    """Decode N × 32-byte directory records into ``ImgEntry`` objects.
+    Used for both formats — VER2 reads from inside the .img after the
+    8-byte header, VER1 reads from the entire .dir file."""
+    entries = []
+    n = len(raw) // DIR_ENTRY_SIZE
+    for i in range(n):
+        rec = raw[i * DIR_ENTRY_SIZE : (i + 1) * DIR_ENTRY_SIZE]
+        off, sz = struct.unpack_from('<II', rec, 0)
+        name_bytes = rec[8:8 + NAME_SIZE]
+        name = name_bytes.split(b'\x00', 1)[0].decode('ascii', errors='replace')
+        entries.append(ImgEntry(name=name, offset=off, size=sz))
+    return entries
+
+
 def read_directory(filepath: str) -> list[ImgEntry]:
-    """Read the directory of an IMG v2 archive."""
+    """Read the directory of an IMG archive — version auto-detected.
+
+    For VER2, the directory is embedded at the top of the ``.img`` file.
+    For VER1, it lives in a sibling ``.dir`` (same basename).
+    """
+    version = detect_img_version(filepath)
+    if version == IMG_VERSION_1:
+        dir_path = _sibling_dir_path(filepath)
+        with open(dir_path, 'rb') as f:
+            return _parse_dir_records(f.read())
+
+    # VER2 — magic header + count + inline directory.
     entries = []
     with open(filepath, 'rb') as f:
         magic = f.read(4)
         if magic != MAGIC:
-            raise ValueError(f"Not a VER2 IMG archive (got {magic!r})")
+            raise ValueError(f"Not a VER2 IMG archive (got {magic!r}). "
+                             "No sibling .dir found either — file is "
+                             "neither VER1 nor VER2.")
         num = struct.unpack('<I', f.read(4))[0]
-        for _ in range(num):
-            raw = f.read(DIR_ENTRY_SIZE)
-            if len(raw) < DIR_ENTRY_SIZE:
-                break
-            off, sz = struct.unpack_from('<II', raw, 0)
-            name_bytes = raw[8:8 + NAME_SIZE]
-            name = name_bytes.split(b'\x00', 1)[0].decode('ascii', errors='replace')
-            entries.append(ImgEntry(name=name, offset=off, size=sz))
+        raw = f.read(num * DIR_ENTRY_SIZE)
+        entries.extend(_parse_dir_records(raw))
     return entries
 
 
@@ -93,6 +158,7 @@ class ImgReader:
 
     def __init__(self, filepath: str):
         self.filepath = filepath
+        self.version = IMG_VERSION_2
         self._f = None
         self._entries: list[ImgEntry] = []
         self._lookup: dict[str, ImgEntry] = {}
@@ -105,24 +171,34 @@ class ImgReader:
         self.close()
 
     def open(self):
-        self._f = open(self.filepath, 'rb')
-        magic = self._f.read(4)
-        if magic != MAGIC:
-            self._f.close()
-            raise ValueError(f"Not a VER2 IMG archive (got {magic!r})")
-        num = struct.unpack('<I', self._f.read(4))[0]
+        # Detect version BEFORE opening — for VER1 the directory lives
+        # in a sibling .dir file, not inside the .img we'll be reading
+        # data from.
+        self.version = detect_img_version(self.filepath)
         self._entries = []
         self._lookup = {}
-        for _ in range(num):
-            raw = self._f.read(DIR_ENTRY_SIZE)
-            if len(raw) < DIR_ENTRY_SIZE:
-                break
-            off, sz = struct.unpack_from('<II', raw, 0)
-            name_bytes = raw[8:8 + NAME_SIZE]
-            name = name_bytes.split(b'\x00', 1)[0].decode('ascii', errors='replace')
-            entry = ImgEntry(name=name, offset=off, size=sz)
-            self._entries.append(entry)
-            self._lookup[name.lower()] = entry
+
+        if self.version == IMG_VERSION_1:
+            # VER1: parse the sibling .dir first; keep the .img open
+            # for random-access data reads.
+            dir_path = _sibling_dir_path(self.filepath)
+            with open(dir_path, 'rb') as df:
+                raw = df.read()
+            self._entries = _parse_dir_records(raw)
+            self._f = open(self.filepath, 'rb')
+        else:
+            # VER2: magic + count + inline directory in one file.
+            self._f = open(self.filepath, 'rb')
+            magic = self._f.read(4)
+            if magic != MAGIC:
+                self._f.close()
+                raise ValueError(f"Not a VER2 IMG archive (got {magic!r})")
+            num = struct.unpack('<I', self._f.read(4))[0]
+            raw = self._f.read(num * DIR_ENTRY_SIZE)
+            self._entries = _parse_dir_records(raw)
+
+        for entry in self._entries:
+            self._lookup[entry.name.lower()] = entry
 
     def close(self):
         if self._f:
@@ -284,16 +360,33 @@ def remove_file(img_path: str, filename: str) -> bool:
     return True
 
 
-def _write_directory(f, entries: list[ImgEntry]) -> None:
-    """Rewrite the VER2 header and directory in-place."""
-    f.seek(0)
-    f.write(MAGIC)
-    f.write(struct.pack('<I', len(entries)))
+def _encode_directory_records(entries: list[ImgEntry]) -> bytes:
+    """Serialise entries to the 32-bytes-per-record on-disk form. Used
+    for both VER1 (full .dir contents) and VER2 (in-place at top of .img)."""
+    out = bytearray()
     for e in entries:
         name_bytes = e.name.encode('ascii', errors='replace')[:NAME_SIZE]
         name_bytes = name_bytes.ljust(NAME_SIZE, b'\x00')
-        f.write(struct.pack('<II', e.offset, e.size))
-        f.write(name_bytes)
+        out += struct.pack('<II', e.offset, e.size)
+        out += name_bytes
+    return bytes(out)
+
+
+def _write_directory(f, entries: list[ImgEntry]) -> None:
+    """Rewrite the VER2 header and directory in-place at the top of
+    the IMG file. VER1 doesn't use this — its .dir is a separate file
+    written by ImgWriter on close."""
+    f.seek(0)
+    f.write(MAGIC)
+    f.write(struct.pack('<I', len(entries)))
+    f.write(_encode_directory_records(entries))
+
+
+def _write_dir_file(dir_path: str, entries: list[ImgEntry]) -> None:
+    """Write VER1's sibling .dir file (just concatenated 32-byte
+    records, no header)."""
+    with open(dir_path, 'wb') as f:
+        f.write(_encode_directory_records(entries))
 
 
 class ImgWriter:
@@ -319,16 +412,56 @@ class ImgWriter:
     - Directory entry is updated accordingly and flushed at close.
     """
 
-    def __init__(self, filepath: str):
+    def __init__(self, filepath: str, *, version: int | None = None):
+        """Open or create an IMG archive for batch writes.
+
+        ``version`` — 1 (VER1, III/VC: split .dir + .img) or 2 (VER2,
+        SA: single .img). Default ``None`` means auto-detect from the
+        existing file (or fall back to VER2 for new archives).
+        """
         self.filepath = filepath
+        self.version = version
         self._f = None
         self._entries: list[ImgEntry] = []
         self._lookup: dict[str, int] = {}
         self._end_pos: int = 0
 
     def __enter__(self):
+        # Auto-detect version when not pinned by caller. We do this BEFORE
+        # opening so the right read path (embedded vs sibling .dir) is
+        # taken.
+        if self.version is None:
+            if os.path.isfile(self.filepath):
+                self.version = detect_img_version(self.filepath)
+            else:
+                self.version = IMG_VERSION_2
+
+        if self.version == IMG_VERSION_1:
+            # VER1: directory lives in sibling .dir. Data file (.img)
+            # is plain raw — no header to consume. Append-pointer (
+            # ``_end_pos``) starts at the file's current EOF, which is
+            # 0 for a freshly created archive.
+            dir_path = _sibling_dir_path(self.filepath)
+            # Create the .img if missing, then open r+b.
+            if not os.path.isfile(self.filepath):
+                open(self.filepath, 'wb').close()
+            self._f = open(self.filepath, 'r+b')
+            if os.path.isfile(dir_path):
+                with open(dir_path, 'rb') as df:
+                    raw = df.read()
+                for i, e in enumerate(_parse_dir_records(raw)):
+                    self._entries.append(e)
+                    self._lookup[e.name.lower()] = i
+            self._f.seek(0, 2)
+            self._end_pos = self._f.tell()
+            return self
+
+        # VER2 — single-file with embedded header + directory at top.
+        # If the file doesn't exist we initialise an empty VER2 header
+        # so the append path below has a valid file to work with.
+        if not os.path.isfile(self.filepath):
+            create_img(self.filepath)
         self._f = open(self.filepath, 'r+b')
-        # Read and validate header
         magic = self._f.read(4)
         if magic != MAGIC:
             self._f.close()
@@ -392,14 +525,30 @@ class ImgWriter:
     def __exit__(self, *args):
         if self._f is not None:
             try:
-                _write_directory(self._f, self._entries)
+                if self.version == IMG_VERSION_1:
+                    # VER1: directory in sibling .dir, .img holds only data.
+                    _write_dir_file(_sibling_dir_path(self.filepath),
+                                    self._entries)
+                else:
+                    _write_directory(self._f, self._entries)
             finally:
                 self._f.close()
                 self._f = None
 
 
-def create_img(filepath: str) -> None:
-    """Create an empty VER2 IMG archive."""
+def create_img(filepath: str, *, version: int = IMG_VERSION_2) -> None:
+    """Create an empty IMG archive.
+
+    VER2 (SA): single ``.img`` with ``VER2`` magic + zero count.
+    VER1 (III/VC): empty ``.img`` data file plus empty ``.dir`` next
+    to it — the data file has no header, the directory file is also
+    initially empty.
+    """
+    if version == IMG_VERSION_1:
+        # Empty .img (raw data, no header) + empty .dir (no records).
+        open(filepath, 'wb').close()
+        open(_sibling_dir_path(filepath), 'wb').close()
+        return
     with open(filepath, 'wb') as f:
         f.write(MAGIC)
         f.write(struct.pack('<I', 0))

@@ -12,10 +12,9 @@
 
 import bpy
 
+from .. import T
 from ..data import material_presets as _mp
-from .compat import safe_icon
-
-
+from .compat import safe_icon, inu_icon
 # Built-in presets — shipped with the addon, always available.
 PRESETS = (
     ('GENERIC',  "Generic",       "Plain textured material, no effects"),
@@ -198,11 +197,11 @@ class GTATOOLS_OT_material_preset_save(bpy.types.Operator):
             return {'CANCELLED'}
         name = (self.preset_name or '').strip()
         if not name:
-            self.report({'ERROR'}, "имя обязательно")
+            self.report({'ERROR'}, T("имя обязательно"))
             return {'CANCELLED'}
         data = _mp.capture_from_inu(inu)
         if not _mp.save_preset(name, data, self.description):
-            self.report({'ERROR'}, "ошибка сохранения")
+            self.report({'ERROR'}, T("ошибка сохранения"))
             return {'CANCELLED'}
         invalidate_cache()
         # Select the newly saved preset
@@ -210,7 +209,7 @@ class GTATOOLS_OT_material_preset_save(bpy.types.Operator):
             context.scene.inu_settings.gtatools_material_preset = f'USER:{name}'
         except Exception:
             pass
-        self.report({'INFO'}, f"сохранён: {name}")
+        self.report({'INFO'}, f"{T('сохранён: ')}{name}")
         return {'FINISHED'}
 
 
@@ -224,10 +223,10 @@ class GTATOOLS_OT_material_preset_delete(bpy.types.Operator):
 
     def execute(self, context):
         if not self.preset_name:
-            self.report({'ERROR'}, "нет выбранного пресета")
+            self.report({'ERROR'}, T("нет выбранного пресета"))
             return {'CANCELLED'}
         if not _mp.delete_preset(self.preset_name):
-            self.report({'ERROR'}, "не удалось удалить")
+            self.report({'ERROR'}, T("не удалось удалить"))
             return {'CANCELLED'}
         invalidate_cache()
         # Reset dropdown to a built-in
@@ -235,7 +234,7 @@ class GTATOOLS_OT_material_preset_delete(bpy.types.Operator):
             context.scene.inu_settings.gtatools_material_preset = 'GENERIC'
         except Exception:
             pass
-        self.report({'INFO'}, f"удалён: {self.preset_name}")
+        self.report({'INFO'}, f"{T('удалён: ')}{self.preset_name}")
         return {'FINISHED'}
 
 
@@ -253,7 +252,7 @@ def draw_pipeline_tab(layout, context):
     mat = context.material
     inu = getattr(mat, 'inu', None)
     if not inu:
-        layout.label(text="No inu properties on material", icon=safe_icon('ERROR'))
+        layout.label(text="No inu properties on material", **inu_icon(safe_icon('ERROR')))
         return
 
     scene = context.scene
@@ -261,24 +260,24 @@ def draw_pipeline_tab(layout, context):
     is_user = current.startswith('USER:')
 
     box = layout.box()
-    box.label(text="Preset", icon=safe_icon('PRESET'))
+    box.label(text="Preset", **inu_icon(safe_icon('PRESET')))
     row = box.row(align=True)
     row.prop(scene.inu_settings, 'gtatools_material_preset', text="")
     from .compat import ICON_CHECK
-    op = row.operator("gtatools.material_preset", text="", icon=ICON_CHECK)
+    op = row.operator("gtatools.material_preset", text="", **inu_icon(ICON_CHECK))
     op.preset = current
 
     row = box.row(align=True)
     row.operator("gtatools.material_preset_save",
-                 text="Сохранить как…", icon=safe_icon('ADD'))
+                 text=T("Сохранить как…"), **inu_icon(safe_icon('ADD')))
     del_row = row.row(align=True)
     del_row.enabled = is_user
     op_del = del_row.operator("gtatools.material_preset_delete",
-                              text="Удалить", icon=safe_icon('REMOVE'))
+                              text=T("Удалить"), **inu_icon(safe_icon('REMOVE')))
     op_del.preset_name = current[5:] if is_user else ''
 
     box = layout.box()
-    box.label(text="Active Effects", icon=safe_icon('MODIFIER'))
+    box.label(text="Active Effects", **inu_icon(safe_icon('MODIFIER')))
     col = box.column(align=True)
     for attr, label in (
         ('export_env_map',    "Env Map"),

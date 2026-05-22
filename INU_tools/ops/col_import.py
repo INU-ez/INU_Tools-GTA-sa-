@@ -10,7 +10,10 @@ from .. import T
 from ..core.col import read_col_file, ColModel
 
 
-def _get_or_make_col_material(surface, material_cache):
+_COL_VERSION_TO_GAME = {1: 'III', 2: 'VC', 3: 'SA'}
+
+
+def _get_or_make_col_material(surface, material_cache, source_game=''):
     """Return a reusable material datablock for the given COL surface.
 
     The cache key is the full surface tuple so different (mat,flags,
@@ -29,7 +32,22 @@ def _get_or_make_col_material(surface, material_cache):
     mat.inu.col_mat_index = s.material
     mat.inu.col_flags = s.flags
     mat.inu.col_brightness = s.brightness
-    mat.inu.col_light = s.light
+    # COL2/COL3 surface.light is one byte packed as
+    #   day  = light & 0xF   (low 4 bits)
+    #   night= light >> 4    (high 4 bits)
+    # — matches the export side (col_export.py:71). The N-panel UI
+    # reads `col_day_light` / `col_night_light` separately, so the
+    # raw byte alone (`col_light = s.light`) leaves the UI sliders
+    # at zero. Split here so что юзер сразу видит правильные значения
+    # после импорта.
+    mat.inu.col_light = s.light                          # raw byte (legacy)
+    mat.inu.col_day_light   = s.light & 0xF
+    mat.inu.col_night_light = (s.light >> 4) & 0xF
+    # Source game stays on the material so a later COL export can
+    # translate IDs across games. Empty string means "unknown" — the
+    # writer's clamp-only safety net still applies.
+    if source_game:
+        mat.inu.col_source_game = source_game
 
     if material_cache is not None:
         material_cache[key] = mat
@@ -69,13 +87,18 @@ def _create_mesh_from_col(model: ColModel, collection, obj_type: str,
     tris = [(f.c, f.b, f.a) for f in faces]
 
     # Per-face material index, computed alongside cache lookups so we
-    # can foreach_set in one shot at the end.
+    # can foreach_set in one shot at the end. The model's version
+    # (1/2/3) tags the source game so on later re-export we can
+    # translate surface IDs across games instead of writing them
+    # untranslated.
+    source_game = _COL_VERSION_TO_GAME.get(model.version, '')
     local_slot = {}  # surface key -> local slot index (per-mesh)
     mat_indices = [0] * len(faces)
     materials_in_order = []
 
     for i, f in enumerate(faces):
-        mat, key = _get_or_make_col_material(f.surface, material_cache)
+        mat, key = _get_or_make_col_material(
+            f.surface, material_cache, source_game=source_game)
         slot = local_slot.get(key)
         if slot is None:
             slot = len(local_slot)
@@ -113,6 +136,39 @@ def _create_sphere(sphere, collection, model_name: str, index: int):
     empty.inu.col_flags = sphere.surface.flags
     empty.inu.col_brightness = sphere.surface.brightness
     empty.inu.col_light = sphere.surface.light
+
+    collection.objects.link(empty)
+    return empty
+
+
+def _create_box(box, collection, model_name: str, index: int):
+    """Create an Empty with cube display from ColBox primitive.
+
+    GTA SA collision files store axis-aligned box primitives (TBox)
+    alongside spheres for fast broad-phase collision. Each box has
+    `min`/`max` corners + a surface (material/flags/brightness/light).
+    DragonFF convention: location = (min+max)/2, scale = (max-min)/2
+    — so Blender's scale directly carries the box's half-extents on
+    each axis. Re-export mirrors this: `min = loc - scale`,
+    `max = loc + scale`.
+    """
+    name = f"{model_name}_box_{index}"
+    empty = bpy.data.objects.new(name, None)
+    empty.empty_display_type = 'CUBE'
+    empty.empty_display_size = 1.0     # constant — scale carries the size
+    half_x = (box.bb_max.x - box.bb_min.x) * 0.5
+    half_y = (box.bb_max.y - box.bb_min.y) * 0.5
+    half_z = (box.bb_max.z - box.bb_min.z) * 0.5
+    cx = box.bb_min.x + half_x
+    cy = box.bb_min.y + half_y
+    cz = box.bb_min.z + half_z
+    empty.location = (cx, cy, cz)
+    empty.scale    = (half_x, half_y, half_z)
+
+    empty.inu.col_material   = box.surface.material
+    empty.inu.col_flags      = box.surface.flags
+    empty.inu.col_brightness = box.surface.brightness
+    empty.inu.col_light      = box.surface.light
 
     collection.objects.link(empty)
     return empty
@@ -174,13 +230,20 @@ def import_col_from_models(models, *, bulk_mode: bool = False,
         if sha_obj:
             imported_objects.append(sha_obj)
 
-        # Spheres — only for single-file import; map import uses the
-        # mesh collision geometry and skipping sphere primitives keeps
-        # the outliner manageable at 3000+ models.
+        # Spheres + boxes — only for single-file import; map import
+        # uses the mesh collision geometry and skipping primitives
+        # keeps the outliner manageable at 3000+ models. Primitives
+        # are the game's broad-phase shapes (fast collision check
+        # before falling back to mesh-mesh) so on map-import they're
+        # already covered by the mesh collision.
         if not bulk_mode:
             for i, sphere in enumerate(model.spheres):
                 emp = _create_sphere(sphere, collection,
                                      model.model_name or "col", i)
+                imported_objects.append(emp)
+            for i, box in enumerate(model.boxes):
+                emp = _create_box(box, collection,
+                                  model.model_name or "col", i)
                 imported_objects.append(emp)
 
     # Single-file-import UX: place COL at the matching DFF's origin
@@ -280,6 +343,11 @@ def _iter_import_col_files(filepaths, target_collection, stats):
                 emp = _create_sphere(
                     sphere, target_collection,
                     model.model_name or "col", s_idx)
+                stats['imported_objects'].append(emp)
+            for b_idx, box in enumerate(model.boxes):
+                emp = _create_box(
+                    box, target_collection,
+                    model.model_name or "col", b_idx)
                 stats['imported_objects'].append(emp)
 
         stats['files_done'] += 1
@@ -433,6 +501,21 @@ class GTATOOLS_OT_import_col(_COLImportModalMixin, bpy.types.Operator):
     filepath: StringProperty(subtype='FILE_PATH')
     filter_glob: StringProperty(default="*.col", options={'HIDDEN'})
 
+    # User-overridable game source — Auto reads the COL header magic
+    # (COLL / COL2 / COL3) to detect the game. Explicit values bypass
+    # detection and tag surface IDs with that source for later
+    # cross-game translation on export.
+    import_game: bpy.props.EnumProperty(
+        name=T("Игра"),
+        description=T("Из какой игры импортируем COL. Auto — по magic header"),
+        items=[
+            ('AUTO', T("Авто-определение"), ""),
+            ('III',  "GTA III",  ""),
+            ('VC',   "Vice City", ""),
+            ('SA',   "San Andreas", ""),
+        ],
+        default='AUTO')
+
     def _collect_paths(self):
         return [self.filepath] if self.filepath else []
 
@@ -440,7 +523,25 @@ class GTATOOLS_OT_import_col(_COLImportModalMixin, bpy.types.Operator):
         context.window_manager.fileselect_add(self)
         return {'RUNNING_MODAL'}
 
+    def draw(self, context):
+        self.layout.prop(self, "import_game")
+
     def execute(self, context):
+        # Source-game resolution: user choice wins, AUTO falls back to
+        # COL-magic detection. Then auto-flip-or-warn the scene game.
+        try:
+            from ..core import game_versions as gv
+            if self.import_game == 'AUTO':
+                detected = gv.detect_game_from_col(self.filepath)
+            else:
+                detected = self.import_game
+            switched = gv.maybe_set_game_from_import(context.scene, detected)
+            if not switched:
+                warn = gv.check_game_mismatch_warning(context.scene, detected)
+                if warn:
+                    self.report({'WARNING'}, warn)
+        except Exception:
+            pass
         return self._start_modal(context)
 
 

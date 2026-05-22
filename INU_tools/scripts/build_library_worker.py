@@ -48,7 +48,49 @@ def _parse_args():
     p.add_argument('--categories', default='',
                    help='Comma-separated subset of categories to build '
                         '(default: all). Empty string = no filter.')
+    p.add_argument('--game', default='SA',
+                   choices=['III', 'VC', 'SA'],
+                   help='Target game (III / VC / SA). Controls which '
+                        '.dat manifest is parsed: SA uses gta.dat + '
+                        'default.dat (+ optional gta_int.dat), VC uses '
+                        'gta_vc.dat + default.dat, III uses gta3.dat + '
+                        'default.dat.')
+    # Полное имя модуля аддона в текущем install-mode:
+    #   • Legacy:  'INU_tools'
+    #   • Extension (4.2+): 'bl_ext.<repo>.<addon_basename>'
+    # Operator passes own __package__ root так что worker не гадает.
+    p.add_argument('--addon-module', default='',
+                   help='Full python module name of the addon (passed from '
+                        'the parent operator). Auto-detected from __file__ '
+                        'if empty.')
     return p.parse_args(argv)
+
+
+def _detect_addon_module() -> str:
+    """Derive the addon's python module name from this worker's path.
+
+    Two install modes covered:
+      • Legacy `scripts/addons/INU_tools/scripts/build_library_worker.py`
+        → 'INU_tools'
+      • Extension `extensions/<repo>/<addon>/scripts/build_library_worker.py`
+        → 'bl_ext.<repo>.<addon>'
+
+    Used as a fallback when `--addon-module` isn't passed by the parent
+    operator (e.g., during direct CLI invocation from `dev/`).
+    """
+    worker_file = os.path.abspath(__file__)
+    scripts_dir = os.path.dirname(worker_file)
+    addon_dir = os.path.dirname(scripts_dir)
+    addon_basename = os.path.basename(addon_dir)
+    parent_dir = os.path.dirname(addon_dir)
+    parent_basename = os.path.basename(parent_dir)
+    # Extension install lives under `…/extensions/<repo>/<addon>/`. The
+    # signature: parent's parent is named `extensions`. Anything else we
+    # treat as legacy (parent is `addons` или ad-hoc dev path).
+    grand = os.path.basename(os.path.dirname(parent_dir))
+    if grand == 'extensions':
+        return f'bl_ext.{parent_basename}.{addon_basename}'
+    return addon_basename
 
 
 def _emit_progress(status: dict):
@@ -68,26 +110,74 @@ def main():
     args = _parse_args()
 
     import bpy  # noqa: E402
+    import importlib
+    import traceback
+
+    # Resolve addon module name. Operator passes it via --addon-module
+    # (knows its own __package__); if missing — auto-detect from path.
+    addon_module = args.addon_module or _detect_addon_module()
+    print(f"[Worker] addon module = {addon_module}", flush=True)
+    print(f"[Worker] bpy.app.version = {bpy.app.version}", flush=True)
+    print(f"[Worker] blender exe = {bpy.app.binary_path}", flush=True)
 
     # Make the addon importable. When the worker is launched from a
-    # running Blender (operator-mode), the addon is already installed in
-    # `<config>/scripts/addons/INU_tools/` and `addon_enable` finds it
-    # by name. When the worker is run directly from the repo (dev mode),
-    # we put the repo root on sys.path so `import INU_tools` resolves.
+    # running Blender (operator-mode), the addon is already installed
+    # and the enable-path resolves by module name. For dev-mode (direct
+    # CLI) we put the repo parent on sys.path so import resolves.
     _this = os.path.dirname(os.path.abspath(__file__))
-    _pkg_root = os.path.dirname(os.path.dirname(_this))  # parent of INU_tools
+    _pkg_root = os.path.dirname(os.path.dirname(_this))
     if _pkg_root not in sys.path:
         sys.path.insert(0, _pkg_root)
 
+    # Extension-system aware enable. Three tries:
+    #   1. bpy.ops.preferences.addon_enable — стандартный путь.
+    #   2. addon_utils.enable() — низкоуровневый, иногда работает там
+    #      где operator не справляется (особенно для bl_ext.* модулей
+    #      в headless Blender).
+    #   3. importlib + manual register() — последний resort, dev-mode.
+    enabled = False
     try:
-        bpy.ops.preferences.addon_enable(module='INU_tools')
-    except Exception as e:
-        print(f"[Worker] addon_enable failed ({e}); falling back to manual register",
-              flush=True)
-        import INU_tools  # noqa: F401
-        INU_tools.register()
+        bpy.ops.preferences.addon_enable(module=addon_module)
+        enabled = True
+        print(f"[Worker] enabled via bpy.ops.preferences.addon_enable", flush=True)
+    except Exception as e1:
+        print(f"[Worker] bpy.ops.preferences.addon_enable({addon_module}) "
+              f"failed: {type(e1).__name__}: {e1}", flush=True)
+        try:
+            import addon_utils
+            addon_utils.enable(addon_module, default_set=False, persistent=False)
+            enabled = True
+            print(f"[Worker] enabled via addon_utils.enable", flush=True)
+        except Exception as e2:
+            print(f"[Worker] addon_utils.enable failed: "
+                  f"{type(e2).__name__}: {e2}", flush=True)
+            try:
+                mod = importlib.import_module(addon_module)
+                if hasattr(mod, 'register'):
+                    mod.register()
+                    enabled = True
+                    print(f"[Worker] enabled via manual register()", flush=True)
+            except Exception as e3:
+                print(f"[Worker] manual register failed: "
+                      f"{type(e3).__name__}: {e3}", flush=True)
+                traceback.print_exc()
+                raise RuntimeError(
+                    f"Could not enable addon module '{addon_module}'. "
+                    f"Tried 3 methods, all failed.")
 
-    from INU_tools.tools.build_library import build_library_iter
+    if not enabled:
+        raise RuntimeError(f"Addon module '{addon_module}' was not enabled.")
+
+    try:
+        build_library_module = importlib.import_module(
+            f'{addon_module}.tools.build_library')
+        build_library_iter = build_library_module.build_library_iter
+        print(f"[Worker] imported {addon_module}.tools.build_library", flush=True)
+    except Exception as e:
+        print(f"[Worker] import build_library failed: "
+              f"{type(e).__name__}: {e}", flush=True)
+        traceback.print_exc()
+        raise
 
     cache = os.path.abspath(args.cache)
     game_root = os.path.abspath(args.game_root)
@@ -116,26 +206,32 @@ def main():
         categories=categories,
         skip_existing=args.skip_existing,
         delete_cache_after=args.delete_cache,
+        game=args.game,
     )
 
     # Drain the generator. Headless mode is fully synchronous — no modal/
     # timer slicing. After each yield the worker emits a JSON-progress
     # line so the parent operator can repaint its progress bar without
     # re-running any of the heavy work itself.
-    last_emit_keys: tuple = ()
-    for _ in gen:
-        # Cheap dedup: skip emit if the keys we care about haven't changed
-        # (cuts stdout volume on long categories where status flips many
-        # times per asset).
-        cur_keys = (
-            status.get('phase'),
-            status.get('category'),
-            status.get('cat_done'),
-            status.get('current_asset'),
-        )
-        if cur_keys != last_emit_keys:
-            _emit_progress(dict(status))
-            last_emit_keys = cur_keys
+    # Wrap в try/except — иначе parent operator видит только exit code 1
+    # без диагностики, а тут полный traceback падает в stderr.
+    last_emit_keys = ()
+    try:
+        for _ in gen:
+            cur_keys = (
+                status.get('phase'),
+                status.get('category'),
+                status.get('cat_done'),
+                status.get('current_asset'),
+            )
+            if cur_keys != last_emit_keys:
+                _emit_progress(dict(status))
+                last_emit_keys = cur_keys
+    except Exception as e:
+        print(f"[Worker] generator crashed: {type(e).__name__}: {e}",
+              flush=True)
+        traceback.print_exc()
+        raise
 
     # Final summary so the parent reports «done» with stats.
     _emit_progress({

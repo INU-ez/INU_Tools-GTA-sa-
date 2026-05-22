@@ -2,10 +2,13 @@
 #
 # Phase 3 (2026-04-26): operators moved from __init__.py.
 
+import re
+
 import bpy
 from bpy.props import (
     StringProperty, BoolProperty, FloatProperty, EnumProperty,
 )
+from mathutils import Vector, Matrix
 
 from .. import T
 
@@ -75,6 +78,13 @@ class GTATOOLS_OT_export_ifp(bpy.types.Operator):
     def invoke(self, context, event):
         if not self.filepath:
             self.filepath = "custom.ifp"
+        # Default the IFP format from the scene's active game. ANP3 is
+        # SA-native (compact int16); III/VC engines don't read it, so
+        # they get the universal ANPK. User can still override in the
+        # export dialog before confirming.
+        from ..core import game_versions as gv
+        game = gv.game_of_scene(context.scene)
+        self.ifp_format = 'ANP3' if game == 'SA' else 'ANPK'
         context.window_manager.fileselect_add(self)
         return {'RUNNING_MODAL'}
 
@@ -127,7 +137,20 @@ class GTATOOLS_OT_export_ifp(bpy.types.Operator):
                 removed, _ = decimate_ifp(
                     ifp, self.decimate_tol_rot, self.decimate_tol_trans)
 
-            count = write_ifp(self.filepath, ifp, format=self.ifp_format)
+            # Defensive: ANP3 is SA-only. If the user kept ANP3 selected
+            # but the scene's game is III/VC, downgrade to ANPK and warn
+            # — otherwise the file would be unreadable in the target
+            # game's engine.
+            from ..core import game_versions as gv
+            _scene_game = gv.game_of_scene(context.scene)
+            _fmt = self.ifp_format
+            if _fmt == 'ANP3' and _scene_game != 'SA':
+                self.report({'WARNING'},
+                    f"ANP3 не поддерживается в {_scene_game} — "
+                    f"переключаюсь на ANPK")
+                _fmt = 'ANPK'
+
+            count = write_ifp(self.filepath, ifp, format=_fmt)
 
             if self.decimate and total_before:
                 pct = (removed / total_before * 100.0)
@@ -497,6 +520,247 @@ class GTATOOLS_OT_fix_quat_signs(bpy.types.Operator):
             f"{T('Перевёрнуто ключей')}: {total_flipped} "
             f"({T('диапазон')} {start}–{end})")
         return {'FINISHED'}
+
+
+class GTATOOLS_OT_smooth_between_anchors(bpy.types.Operator):
+    """Сгладить ключи между выделенными опорными.
+
+    Use-case: запечённая анимация с ключом на каждом кадре (например 700
+    ключей). Хочешь опустить кость на кадре 70 — двигаешь её там, потом
+    в Dope Sheet/Graph Editor выделяешь 3 ключа (50, 70, 90: первый,
+    редактированный, последний) и нажимаешь эту кнопку. Промежуточные
+    ключи (51-69 и 71-89) перезаписываются smooth-step интерполяцией
+    между соседними опорными — будто там никаких ключей и не было.
+
+    Режимы оси:
+    - ALL — обрабатывает ВСЕ F-curve (включая rotation, scale) в bone-
+      local координатах. Быстро.
+    - WORLD_X/Y/Z — обрабатывает только .location и считает в МИРОВЫХ
+      координатах. Учитывает поворот родительских костей и armature.
+      Медленнее (per-frame depsgraph eval), но даёт правильный «по Z
+      вниз» эффект независимо от ориентации кости.
+
+    Анкоры берутся из выделенных ключей, минимум 2.
+    Структура «ключ на каждом кадре» сохраняется (важно для round-trip
+    в IFP)."""
+    bl_idname = "gtatools.smooth_between_anchors"
+    bl_label = "INU: Smooth Between Anchors"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    use_cubic: BoolProperty(
+        name="Smooth (cubic)",
+        description=("True — кубический ease-in/out (без углов на анкорах). "
+                     "False — линейная интерполяция"),
+        default=True,
+    )
+
+    axis_mode: EnumProperty(
+        name="Axis",
+        description="Ось вдоль которой сглаживать",
+        items=[
+            ('ALL', "Все каналы (local)",
+             "Обработать все F-curve в bone-local координатах "
+             "(rotation, location, любые свойства)"),
+            ('WORLD_X', "World X",
+             "Только translation, по мировой оси X "
+             "(per-frame depsgraph eval, медленнее)"),
+            ('WORLD_Y', "World Y",
+             "Только translation, по мировой оси Y"),
+            ('WORLD_Z', "World Z",
+             "Только translation, по мировой оси Z"),
+        ],
+        default='ALL',
+    )
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj and obj.animation_data
+                and obj.animation_data.action is not None)
+
+    @staticmethod
+    def _ease(t, cubic):
+        return t * t * (3.0 - 2.0 * t) if cubic else t
+
+    def _collect_fcurves(self, action, slot):
+        out = []
+        for layer in action.layers:
+            for strip in layer.strips:
+                cb = strip.channelbag(slot) if slot else None
+                if cb:
+                    out.extend(cb.fcurves)
+        return out
+
+    def _smooth_all_local(self, context):
+        """Original behavior: process every F-curve in bone-local space."""
+        obj = context.active_object
+        action = obj.animation_data.action
+        slot = obj.animation_data.action_slot
+        fcurves = self._collect_fcurves(action, slot)
+
+        total_modified = 0
+        curves_processed = 0
+
+        for fc in fcurves:
+            anchors = sorted(
+                ((int(round(kp.co.x)), kp.co.y)
+                 for kp in fc.keyframe_points
+                 if kp.select_control_point),
+                key=lambda p: p[0],
+            )
+            if len(anchors) < 2:
+                continue
+
+            for (a, va), (b, vb) in zip(anchors, anchors[1:]):
+                if a == b:
+                    continue
+                span = float(b - a)
+                for kp in fc.keyframe_points:
+                    f = int(round(kp.co.x))
+                    if a < f < b:
+                        t = self._ease((f - a) / span, self.use_cubic)
+                        new_val = va + t * (vb - va)
+                        kp.co.y = new_val
+                        kp.handle_left.y = new_val
+                        kp.handle_right.y = new_val
+                        total_modified += 1
+
+            fc.update()
+            curves_processed += 1
+
+        if curves_processed == 0:
+            self.report({'WARNING'},
+                T("Выдели минимум 2 ключа в Dope Sheet как опорные"))
+            return {'CANCELLED'}
+
+        self.report({'INFO'},
+            f"{T('Сглажено ключей')}: {total_modified} "
+            f"({curves_processed} F-curves)")
+        return {'FINISHED'}
+
+    def _smooth_world_axis(self, context, axis_idx):
+        """World-space smoothing: target a single world axis, write the
+        corresponding local-translation deltas back to the F-curves.
+
+        Heavy operation — sets scene.frame at every anchor and every
+        in-between frame so depsgraph gives us accurate parent matrices
+        per frame. For ~700 frames typically completes in a few seconds.
+        """
+        obj = context.active_object
+        action = obj.animation_data.action
+        slot = obj.animation_data.action_slot
+        scene = context.scene
+
+        # Group .location F-curves by bone name.
+        loc_by_bone = {}
+        for fc in self._collect_fcurves(action, slot):
+            if not fc.data_path.endswith('.location'):
+                continue
+            m = re.match(r'pose\.bones\["([^"]+)"\]\.location', fc.data_path)
+            if not m:
+                continue
+            loc_by_bone.setdefault(m.group(1), {})[fc.array_index] = fc
+
+        if not loc_by_bone:
+            self.report({'WARNING'},
+                T("Не найдено translation-каналов для смещения в мировом пространстве"))
+            return {'CANCELLED'}
+
+        saved_frame = scene.frame_current
+        total_modified = 0
+        bones_processed = 0
+
+        try:
+            for bone_name, axis_fcs in loc_by_bone.items():
+                pose_bone = obj.pose.bones.get(bone_name)
+                if pose_bone is None:
+                    continue
+
+                # Anchor frames = union of selected keys across X/Y/Z curves
+                anchor_frames = set()
+                for fc in axis_fcs.values():
+                    for kp in fc.keyframe_points:
+                        if kp.select_control_point:
+                            anchor_frames.add(int(round(kp.co.x)))
+                if len(anchor_frames) < 2:
+                    continue
+                anchor_frames = sorted(anchor_frames)
+
+                # Sample world head position component at each anchor.
+                anchor_world_val = {}
+                for f in anchor_frames:
+                    scene.frame_set(f)
+                    anchor_world_val[f] = (obj.matrix_world @ pose_bone.head)[axis_idx]
+
+                # In-between frames: any frame that has a key on any axis
+                # and falls strictly between two anchors.
+                all_keyed_frames = set()
+                for fc in axis_fcs.values():
+                    for kp in fc.keyframe_points:
+                        all_keyed_frames.add(int(round(kp.co.x)))
+
+                for a, b in zip(anchor_frames, anchor_frames[1:]):
+                    if a == b:
+                        continue
+                    span = float(b - a)
+                    va, vb = anchor_world_val[a], anchor_world_val[b]
+
+                    for f in sorted(all_keyed_frames):
+                        if not (a < f < b):
+                            continue
+                        t = self._ease((f - a) / span, self.use_cubic)
+                        target_world_val = va + t * (vb - va)
+
+                        scene.frame_set(f)
+                        current_world = obj.matrix_world @ pose_bone.head
+                        delta_world_axis = target_world_val - current_world[axis_idx]
+                        if abs(delta_world_axis) < 1e-9:
+                            continue
+
+                        # Map world delta vector → bone-local delta vector.
+                        # world_delta = (armature_world × parent_armature × bone_rest_local).to_3x3() @ local_delta
+                        parent_arm = (pose_bone.parent.matrix.to_3x3()
+                                      if pose_bone.parent
+                                      else Matrix.Identity(3))
+                        bone_rest = pose_bone.bone.matrix_local.to_3x3()
+                        M = obj.matrix_world.to_3x3() @ parent_arm @ bone_rest
+
+                        world_delta_vec = Vector((0.0, 0.0, 0.0))
+                        world_delta_vec[axis_idx] = delta_world_axis
+                        local_delta_vec = M.inverted() @ world_delta_vec
+
+                        # Apply the delta to every axis keyframe at this frame.
+                        for ax_i, fc in axis_fcs.items():
+                            for kp in fc.keyframe_points:
+                                if int(round(kp.co.x)) == f:
+                                    kp.co.y += local_delta_vec[ax_i]
+                                    kp.handle_left.y += local_delta_vec[ax_i]
+                                    kp.handle_right.y += local_delta_vec[ax_i]
+                                    total_modified += 1
+                                    break
+
+                for fc in axis_fcs.values():
+                    fc.update()
+                bones_processed += 1
+        finally:
+            scene.frame_set(saved_frame)
+
+        if bones_processed == 0:
+            self.report({'WARNING'},
+                T("Выдели минимум 2 ключа .location в Dope Sheet как опорные"))
+            return {'CANCELLED'}
+
+        axis_letter = ('X', 'Y', 'Z')[axis_idx]
+        self.report({'INFO'},
+            f"World-{axis_letter}: {T('сглажено ключей')} "
+            f"{total_modified} ({bones_processed} bones)")
+        return {'FINISHED'}
+
+    def execute(self, context):
+        if self.axis_mode == 'ALL':
+            return self._smooth_all_local(context)
+        axis_idx = {'WORLD_X': 0, 'WORLD_Y': 1, 'WORLD_Z': 2}[self.axis_mode]
+        return self._smooth_world_axis(context, axis_idx)
 
 
 class GTATOOLS_OT_delete_active_action(bpy.types.Operator):

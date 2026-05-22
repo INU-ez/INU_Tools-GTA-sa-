@@ -24,6 +24,7 @@ from ..tools.prelight import (
     apply_brightness_offset, analyze_vertex_colors,
     smooth_vertex_colors, adjust_vertex_colors_contrast,
     adjust_vertex_colors_brightness, adjust_vertex_colors_gamma,
+    lift_shadows,
     setup_prelight_preview,
     add_scatter_layer, remove_scatter_layer, clear_scatter_layers,
     remove_fill_color_by_index, get_selected_faces_color,
@@ -264,6 +265,38 @@ class GTATOOLS_OT_remove_prelight_lights(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class GTATOOLS_OT_toggle_prelight_lights(bpy.types.Operator):
+    """Toggle 8-light setup: создать если ламп нет, удалить если есть"""
+    bl_idname = "gtatools.toggle_prelight_lights"
+    bl_label = "INU: Toggle Prelight Lights"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    distance: FloatProperty(
+        name="Distance",
+        description=T("Расстояние ламп от центра"),
+        default=100.0, min=1.0, max=1000.0)
+
+    def execute(self, context):
+        coll = bpy.data.collections.get("Prelight_Lights")
+        has_lights = bool(coll and len(coll.objects) > 0)
+        if has_lights:
+            remove_prelight_scene_lights()
+            self.report({'INFO'}, T("Лампы удалены"))
+            return {'FINISHED'}
+
+        obj = context.active_object
+        if obj is None:
+            # No active object → use scene origin so the toggle still
+            # works and produces a usable lamp ring.
+            world_center = Vector((0.0, 0.0, 0.0))
+        else:
+            bbox_center = sum((Vector(b) for b in obj.bound_box), Vector()) / 8
+            world_center = obj.matrix_world @ bbox_center
+        lights = create_prelight_scene_lights(world_center, self.distance)
+        self.report({'INFO'}, f"Created {len(lights)} lights")
+        return {'FINISHED'}
+
+
 class GTATOOLS_OT_bake_vertex_colors(bpy.types.Operator):
     """Запечь освещение от Point источников в vertex colors"""
     bl_idname = "gtatools.bake_vertex_colors"
@@ -282,6 +315,11 @@ class GTATOOLS_OT_bake_vertex_colors(bpy.types.Operator):
             self.report({'ERROR'}, T("Выделите меш объекты"))
             return {'CANCELLED'}
 
+        # Loop normals are read from EVALUATED mesh inside the bake
+        # function — respects «Smooth by Angle» modifier and sharp
+        # marks. No pre-bake topology mangling needed.
+        from ..tools.prelight import apply_brightness_offset
+
         prev_mode, prev_obj = _force_object_mode(context)
         try:
             baked = 0
@@ -296,7 +334,6 @@ class GTATOOLS_OT_bake_vertex_colors(bpy.types.Operator):
                         # Сохранить пользовательский V-offset: накладываем
                         # его поверх свежих колоров через apply_brightness_offset
                         # (он сам обновит obj["v_offset_<name>"]).
-                        from ..tools.prelight import apply_brightness_offset
                         if attr_name == "Day" and obj.gtatools_v_offset_day != 0.0:
                             apply_brightness_offset(obj, obj.gtatools_v_offset_day)
                         elif attr_name == "Night" and obj.gtatools_v_offset_night != 0.0:
@@ -333,6 +370,10 @@ class GTATOOLS_OT_bake_vertex_colors_simple(bpy.types.Operator):
         gamma = scene.inu_settings.gtatools_bake_gamma
         use_shadows = False
 
+        # Loop normals are read from EVALUATED mesh inside the bake
+        # function — respects «Smooth by Angle» modifier and sharp marks.
+        from ..tools.prelight import apply_brightness_offset
+
         prev_mode, prev_obj = _force_object_mode(context)
         try:
             baked = 0
@@ -345,7 +386,6 @@ class GTATOOLS_OT_bake_vertex_colors_simple(bpy.types.Operator):
                         obj[f"v_offset_{attr_name}"] = 0.0
                         # Сохранить пользовательский V-offset поверх
                         # свежих колоров (см. полный комментарий выше).
-                        from ..tools.prelight import apply_brightness_offset
                         if attr_name == "Day" and obj.gtatools_v_offset_day != 0.0:
                             apply_brightness_offset(obj, obj.gtatools_v_offset_day)
                         elif attr_name == "Night" and obj.gtatools_v_offset_night != 0.0:
@@ -521,6 +561,26 @@ class GTATOOLS_OT_vc_gamma(bpy.types.Operator):
             if success:
                 count += 1
         self.report({'INFO'}, f"Gamma: {count} objects")
+        return {'FINISHED'} if count else {'CANCELLED'}
+
+
+class GTATOOLS_OT_lift_shadows(bpy.types.Operator):
+    """Подтянуть тёмные участки к ярким, сохраняя шаг между гранями"""
+    bl_idname = "gtatools.lift_shadows"
+    bl_label = "INU: Lift Shadows"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        mesh_objects = [o for o in context.selected_objects if o.type == 'MESH']
+        if not mesh_objects:
+            mesh_objects = [context.active_object] if context.active_object and context.active_object.type == 'MESH' else []
+        strength = context.scene.inu_settings.gtatools_lift_shadows_strength
+        count = 0
+        for obj in mesh_objects:
+            success, _ = lift_shadows(obj, strength)
+            if success:
+                count += 1
+        self.report({'INFO'}, f"Lift shadows: {count} objects (strength={strength:.2f})")
         return {'FINISHED'} if count else {'CANCELLED'}
 
 
@@ -745,7 +805,7 @@ class GTATOOLS_OT_load_lightmap(bpy.types.Operator):
             # ShaderNodeMix(RGBA), на 2.80-3.3 — ShaderNodeMixRGB.
             mix_node = nodes.new(compat.MIX_NODE_TYPE)
             compat.setup_mix_rgba_node(mix_node, blend='MULTIPLY')
-            mix_node.inputs[compat.MIX_INPUT_FACTOR].default_value = 1.0
+            compat.mix_input_factor(mix_node).default_value = 1.0
             _mix_in1, _mix_in2, _mix_out = (
                 compat.MIX_INPUT_A, compat.MIX_INPUT_B, compat.MIX_OUTPUT_RESULT)
             mix_node.name = "Lightmap_Mix"
@@ -861,10 +921,10 @@ class GTATOOLS_OT_remove_lightmap(bpy.types.Operator):
             removed_count += 1
 
         if removed_count > 0:
-            self.report({'INFO'}, f"Lightmap удалён из {removed_count} материал(ов)")
+            self.report({'INFO'}, f"{T('Lightmap удалён из ')}{removed_count}{T(' материал(ов)')}")
             return {'FINISHED'}
         else:
-            self.report({'WARNING'}, "Lightmap не найден в материалах")
+            self.report({'WARNING'}, T("Lightmap не найден в материалах"))
             return {'CANCELLED'}
 
 
@@ -2001,6 +2061,7 @@ classes = (
     GTATOOLS_OT_lightmap_clear,
     GTATOOLS_OT_create_prelight_lights,
     GTATOOLS_OT_remove_prelight_lights,
+    GTATOOLS_OT_toggle_prelight_lights,
     GTATOOLS_OT_bake_vertex_colors,
     GTATOOLS_OT_bake_vertex_colors_simple,
     GTATOOLS_OT_reset_bake_settings,
@@ -2011,6 +2072,7 @@ classes = (
     GTATOOLS_OT_vc_contrast,
     GTATOOLS_OT_vc_brightness,
     GTATOOLS_OT_vc_gamma,
+    GTATOOLS_OT_lift_shadows,
     GTATOOLS_OT_vc_smooth_between,
     GTATOOLS_OT_load_lightmap,
     GTATOOLS_OT_remove_lightmap,

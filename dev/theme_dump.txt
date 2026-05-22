@@ -1,0 +1,226 @@
+=== user_interface wcol_* ===
+  wcol_regular:
+    inner       = (0.3294, 0.3294, 0.3294, 1.0000)
+    inner_sel   = (0.2784, 0.4471, 0.7020, 1.0000)
+    outline     = (0.2392, 0.2392, 0.2392, 1.0000)
+    item        = (0.1137, 0.1137, 0.1137, 0.5020)
+    text        = (0.9020, 0.9020, 0.9020, 1.0000)
+    text_sel    = (1.0000, 1.0000, 1.0000, 1.0000)
+    show_shaded = False
+    shadetop    = 0
+    shadedown   = 0
+    roundness   = 0.4000000059604645
+  wcol_tool:
+    inner       = (0.3294, 0.3294, 0.3294, 1.0000)
+    inner_sel   = (0.2784, 0.4471, 0.7020, 1.0000)
+    outline     = (0.2392, 0.2392, 0.2392, 1.0000)
+    item        = (1.0000, 1.0000, 1.0000, 1.0000)
+    text        = (0.9020, 0.9020, 0.9020, 1.0000)
+    text_sel    = (1.0000, 1.0000, 1.0000, 1.0000)
+    show_shaded = False
+    shadetop    = 0
+    shadedown   = 0
+    roundness   = 0.4000000059604645
+  wcol_toolbar_item:
+    inner       = (0.1569, 0.1569, 0.1569, 1.0000)
+    inner_sel   = (0.2784, 0.4471, 0.7020, 1.0000)
+    outline     = (0.2392, 0.2392, 0.2392, 1.0000)
+    item        = (1.0000, 1.0000, 1.0000, 0.7020)
+    text        = (0.9020, 0.9020, 0.9020, 1.0000)
+    text_sel    = (1.0000, 1.0000, 1.0000, 1.0000)
+    show_shaded = False
+    shadetop    = 0
+    shadedown   = 0
+    roundness   = 0.4000000059604645
+  wcol_radio:
+    inner       = (0.3294, 0.3294, 0.3294, 1.0000)
+    inner_sel   = (0.2784, 0.4471, 0.7020, 1.0000)
+    outline     = (0.2392, 0.2392, 0.2392, 1.0000)
+    item        = (0.1451, 0.1451, 0.1451, 1.0000)
+    text        = (0.9020, 0.9020, 0.9020, 1.0000)
+    text_sel    = (1.0000, 1.0000, 1.0000, 1.0000)
+    show_shaded = False
+    shadetop    = 0
+    shadedown   = 0
+    roundness   = 0.4000000059604645
+  wcol_text:
+    inner       = (0.1137, 0.1137, 0.1137, 1.0000)
+    inner_sel   = (0.0941, 0.0941, 0.0941, 1.0000)
+    outline     = (0.2392, 0.2392, 0.2392, 1.0000)
+    item        = (1.0000, 1.0000, 1.0000, 0.2000)
+    text        = (0.9020, 0.9020, 0.9020, 1.0000)
+    text_sel    = (1.0000, 1.0000, 1.0000, 1.0000)
+    show_shaded = False
+    shadetop    = 0
+    shadedown   = 0
+    roundness   = 0.4000000059604645
+  wcol_option:
+    inner       = (0.3294, 0.3294, 0.3294, 1.0000)
+    inner_sel   = (0.2784, 0.4471, 0.7020, 1.0000)
+    outline     = (0.2392, 0.2392, 0.2392, 1.0000)
+    item        = (1.0000, 1.0000, 1.0000, 1.0000)
+    text        = (0.9020, 0.9020, 0.9020, 1.0000)
+    text_sel    = (1.0000, 1.0000, 1.0000, 1.0000)
+    show_shaded = False
+    shadetop    = 0
+    shadedown   = 0
+    roundness   = 0.4000000059604645
+  wcol_toggle:
+    inner       = (0.3294, 0.3294, 0.3294, 1.0000)
+    inner_sel   = (0.2784, 0.4471, 0.7020, 1.0000)
+    outline     = (0.2392, 0.2392, 0.2392, 1.0000)
+    item        = (0.1451, 0.1451, 0.1451, 1.0000)
+    text        = (0.9020, 0.9020, 0.9020, 1.0000)
+    text_sel    = (1.0000, 1.0000, 1.0000, 1.0000)
+    show_shaded = False
+    shadetop    = 0
+    shadedown   = 0
+    roundness   = 0.4000000059604645
+  wcol_num:
+    inner       = (0.3294, 0.3294, 0.3294, 1.0000)
+    inner_sel   = (0.1333, 0.1333, 0.1333, 1.0000)
+    outline     = (0.2392, 0.2392, 0.2392, 1.0000)
+    item        = (0.2784, 0.4471, 0.7020, 1.0000)
+    text        = (0.9020, 0.9020, 0.9020, 1.0000)
+    text_sel    = (1.0000, 1.0000, 1.0000, 1.0000)
+    show_shaded = False
+    shadetop    = 0
+    shadedown   = 0
+    roundness   = 0.4000000059604645
+  wcol_numslider:
+    inner       = (0.3294, 0.3294, 0.3294, 1.0000)
+    inner_sel   = (0.1333, 0.1333, 0.1333, 1.0000)
+    outline     = (0.2392, 0.2392, 0.2392, 1.0000)
+    item        = (0.2784, 0.4471, 0.7020, 1.0000)
+    text        = (0.9020, 0.9020, 0.9020, 1.0000)
+    text_sel    = (1.0000, 1.0000, 1.0000, 1.0000)
+    show_shaded = False
+    shadetop    = 0
+    shadedown   = 0
+    roundness   = 0.4000000059604645
+  wcol_box:
+    inner       = (0.1137, 0.1137, 0.1137, 0.5020)
+    inner_sel   = (0.3294, 0.3294, 0.3294, 1.0000)
+    outline     = (0.2392, 0.2392, 0.2392, 1.0000)
+    item        = (0.0980, 0.0980, 0.0980, 1.0000)
+    text        = (0.9020, 0.9020, 0.9020, 1.0000)
+    text_sel    = (1.0000, 1.0000, 1.0000, 1.0000)
+    show_shaded = False
+    shadetop    = 0
+    shadedown   = 0
+    roundness   = 0.4000000059604645
+  wcol_menu:
+    inner       = (0.1569, 0.1569, 0.1569, 1.0000)
+    inner_sel   = (0.2784, 0.4471, 0.7020, 0.7020)
+    outline     = (0.2392, 0.2392, 0.2392, 1.0000)
+    item        = (0.8510, 0.8510, 0.8510, 1.0000)
+    text        = (0.9020, 0.9020, 0.9020, 1.0000)
+    text_sel    = (1.0000, 1.0000, 1.0000, 1.0000)
+    show_shaded = False
+    shadetop    = 0
+    shadedown   = 0
+    roundness   = 0.4000000059604645
+  wcol_pulldown:
+    inner       = (0.1333, 0.1333, 0.1333, 0.0000)
+    inner_sel   = (1.0000, 1.0000, 1.0000, 0.1020)
+    outline     = (0.2392, 0.2392, 0.2392, 0.0000)
+    item        = (1.0000, 1.0000, 1.0000, 0.5608)
+    text        = (0.8510, 0.8510, 0.8510, 1.0000)
+    text_sel    = (1.0000, 1.0000, 1.0000, 1.0000)
+    show_shaded = False
+    shadetop    = 0
+    shadedown   = 0
+    roundness   = 0.4000000059604645
+  wcol_menu_back:
+    inner       = (0.0941, 0.0941, 0.0941, 1.0000)
+    inner_sel   = (0.2784, 0.4471, 0.7020, 1.0000)
+    outline     = (0.1412, 0.1412, 0.1412, 1.0000)
+    item        = (0.8510, 0.8510, 0.8510, 1.0000)
+    text        = (0.6000, 0.6000, 0.6000, 1.0000)
+    text_sel    = (1.0000, 1.0000, 1.0000, 1.0000)
+    show_shaded = False
+    shadetop    = 0
+    shadedown   = 0
+    roundness   = 0.4000000059604645
+  wcol_menu_item:
+    inner       = (0.0941, 0.0941, 0.0941, 0.0000)
+    inner_sel   = (0.2784, 0.4471, 0.7020, 1.0000)
+    outline     = (0.2392, 0.2392, 0.2392, 0.0000)
+    item        = (1.0000, 1.0000, 1.0000, 0.5608)
+    text        = (0.8667, 0.8667, 0.8667, 1.0000)
+    text_sel    = (1.0000, 1.0000, 1.0000, 1.0000)
+    show_shaded = False
+    shadetop    = 0
+    shadedown   = 0
+    roundness   = 0.4000000059604645
+  wcol_tooltip:
+    inner       = (0.1137, 0.1137, 0.1137, 1.0000)
+    inner_sel   = (0.2784, 0.4471, 0.7020, 1.0000)
+    outline     = (0.1412, 0.1412, 0.1412, 1.0000)
+    item        = (0.8510, 0.8510, 0.8510, 1.0000)
+    text        = (0.8510, 0.8510, 0.8510, 1.0000)
+    text_sel    = (1.0000, 1.0000, 1.0000, 1.0000)
+    show_shaded = False
+    shadetop    = 0
+    shadedown   = 0
+    roundness   = 0.4000000059604645
+  wcol_scroll:
+    inner       = (0.1333, 0.1333, 0.1333, 0.0000)
+    inner_sel   = (1.0000, 1.0000, 1.0000, 1.0000)
+    outline     = (0.2392, 0.2392, 0.2392, 1.0000)
+    item        = (0.3294, 0.3294, 0.3294, 1.0000)
+    text        = (0.9020, 0.9020, 0.9020, 1.0000)
+    text_sel    = (1.0000, 1.0000, 1.0000, 1.0000)
+    show_shaded = False
+    shadetop    = 0
+    shadedown   = 0
+    roundness   = 1.0
+  wcol_progress:
+    inner       = (0.1333, 0.1333, 0.1333, 1.0000)
+    inner_sel   = (0.2784, 0.4471, 0.7020, 1.0000)
+    outline     = (0.2392, 0.2392, 0.2392, 1.0000)
+    item        = (0.2784, 0.4471, 0.7020, 1.0000)
+    text        = (0.9020, 0.9020, 0.9020, 1.0000)
+    text_sel    = (1.0000, 1.0000, 1.0000, 1.0000)
+    show_shaded = False
+    shadetop    = 0
+    shadedown   = 0
+    roundness   = 0.4000000059604645
+  wcol_list_item:
+    inner       = (1.0000, 1.0000, 1.0000, 0.0000)
+    inner_sel   = (0.2784, 0.4471, 0.7020, 1.0000)
+    outline     = (0.1765, 0.1765, 0.1765, 0.0000)
+    item        = (1.0000, 1.0000, 1.0000, 0.2000)
+    text        = (0.8000, 0.8000, 0.8000, 1.0000)
+    text_sel    = (1.0000, 1.0000, 1.0000, 1.0000)
+    show_shaded = False
+    shadetop    = 0
+    shadedown   = 0
+    roundness   = 0.4000000059604645
+  wcol_tab:
+    inner       = (0.1137, 0.1137, 0.1137, 1.0000)
+    inner_sel   = (0.1882, 0.1882, 0.1882, 1.0000)
+    outline     = (0.1137, 0.1137, 0.1137, 1.0000)
+    item        = (0.1137, 0.1137, 0.1137, 1.0000)
+    text        = (0.5961, 0.5961, 0.5961, 1.0000)
+    text_sel    = (1.0000, 1.0000, 1.0000, 1.0000)
+    show_shaded = False
+    shadetop    = 0
+    shadedown   = 0
+    roundness   = 0.4000000059604645
+
+=== view_3d space colours ===
+  space.back = ERR 'ThemeSpaceGradient' object has no attribute 'back'
+  space.text = (0.9020, 0.9020, 0.9020, 1.0000)
+  space.text_hi = (1.0000, 1.0000, 1.0000, 1.0000)
+  space.header = (0.1882, 0.1882, 0.1882, 0.7020)
+  space.header_text = (0.9333, 0.9333, 0.9333, 1.0000)
+  space.header_text_hi = (1.0000, 1.0000, 1.0000, 1.0000)
+  space.button = ERR 'ThemeSpaceGradient' object has no attribute 'button'
+  space.button_title = ERR 'ThemeSpaceGradient' object has no attribute 'button_title'
+  space.button_text = ERR 'ThemeSpaceGradient' object has no attribute 'button_text'
+  space.button_text_hi = ERR 'ThemeSpaceGradient' object has no attribute 'button_text_hi'
+  panelcolors = ERR 'ThemeSpaceGradient' object has no attribute 'panelcolors'
+Blender 5.1.0 (hash adfe2921d5f3 built 2026-03-17 01:37:32)
+
+Blender quit

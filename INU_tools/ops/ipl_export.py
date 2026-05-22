@@ -4,6 +4,17 @@ from __future__ import annotations
 from ..core.ipl import IplFile, IplInstance, write_ipl
 
 
+def _scene_game() -> str:
+    """Read the active game (III/VC/SA) off the current Blender scene.
+    Falls back to SA when bpy isn't available (unit tests)."""
+    try:
+        import bpy
+        from ..core import game_versions as gv
+        return gv.game_of_scene(bpy.context.scene)
+    except Exception:
+        return 'SA'
+
+
 def export_ipl(filepath: str, objects: list, *, binary: bool = False,
                fla_extended: bool = False) -> None:
     """
@@ -105,7 +116,8 @@ def export_ipl(filepath: str, objects: list, *, binary: bool = False,
         if lod_idx >= 0:
             ipl.instances[i].lod_index = lod_idx
 
-    write_ipl(filepath, ipl, binary=binary, fla_extended=fla_extended)
+    write_ipl(filepath, ipl, binary=binary, fla_extended=fla_extended,
+              game=_scene_game())
 
 
 def _clean_model_name(name: str) -> str:

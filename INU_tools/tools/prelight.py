@@ -388,6 +388,146 @@ def remove_prelight_scene_lights():
     return False
 
 
+def _eval_loop_normals(obj):
+    """Loop normals from the EVALUATED mesh — respects «Smooth by Angle»
+    modifier (Blender 4.1+), legacy auto_smooth, manual sharp marks,
+    and any custom split normals.
+
+    Falls back to source mesh's loop normals if the evaluated mesh's
+    loop count differs (topology-changing modifier upstream of ours,
+    e.g. Subdivision Surface — bake doesn't support those anyway because
+    we'd have nowhere to write the colors back to).
+    """
+    import numpy as np
+    src = obj.data
+    n_loops_src = len(src.loops)
+    if n_loops_src == 0:
+        return np.zeros((0, 3), dtype=np.float32), False
+
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    eval_obj = obj.evaluated_get(depsgraph)
+    eval_mesh = None
+    used_eval = False
+    try:
+        eval_mesh = eval_obj.to_mesh()
+        if len(eval_mesh.loops) == n_loops_src:
+            try:
+                eval_mesh.calc_normals_split()
+            except Exception:
+                pass
+            arr = np.empty(n_loops_src * 3, dtype=np.float32)
+            eval_mesh.loops.foreach_get('normal', arr)
+            used_eval = True
+        else:
+            arr = None
+    except Exception:
+        arr = None
+    finally:
+        if eval_mesh is not None:
+            try:
+                eval_obj.to_mesh_clear()
+            except Exception:
+                pass
+
+    if arr is None:
+        # Fallback — source mesh loop normals.
+        try:
+            src.calc_normals_split()
+        except Exception:
+            pass
+        arr = np.empty(n_loops_src * 3, dtype=np.float32)
+        src.loops.foreach_get('normal', arr)
+
+    return arr.reshape(n_loops_src, 3), used_eval
+
+
+def _snapshot_smooth_state(mesh):
+    """Save mesh.use_auto_smooth + edge.use_edge_sharp before sharpening
+    for bake. Returns dict that ``_restore_smooth_state`` consumes."""
+    import numpy as np
+    n_edges = len(mesh.edges)
+    sharp = np.zeros(n_edges, dtype=bool)
+    if n_edges:
+        flat = np.empty(n_edges, dtype=bool)
+        mesh.edges.foreach_get('use_edge_sharp', flat)
+        sharp = flat.copy()
+    return {
+        'use_auto_smooth': bool(getattr(mesh, 'use_auto_smooth', False)),
+        'auto_smooth_angle': float(getattr(mesh, 'auto_smooth_angle', 0.0)),
+        'sharp': sharp,
+    }
+
+
+def _apply_sharp_for_bake(mesh, angle_rad):
+    """Mark edges with face-angle ≥ ``angle_rad`` as sharp and enable
+    auto_smooth so ``mesh.calc_normals_split()`` produces face-aligned
+    loop normals at those edges. Bake reads loop normals, so the
+    resulting per-loop colors will differ across the sharp edge —
+    which the DFF exporter's ``_needs_split`` detects and splits the
+    vertices in the binary."""
+    import numpy as np
+    import bmesh
+
+    snapshot = _snapshot_smooth_state(mesh)
+
+    # Compute face-pair angle per edge via bmesh (cheap on small/medium
+    # meshes; manual loop on Python wins over per-edge RNA traversal).
+    bm = bmesh.new()
+    try:
+        bm.from_mesh(mesh)
+        bm.edges.ensure_lookup_table()
+        n_edges = len(bm.edges)
+        new_sharp = np.zeros(n_edges, dtype=bool)
+        for i, e in enumerate(bm.edges):
+            if len(e.link_faces) != 2:
+                continue
+            try:
+                ang = e.calc_face_angle(0.0)
+            except (ValueError, RuntimeError):
+                continue
+            if ang >= angle_rad:
+                new_sharp[i] = True
+        # OR with previously-sharp edges so existing manual marks
+        # still hold (don't unmark anything the user marked).
+        new_sharp |= snapshot['sharp']
+        mesh.edges.foreach_set('use_edge_sharp', new_sharp.astype(np.bool_).tolist() if hasattr(new_sharp, 'tolist') else list(new_sharp))
+    finally:
+        bm.free()
+
+    # auto_smooth was removed in Blender 4.1 — set only on older builds.
+    if hasattr(mesh, 'use_auto_smooth'):
+        mesh.use_auto_smooth = True
+        # Set angle ≥ ours so calc_normals_split honours our explicit
+        # sharp marks regardless of soft auto_smooth threshold.
+        if hasattr(mesh, 'auto_smooth_angle'):
+            mesh.auto_smooth_angle = max(angle_rad, snapshot['auto_smooth_angle'])
+
+    return snapshot
+
+
+def _restore_smooth_state(mesh, snapshot):
+    """Restore the mesh's auto_smooth + per-edge sharp flags to whatever
+    they were before ``_apply_sharp_for_bake``. The per-loop colors
+    written during bake are NOT touched — they keep the per-face values
+    so the DFF export still splits at corners. Removing the visual
+    sharp/auto_smooth here just hides the smoothing artefacts in the
+    viewport."""
+    if snapshot is None:
+        return
+    if hasattr(mesh, 'use_auto_smooth'):
+        mesh.use_auto_smooth = snapshot['use_auto_smooth']
+        if hasattr(mesh, 'auto_smooth_angle'):
+            mesh.auto_smooth_angle = snapshot['auto_smooth_angle']
+    sharp = snapshot.get('sharp')
+    if sharp is not None and len(sharp) == len(mesh.edges):
+        try:
+            import numpy as np
+            mesh.edges.foreach_set('use_edge_sharp', np.asarray(sharp, dtype=bool))
+        except Exception:
+            for i, val in enumerate(sharp):
+                mesh.edges[i].use_edge_sharp = bool(val)
+
+
 def bake_vertex_colors_from_lights(obj, use_shadows=True):
     """Запечь освещение от Point источников в vertex colors.
 
@@ -453,9 +593,11 @@ def bake_vertex_colors_from_lights(obj, use_shadows=True):
     norms[norms < 1e-6] = 1.0
     vert_world_no /= norms
 
-    loop_no = np.empty(n_loops * 3, dtype=np.float32)
-    mesh.loops.foreach_get('normal', loop_no)
-    loop_no = loop_no.reshape(n_loops, 3)
+    # Loop normals — read from EVALUATED mesh to respect «Smooth by
+    # Angle» modifier / legacy auto_smooth / sharp-edge marks. Without
+    # this the bake ignores the user's smoothing setup and always
+    # produces smooth corners regardless of viewport shading.
+    loop_no, _used_eval = _eval_loop_normals(obj)
     loop_world_no = loop_no @ NM.T
     norms = np.linalg.norm(loop_world_no, axis=1, keepdims=True)
     norms[norms < 1e-6] = 1.0
@@ -580,9 +722,9 @@ def bake_vertex_colors_simple(obj, ambient=0.05, intensity_mult=0.008, gamma=1.8
     norms[norms < 1e-6] = 1.0
     vert_world_no /= norms
 
-    loop_no = np.empty(n_loops * 3, dtype=np.float32)
-    mesh.loops.foreach_get('normal', loop_no)
-    loop_no = loop_no.reshape(n_loops, 3)
+    # Loop normals from EVALUATED mesh (respects Smooth-by-Angle modifier
+    # and sharp marks; see _eval_loop_normals).
+    loop_no, _used_eval = _eval_loop_normals(obj)
     loop_world_no = loop_no @ NM.T
     norms = np.linalg.norm(loop_world_no, axis=1, keepdims=True)
     norms[norms < 1e-6] = 1.0
@@ -909,6 +1051,61 @@ def adjust_vertex_colors_gamma(obj, gamma=1.0):
     return True, f"Gamma: {gamma:.2f}"
 
 
+def lift_shadows(obj, strength=0.5):
+    """«Подтянуть тени» — pull each loop's brightness toward the
+    mesh-wide max by ``strength``. Hue is preserved (colour scaled
+    proportionally), so a dark wall stays the same warm/cool tone but
+    becomes less dark.
+
+    strength=0 → no-op
+    strength=1 → every loop reaches the max → fully uniform brightness
+                 (loses the per-face step entirely; not recommended)
+    Typical 0.3-0.5 → dark faces noticeably lifted, contrast step kept.
+
+    Operates on the active color attribute (Day or Night). Black loops
+    (brightness ~0) are excluded — multiplying 0 by anything stays 0,
+    and trying to interpolate hue from pure black is meaningless.
+    """
+    import numpy as np
+    if obj is None or obj.type != 'MESH':
+        return False, "Select a mesh object!"
+    if strength <= 0.0:
+        return True, "Strength is zero — nothing to do"
+
+    mesh = obj.data
+    color_attr = compat.vcol_active(mesh)
+    if color_attr is None:
+        return False, "No active color layer!"
+
+    n = len(color_attr.data)
+    if n == 0:
+        return False, "No loops"
+
+    flat = np.empty(n * 4, dtype=np.float32)
+    color_attr.data.foreach_get('color', flat)
+    flat = flat.reshape(n, 4)
+
+    rgb = flat[:, :3]
+    brightness = rgb.mean(axis=1)
+    target = float(brightness.max())
+    if target <= 1e-6:
+        return True, "All colours are black — nothing to lift"
+
+    # Mask out near-black loops (would scale 0×k = 0 anyway).
+    valid = brightness > 1e-4
+    new_b = brightness + (target - brightness) * float(strength)
+    # Per-loop scale to lift brightness while preserving hue.
+    scale = np.ones(n, dtype=np.float32)
+    scale[valid] = new_b[valid] / brightness[valid]
+
+    rgb_out = rgb * scale[:, None]
+    np.clip(rgb_out, 0.0, 1.0, out=rgb_out)
+    flat[:, :3] = rgb_out
+
+    color_attr.data.foreach_set('color', flat.reshape(-1))
+    return True, f"Lifted shadows: strength={strength:.2f}"
+
+
 # ── Modulate Color presets ──────────────────────────────────────
 # Хардкод значений из ванильного timecyc.dat (EXTRASUNNY_LA),
 # чтобы пользователю не нужно было ничего настраивать.
@@ -1028,7 +1225,7 @@ def setup_prelight_preview(obj, enable=True):
                     vc_node.layer_name = color_name
                 elif hasattr(vc_node, 'attribute_name'):
                     vc_node.attribute_name = color_name
-                bright_node.inputs[compat.MIX_INPUT_B].default_value = (0.0, 0.0, 0.0, 0.0)
+                compat.mix_input_b(bright_node).default_value = (0.0, 0.0, 0.0, 0.0)
                 # Insert Prelight_Ambient if missing (older preview without it)
                 if amb_node is None:
                     amb_node = nodes.new(compat.MIX_NODE_TYPE)
@@ -1036,14 +1233,14 @@ def setup_prelight_preview(obj, enable=True):
                     amb_node.label = "Ambient (Modulate)"
                     compat.setup_mix_rgba_node(amb_node, blend='ADD')
                     amb_node.location = (
-                        principled.location.x - 280, principled.location.y - 100)
+                        principled.location.x - 800, principled.location.y - 200)
                     # Splice between bright_node and mix_node B
-                    for lnk in list(mix_node.inputs[compat.MIX_INPUT_B].links):
+                    for lnk in list(compat.mix_input_b(mix_node).links):
                         links.remove(lnk)
-                    links.new(bright_node.outputs[compat.MIX_OUTPUT_RESULT], amb_node.inputs[compat.MIX_INPUT_A])
-                    links.new(amb_node.outputs[compat.MIX_OUTPUT_RESULT], mix_node.inputs[compat.MIX_INPUT_B])
-                amb_node.inputs[compat.MIX_INPUT_FACTOR].default_value = amb_factor
-                amb_node.inputs[compat.MIX_INPUT_B].default_value = amb_b
+                    links.new(compat.mix_output_result(bright_node), compat.mix_input_a(amb_node))
+                    links.new(compat.mix_output_result(amb_node), compat.mix_input_b(mix_node))
+                compat.mix_input_factor(amb_node).default_value = amb_factor
+                compat.mix_input_b(amb_node).default_value = amb_b
                 # Создать недостающие ноды: PostFx1, PostFx2, BrightContrast, Gamma
                 if pf1_node is None:
                     pf1_node = nodes.new(compat.MIX_NODE_TYPE)
@@ -1075,23 +1272,23 @@ def setup_prelight_preview(obj, enable=True):
                 # Перевязать цепочку: Mix → PostFx1 → PostFx2 → BrightContrast → Gamma → Base Color
                 for lnk in list(base_color_input.links):
                     links.remove(lnk)
-                for lnk in list(pf1_node.inputs[compat.MIX_INPUT_A].links):
+                for lnk in list(compat.mix_input_a(pf1_node).links):
                     links.remove(lnk)
-                for lnk in list(pf2_node.inputs[compat.MIX_INPUT_A].links):
+                for lnk in list(compat.mix_input_a(pf2_node).links):
                     links.remove(lnk)
                 for lnk in list(bc_node.inputs['Color'].links):
                     links.remove(lnk)
                 for lnk in list(gm_node.inputs['Color'].links):
                     links.remove(lnk)
-                links.new(mix_node.outputs[compat.MIX_OUTPUT_RESULT], pf1_node.inputs[compat.MIX_INPUT_A])
-                links.new(pf1_node.outputs[compat.MIX_OUTPUT_RESULT], pf2_node.inputs[compat.MIX_INPUT_A])
-                links.new(pf2_node.outputs[compat.MIX_OUTPUT_RESULT], bc_node.inputs['Color'])
+                links.new(compat.mix_output_result(mix_node), compat.mix_input_a(pf1_node))
+                links.new(compat.mix_output_result(pf1_node), compat.mix_input_a(pf2_node))
+                links.new(compat.mix_output_result(pf2_node), bc_node.inputs['Color'])
                 links.new(bc_node.outputs['Color'], gm_node.inputs['Color'])
                 links.new(gm_node.outputs['Color'], base_color_input)
-                pf1_node.inputs[compat.MIX_INPUT_FACTOR].default_value = pf1_f
-                pf1_node.inputs[compat.MIX_INPUT_B].default_value = pf1_b
-                pf2_node.inputs[compat.MIX_INPUT_FACTOR].default_value = pf2_f
-                pf2_node.inputs[compat.MIX_INPUT_B].default_value = pf2_b
+                compat.mix_input_factor(pf1_node).default_value = pf1_f
+                compat.mix_input_b(pf1_node).default_value = pf1_b
+                compat.mix_input_factor(pf2_node).default_value = pf2_f
+                compat.mix_input_b(pf2_node).default_value = pf2_b
                 bc_node.inputs['Contrast'].default_value = bc_contrast
                 gm_node.inputs['Gamma'].default_value = gm_gamma
                 continue
@@ -1107,7 +1304,12 @@ def setup_prelight_preview(obj, enable=True):
                     vc_node.layer_name = color_name
                 vc_node.name = "Prelight_VertexColor"
                 vc_node.label = "Prelight"
-                vc_node.location = (principled.location.x - 500, principled.location.y - 200)
+                # Side-chain row sits 200 px below Principled; main
+                # chain (Mix → ... → Gamma → BaseColor) runs along
+                # Principled's Y. 180 px spacing between nodes is
+                # roughly node-width + 40 px breathing room, so the
+                # graph stays readable without huge gaps.
+                vc_node.location = (principled.location.x - 1200, principled.location.y - 200)
             else:
                 if hasattr(vc_node, 'layer_name'):
                     vc_node.layer_name = color_name
@@ -1120,9 +1322,9 @@ def setup_prelight_preview(obj, enable=True):
                 bright_node.name = "Prelight_Bright"
                 bright_node.label = "Brightness"
                 compat.setup_mix_rgba_node(bright_node, blend='ADD')
-                bright_node.location = (principled.location.x - 350, principled.location.y - 200)
-                bright_node.inputs[compat.MIX_INPUT_FACTOR].default_value = 1.0
-            bright_node.inputs[compat.MIX_INPUT_B].default_value = (0.0, 0.0, 0.0, 0.0)
+                bright_node.location = (principled.location.x - 1000, principled.location.y - 200)
+                compat.mix_input_factor(bright_node).default_value = 1.0
+            compat.mix_input_b(bright_node).default_value = (0.0, 0.0, 0.0, 0.0)
 
             # Create Ambient (Modulate) node — adds ambient_obj × surfAmb
             # to vertex color, mirroring ванильный SA-шейдер зданий
@@ -1135,8 +1337,8 @@ def setup_prelight_preview(obj, enable=True):
                 compat.setup_mix_rgba_node(amb_node, blend='ADD')
                 amb_node.location = (
                     principled.location.x - 280, principled.location.y - 100)
-            amb_node.inputs[compat.MIX_INPUT_FACTOR].default_value = amb_factor
-            amb_node.inputs[compat.MIX_INPUT_B].default_value = amb_b
+            compat.mix_input_factor(amb_node).default_value = amb_factor
+            compat.mix_input_b(amb_node).default_value = amb_b
 
             # Create Mix node (Multiply with texture)
             if not mix_node:
@@ -1144,8 +1346,8 @@ def setup_prelight_preview(obj, enable=True):
                 mix_node.name = "Prelight_Mix"
                 mix_node.label = "Prelight Multiply"
                 compat.setup_mix_rgba_node(mix_node, blend='MULTIPLY')
-                mix_node.location = (principled.location.x - 200, principled.location.y)
-                mix_node.inputs[compat.MIX_INPUT_FACTOR].default_value = 1.0
+                mix_node.location = (principled.location.x - 860, principled.location.y)
+                compat.mix_input_factor(mix_node).default_value = 1.0
 
             # ── PostFx1 + PostFx2 — точная игровая формула из
             # CPostEffects::ColourFilter (gta-reversed-modern):
@@ -1159,25 +1361,25 @@ def setup_prelight_preview(obj, enable=True):
                 pf1_node.name = "Prelight_PostFx1"
                 pf1_node.label = "PostFx1 (Add)"
                 compat.setup_mix_rgba_node(pf1_node, blend='ADD')
-                pf1_node.location = (principled.location.x - 200, principled.location.y - 50)
-            pf1_node.inputs[compat.MIX_INPUT_FACTOR].default_value = pf1_f
-            pf1_node.inputs[compat.MIX_INPUT_B].default_value = pf1_b
+                pf1_node.location = (principled.location.x - 690, principled.location.y)
+            compat.mix_input_factor(pf1_node).default_value = pf1_f
+            compat.mix_input_b(pf1_node).default_value = pf1_b
 
             if not pf2_node:
                 pf2_node = nodes.new(compat.MIX_NODE_TYPE)
                 pf2_node.name = "Prelight_PostFx2"
                 pf2_node.label = "PostFx2 (Add)"
                 compat.setup_mix_rgba_node(pf2_node, blend='ADD')
-                pf2_node.location = (principled.location.x - 150, principled.location.y - 50)
-            pf2_node.inputs[compat.MIX_INPUT_FACTOR].default_value = pf2_f
-            pf2_node.inputs[compat.MIX_INPUT_B].default_value = pf2_b
+                pf2_node.location = (principled.location.x - 520, principled.location.y)
+            compat.mix_input_factor(pf2_node).default_value = pf2_f
+            compat.mix_input_b(pf2_node).default_value = pf2_b
 
             # ── BrightContrast + Gamma — color-grading на финальный результат
             if not bc_node:
                 bc_node = nodes.new('ShaderNodeBrightContrast')
                 bc_node.name = "Prelight_BrightContrast"
                 bc_node.label = "Contrast"
-                bc_node.location = (principled.location.x - 100, principled.location.y - 50)
+                bc_node.location = (principled.location.x - 350, principled.location.y)
             bc_node.inputs['Bright'].default_value = 0.0
             bc_node.inputs['Contrast'].default_value = bc_contrast
 
@@ -1185,30 +1387,30 @@ def setup_prelight_preview(obj, enable=True):
                 gm_node = nodes.new('ShaderNodeGamma')
                 gm_node.name = "Prelight_Gamma"
                 gm_node.label = "Gamma"
-                gm_node.location = (principled.location.x - 50, principled.location.y - 50)
+                gm_node.location = (principled.location.x - 180, principled.location.y)
             gm_node.inputs['Gamma'].default_value = gm_gamma
 
             # Connect nodes
             if tex_node and original_link:
                 # Texture -> Mix A
-                links.new(tex_output, mix_node.inputs[compat.MIX_INPUT_A])
+                links.new(tex_output, compat.mix_input_a(mix_node))
             else:
                 # No texture - use white
-                mix_node.inputs[compat.MIX_INPUT_A].default_value = (1, 1, 1, 1)
+                compat.mix_input_a(mix_node).default_value = (1, 1, 1, 1)
 
             # Vertex Color -> Bright A
-            links.new(vc_node.outputs['Color'], bright_node.inputs[compat.MIX_INPUT_A])
+            links.new(vc_node.outputs['Color'], compat.mix_input_a(bright_node))
 
             # Bright Result -> Ambient A
-            links.new(bright_node.outputs[compat.MIX_OUTPUT_RESULT], amb_node.inputs[compat.MIX_INPUT_A])
+            links.new(compat.mix_output_result(bright_node), compat.mix_input_a(amb_node))
 
             # Ambient Result -> Mix B
-            links.new(amb_node.outputs[compat.MIX_OUTPUT_RESULT], mix_node.inputs[compat.MIX_INPUT_B])
+            links.new(compat.mix_output_result(amb_node), compat.mix_input_b(mix_node))
 
             # Mix -> PostFx1 -> PostFx2 -> BrightContrast -> Gamma -> Base Color
-            links.new(mix_node.outputs[compat.MIX_OUTPUT_RESULT], pf1_node.inputs[compat.MIX_INPUT_A])
-            links.new(pf1_node.outputs[compat.MIX_OUTPUT_RESULT], pf2_node.inputs[compat.MIX_INPUT_A])
-            links.new(pf2_node.outputs[compat.MIX_OUTPUT_RESULT], bc_node.inputs['Color'])
+            links.new(compat.mix_output_result(mix_node), compat.mix_input_a(pf1_node))
+            links.new(compat.mix_output_result(pf1_node), compat.mix_input_a(pf2_node))
+            links.new(compat.mix_output_result(pf2_node), bc_node.inputs['Color'])
             links.new(bc_node.outputs['Color'], gm_node.inputs['Color'])
             links.new(gm_node.outputs['Color'], base_color_input)
 
@@ -1239,7 +1441,7 @@ def setup_prelight_preview(obj, enable=True):
                         alpha_mult.name = "Prelight_AlphaMult"
                         alpha_mult.label = "Prelight Alpha Mult"
                         alpha_mult.operation = 'MULTIPLY'
-                        alpha_mult.location = (principled.location.x - 200, principled.location.y - 350)
+                        alpha_mult.location = (principled.location.x - 350, principled.location.y - 400)
                     # Disconnect old alpha link
                     for lnk in list(alpha_input.links):
                         links.remove(lnk)
@@ -1276,7 +1478,14 @@ def setup_prelight_preview(obj, enable=True):
 
                 if principled:
                     base_color_input = principled.inputs.get('Base Color')
-                    # Restore connection - может быть Lightmap_Mix или оригинальная текстура
+                    # Always cut whatever is currently driving Base
+                    # Color (the prelight chain's gm_node → here) so
+                    # the prelight signal doesn't leak through with
+                    # the chain still wired up. If we have a saved
+                    # original source, link it back; otherwise leave
+                    # Base Color on its default value.
+                    for lnk in list(base_color_input.links):
+                        links.remove(lnk)
                     if original_source and original_socket:
                         links.new(original_socket, base_color_input)
 
@@ -1315,30 +1524,37 @@ def setup_prelight_preview(obj, enable=True):
                                 mat.blend_method = 'OPAQUE'
                         del mat['prelight_orig_blend']
 
-                # Remove prelight nodes
-                nodes.remove(mix_node)
+                # Keep the prelight chain nodes in place — only the
+                # Mix → Principled connection got cut above (Principled
+                # is now back on the raw texture, so the viewport
+                # shows "preview off"). Leaving the nodes alone makes
+                # the next enable-toggle a cheap re-link via the
+                # "already has prelight setup" fast path at line 1222
+                # instead of rebuilding 8 nodes every time.
+                #
+                # The DFF exporter walks past `Prelight_Mix` to find
+                # the real texture (dff_export.py:146), so leftover
+                # preview nodes don't affect export output. It still
+                # calls `setup_prelight_preview(enable=False)` for
+                # safety, which now restores links without churn.
                 modified_count += 1
 
-            if gm_node:
-                nodes.remove(gm_node)
-
-            if bc_node:
-                nodes.remove(bc_node)
-
-            if pf2_node:
-                nodes.remove(pf2_node)
-
-            if pf1_node:
-                nodes.remove(pf1_node)
-
-            if amb_node:
-                nodes.remove(amb_node)
-
-            if bright_node:
-                nodes.remove(bright_node)
-
-            if vc_node:
-                nodes.remove(vc_node)
+    # Stamp an explicit on/off flag onto each touched material so
+    # the button-state checks don't have to rely on the presence of
+    # `Prelight_Mix` (which now persists even while preview is off —
+    # we no longer destroy the prelight chain on toggle).
+    for mat_slot in obj.material_slots:
+        mat = mat_slot.material
+        if mat is None:
+            continue
+        if enable:
+            mat['prelight_preview_active'] = True
+        else:
+            try:
+                if 'prelight_preview_active' in mat:
+                    del mat['prelight_preview_active']
+            except Exception:
+                mat['prelight_preview_active'] = False
 
     if enable:
         return True, f"Prelight preview enabled on {modified_count} materials"
@@ -1400,10 +1616,10 @@ def apply_modulate_preview(scene=None):
             amb_n.label = "Ambient (Modulate)"
             compat.setup_mix_rgba_node(amb_n, blend='ADD')
             amb_n.location = (mix_n.location.x - 80, mix_n.location.y - 100)
-            for lnk in list(mix_n.inputs[compat.MIX_INPUT_B].links):
+            for lnk in list(compat.mix_input_b(mix_n).links):
                 nt.links.remove(lnk)
-            nt.links.new(bright_n.outputs[compat.MIX_OUTPUT_RESULT], amb_n.inputs[compat.MIX_INPUT_A])
-            nt.links.new(amb_n.outputs[compat.MIX_OUTPUT_RESULT], mix_n.inputs[compat.MIX_INPUT_B])
+            nt.links.new(compat.mix_output_result(bright_n), compat.mix_input_a(amb_n))
+            nt.links.new(compat.mix_output_result(amb_n), compat.mix_input_b(mix_n))
 
         # Lazy upgrade: вставить PostFx1+PostFx2+BrightContrast+Gamma
         # после mix_n, перед Principled.Base Color если их нет.
@@ -1442,29 +1658,29 @@ def apply_modulate_preview(scene=None):
                 # Перевязать: mix → pf1 → pf2 → bc → gm → Base Color
                 for lnk in list(base_input.links):
                     nt.links.remove(lnk)
-                for lnk in list(pf1_n.inputs[compat.MIX_INPUT_A].links):
+                for lnk in list(compat.mix_input_a(pf1_n).links):
                     nt.links.remove(lnk)
-                for lnk in list(pf2_n.inputs[compat.MIX_INPUT_A].links):
+                for lnk in list(compat.mix_input_a(pf2_n).links):
                     nt.links.remove(lnk)
                 for lnk in list(bc_n.inputs['Color'].links):
                     nt.links.remove(lnk)
                 for lnk in list(gm_n.inputs['Color'].links):
                     nt.links.remove(lnk)
-                nt.links.new(mix_n.outputs[compat.MIX_OUTPUT_RESULT], pf1_n.inputs[compat.MIX_INPUT_A])
-                nt.links.new(pf1_n.outputs[compat.MIX_OUTPUT_RESULT], pf2_n.inputs[compat.MIX_INPUT_A])
-                nt.links.new(pf2_n.outputs[compat.MIX_OUTPUT_RESULT], bc_n.inputs['Color'])
+                nt.links.new(compat.mix_output_result(mix_n), compat.mix_input_a(pf1_n))
+                nt.links.new(compat.mix_output_result(pf1_n), compat.mix_input_a(pf2_n))
+                nt.links.new(compat.mix_output_result(pf2_n), bc_n.inputs['Color'])
                 nt.links.new(bc_n.outputs['Color'], gm_n.inputs['Color'])
                 nt.links.new(gm_n.outputs['Color'], base_input)
 
         try:
-            amb_n.inputs[compat.MIX_INPUT_FACTOR].default_value = amb_factor
-            amb_n.inputs[compat.MIX_INPUT_B].default_value = amb_b
+            compat.mix_input_factor(amb_n).default_value = amb_factor
+            compat.mix_input_b(amb_n).default_value = amb_b
             if pf1_n is not None:
-                pf1_n.inputs[compat.MIX_INPUT_FACTOR].default_value = pf1_f
-                pf1_n.inputs[compat.MIX_INPUT_B].default_value = pf1_b
+                compat.mix_input_factor(pf1_n).default_value = pf1_f
+                compat.mix_input_b(pf1_n).default_value = pf1_b
             if pf2_n is not None:
-                pf2_n.inputs[compat.MIX_INPUT_FACTOR].default_value = pf2_f
-                pf2_n.inputs[compat.MIX_INPUT_B].default_value = pf2_b
+                compat.mix_input_factor(pf2_n).default_value = pf2_f
+                compat.mix_input_b(pf2_n).default_value = pf2_b
             if bc_n is not None:
                 bc_n.inputs['Contrast'].default_value = bc_contrast
             if gm_n is not None:

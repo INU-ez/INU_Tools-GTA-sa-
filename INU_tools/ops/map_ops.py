@@ -207,6 +207,10 @@ def _bbox_selection_handler(scene, depsgraph):
 # ── Model Links Visualization ────────────────────────────────────────
 
 _links_draw_handler = None
+# Mirror of scene.inu_settings.gtatools_links_active for legacy readers.
+# Authoritative state lives in the scene property so it persists with
+# the .blend; this global is refreshed in the toggle operator and on
+# load_post (re-registers the draw handler on file open if active).
 _links_active = False
 
 
@@ -292,7 +296,10 @@ class GTATOOLS_OT_toggle_links(bpy.types.Operator):
     def execute(self, context):
         global _links_active, _links_draw_handler
 
-        _links_active = not _links_active
+        settings = context.scene.inu_settings
+        new_active = not settings.gtatools_links_active
+        settings.gtatools_links_active = new_active
+        _links_active = new_active
 
         if _links_active:
             if _links_draw_handler is None:

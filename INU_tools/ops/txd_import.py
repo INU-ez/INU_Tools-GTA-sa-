@@ -115,6 +115,18 @@ def import_txd(filepath: str, assign_to_materials: bool = True,
     import os
     fname = os.path.basename(filepath)
     print(f"[TXD IMPORT] === START {fname} (assign={assign_to_materials}) ===")
+    # Mobile TXD container detection — short-circuit with a helpful
+    # message before we try to parse PVRTC/ETC1 bytes as RW chunks.
+    # Pixel decode would need a C-extension codec we don't ship.
+    try:
+        from ..core.txd_mobile import detect_mobile_txd, container_summary
+        _mobile = detect_mobile_txd(filepath)
+        if _mobile is not None:
+            from ..core.txd_mobile import MobileTxdPixelDecodeUnsupported
+            print(f"[TXD IMPORT] {container_summary(_mobile)}")
+            raise MobileTxdPixelDecodeUnsupported(_mobile)
+    except ImportError:
+        pass
     t0 = time.perf_counter()
     textures = read_txd_file(filepath)
     if name_filter is not None:
@@ -332,14 +344,39 @@ class GTATOOLS_OT_import_txd(bpy.types.Operator):
     filepath: StringProperty(subtype='FILE_PATH')
     filter_glob: StringProperty(default="*.txd", options={'HIDDEN'})
 
+    import_game: bpy.props.EnumProperty(
+        name="Игра",
+        description="Из какой игры импортируем TXD. Auto — по RW-версии в chunk header",
+        items=[
+            ('AUTO', "Авто-определение", ""),
+            ('III',  "GTA III", ""),
+            ('VC',   "Vice City", ""),
+            ('SA',   "San Andreas", ""),
+        ],
+        default='AUTO')
+
     def invoke(self, context, event):
         context.window_manager.fileselect_add(self)
         return {'RUNNING_MODAL'}
 
+    def draw(self, context):
+        self.layout.prop(self, "import_game")
+
     def execute(self, context):
         try:
             images = import_txd(filepath=self.filepath)
-            self.report({'INFO'}, f"Imported TXD: {len(images)} textures")
+            from ..core import game_versions as gv
+            if self.import_game == 'AUTO':
+                detected = gv.detect_game_from_txd(self.filepath)
+            else:
+                detected = self.import_game
+            switched = gv.maybe_set_game_from_import(context.scene, detected)
+            tag = f" → game={detected}" if switched else ""
+            self.report({'INFO'}, f"Imported TXD: {len(images)} textures{tag}")
+            if not switched:
+                warn = gv.check_game_mismatch_warning(context.scene, detected)
+                if warn:
+                    self.report({'WARNING'}, warn)
             return {'FINISHED'}
         except Exception as e:
             self.report({'ERROR'}, f"TXD import error: {str(e)}")

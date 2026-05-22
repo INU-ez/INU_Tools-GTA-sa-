@@ -520,3 +520,80 @@ def check_damage_pairs(mesh_names):
             'нет парного _ok',
             'OBJECT', dams[base]))
     return out
+
+
+def check_cross_game_compat(scene_game, model_data):
+    """Warn when the scene targets III/VC but objects rely on
+    SA-only features that the writer would silently drop on export.
+
+    The writers (Phase 1-7) already gate SA-specific extensions
+    when ``rw_version < 0x36000`` — this check surfaces the same
+    information to the user at validate time, so they can decide
+    whether to remove the feature or switch the scene back to SA.
+
+    Args:
+        scene_game: 'III' / 'VC' / 'SA' (gtatools_game enum value).
+        model_data: list of dicts with keys
+            name (str), model_id (int), has_night_vcols (bool),
+            has_multi_mesh_lod (bool), has_uv_anim_material (bool),
+            fx_2dfx_ids (set of int)
+        Built by ``_gather_cross_game_data`` in ops/validate_scene.py.
+    """
+    out = []
+    if scene_game == 'SA' or not model_data:
+        # SA target accepts everything — no cross-game friction.
+        return out
+
+    # Per-game model_id ceilings — SA-only IDs are written but the
+    # target engine refuses to load model IDs past its vanilla cap
+    # unless FLA is installed.
+    _id_max = {'III': 6500, 'VC': 8500}.get(scene_game, 19999)
+
+    for m in model_data:
+        name = m.get('name', '?')
+        mid = m.get('model_id') or 0
+
+        if mid > _id_max:
+            out.append(_issue(
+                'WARNING', 'CrossGame',
+                f'model_id {mid} > {scene_game} vanilla max {_id_max} '
+                f'(нужен Fastman92 Limit Adjuster для {scene_game})',
+                'OBJECT', name))
+
+        # Night vertex colors (SA-only extension 0x253F2FB).
+        if m.get('has_night_vcols'):
+            out.append(_issue(
+                'WARNING', 'CrossGame',
+                f'Night vcols это SA-only — будут потеряны при экспорте в {scene_game}',
+                'OBJECT', name))
+
+        # Multi-mesh LOD (SA-only OBJS-line variant — III/VC IDE writer
+        # downgrades to single-mesh and drops extra draw_distances).
+        if m.get('has_multi_mesh_lod'):
+            out.append(_issue(
+                'WARNING', 'CrossGame',
+                f'Multi-mesh LOD это SA-only — в {scene_game} останется только первый draw_distance',
+                'OBJECT', name))
+
+        # UV animation materials (RW 3.5+, so OK for VC; III only).
+        if scene_game == 'III' and m.get('has_uv_anim_material'):
+            out.append(_issue(
+                'WARNING', 'CrossGame',
+                'UV anim material требует RW 3.5+ (VC/SA) — III не загрузит',
+                'OBJECT', name))
+
+        # 2DFX types — types beyond III/VC's allowlist are silently
+        # dropped (see _allowed_2dfx_ids in core/dff.py).
+        fx_ids = m.get('fx_2dfx_ids') or set()
+        if scene_game == 'III':
+            unsupported = fx_ids - {0, 1}
+        else:  # VC
+            unsupported = fx_ids - {0, 1, 3}
+        if unsupported:
+            ids_str = ', '.join(sorted(str(i) for i in unsupported))
+            out.append(_issue(
+                'WARNING', 'CrossGame',
+                f'2DFX типы {ids_str} не поддерживаются в {scene_game}, будут пропущены',
+                'OBJECT', name))
+
+    return out

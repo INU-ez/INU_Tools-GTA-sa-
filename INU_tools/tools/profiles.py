@@ -21,7 +21,18 @@ import re
 
 import bpy
 
-from .compat import safe_icon
+# `from .. import T` works in production (module loaded as
+# `INU_tools.tools.profiles`) but breaks under unit tests that put
+# `INU_tools/` on `sys.path` and load `tools` as a top-level package
+# (`..` then goes above top-level). Fall back to identity-function so
+# error-message strings pass through untranslated — fine for tests.
+try:
+    from .. import T
+except ImportError:
+    def T(s):
+        return s
+
+from .compat import safe_icon, inu_icon
 from .user_data import get_user_data_dir
 from typing import Dict, List, Optional
 
@@ -488,11 +499,11 @@ class GTATOOLS_OT_profile_save(bpy.types.Operator):
     def execute(self, context):
         if not _is_valid_name(self.profile_name):
             self.report({'ERROR'},
-                        "Имя содержит недопустимые символы или слишком длинное")
+                        T("Имя содержит недопустимые символы или слишком длинное"))
             return {'CANCELLED'}
         if self.profile_name.upper() == 'ALL':
             self.report({'ERROR'},
-                        "Имя 'ALL' зарезервировано")
+                        T("Имя 'ALL' зарезервировано"))
             return {'CANCELLED'}
 
         # Default: all panels in canonical order, nothing hidden.
@@ -506,10 +517,10 @@ class GTATOOLS_OT_profile_save(bpy.types.Operator):
             except Exception:
                 pass
             self.report({'INFO'},
-                        f"Создан: {self.profile_name}")
+                        f"{T('Создан: ')}{self.profile_name}")
             return {'FINISHED'}
         else:
-            self.report({'ERROR'}, "Ошибка записи профиля")
+            self.report({'ERROR'}, T("Ошибка записи профиля"))
             return {'CANCELLED'}
 
 
@@ -530,14 +541,14 @@ class GTATOOLS_OT_profile_delete(bpy.types.Operator):
     def execute(self, context):
         active = context.scene.inu_settings.gtatools_profile
         if active == 'ALL':
-            self.report({'ERROR'}, "ALL удалить нельзя")
+            self.report({'ERROR'}, T("ALL удалить нельзя"))
             return {'CANCELLED'}
         if delete_user_profile(active):
             context.scene.inu_settings.gtatools_profile = 'ALL'
-            self.report({'INFO'}, f"Удалён: {active}")
+            self.report({'INFO'}, f"{T('Удалён: ')}{active}")
             return {'FINISHED'}
         else:
-            self.report({'ERROR'}, "Ошибка удаления")
+            self.report({'ERROR'}, T("Ошибка удаления"))
             return {'CANCELLED'}
 
 
@@ -614,7 +625,7 @@ class GTATOOLS_OT_profile_pick_panel(bpy.types.Operator):
         # a real frame to settle.
         if not save_user_profile(active, order, desc,
                                  hidden=original_hidden):
-            self.report({'ERROR'}, "Ошибка сохранения")
+            self.report({'ERROR'}, T("Ошибка сохранения"))
             return {'CANCELLED'}
 
         scene.inu_settings.gtatools_profile_picked = ""
@@ -736,10 +747,10 @@ class GTATOOLS_OT_profile_edit(bpy.types.Operator):
         active = scene.inu_settings.gtatools_profile
         prof = load_user_profile(active)
         if prof is None:
-            layout.label(text=f"Профиль не найден: {active}", icon=safe_icon('ERROR'))
+            layout.label(text=f"Профиль не найден: {active}", **inu_icon(safe_icon('ERROR')))
             return
 
-        layout.label(text=f"{active}", icon=safe_icon('PRESET'))
+        layout.label(text=f"{active}", **inu_icon(safe_icon('PRESET')))
 
         # Single combined list — every panel is shown in one place.
         # Eye-toggle flips visibility without disturbing position;
@@ -765,12 +776,12 @@ class GTATOOLS_OT_profile_edit(bpy.types.Operator):
             hint.label(
                 text=(f"{_t('Взято:')} «{panel_label(picked)}» — "
                       f"{_t('клик на другую = переместить сюда')}"),
-                icon=safe_icon('RESTRICT_SELECT_OFF'))
+                **inu_icon(safe_icon('RESTRICT_SELECT_OFF')))
         else:
             hint.label(
                 text=_t("Клик на название = взять, потом клик на "
                         "другую = поставить"),
-                icon=safe_icon('INFO'))
+                **inu_icon(safe_icon('INFO')))
 
         col = layout.column(align=True)
         for idname in order:
@@ -799,7 +810,7 @@ class GTATOOLS_OT_profile_edit(bpy.types.Operator):
             eye_op = row.operator(
                 "gtatools.profile_toggle_panel",
                 text="",
-                icon=('HIDE_ON' if is_hidden else 'HIDE_OFF'))
+                **inu_icon(('HIDE_ON' if is_hidden else 'HIDE_OFF')))
             eye_op.panel_idname = idname
 
     def execute(self, context):

@@ -8,9 +8,7 @@
 import bpy
 
 from .. import T, get_locale
-from ..tools.compat import safe_icon
-
-
+from ..tools.compat import safe_icon, inu_icon
 # Docs and issues live on GitHub; the addon installer only ships the
 # INU_tools/ module to Blender's addons folder, NOT the docs/ folder
 # from the repo, so we can't rely on a local file path. Web URLs are
@@ -117,14 +115,14 @@ class GTATOOLS_OT_whats_new(bpy.types.Operator):
                 # Blank divider line.
                 row.label(text="")
             elif icon:
-                row.label(text=text, icon=icon)
+                row.label(text=text, **inu_icon(icon))
             else:
                 row.label(text=text)
 
         layout.separator()
         layout.operator("gtatools.open_release",
                         text=T("Открыть полный changelog на GitHub"),
-                        icon=safe_icon('URL'))
+                        **inu_icon(safe_icon('URL')))
 
     def execute(self, context):
         return {'FINISHED'}

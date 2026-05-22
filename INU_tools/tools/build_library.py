@@ -153,13 +153,24 @@ def is_lod_name(name: str) -> bool:
     return n.startswith('lod') or '_lod' in n or 'lod' in n
 
 
-def build_classification(game_root: str) -> dict:
+def build_classification(game_root: str, game: str = 'SA') -> dict:
     """{ model_name_lower: {'category', 'txd_name', 'model_id',
                             'draw_distance', 'ide_flags'} }
 
-    Reads every IDE referenced from gta.dat AND default.dat AND optionally
-    gta_int.dat. Vehicles/peds/weapons go to fixed categories; static
-    objects are routed by IDE folder via ``classify_ide_path``.
+    Reads every IDE referenced from the game's master .dat manifest.
+    Vehicles / peds / weapons go to fixed categories; static objects
+    are routed by IDE folder via ``classify_ide_path``.
+
+    ``game`` (III / VC / SA, default SA) selects which .dat files to
+    parse:
+      * SA  → ``data/gta.dat`` + ``data/default.dat`` + optional
+              ``data/gta_int.dat``
+      * VC  → ``data/gta_vc.dat`` + ``data/default.dat``
+      * III → ``data/gta3.dat`` + ``data/default.dat``
+
+    The IDE parser itself is game-agnostic (per Phase 5 + 18 + 19);
+    column counts auto-detect on read so III/VC cars/peds entries
+    land in the right fields.
     """
     from ..core import ide as ide_module
     from ..core.gta_dat import parse_gta_dat, resolve_paths
@@ -253,13 +264,20 @@ def build_classification(game_root: str) -> dict:
             state['current_cat'] = classify_ide_path(ide_path)
             _absorb(ide)
 
-    # SA splits its config across multiple .dat files:
-    #   gta.dat       — map IDEs (data/maps/<region>/*.ide)
-    #   default.dat   — vehicles.ide / peds.ide / weapons.ide / default.ide
-    #   gta_int.dat   — interiors (only present on Steam Edition / mods)
-    _walk(os.path.join(game_root, 'data', 'gta.dat'), required=True)
-    _walk(os.path.join(game_root, 'data', 'default.dat'), required=True)
-    _walk(os.path.join(game_root, 'data', 'gta_int.dat'), required=False)
+    # Per-game master .dat selection. Each game ships its IDE manifest
+    # under a different name; default.dat is shared (vehicles/peds/
+    # weapons across all three).
+    if game == 'III':
+        _walk(os.path.join(game_root, 'data', 'gta3.dat'), required=True)
+        _walk(os.path.join(game_root, 'data', 'default.dat'), required=True)
+    elif game == 'VC':
+        _walk(os.path.join(game_root, 'data', 'gta_vc.dat'), required=True)
+        _walk(os.path.join(game_root, 'data', 'default.dat'), required=True)
+    else:
+        # SA — three .dats; gta_int is only present on Steam Edition / mods.
+        _walk(os.path.join(game_root, 'data', 'gta.dat'), required=True)
+        _walk(os.path.join(game_root, 'data', 'default.dat'), required=True)
+        _walk(os.path.join(game_root, 'data', 'gta_int.dat'), required=False)
 
     print(f"      sections: " + ", ".join(
         f"{k}={v}" for k, v in sorted(section_totals.items())))
@@ -862,7 +880,8 @@ def build_library_iter(cache_dir: str,
                        skip_existing: bool = False,
                        quiet_alpha: bool = True,
                        dry_run: bool = False,
-                       delete_cache_after: bool = False) -> Iterator[None]:
+                       delete_cache_after: bool = False,
+                       game: str = 'SA') -> Iterator[None]:
     """Drive the full build pipeline as a generator. Yields ``None`` at
     every meaningful checkpoint (per-asset, between phases). Updates
     ``status`` in-place — operator/CLI both read fields off it.
@@ -884,8 +903,8 @@ def build_library_iter(cache_dir: str,
     # ── classify ──────────────────────────────────────────────
     status['phase'] = 'classify'
     yield
-    print("[1/4] Reading IDE files...")
-    classification = build_classification(game_root)
+    print(f"[1/4] Reading IDE files (game={game})...")
+    classification = build_classification(game_root, game=game)
     print(f"      {len(classification)} model names classified")
     yield
 

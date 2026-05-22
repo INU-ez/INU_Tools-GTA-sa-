@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from struct import pack
+from struct import pack, unpack_from
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -42,7 +42,38 @@ CHUNK_USERDATA_PLG     = 287
 CHUNK_MATFX_PLG        = 288
 CHUNK_UV_ANIM_PLG      = 309
 CHUNK_BIN_MESH_PLG     = 1294
+CHUNK_NATIVE_DATA_PLG  = 0x0510   # 1296 — mobile (War Drum OpenGL) + PS2/Xbox native geom
 CHUNK_PIPELINE_SET     = 0x0253F2F3
+
+# ── Native Data PLG platform IDs (RW convention) ─────────────────
+# Mobile GTA SA stores geometry via OGL (0x2). PS2/Xbox/PSP also have
+# their own native data formats — we only support OGL for now.
+
+NATIVE_PLATFORM_D3D7 = 0x1
+NATIVE_PLATFORM_OGL  = 0x2   # War Drum / iOS / Android
+NATIVE_PLATFORM_MAC  = 0x3
+NATIVE_PLATFORM_PS2  = 0x4
+NATIVE_PLATFORM_XBOX = 0x5
+NATIVE_PLATFORM_GC   = 0x6
+NATIVE_PLATFORM_PSP  = 0xA
+
+# ── War Drum OpenGL attribute IDs / types ────────────────────────
+# Each vertex in mobile geometry is described by 1-7 of these
+# attributes, interleaved in a single buffer with explicit stride.
+
+WDGL_ATTRIB_COORD       = 0   # vec3 position
+WDGL_ATTRIB_TEX_COORD   = 1   # vec2 uv (scaled by 512 if integer)
+WDGL_ATTRIB_NORMAL      = 2   # vec3 normal
+WDGL_ATTRIB_PRELIT      = 3   # vec4 RGBA (normalised float)
+WDGL_ATTRIB_BONE_WEIGHT = 4   # vec4 weights
+WDGL_ATTRIB_BONE_INDEX  = 5   # vec4 bone indices
+WDGL_ATTRIB_EXTRA_COLOR = 6   # vec4 RGBA night vertex colour (SA only)
+
+WDGL_TYPE_FLOAT  = 0
+WDGL_TYPE_BYTE   = 1
+WDGL_TYPE_UBYTE  = 2
+WDGL_TYPE_SHORT  = 3
+WDGL_TYPE_USHORT = 4
 CHUNK_SPECULAR_MAT     = 0x0253F2F6
 CHUNK_2DFXPLG          = 0x0253F2F8
 CHUNK_EXTRA_COLORS     = 0x0253F2F9
@@ -492,7 +523,11 @@ class DffMaterial:
         if self.user_data and self.user_data.sections:
             ext_data += self.user_data.to_bytes(lib_id)
 
-        if self.uv_anim_names:
+        # UV Animation PLG (CHUNK_UV_ANIM_PLG = 0x135) references entries
+        # in the clump-level UV Anim Dict (0x2B). Both are RW 3.5+ — skip
+        # on III (rw_version < 0x35000) since the dict won't be emitted
+        # there and a dangling reference would break the parser.
+        if self.uv_anim_names and rw_version >= 0x35000:
             ext_data += _uv_anim_plg_bytes(self.uv_anim_names, lib_id)
 
         body += _chunk(CHUNK_EXTENSION, ext_data, lib_id)
@@ -594,6 +629,57 @@ class BreakableData:
 
 # ── 2DFX Effect structures ──────────────────────────────────────
 
+# Per-game allowlist of 2DFX effect_id values. The 2DFX RW chunk
+# (0x253F2F8) is shared across III / VC / SA, but each game's engine
+# only recognises a subset of the type IDs that ship inside it. Types
+# the engine doesn't understand are either silently ignored (best case)
+# or parsed as a different type with garbage offsets (crash, worst
+# case). Writer filters entries against the target game's allowlist
+# before emitting to avoid both failure modes.
+#
+# IDs in the dict map to:
+#   0 = Light (street lamps, neon signs) — III/VC/SA
+#   1 = Particle effect                    — III/VC/SA
+#   2 = Strobe/investigation               — III/VC (unused in VC, dropped in SA)
+#   3 = Ped attractor (ATM, bench, bus stop) — VC + SA
+#   4 = Sun reflection / sun glare         — VC + SA
+#   6 = Enter-Exit, 7 = Street sign, 8 = Trigger point,
+#   9 = Cover point, 10 = Escalator        — SA-specific extras
+#       (we don't currently write 6-10 so they're omitted here;
+#       adding them would require type-specific binary writers).
+#
+# IMPORTANT — storage location differs across games:
+#   * III / VC: 2DFX entries live in IDE files (``2dfx`` section).
+#     Writing a DFF 0x253F2F8 chunk for those games is technically
+#     valid bytes but the engine doesn't read them — effects appear
+#     missing in-game until the IDE section is also populated.
+#   * SA: 2DFX entries live in the DFF chunk (this writer's normal
+#     path). The SA-only Type 5 ("special") still goes in IDE.
+# Phase 7 currently only writes the DFF chunk; full III/VC 2DFX
+# support requires extending the IDE writer to emit 2dfx entries
+# from objects' attached effect Empties.
+#
+# Source: gtamods.com/wiki/2DFX (verified 2026-05).
+_2DFX_ALLOWLIST_BY_RW_VERSION = {
+    0x33000: frozenset({0, 1, 2}),          # III: + Strobe
+    0x35000: frozenset({0, 1, 2, 3, 4}),    # VC:  + Strobe + PedAttractor + SunGlare
+    0x36000: frozenset({0, 1, 3, 4}),       # SA:  Strobe dropped (Type 2 removed)
+}
+
+
+def _allowed_2dfx_ids(rw_version: int) -> frozenset:
+    """Return the set of 2DFX effect_id values the target game accepts.
+    Picks the closest floor ≤ rw_version so any future intermediate
+    RW versions still resolve to a sensible allowlist."""
+    best_floor = 0x33000
+    for floor in _2DFX_ALLOWLIST_BY_RW_VERSION:
+        if floor <= rw_version and floor >= best_floor:
+            best_floor = floor
+    return _2DFX_ALLOWLIST_BY_RW_VERSION[best_floor]
+
+
+
+
 @dataclass
 class Light2dfx:
     """Light effect (street lights, neon signs, etc.)."""
@@ -647,14 +733,26 @@ class Extension2dfx:
     """Container for all 2DFX effect entries."""
     entries: list = field(default_factory=list)  # list of Light2dfx/Particle2dfx/etc.
 
-    def to_bytes(self, lib_id: int) -> bytes:
-        """Serialize 2DFX plugin to RenderWare chunk."""
+    def to_bytes(self, lib_id: int, rw_version: int = 0x36003) -> bytes:
+        """Serialize 2DFX plugin to RenderWare chunk.
+
+        Entries whose ``effect_id`` is outside the target game's
+        allowlist (per ``_2DFX_ALLOWLIST_BY_RW_VERSION``) are silently
+        dropped — the engine wouldn't render them anyway and emitting
+        them risks corrupt-stream crashes. Default rw_version is SA so
+        existing callers that don't pass version keep current behaviour.
+        """
         if not self.entries:
             return b''
 
-        data = pack('<I', len(self.entries))
+        allowed = _allowed_2dfx_ids(rw_version)
+        kept = [e for e in self.entries if e.effect_id in allowed]
+        if not kept:
+            return b''
 
-        for entry in self.entries:
+        data = pack('<I', len(kept))
+
+        for entry in kept:
             # Location (3 floats) + entry_type (u32) + entry_size (u32)
             entry_data = _write_2dfx_entry(entry)
             data += pack('<3f', *entry.loc)
@@ -779,6 +877,23 @@ class DffGeometry:
     user_data: Optional[UserData] = None
     ext_2dfx: Optional[Extension2dfx] = None
     breakable: Optional[BreakableData] = None
+    # Mobile (War Drum OpenGL) native geometry marker. Set by the
+    # reader when CHUNK_NATIVE_DATA_PLG with platform=OGL is parsed —
+    # tells the rest of the pipeline that vertex data came from a
+    # mobile DFF (iOS/Android), so subsequent processing knows the
+    # provenance even though vertices/uvs/normals/triangles look
+    # identical to a PC geom by the time we're done.
+    is_native_ogl: bool = False
+    # Per-vertex bone data carved out of the WDGL buffer — kept in
+    # private fields so SKIN_PLG processing can grab them. Pre-parser
+    # geom has no skin, post-parser they bubble into geom.skin.
+    _wdgl_bone_weights: Optional[list] = None
+    _wdgl_bone_indices: Optional[list] = None
+    # Round-trip raw bytes for Native Data PLG variants we don't decode
+    # (PS2/Xbox/PSP/GC). When present, the writer emits these bytes
+    # verbatim in the geometry extension instead of building our own.
+    raw_native_data_plg: bytes = b''
+    is_native_other_platform: int = 0   # platform ID we captured raw
 
     def _build_flags(self) -> int:
         num_uv = len(self.uv_layers)
@@ -849,8 +964,126 @@ class DffGeometry:
 
         return _chunk(CHUNK_BIN_MESH_PLG, data, lib_id)
 
+    def _build_wdgl_native_buffer(self, rw_version: int = GTA_SA_VERSION) -> tuple:
+        """Pack our geom into War Drum OpenGL interleaved buffer.
+
+        Returns (descriptors_bytes, vertex_buffer_bytes). The caller wraps
+        them inside CHUNK_NATIVE_DATA_PLG > CHUNK_STRUCT alongside the
+        platform u32. Layout chosen for simplicity + safety:
+          - position : 3×FLOAT   (12B)
+          - normal   : 3×FLOAT   (12B, if present)
+          - uv0      : 2×FLOAT   ( 8B, scaled by 512 to match reader)
+          - prelit   : 4×UBYTE   ( 4B, normalised)
+          - extra    : 4×UBYTE   ( 4B, normalised, SA night colours)
+          - bone_idx : 4×UBYTE   ( 4B, not normalised — raw bone IDs)
+          - bone_wt  : 4×FLOAT   (16B)
+        Skipping a layer (no normals/UVs/etc) skips the whole attribute,
+        keeping stride compact. Real mobile DFFs use SHORT/UBYTE for
+        many of these to save space; we use FLOAT for safety since War
+        Drum's reader honours the descriptor regardless.
+        """
+        num_verts = len(self.vertices)
+        attribs = []  # (id, type, size, normalized, per_vert_bytes)
+
+        attribs.append((WDGL_ATTRIB_COORD,     WDGL_TYPE_FLOAT, 3, False, 12))
+        if self.export_normals and self.normals:
+            attribs.append((WDGL_ATTRIB_NORMAL, WDGL_TYPE_FLOAT, 3, False, 12))
+        if self.uv_layers:
+            attribs.append((WDGL_ATTRIB_TEX_COORD, WDGL_TYPE_FLOAT, 2, False, 8))
+        if self.prelit_colors:
+            attribs.append((WDGL_ATTRIB_PRELIT, WDGL_TYPE_UBYTE, 4, True, 4))
+        # Night vertex colors — SA-only extension (RW 3.6+). III/VC's
+        # mobile engines ignore the chunk on PC and lack the WDGL slot
+        # on mobile, so we drop the attribute for older RW versions.
+        if (self.extra_colors and self.extra_colors.colors
+                and rw_version >= 0x36000):
+            attribs.append((WDGL_ATTRIB_EXTRA_COLOR, WDGL_TYPE_UBYTE, 4, True, 4))
+        has_skin = bool(self.skin and self.skin.bone_indices and self.skin.bone_weights)
+        if has_skin:
+            attribs.append((WDGL_ATTRIB_BONE_INDEX, WDGL_TYPE_UBYTE, 4, False, 4))
+            attribs.append((WDGL_ATTRIB_BONE_WEIGHT, WDGL_TYPE_FLOAT, 4, False, 16))
+
+        stride = sum(a[4] for a in attribs)
+
+        # Build descriptor block (24 B each) with cumulative offsets.
+        offsets = []
+        running = 0
+        for a in attribs:
+            offsets.append(running)
+            running += a[4]
+        descs_bytes = b''
+        for (aid, atype, asize, anorm, _per), off in zip(attribs, offsets):
+            descs_bytes += pack('<IiIiII',
+                                aid, atype, 1 if anorm else 0, asize, stride, off)
+
+        # Build interleaved vertex buffer.
+        buf = bytearray(num_verts * stride)
+        uv0 = self.uv_layers[0] if self.uv_layers else None
+        bidx = self.skin.bone_indices if has_skin else None
+        bwts = self.skin.bone_weights if has_skin else None
+        ec = self.extra_colors.colors if (self.extra_colors and self.extra_colors.colors) else None
+
+        for vi in range(num_verts):
+            base = vi * stride
+            cur = base
+            for (aid, atype, asize, anorm, per) in attribs:
+                if aid == WDGL_ATTRIB_COORD:
+                    v = self.vertices[vi]
+                    pack_into = pack('<3f', v[0], v[1], v[2])
+                    buf[cur:cur+12] = pack_into
+                elif aid == WDGL_ATTRIB_NORMAL:
+                    n = self.normals[vi]
+                    buf[cur:cur+12] = pack('<3f', n[0], n[1], n[2])
+                elif aid == WDGL_ATTRIB_TEX_COORD:
+                    tc = uv0[vi] if uv0 and vi < len(uv0) else None
+                    if tc is None:
+                        buf[cur:cur+8] = pack('<2f', 0.0, 0.0)
+                    else:
+                        # Reader divides by 512 — pre-scale to keep round-trip stable.
+                        buf[cur:cur+8] = pack('<2f', tc.u * 512.0, tc.v * 512.0)
+                elif aid == WDGL_ATTRIB_PRELIT:
+                    c = self.prelit_colors[vi] if vi < len(self.prelit_colors) else None
+                    if c is None:
+                        buf[cur:cur+4] = pack('<4B', 255, 255, 255, 255)
+                    else:
+                        buf[cur:cur+4] = pack('<4B', c.r & 0xFF, c.g & 0xFF,
+                                              c.b & 0xFF, c.a & 0xFF)
+                elif aid == WDGL_ATTRIB_EXTRA_COLOR:
+                    c = ec[vi] if ec and vi < len(ec) else None
+                    if c is None:
+                        buf[cur:cur+4] = pack('<4B', 255, 255, 255, 255)
+                    else:
+                        buf[cur:cur+4] = pack('<4B', c.r & 0xFF, c.g & 0xFF,
+                                              c.b & 0xFF, c.a & 0xFF)
+                elif aid == WDGL_ATTRIB_BONE_INDEX:
+                    bi = bidx[vi] if bidx and vi < len(bidx) else (0, 0, 0, 0)
+                    buf[cur:cur+4] = pack('<4B',
+                                          bi[0] & 0xFF, bi[1] & 0xFF,
+                                          bi[2] & 0xFF, bi[3] & 0xFF)
+                elif aid == WDGL_ATTRIB_BONE_WEIGHT:
+                    bw = bwts[vi] if bwts and vi < len(bwts) else (0.0, 0.0, 0.0, 0.0)
+                    buf[cur:cur+16] = pack('<4f', *bw)
+                cur += per
+
+        # Header inside WDGL block: just numAttribs u32 + descriptors + buffer.
+        return (pack('<I', len(attribs)) + descs_bytes, bytes(buf))
+
+    def _write_native_data_plg(self, lib_id: int,
+                                rw_version: int = GTA_SA_VERSION) -> bytes:
+        """Wrap WDGL geometry in CHUNK_NATIVE_DATA_PLG with platform=OGL."""
+        descs_and_header, vertex_buf = self._build_wdgl_native_buffer(rw_version)
+        # platform u32 + numAttribs + descriptors + vertex buffer
+        struct_body = pack('<I', NATIVE_PLATFORM_OGL) + descs_and_header + vertex_buf
+        body = _chunk(CHUNK_STRUCT, struct_body, lib_id)
+        return _chunk(CHUNK_NATIVE_DATA_PLG, body, lib_id)
+
     def to_bytes(self, lib_id: int, rw_version: int) -> bytes:
         flags = self._build_flags()
+        # Native export (mobile OGL OR round-tripped PS2/Xbox/PSP/GC) —
+        # flip GEOM_NATIVE so the engine looks in Native Data PLG
+        # instead of the main Struct.
+        if self.is_native_ogl or self.raw_native_data_plg:
+            flags |= GEOM_NATIVE
         num_verts = len(self.vertices)
         num_tris = len(self.triangles)
 
@@ -861,37 +1094,45 @@ class DffGeometry:
         if rw_version < 0x34000:
             struct_data += pack('<3f', 1.0, 1.0, 1.0)
 
-        # Prelit colors
-        if flags & GEOM_PRELIT:
-            for c in self.prelit_colors:
-                struct_data += pack('<4B', c.r, c.g, c.b, c.a)
+        is_native = self.is_native_ogl or bool(self.raw_native_data_plg)
+        if not is_native:
+            # ── PC / classic path ──
+            # Prelit colors
+            if flags & GEOM_PRELIT:
+                for c in self.prelit_colors:
+                    struct_data += pack('<4B', c.r, c.g, c.b, c.a)
 
-        # UV layers
-        for uv_layer in self.uv_layers:
-            for tc in uv_layer:
-                struct_data += pack('<2f', tc.u, tc.v)
+            # UV layers
+            for uv_layer in self.uv_layers:
+                for tc in uv_layer:
+                    struct_data += pack('<2f', tc.u, tc.v)
 
-        # Triangles (RenderWare format: b, a, material, c)
-        for tri in self.triangles:
-            struct_data += pack('<4H', tri.b, tri.a, tri.material, tri.c)
+            # Triangles (RenderWare format: b, a, material, c)
+            for tri in self.triangles:
+                struct_data += pack('<4H', tri.b, tri.a, tri.material, tri.c)
 
-        # Bounding sphere
+        # Bounding sphere — emitted on both paths.
         bs = self.bounding_sphere
         struct_data += pack('<4f', bs.x, bs.y, bs.z, bs.radius)
 
-        # Has vertices / has normals flags
-        struct_data += pack('<II', 1 if self.vertices else 0,
-                                   1 if (self.export_normals and self.normals) else 0)
+        if is_native:
+            # Native path: vertex/normal/uv data lives in Native Data PLG.
+            # Struct still needs the morph trailer, but has_pos/has_norm = 0.
+            struct_data += pack('<II', 0, 0)
+        else:
+            # Has vertices / has normals flags
+            struct_data += pack('<II', 1 if self.vertices else 0,
+                                       1 if (self.export_normals and self.normals) else 0)
 
-        # Vertices
-        if self.vertices:
-            for v in self.vertices:
-                struct_data += pack('<3f', v[0], v[1], v[2])
+            # Vertices
+            if self.vertices:
+                for v in self.vertices:
+                    struct_data += pack('<3f', v[0], v[1], v[2])
 
-        # Normals
-        if self.export_normals and self.normals:
-            for n in self.normals:
-                struct_data += pack('<3f', n[0], n[1], n[2])
+            # Normals
+            if self.export_normals and self.normals:
+                for n in self.normals:
+                    struct_data += pack('<3f', n[0], n[1], n[2])
 
         body = _chunk(CHUNK_STRUCT, struct_data, lib_id)
 
@@ -906,13 +1147,38 @@ class DffGeometry:
 
         # Extensions
         ext_data = b''
+
+        # Native Data PLG comes first in extension on mobile DFFs —
+        # carries the actual vertex buffer that the engine's WDGL
+        # uploader expects. BIN_MESH_PLG that follows carries the
+        # triangle index list (same as PC). For non-OGL native
+        # platforms (PS2/Xbox/PSP/GC) we round-trip raw bytes instead
+        # of building from scratch — we don't decode those formats.
+        if self.raw_native_data_plg:
+            ext_data += self.raw_native_data_plg
+        elif self.is_native_ogl:
+            ext_data += self._write_native_data_plg(lib_id, rw_version)
+
         if self.write_bin_mesh:
             ext_data += self._write_bin_mesh_plg(lib_id)
 
         if self.skin:
-            ext_data += self.skin.to_bytes(lib_id)
+            if self.is_native_ogl:
+                # NativeOGLSkin = u32 num_bones + 16f matrices. Per-vertex
+                # weights/indices are already inside the WDGL buffer.
+                sk_data = pack('<I', self.skin.num_bones)
+                for matrix in self.skin.bone_matrices:
+                    flat = matrix[0] + matrix[1] + matrix[2] + matrix[3]
+                    sk_data += pack('<16f', *flat)
+                ext_data += _chunk(CHUNK_SKIN_PLG, sk_data, lib_id)
+            else:
+                ext_data += self.skin.to_bytes(lib_id)
 
-        if self.extra_colors and self.extra_colors.colors:
+        # Night Vertex Colors (CHUNK_EXTRA_COLORS = 0x253F2F9) — SA-only
+        # extension. III/VC engines don't read it; emitting on those
+        # versions just bloats the file. Gate on rw_version ≥ SA (0x36003).
+        if (self.extra_colors and self.extra_colors.colors
+                and rw_version >= 0x36000):
             ec_data = pack('<I', 1)  # magic
             for c in self.extra_colors.colors:
                 ec_data += pack('<4B', c.r, c.g, c.b, c.a)
@@ -933,9 +1199,11 @@ class DffGeometry:
         if has_matfx:
             ext_data += _chunk(CHUNK_MATFX_PLG, pack('<I', 1), lib_id)
 
-        # 2DFX effects (usually on last geometry only)
+        # 2DFX effects (usually on last geometry only). Pass through
+        # rw_version so types not supported by the target engine
+        # (e.g. SunGlare on III/VC) are dropped before emit.
         if self.ext_2dfx and self.ext_2dfx.entries:
-            ext_data += self.ext_2dfx.to_bytes(lib_id)
+            ext_data += self.ext_2dfx.to_bytes(lib_id, rw_version)
 
         # Breakable Objects extension (0x253F2FD)
         if self.breakable:
@@ -1078,6 +1346,10 @@ class DffClump:
     # at 0x2B, Animation at 0x1B). Stored verbatim and re-emitted on
     # export to preserve the file's binary identity.
     pre_clump_data: bytes = b''
+    # True when at least one geometry was parsed from Native Data PLG
+    # (OpenGL/War Drum). Set after read_dff(). The dff import operator
+    # uses this to flip scene.gtatools_platform = MOBILE.
+    is_mobile: bool = False
 
     def to_bytes(self) -> bytes:
         _validate_dff_writable(self)
@@ -1133,9 +1405,12 @@ class DffClump:
                     atomic_ext += _chunk(0x0120, pack('<I', 0), lib_id)  # Node Name PLG (required for SA skinned)
                 if any(m.bump_map or m.env_map or m.dual_texture for m in geom.materials):
                     atomic_ext += _chunk(CHUNK_MATFX_PLG, pack('<I', 1), lib_id)
-                # Pipeline chunk (0x253F2F3) — тут его ожидает RenderWare/librwgta/Kam's scripts.
-                # Для Vehicle pipeline (0x53F2009A) кузов машины получает env-map отражения в игре.
-                if geom.pipeline:
+                # Pipeline chunk (0x253F2F3) — SA-specific RW pipeline ID
+                # used for the vehicle env-map pipeline (0x53F2009A).
+                # III/VC engines don't read this chunk and the SA vehicle
+                # pipeline values would be meaningless to those games
+                # anyway. Gate on rw_version ≥ SA (0x36000).
+                if geom.pipeline and rw_version >= 0x36000:
                     atomic_ext += _chunk(CHUNK_PIPELINE_SET, pack('<I', geom.pipeline), lib_id)
 
                 atomic_body += _chunk(CHUNK_EXTENSION, atomic_ext, lib_id)
@@ -1163,7 +1438,11 @@ class DffClump:
         clump_ext = b''
         if self.collision_data:
             clump_ext += _chunk(CHUNK_COLLISION_MODEL, self.collision_data, lib_id)
-        if self.uv_anim_dict and self.uv_anim_dict.anims:
+        # UV Animation Dictionary (CHUNK_UV_ANIM_DICT = 0x2B) was added
+        # in RW 3.5 (VC) — III's RW 3.3 doesn't read it. Skip when
+        # writing III-targeted DFF, otherwise emit normally.
+        if (self.uv_anim_dict and self.uv_anim_dict.anims
+                and rw_version >= 0x35000):
             clump_ext += self.uv_anim_dict.to_bytes(lib_id)
         body += _chunk(CHUNK_EXTENSION, clump_ext, lib_id)
 
@@ -1470,8 +1749,19 @@ def _read_geometry_chunk(r: BinaryReader, size: int, rw_version: int) -> DffGeom
                 plugin_end = r.pos + ecs
                 if ect == CHUNK_BIN_MESH_PLG:
                     _read_bin_mesh_plg(r, ecs, geom)
+                elif ect == CHUNK_NATIVE_DATA_PLG:
+                    # Mobile DFF (or PS2/Xbox native) — geometry data
+                    # lives here, not in the main Struct. We only
+                    # handle OGL/War Drum; other platforms are no-op.
+                    _read_native_data_plg(r, ecs, geom, num_verts)
                 elif ect == CHUNK_SKIN_PLG:
-                    geom.skin = _read_skin_plugin(r, ecs, len(geom.vertices))
+                    if geom.is_native_ogl:
+                        # Mobile SKIN_PLG = NativeOGLSkin (matrices only;
+                        # weights/indices live in WDGL buffer we already
+                        # parsed). Different reader, different layout.
+                        geom.skin = _read_native_skin_plg(r, ecs, geom)
+                    else:
+                        geom.skin = _read_skin_plugin(r, ecs, len(geom.vertices))
                 elif ect == CHUNK_EXTRA_COLORS:
                     # Night Vertex Colors PLG:
                     #   magic u32 — 0 means "no night colors, chunk is only
@@ -1553,8 +1843,231 @@ def _read_userdata_plugin(r: BinaryReader, size: int) -> UserData:
     return ud
 
 
+def _wdgl_unpack_attrib(data: bytes, offset: int, attrib_type: int,
+                        comp_size: int, is_normalized: bool):
+    """Unpack one attribute value from War Drum OpenGL interleaved buffer.
+
+    Mirrors DragonFF's reference implementation. Normalisation divisors
+    follow DragonFF (USHORT uses 65435.0 — that matches War Drum runtime
+    even though it looks like a typo of 65535, keep it for parity).
+    """
+    if attrib_type == WDGL_TYPE_FLOAT:
+        return unpack_from('<%df' % comp_size, data, offset)
+    if attrib_type == WDGL_TYPE_BYTE:
+        vals = unpack_from('<%db' % comp_size, data, offset)
+        if is_normalized:
+            return tuple(v / 127.0 for v in vals)
+        return vals
+    if attrib_type == WDGL_TYPE_UBYTE:
+        vals = unpack_from('<%dB' % comp_size, data, offset)
+        if is_normalized:
+            return tuple(v / 255.0 for v in vals)
+        return vals
+    if attrib_type == WDGL_TYPE_SHORT:
+        vals = unpack_from('<%dh' % comp_size, data, offset)
+        if is_normalized:
+            return tuple(v / 32767.0 for v in vals)
+        return vals
+    if attrib_type == WDGL_TYPE_USHORT:
+        vals = unpack_from('<%dH' % comp_size, data, offset)
+        if is_normalized:
+            return tuple(v / 65435.0 for v in vals)
+        return vals
+    raise ValueError(f"Unknown WDGL attrib type: {attrib_type}")
+
+
+def _read_wdgl_geometry(r: BinaryReader, size: int, geom: 'DffGeometry',
+                        num_verts: int):
+    """Parse War Drum OpenGL native vertex block (mobile DFF).
+
+    Layout (after the platform u32 already consumed by the caller):
+        u32 numAttribs
+        numAttribs × 24-byte descriptor (id, type, normalized, size, stride, offset)
+        <interleaved vertex buffer>
+
+    Each descriptor describes one attribute (position / uv / normal /
+    color / weights / bone indices / extra color) and its byte offset
+    inside the interleaved buffer. We iterate per-vertex per-attribute
+    using descriptor.offset + i*descriptor.stride.
+    """
+    block_start = r.pos
+    block_end = block_start + size
+
+    if size < 4:
+        r.seek(block_end)
+        return
+
+    num_attribs = r.read_one('<I')
+    if num_attribs <= 0 or num_attribs > 8:
+        # Out-of-range descriptor count — likely a non-OGL native data
+        # variant or a corrupt chunk. Bail without trashing the geom.
+        r.seek(block_end)
+        return
+
+    descs = []
+    for _ in range(num_attribs):
+        # <I i I i I I> matches DragonFF; signed fields keep War Drum's
+        # original layout where 'type' and 'size' were declared as int32.
+        aid, atype, normalized, comp_size, stride, voff = r.read('<IiIiII')
+        descs.append((aid, atype, bool(normalized), comp_size, stride, voff))
+
+    # All descriptor offsets are relative to the byte after the
+    # descriptor array — i.e. the start of the interleaved buffer.
+    attribs_base = r.pos
+
+    coords = []
+    uvs = []
+    normals = []
+    prelits = []
+    extras = []
+    bone_weights = []
+    bone_indices = []
+
+    data = r.data
+    for (aid, atype, norm, csize, stride, voff) in descs:
+        cursor = attribs_base + voff
+        for _ in range(num_verts):
+            vals = _wdgl_unpack_attrib(data, cursor, atype, csize, norm)
+            if aid == WDGL_ATTRIB_COORD:
+                coords.append([vals[0], vals[1], vals[2]])
+            elif aid == WDGL_ATTRIB_TEX_COORD:
+                # War Drum UVs come pre-scaled by 512 (fits in short).
+                # Divide back to get standard 0..1 range.
+                uvs.append(TexCoords(vals[0] / 512.0, vals[1] / 512.0))
+            elif aid == WDGL_ATTRIB_NORMAL:
+                normals.append([vals[0], vals[1], vals[2]])
+            elif aid == WDGL_ATTRIB_PRELIT:
+                r_, g_, b_, a_ = (int(v * 255.0) for v in vals)
+                prelits.append(RGBA(r_, g_, b_, a_))
+            elif aid == WDGL_ATTRIB_EXTRA_COLOR:
+                r_, g_, b_, a_ = (int(v * 255.0) for v in vals)
+                extras.append(RGBA(r_, g_, b_, a_))
+            elif aid == WDGL_ATTRIB_BONE_WEIGHT:
+                bone_weights.append(tuple(vals))
+            elif aid == WDGL_ATTRIB_BONE_INDEX:
+                bone_indices.append(tuple(int(v) for v in vals))
+            cursor += stride
+
+    if coords:
+        geom.vertices = coords
+    if uvs:
+        geom.uv_layers = [uvs]
+    if normals:
+        geom.normals = normals
+    if prelits:
+        geom.prelit_colors = prelits
+    if extras:
+        ec = ExtraVertColors()
+        ec.colors = extras
+        geom.extra_colors = ec
+    if bone_weights:
+        geom._wdgl_bone_weights = bone_weights
+    if bone_indices:
+        geom._wdgl_bone_indices = bone_indices
+
+    r.seek(block_end)
+
+
+def _read_native_skin_plg(r: BinaryReader, size: int,
+                          geom: 'DffGeometry') -> Optional['SkinData']:
+    """Read SKIN_PLG for mobile (Native OGL) geometry.
+
+    Mobile DFFs put per-vertex weights/indices inside the WDGL buffer
+    of Native Data PLG, so the SKIN_PLG carries only header + bone
+    matrices (NativeOGLSkin format):
+        u32 num_bones
+        num_bones × 16f matrix (4×4 column-major; last column zeroed
+        and [15]=1 enforced for affine sanity)
+
+    We pair the matrices with the bone weights/indices we cached in
+    geom._wdgl_bone_weights / _wdgl_bone_indices during Native Data PLG
+    read, and produce a regular SkinData so the rest of the pipeline
+    (skin builder, write_skin) sees a uniform object.
+    """
+    start = r.pos
+    skin = SkinData()
+
+    skin.num_bones = r.read_one('<I')
+    for _ in range(skin.num_bones):
+        raw = list(r.read('<16f'))
+        raw[3] = 0.0
+        raw[7] = 0.0
+        raw[11] = 0.0
+        raw[15] = 1.0
+        skin.bone_matrices.append([raw[0:4], raw[4:8], raw[8:12], raw[12:16]])
+
+    # Stitch in per-vertex data that WDGL parsed earlier.
+    bw = getattr(geom, '_wdgl_bone_weights', None) or []
+    bi = getattr(geom, '_wdgl_bone_indices', None) or []
+    if bw:
+        skin.bone_weights = list(bw)
+    if bi:
+        skin.bone_indices = list(bi)
+
+    # max_weights = highest non-zero weight count per vertex
+    if skin.bone_weights:
+        mw = 0
+        for vw in skin.bone_weights:
+            nz = sum(1 for x in vw if x > 0.0)
+            if nz > mw:
+                mw = nz
+        skin.max_weights = mw
+    skin.num_used = 0  # mobile skins ship without the bones_used list
+
+    r.seek(start + size)
+    return skin
+
+
+def _read_native_data_plg(r: BinaryReader, size: int, geom: 'DffGeometry',
+                          num_verts: int):
+    """Read Native Data PLG (chunk 0x510).
+
+    Mobile DFFs store geometry inside this plugin instead of the main
+    Geometry Struct. The PLG itself wraps a single Struct that carries
+    the platform ID followed by platform-native data. For OpenGL/War
+    Drum (mobile) we dispatch to _read_wdgl_geometry; for other native
+    platforms (PS2/Xbox/PSP/GC) we capture the entire chunk verbatim so
+    the writer can round-trip the file without losing data we can't
+    interpret yet.
+    """
+    # Chunk header was consumed by the caller (12 B before r.pos).
+    chunk_header_start = r.pos - 12
+    chunk_end_abs = chunk_header_start + 12 + size
+    end = r.pos + size
+
+    ct, cs, cl = _read_chunk_header(r)
+    if ct != CHUNK_STRUCT:
+        r.seek(end)
+        return
+    struct_end = r.pos + cs
+
+    if cs < 4:
+        r.seek(end)
+        return
+
+    platform = r.read_one('<I')
+    if platform == NATIVE_PLATFORM_OGL:
+        geom.is_native_ogl = True
+        _read_wdgl_geometry(r, struct_end - r.pos, geom, num_verts)
+    else:
+        # Round-trip: capture the chunk bytes (header + body) so the
+        # writer can emit them unchanged. Decoding PS2/Xbox/PSP/GC is
+        # out of scope for now.
+        geom.raw_native_data_plg = bytes(r.data[chunk_header_start:chunk_end_abs])
+        geom.is_native_other_platform = platform
+
+    r.seek(end)
+
+
 def _read_bin_mesh_plg(r: BinaryReader, size: int, geom: 'DffGeometry'):
-    """Read Binary Mesh PLG and update triangle material indices."""
+    """Read Binary Mesh PLG.
+
+    For PC DFFs the main Geometry Struct already carries triangles
+    (with material indices), and BIN_MESH_PLG just *re-assigns* the
+    material via vertex-tuple lookup. For mobile DFFs (Native Data PLG)
+    the Struct has no triangles at all — BIN_MESH_PLG IS the triangle
+    list and we have to build geom.triangles from scratch.
+    """
     # Capture position BEFORE reading anything — `r.seek(start + size)`
     # at the bottom of this function uses it to advance past any padding
     # the source DFF left after the indices. An autofixer once removed
@@ -1565,12 +2078,15 @@ def _read_bin_mesh_plg(r: BinaryReader, size: int, geom: 'DffGeometry'):
     num_splits = r.read_one('<I')
     r.read_one('<I')               # total_indices (unused)
 
-    # Build vertex→triangle lookup for material assignment
-    # Map (v0,v1,v2) → triangle index for fast lookup
+    build_mode = (len(geom.triangles) == 0)
+
+    # Build vertex→triangle lookup for material assignment (PC path).
+    # In build_mode we skip this — geom.triangles is empty.
     tri_lookup = {}
-    for ti, tri in enumerate(geom.triangles):
-        key = tuple(sorted((tri.a, tri.b, tri.c)))
-        tri_lookup[key] = ti
+    if not build_mode:
+        for ti, tri in enumerate(geom.triangles):
+            key = tuple(sorted((tri.a, tri.b, tri.c)))
+            tri_lookup[key] = ti
 
     for _ in range(num_splits):
         num_indices = r.read_one('<I')
@@ -1583,11 +2099,16 @@ def _read_bin_mesh_plg(r: BinaryReader, size: int, geom: 'DffGeometry'):
                 tri_arr = np.frombuffer(r.data, dtype='<u4',
                                         count=n_tris * 3, offset=r.pos).reshape(n_tris, 3)
                 r.skip(n_tris * 12)
-                for i0, i1, i2 in tri_arr.tolist():
-                    key = tuple(sorted((i0, i1, i2)))
-                    ti = tri_lookup.get(key)
-                    if ti is not None:
-                        geom.triangles[ti].material = mat_idx
+                if build_mode:
+                    for i0, i1, i2 in tri_arr.tolist():
+                        geom.triangles.append(
+                            Triangle(a=i0, b=i1, c=i2, material=mat_idx))
+                else:
+                    for i0, i1, i2 in tri_arr.tolist():
+                        key = tuple(sorted((i0, i1, i2)))
+                        ti = tri_lookup.get(key)
+                        if ti is not None:
+                            geom.triangles[ti].material = mat_idx
         else:
             # Triangle strip: read all indices at once, then walk in Python.
             if num_indices > 0:
@@ -1603,10 +2124,14 @@ def _read_bin_mesh_plg(r: BinaryReader, size: int, geom: 'DffGeometry'):
                     i0, i1, i2 = indices[j], indices[j+2], indices[j+1]
                 if i0 == i1 or i1 == i2 or i0 == i2:
                     continue  # degenerate
-                key = tuple(sorted((i0, i1, i2)))
-                ti = tri_lookup.get(key)
-                if ti is not None:
-                    geom.triangles[ti].material = mat_idx
+                if build_mode:
+                    geom.triangles.append(
+                        Triangle(a=i0, b=i1, c=i2, material=mat_idx))
+                else:
+                    key = tuple(sorted((i0, i1, i2)))
+                    ti = tri_lookup.get(key)
+                    if ti is not None:
+                        geom.triangles[ti].material = mat_idx
 
     r.seek(start + size)
 
@@ -1963,6 +2488,13 @@ def read_dff(data: bytes) -> DffClump:
             r.skip(cs)
 
         r.seek(chunk_end)
+
+    # Mobile DFF detection: any geometry parsed via Native Data PLG
+    # (War Drum OpenGL) flips the clump's is_mobile flag. The import
+    # operator reads this and switches scene.gtatools_platform=MOBILE
+    # so the UI reflects what was actually loaded.
+    if any(getattr(g, 'is_native_ogl', False) for g in clump.geometries):
+        clump.is_mobile = True
 
     return clump
 

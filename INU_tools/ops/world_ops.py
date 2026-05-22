@@ -202,18 +202,30 @@ class GTATOOLS_OT_import_nodes(bpy.types.Operator):
 
     def execute(self, context):
         from .path_import import import_nodes
+        wm = context.window_manager
         total_nodes = 0
         total_files = 0
-        for f in self.files:
-            path = os.path.join(self.directory, f.name)
-            if not os.path.isfile(path):
-                continue
-            try:
-                objects = import_nodes(filepath=path, context=context)
-                total_nodes += sum(len(o.data.vertices) for o in objects if o.type == 'MESH')
-                total_files += 1
-            except Exception as e:
-                self.report({'WARNING'}, f"{f.name}: {str(e)}")
+        # Progress bar: cursor flips through the file count so user
+        # gets visual feedback during a full-map import (64 zone files).
+        # Blender's `wm.progress_*` only updates the cursor, not the
+        # viewport, but it's the standard pattern and good enough
+        # since import is a blocking single-threaded operation.
+        n_files = max(1, len(self.files))
+        wm.progress_begin(0, n_files)
+        try:
+            for idx, f in enumerate(self.files):
+                wm.progress_update(idx)
+                path = os.path.join(self.directory, f.name)
+                if not os.path.isfile(path):
+                    continue
+                try:
+                    objects = import_nodes(filepath=path, context=context)
+                    total_nodes += sum(len(o.data.vertices) for o in objects if o.type == 'MESH')
+                    total_files += 1
+                except Exception as e:
+                    self.report({'WARNING'}, f"{f.name}: {str(e)}")
+        finally:
+            wm.progress_end()
         self.report({'INFO'}, f"Nodes: {total_nodes} nodes from {total_files} files")
         return {'FINISHED'}
 
@@ -232,6 +244,14 @@ class GTATOOLS_OT_export_nodes(bpy.types.Operator):
     )
 
     def invoke(self, context, event):
+        # Auto-detect FLA4 from selected imported objects so the user
+        # doesn't have to remember the format of the file they loaded.
+        # Without this, re-exporting an FLA4 source silently downgrades
+        # to vanilla format (losing spawn/speed/lane per-node fields).
+        for obj in context.selected_objects:
+            if obj.get('fla4', False):
+                self.fla4 = True
+                break
         context.window_manager.fileselect_add(self)
         return {'RUNNING_MODAL'}
 
@@ -301,6 +321,73 @@ class GTATOOLS_OT_export_nodes(bpy.types.Operator):
                     self.report({'WARNING'}, f"{fname}: {e}")
 
         self.report({'INFO'}, f"Nodes: {exported} nodes exported")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_toggle_nodes_viz(bpy.types.Operator):
+    """Создать или скрыть геометрию визуализации путей"""
+    bl_idname = "gtatools.toggle_nodes_viz"
+    bl_label = "INU: Toggle Path Nodes Visualization"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        # Walk every path-node mesh in scene (vehicle + ped).
+        path_meshes = [
+            o for o in context.scene.objects
+            if o.type == 'MESH'
+            and o.get('path_type', '') in ('nodes_vehicle', 'nodes_ped')
+        ]
+        if not path_meshes:
+            self.report({'INFO'}, "No path nodes meshes in scene")
+            return {'CANCELLED'}
+
+        # Determine current state: any Skin modifier with show_viewport
+        # = True means visualisation is currently ON. State machine:
+        #   OFF → ON  : ensure Skin exists + show. Lazy-creates the
+        #               modifier on the first toggle so import stays
+        #               cheap (heavy geometry only when user asks).
+        #   ON  → OFF : hide existing modifiers but keep them so the
+        #               next ON click is instant (no rebuild).
+        any_on = False
+        for obj in path_meshes:
+            for mod in obj.modifiers:
+                if mod.type == 'SKIN' and mod.show_viewport:
+                    any_on = True
+                    break
+            if any_on:
+                break
+        new_state = not any_on
+
+        n_changed = 0
+        if new_state:
+            # OFF → ON
+            from .path_import import _add_skin_modifier
+            for obj in path_meshes:
+                mod = next((m for m in obj.modifiers if m.type == 'SKIN'), None)
+                if mod is None:
+                    # First toggle for this object — create from
+                    # scratch. Edges already live on the mesh from
+                    # import; reuse them so Skin tubes the same graph.
+                    edges = [(e.vertices[0], e.vertices[1])
+                             for e in obj.data.edges]
+                    radius = (0.5 if obj.get('path_type') == 'nodes_vehicle'
+                              else 0.35)
+                    _add_skin_modifier(obj, edges, radius=radius)
+                    n_changed += 1
+                elif not mod.show_viewport:
+                    mod.show_viewport = True
+                    n_changed += 1
+        else:
+            # ON → OFF
+            for obj in path_meshes:
+                for mod in obj.modifiers:
+                    if mod.type == 'SKIN' and mod.show_viewport:
+                        mod.show_viewport = False
+                        n_changed += 1
+
+        verb = "shown" if new_state else "hidden"
+        self.report({'INFO'},
+                    f"Path nodes geometry {verb} ({n_changed} obj)")
         return {'FINISHED'}
 
 
@@ -737,6 +824,7 @@ classes = (
     GTATOOLS_OT_export_track,
     GTATOOLS_OT_import_nodes,
     GTATOOLS_OT_export_nodes,
+    GTATOOLS_OT_toggle_nodes_viz,
     GTATOOLS_OT_import_paths_ipl,
     GTATOOLS_OT_export_paths_ipl,
     GTATOOLS_OT_convert_to_path,

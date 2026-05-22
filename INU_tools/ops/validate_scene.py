@@ -188,6 +188,80 @@ def _gather_objects_with_model_id():
     return out
 
 
+def _gather_cross_game_data():
+    """Per-mesh data for the cross-game compatibility check. Captures
+    just enough per-object metadata to flag SA-only features when the
+    scene targets III or VC. Returns a list of dicts shaped to match
+    ``core.validate.check_cross_game_compat``'s contract.
+    """
+    out = []
+    for obj in _scene_objects({'MESH'}):
+        inu = getattr(obj, 'inu', None)
+        mid = int(getattr(inu, 'model_id', 0) or 0) if inu else 0
+
+        # Night vertex colors: detect via an `inu_night_color` color
+        # attribute on the mesh data. Bake adds this when the user
+        # paints a Night colour layer. Defensive — name may vary;
+        # checking any color_attribute keyed for night is enough.
+        me = obj.data
+        has_night = False
+        if me is not None:
+            attrs = getattr(me, 'color_attributes', None) or []
+            for a in attrs:
+                if 'night' in a.name.lower():
+                    has_night = True
+                    break
+
+        # Multi-mesh LOD: SA OBJS-line type 2/3 with extra draw
+        # distances. Stored on the object as ``inu.extra_draw_dists``
+        # (list of floats, empty for single-mesh / type 1).
+        extra_dd = getattr(inu, 'extra_draw_dists', None) if inu else None
+        has_multi_lod = bool(extra_dd and len(extra_dd) > 0)
+
+        # UV-animation material flag: any slot whose material carries
+        # the dff.uv_anim_names extension (set via DragonFF-style props).
+        has_uv_anim = False
+        for slot in obj.material_slots:
+            mat = slot.material
+            if mat is None:
+                continue
+            uv_names = getattr(getattr(mat, 'dff', None), 'uv_anim', None)
+            if uv_names:
+                has_uv_anim = True
+                break
+
+        # 2DFX types attached to this object — children Empty objects
+        # tagged `inu.type == '2DFX'` carry the effect type on their
+        # ``inu.fx_type`` field.
+        fx_ids = set()
+        for child in obj.children:
+            if child.type != 'EMPTY':
+                continue
+            c_inu = getattr(child, 'inu', None)
+            if c_inu is None:
+                continue
+            if getattr(c_inu, 'type', '') != '2DFX':
+                continue
+            t = getattr(c_inu, 'fx_type', None)
+            # fx_type is usually an enum string; map to numeric IDs
+            # the writer uses.
+            _fx_map = {'LIGHT': 0, 'PARTICLE': 1,
+                       'PED_ATTRACTOR': 3, 'SUN_GLARE': 4}
+            n = _fx_map.get(t)
+            if n is not None:
+                fx_ids.add(n)
+
+        out.append(dict(
+            name=obj.name,
+            model_id=mid,
+            has_night_vcols=has_night,
+            has_multi_mesh_lod=has_multi_lod,
+            has_uv_anim_material=has_uv_anim,
+            fx_2dfx_ids=fx_ids,
+        ))
+    return out
+
+
 def _gather_mesh_vert_counts():
     """Vertex counts for every MESH — used by both empty-mesh and
     large-mesh checks. We pull from the underlying Mesh datablock so
@@ -338,6 +412,18 @@ def collect_all_issues():
     issues.extend(check_object_scale(_gather_object_scales()))
     issues.extend(check_light_beam_asi(
         _gather_light_beam_meshes(), _sa_light_asi_present()))
+    # Cross-game compat — only fires when scene targets III/VC and
+    # surfaces SA-only features still attached to objects. No-op for SA.
+    try:
+        import bpy as _bpy
+        from ..core.validate import check_cross_game_compat
+        from ..core import game_versions as _gv
+        scene_game = _gv.game_of_scene(_bpy.context.scene)
+        issues.extend(check_cross_game_compat(
+            scene_game, _gather_cross_game_data()))
+    except Exception:
+        # Defensive: validation must never crash on a missing check
+        pass
     return issues
 
 

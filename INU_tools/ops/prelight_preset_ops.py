@@ -10,6 +10,108 @@ from bpy.props import (
 from .. import T
 
 
+# ── Lights snapshot ────────────────────────────────────────────
+# 8-light prelight rig is part of the preset payload. Position is
+# stored RELATIVE to the lights' bounding-box center (so loading the
+# preset on a scene with a different active object re-derives the
+# absolute positions from the active obj's bbox center). Color +
+# energy + radius captured verbatim.
+
+_PRELIGHT_COLLECTION = "Prelight_Lights"
+
+
+def _collect_lights_snapshot():
+    """Return list of dicts describing each lamp in Prelight_Lights
+    collection, or [] if collection is missing/empty.
+
+    Positions are stored RELATIVE to the bbox center of all lamps —
+    this lets the snapshot load on objects of any size; Apply will
+    re-anchor the lamp ring around the active object's bbox.
+    """
+    coll = bpy.data.collections.get(_PRELIGHT_COLLECTION)
+    if not coll or not coll.objects:
+        return []
+    lamp_objs = [o for o in coll.objects if o.type == 'LIGHT']
+    if not lamp_objs:
+        return []
+
+    # Bbox center of the lamp ring → relative offsets.
+    cx = sum(o.location.x for o in lamp_objs) / len(lamp_objs)
+    cy = sum(o.location.y for o in lamp_objs) / len(lamp_objs)
+    cz = sum(o.location.z for o in lamp_objs) / len(lamp_objs)
+
+    out = []
+    for o in lamp_objs:
+        ldata = o.data
+        out.append({
+            "name": o.name,
+            "rel_offset": [
+                float(o.location.x - cx),
+                float(o.location.y - cy),
+                float(o.location.z - cz),
+            ],
+            "color": [float(c) for c in ldata.color],
+            "energy": float(getattr(ldata, "energy", 0.0)),
+            "radius": float(getattr(ldata, "shadow_soft_size", 0.0)),
+        })
+    return out
+
+
+def _apply_lights_snapshot(context, snapshot):
+    """Replace contents of Prelight_Lights collection with the lamps
+    described by ``snapshot``. Lamp positions are anchored around the
+    active mesh object's bbox center; if no active mesh, anchored at
+    world origin."""
+    if not snapshot:
+        return 0
+    from mathutils import Vector
+    obj = context.active_object
+    if obj is not None and obj.type == 'MESH':
+        bbox_center = sum((Vector(b) for b in obj.bound_box), Vector()) / 8
+        center = obj.matrix_world @ bbox_center
+    else:
+        center = Vector((0.0, 0.0, 0.0))
+
+    coll = bpy.data.collections.get(_PRELIGHT_COLLECTION)
+    if coll:
+        for o in list(coll.objects):
+            bpy.data.objects.remove(o, do_unlink=True)
+    else:
+        coll = bpy.data.collections.new(_PRELIGHT_COLLECTION)
+        context.scene.collection.children.link(coll)
+
+    created = 0
+    for entry in snapshot:
+        name = entry.get("name", "Prelight_Lamp")
+        rel = entry.get("rel_offset", [0.0, 0.0, 0.0])
+        ldata = bpy.data.lights.new(name=name, type='POINT')
+        ldata.color = tuple(entry.get("color", [1.0, 1.0, 1.0]))[:3]
+        ldata.energy = float(entry.get("energy", 10.0))
+        if hasattr(ldata, "shadow_soft_size"):
+            ldata.shadow_soft_size = float(entry.get("radius", 0.0))
+        lamp_obj = bpy.data.objects.new(name=name, object_data=ldata)
+        lamp_obj.location = (
+            center.x + rel[0],
+            center.y + rel[1],
+            center.z + rel[2],
+        )
+        coll.objects.link(lamp_obj)
+        created += 1
+    return created
+
+
+# ── Default preset (read-only) ─────────────────────────────────
+# Lives next to the addon code as `data/default_prelight_preset.json`.
+# Always shows up first in the preset enum and cannot be deleted /
+# overwritten / renamed. «Load» works as usual.
+
+_DEFAULT_PRESET_NAME = "Default"
+
+
+def _is_default_preset(name):
+    return (name or "").strip() == _DEFAULT_PRESET_NAME
+
+
 def _collect_object_preset_state(context):
     """Read per-object Day/Night state from the active mesh.
 
@@ -133,12 +235,18 @@ class GTATOOLS_OT_prelight_preset_load(bpy.types.Operator):
                 s.gtatools_vc_contrast = p.get('vc_contrast', s.gtatools_vc_contrast)
                 s.gtatools_vc_brightness = p.get('vc_brightness', s.gtatools_vc_brightness)
                 s.gtatools_vc_gamma = p.get('vc_gamma', s.gtatools_vc_gamma)
+                s.gtatools_lift_shadows_strength = p.get('lift_shadows', s.gtatools_lift_shadows_strength)
                 # Per-object: create Day/Night attrs (if preset flagged
                 # them) on selected meshes and apply saved V offsets.
                 touched, created = _apply_object_preset_state(context, p)
+                # Lights: if preset has a snapshot, materialise it
+                # (replaces existing Prelight_Lights collection).
+                lights_count = _apply_lights_snapshot(context, p.get('lights', []))
                 msg = f"{T('Пресет загружен:')} {name}"
                 if touched:
                     msg += f" | {touched} {T('объектов')}, +{created} attr"
+                if lights_count:
+                    msg += f" | {lights_count} {T('ламп')}"
                 self.report({'INFO'}, msg)
                 return {'FINISHED'}
         self.report({'ERROR'}, T("Пресет не найден"))
@@ -158,6 +266,10 @@ class GTATOOLS_OT_prelight_preset_save(bpy.types.Operator):
 
     def execute(self, context):
         s = context.scene.inu_settings
+
+        if _is_default_preset(self.preset_name):
+            self.report({'ERROR'}, T("'Default' зарезервирован — выбери другое имя"))
+            return {'CANCELLED'}
 
         new_preset = {
             "name": self.preset_name,
@@ -182,8 +294,11 @@ class GTATOOLS_OT_prelight_preset_save(bpy.types.Operator):
             "vc_contrast": s.gtatools_vc_contrast,
             "vc_brightness": s.gtatools_vc_brightness,
             "vc_gamma": s.gtatools_vc_gamma,
+            "lift_shadows": s.gtatools_lift_shadows_strength,
             # Per-object Day/Night state (read from active mesh).
             **_collect_object_preset_state(context),
+            # Lights snapshot (8-light rig if present in scene).
+            "lights": _collect_lights_snapshot(),
         }
 
         from .. import _save_preset_file
@@ -200,6 +315,9 @@ class GTATOOLS_OT_prelight_preset_delete(bpy.types.Operator):
 
     def execute(self, context):
         name = context.scene.inu_settings.gtatools_prelight_preset
+        if _is_default_preset(name):
+            self.report({'ERROR'}, T("'Default' нельзя удалить — это встроенный пресет"))
+            return {'CANCELLED'}
         from .. import _delete_preset_file
         _delete_preset_file(name)
         self.report({'INFO'}, f"{T('Пресет удалён:')} {name}")
@@ -217,6 +335,10 @@ class GTATOOLS_OT_prelight_preset_apply(bpy.types.Operator):
         name = s.gtatools_prelight_preset
         if not name or name == 'NONE':
             self.report({'ERROR'}, T("Сначала выберите пресет в списке"))
+            return {'CANCELLED'}
+        if _is_default_preset(name):
+            self.report({'ERROR'},
+                T("'Default' read-only — сохрани под другим именем (Save)"))
             return {'CANCELLED'}
 
         new_preset = {
@@ -242,8 +364,11 @@ class GTATOOLS_OT_prelight_preset_apply(bpy.types.Operator):
             "vc_contrast": s.gtatools_vc_contrast,
             "vc_brightness": s.gtatools_vc_brightness,
             "vc_gamma": s.gtatools_vc_gamma,
+            "lift_shadows": s.gtatools_lift_shadows_strength,
             # Per-object Day/Night state (read from active mesh).
             **_collect_object_preset_state(context),
+            # Lights snapshot (8-light rig if present in scene).
+            "lights": _collect_lights_snapshot(),
         }
 
         # Diff против старого файла, чтобы отчитаться что изменилось.
@@ -301,6 +426,10 @@ class GTATOOLS_OT_prelight_preset_rename(bpy.types.Operator):
         if not current or current == 'NONE':
             self.report({'ERROR'}, T("Сначала выберите пресет в списке"))
             return {'CANCELLED'}
+        if _is_default_preset(current):
+            self.report({'ERROR'},
+                T("'Default' нельзя переименовать — это встроенный пресет"))
+            return {'CANCELLED'}
         self.new_name = current
         return context.window_manager.invoke_props_dialog(self, width=320)
 
@@ -315,6 +444,9 @@ class GTATOOLS_OT_prelight_preset_rename(bpy.types.Operator):
             self.report({'ERROR'}, T("Введите новое название"))
             return {'CANCELLED'}
         if new == current:
+            return {'CANCELLED'}
+        if _is_default_preset(new):
+            self.report({'ERROR'}, T("'Default' зарезервирован — выбери другое имя"))
             return {'CANCELLED'}
 
         from .. import _load_prelight_presets, _save_preset_file, _delete_preset_file

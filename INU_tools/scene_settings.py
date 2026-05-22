@@ -13,6 +13,7 @@ import bpy
 from bpy.props import (
     StringProperty, BoolProperty, IntProperty, FloatProperty,
     EnumProperty, FloatVectorProperty, CollectionProperty,
+    PointerProperty,
 )
 
 
@@ -121,6 +122,17 @@ def _update_uv_grid(self, context):
 def _on_modulate_preview_update(self, context):
     from .tools.prelight import apply_modulate_preview
     apply_modulate_preview(context.scene)
+
+
+def _inu_pipeline_changed_proxy(self, context):
+    try:
+        from . import _inu_pipeline_changed
+        _inu_pipeline_changed(self, context)
+    except Exception as e:
+        # update-коллбэк не должен ронять остальной UI. Если что-то
+        # пошло не так с per-pipeline snapshot logic — печатаем в
+        # консоль и идём дальше, не мешая пайплайну сохраниться.
+        print(f"[INU] pipeline-change snapshot failed: {e!r}")
 
 
 def _ifp_action_changed(self, context):
@@ -331,6 +343,62 @@ class GTATOOLS_LintIssueItem(bpy.types.PropertyGroup):
     message: StringProperty(default='')
 
 
+class GTATOOLS_PathItem(bpy.types.PropertyGroup):
+    """Single file-path entry — used by map analyzer's custom IDE/IPL
+    lists. CollectionProperty of these gives the user an add/remove UI."""
+    path: StringProperty(name="Path", subtype='FILE_PATH', default='')
+
+
+class GTATOOLS_TextureBrowserItem(bpy.types.PropertyGroup):
+    """One row in the Texture Browser UIList. Mirrors
+    core/texture_index.TextureEntry. Lives on WindowManager
+    (transient — index isn't saved with the .blend, user re-scans
+    each session)."""
+    archive_path: StringProperty(default='')
+    txd_name: StringProperty(default='')
+    texture_name: StringProperty(default='')
+    width: IntProperty(default=0)
+    height: IntProperty(default=0)
+    depth: IntProperty(default=0)
+    fourcc: IntProperty(default=0)
+    num_levels: IntProperty(default=1)
+    platform_id: IntProperty(default=8)
+    format_label: StringProperty(default='')
+    usage_count: IntProperty(default=0)    # IDE models referencing this TXD
+
+
+def _on_scene_animobj_pick(self, context):
+    """Fires when the user picks a mesh via the scene-level animobj
+    pipette. Delegates to ``attach_mesh_to_rig`` which auto-creates a
+    rig on the first pick, then routes subsequent picks per the
+    sibling ``gtatools_animobj_picker_target`` enum. Imports the
+    helper lazily — scene_settings is imported very early and the
+    operators module isn't ready yet at top-level."""
+    mesh = self.gtatools_animobj_picker
+    if mesh is None or mesh.type != 'MESH':
+        return
+    target = self.gtatools_animobj_picker_target
+    try:
+        from .ops.animobj_ops import attach_mesh_to_rig
+        attach_mesh_to_rig(context, mesh, target=target)
+    except Exception as ex:
+        print(f"[INU] animobj pipette failed: {ex}")
+
+    # Clear the picker via a deferred timer — update callbacks can't
+    # safely mutate their own property in the same event cycle.
+    settings = self
+    def _clear():
+        try:
+            settings.gtatools_animobj_picker = None
+        except Exception:
+            pass
+        return None
+    try:
+        bpy.app.timers.register(_clear, first_interval=0.01)
+    except Exception:
+        pass
+
+
 # ── PropertyGroup ─────────────────────────────────────────────────
 
 
@@ -486,6 +554,31 @@ class INUSceneSettings(bpy.types.PropertyGroup):
         name="Group by IPL",
         description="Создавать отдельную коллекцию на каждый IPL-файл",
         default=True)
+    # Active game — drives version dispatch in DFF/COL/TXD/IDE/IPL/IMG
+    # writers and lint thresholds. Default SA (the addon's historical
+    # focus). III/VC are work-in-progress — readers/writers gradually
+    # gaining version-aware code paths.
+    gtatools_game: EnumProperty(
+        name="Игра",
+        description="Целевая игра для экспорта / валидации. Импорт авто-детектит игру по RW-версии",
+        items=[
+            ('SA',  "SA",  "GTA: San Andreas (RW 3.6, COL3, IMG VER2)"),
+            ('VC',  "VC",  "GTA: Vice City (RW 3.5, COL2, IMG VER1)"),
+            ('III', "III", "GTA III (RW 3.3, COL1, IMG VER1)"),
+        ],
+        default='SA')
+    # Target platform — PC (vanilla RW geometry, D3D textures) vs
+    # Mobile (Native Data PLG / OpenGL geometry, PVRTC/ETC1 textures).
+    # Affects DFF reader/writer dispatch and export options. Импорт
+    # авто-детектит платформу по наличию Native Data PLG чанков.
+    gtatools_platform: EnumProperty(
+        name="Платформа",
+        description="Целевая платформа: PC (vanilla) или Mobile (iOS/Android, Native Data PLG)",
+        items=[
+            ('PC',     "PC",     "PC / Xbox / PS2 (vanilla RW geometry)"),
+            ('MOBILE', "Mobile", "iOS / Android (Native Data PLG, War Drum OpenGL)"),
+        ],
+        default='PC')
     gtatools_game_root: StringProperty(
         name="Game Root",
         description="Корневая папка GTA SA",
@@ -576,8 +669,34 @@ class INUSceneSettings(bpy.types.PropertyGroup):
         description="Включить в сборку Interior-объекты (data/maps/interior). "
                     "Имеет смысл только при выбранном регионе",
         default=False)
+
+    # ── «Проверка» panel toggle state ─────────────────────────────────
+    # Persisted with the .blend so the panel reflects actual hidden /
+    # links-active state after Blender restart. Previously lived as
+    # module-level globals which reset on every addon (re)load.
+    gtatools_hide_dff: BoolProperty(
+        name="Hide DFF",
+        description="Currently hiding DFF meshes via the «Проверка» toggle",
+        default=False)
+    gtatools_hide_lod: BoolProperty(
+        name="Hide LOD",
+        description="Currently hiding LOD meshes via the «Проверка» toggle",
+        default=False)
+    gtatools_hide_col: BoolProperty(
+        name="Hide COL",
+        description="Currently hiding COL meshes via the «Проверка» toggle",
+        default=False)
+    gtatools_hide_sha: BoolProperty(
+        name="Hide SHA",
+        description="Currently hiding shadow meshes via the «Проверка» toggle",
+        default=False)
+    gtatools_links_active: BoolProperty(
+        name="Model links overlay",
+        description="DFF↔LOD↔COL dashed-link viewport overlay enabled",
+        default=False)
+
     gtatools_dxt_backend: EnumProperty(
-        name="DXT",
+        name="",
         description=(
             "Бэкенд сжатия DXT-текстур.\n"
             "Pure numpy, без NVTT и внешних бинарей — соответствует требованиям\n"
@@ -636,6 +755,37 @@ class INUSceneSettings(bpy.types.PropertyGroup):
             ('OBJ',  "Объекты",   "Animated Map Object"),
         ],
         default='CHAR')
+
+    # ── Animated Map Object — scene-level eyedropper ─────────────
+    # Replaces the «Setup» button: user picks meshes one by one with
+    # the pipette, and the rig is auto-created on the first pick.
+    # update= lives in ops/animobj_ops.py (lazy-imported to dodge
+    # the circular import that would happen at module load time).
+    gtatools_animobj_picker_target: EnumProperty(
+        name="Куда добавить",
+        description=(
+            "Куда привесить выбранный пипеткой меш:\n"
+            "  Новый pivot — анимированная часть (своя ось/скорость)\n"
+            "  К существующему pivot — на тот же pivot что и предыдущая\n"
+            "  К root — статичная часть без анимации"),
+        items=[
+            ('NEW_PIVOT', "Новый pivot",
+             "Создать новый pivot и привесить меш к нему — он будет крутиться отдельно"),
+            ('PIVOT', "К существующему pivot",
+             "На первый pivot — общая анимация с другими мешами под ним"),
+            ('ROOT', "К root (статика)",
+             "Статичная часть, не крутится"),
+        ],
+        default='NEW_PIVOT')
+    gtatools_animobj_picker: PointerProperty(
+        type=bpy.types.Object,
+        name="Меш",
+        description=(
+            "Кликни на пипетку и выбери меш в сцене или 3D-окне. "
+            "Если rig'а ещё нет — он создастся автоматически. "
+            "После пика поле очищается — можно сразу подбирать следующий"),
+        poll=lambda self, obj: obj is not None and obj.type == 'MESH',
+        update=lambda self, context: _on_scene_animobj_pick(self, context))
 
     # ── Profile ─────────────────────────────────────────────────
     gtatools_profile: EnumProperty(
@@ -770,6 +920,19 @@ class INUSceneSettings(bpy.types.PropertyGroup):
         name="Конец",
         description="Последний кадр диапазона",
         default=10000, min=0)
+    gtatools_smooth_axis_mode: EnumProperty(
+        name="Smooth axis",
+        description=("Ось вдоль которой сглаживать ключи между опорными. "
+                     "ALL — все каналы в локальных координатах кости; "
+                     "WORLD_X/Y/Z — только translation, в мировых "
+                     "координатах (медленнее, but учитывает поворот родителей)"),
+        items=[
+            ('ALL', "All", "All channels (local)"),
+            ('WORLD_X', "X", "World X (translation only)"),
+            ('WORLD_Y', "Y", "World Y (translation only)"),
+            ('WORLD_Z', "Z", "World Z (translation only)"),
+        ],
+        default='ALL')
     gtatools_ik_chain_offset: FloatVectorProperty(
         name="Смещение куба руки/ноги",
         description="Визуальный сдвиг кубов IK для рук и ног",
@@ -889,23 +1052,49 @@ class INUSceneSettings(bpy.types.PropertyGroup):
         default=0.0, min=-100.0, max=100.0)
     gtatools_vc_smooth_iterations: IntProperty(
         name="Iterations",
-        description="Количество итераций сглаживания",
+        description=(
+            "Сглаживание vertex colors между соседними вершинами.\n"
+            "Iterations — количество проходов.\n"
+            "Больше проходов = плавнее переходы"),
         default=1, min=1, max=50)
     gtatools_vc_smooth_factor: FloatProperty(
         name="Factor",
-        description="Сила сглаживания",
+        description=(
+            "Сила сглаживания за один проход (0-1).\n"
+            "0 — без эффекта, 1 — vertex берёт полное среднее соседей"),
         default=0.5, min=0.0, max=1.0)
     gtatools_vc_contrast: FloatProperty(
         name="Contrast",
-        description="Контраст",
+        description=(
+            "Контраст vertex colors.\n"
+            "1.0 — без изменений\n"
+            "< 1.0 — меньше контраст\n"
+            "> 1.0 — больше контраст"),
         default=1.0, min=0.0, max=3.0)
     gtatools_vc_brightness: FloatProperty(
         name="Brightness",
-        description="Яркость смещение",
+        description=(
+            "Яркость vertex colors (additive offset).\n"
+            "0.0 — без изменений\n"
+            "> 0 — светлее\n"
+            "< 0 — темнее"),
         default=0.0, min=-1.0, max=1.0)
+    gtatools_lift_shadows_strength: FloatProperty(
+        name="Подтянуть тени",
+        description=(
+            "Подтягивает тёмные участки к самой яркой точке, "
+            "сохраняя шаг между гранями.\n"
+            "0 — без изменений\n"
+            "0.3-0.5 — рекомендуемый диапазон\n"
+            "1 — все цвета доходят до max (теряется визуальный шаг)"),
+        default=0.5, min=0.0, max=1.0, subtype='FACTOR')
     gtatools_vc_gamma: FloatProperty(
         name="Gamma",
-        description="Гамма-коррекция",
+        description=(
+            "Гамма-коррекция vertex colors.\n"
+            "1.0 — без изменений\n"
+            "< 1.0 — светлее (lift тени)\n"
+            "> 1.0 — темнее (deepen тени)"),
         default=1.0, min=0.1, max=3.0)
     gtatools_fill_color: FloatVectorProperty(
         name="Fill Color",
@@ -953,10 +1142,45 @@ class INUSceneSettings(bpy.types.PropertyGroup):
             ('0x53F2009A', 'Vehicle', "Pipeline кузова машины"),
             ('0x53F20098', 'Day/Night', "Pipeline здания с day/night vertex colors"),
             ('0x53F2009C', 'Building', "Простой pipeline здания"),
+            ('PED', 'Ped',
+             "Preset для персонажа: pipeline ID = 0, SkinPLG обязателен, "
+             "MatFX/day-night vcols отключены. Используется для экспорта "
+             "скиннутых ped-моделей. На самом экспорте автоматически "
+             "выставляет ped-friendly defaults: has_skin=True, "
+             "day_cols=False, night_cols=False, matfx=False"),
         ],
         name="Pipeline",
         description="Рендер-пайплайн для экспорта DFF",
-        default='NONE')
+        default='NONE',
+        update=_inu_pipeline_changed_proxy)
+    # Last seen pipeline value — без этого update-коллбэк не знает
+    # из какого слота сохранять. Hidden, не показывается юзеру.
+    inu_prev_pipeline_internal: StringProperty(default='NONE', options={'HIDDEN'})
+
+    # ── Graph editor: keyframe thinning ──
+    gtatools_thin_keys_mode: EnumProperty(
+        name="Режим прореживания",
+        items=[
+            ('NTH',  "Каждый N-ный", "Оставить каждый N-ный ключ"),
+            ('AUTO', "Авто",          "Удалить избыточные (колинеарные) ключи"),
+        ],
+        default='NTH')
+    gtatools_thin_keys_stride: IntProperty(
+        name="N",
+        description="Оставить каждый N-ный из выделенных (2 = удалить каждый второй)",
+        default=2, min=2, max=20)
+    gtatools_thin_keys_error: FloatProperty(
+        name="Порог ошибки",
+        description="Чем выше — тем агрессивнее срез избыточных ключей",
+        default=0.01, min=0.0001, max=1.0, precision=4)
+    gtatools_thin_keys_interp: EnumProperty(
+        name="Интерполяция",
+        items=[
+            ('BEZIER',   "Безье",     "Плавная кривая между ключами"),
+            ('LINEAR',   "Линейная",  "Прямые линии между ключами"),
+            ('CONSTANT', "Постоянная", "Ступенька — без интерполяции"),
+        ],
+        default='BEZIER')
     gtatools_material_preset: EnumProperty(
         items=_mat_preset_items_proxy,
         name="GTA Material Preset")
@@ -1000,6 +1224,7 @@ class INUSceneSettings(bpy.types.PropertyGroup):
         name="VC Layers Section Expanded",
         default=False)
 
+
     # ── Binary file scanner (DFF / COL / TXD lint) ─────────────
     gtatools_scan_dir: StringProperty(
         name="Папка",
@@ -1027,6 +1252,130 @@ class INUSceneSettings(bpy.types.PropertyGroup):
     gtatools_scan_report_custom_path: StringProperty(
         name="Папка для отчёта",
         subtype='DIR_PATH', default="")
+
+    # ── Analysis combined panel (file scanner + map analyzer) ──
+    # Внутренний toggle между двумя режимами в одной sub-panel
+    # «Анализ карты/файлов» внутри Check.
+    gtatools_analysis_mode: EnumProperty(
+        name="Режим",
+        items=[
+            ('FILES', "Файлы",  "Скан DFF/COL/TXD на диске"),
+            ('MAP',   "Карта",  "Cross-reference IDE/IPL"),
+        ],
+        default='FILES')
+
+    # ── Map Analyzer (cross-reference IDE/IPL) ──────────────────
+    gtatools_map_analyzer_mode: EnumProperty(
+        name="Источник",
+        items=[
+            ('DAT',    "DAT файл",   "gta.dat / default.dat / кастомный — следует за IDE/IPL/IMG строками"),
+            ('FOLDER', "Папка",      "Сканировать все *.ide / *.ipl в указанной папке"),
+            ('CUSTOM', "Свои пути",  "Ручной список IDE и IPL файлов"),
+        ],
+        default='FOLDER')
+    gtatools_map_analyzer_dat_path: StringProperty(
+        name=".dat файл",
+        subtype='FILE_PATH', default="")
+    gtatools_map_analyzer_folder: StringProperty(
+        name="Папка с IDE/IPL",
+        subtype='DIR_PATH', default="")
+    gtatools_map_analyzer_recursive: BoolProperty(
+        name="Включая подпапки",
+        description="Рекурсивный обход подпапок при FOLDER-режиме",
+        default=True)
+    gtatools_map_analyzer_check_img: BoolProperty(
+        name="Проверять модели в IMG",
+        description="Авто-поиск всех *.img в области скана (DAT-строки / FOLDER walk / CUSTOM parent dirs) и cross-check IDE entries — flag missing DFF/TXD",
+        default=False)
+    gtatools_map_analyzer_custom_ides: CollectionProperty(type=GTATOOLS_PathItem)
+    gtatools_map_analyzer_custom_ipls: CollectionProperty(type=GTATOOLS_PathItem)
+    gtatools_map_analyzer_only_errors: BoolProperty(
+        name="Только ERROR",
+        description="Скрыть WARN/INFO в списке (фильтр draw)",
+        default=True)
+    # Shared profile for File Scanner + Map Analyzer. Single EnumProperty
+    # rather than per-tool — modders typically have one stance on
+    # what counts as a problem; splitting would force them to keep
+    # both panels in sync manually.
+    # Texture Browser inputs. Reuses the same source-mode pattern as
+    # Map Analyzer (DAT / FOLDER / CUSTOM) but with its own paths so
+    # the user can index a different scope.
+    gtatools_texture_browser_source: EnumProperty(
+        name="Источник",
+        description="Откуда брать TXD-файлы для индекса",
+        items=[
+            ('DAT',    "DAT",    "Из gta.dat по путям сцены — все *.img и *.txd"),
+            ('FOLDER', "Папка", "Просканировать одну папку рекурсивно"),
+            ('CUSTOM', "Файлы", "Вручную выбранные .img / .txd"),
+        ],
+        default='DAT')
+    gtatools_texture_browser_folder: StringProperty(
+        name="Папка",
+        description="Папка со стандалон-TXD для сканирования",
+        subtype='DIR_PATH', default='')
+    gtatools_texture_browser_custom: CollectionProperty(type=GTATOOLS_PathItem)
+    gtatools_texture_browser_check_ide: BoolProperty(
+        name="Cross-ref c IDE",
+        description="Подсчитать сколько IDE-моделей используют каждый TXD (используется тот же набор IDE что и у Map Analyzer)",
+        default=True)
+    gtatools_texture_browser_search: StringProperty(
+        name="Поиск",
+        description="Фильтр по имени текстуры или TXD",
+        default='')
+
+    gtatools_lint_profile: EnumProperty(
+        name="Профиль",
+        description="Стандарт (vanilla SA) / FLA / Строгий / Мягкий",
+        items=[
+            ('STANDARD', "Стандарт", "Калибровано под vanilla SA — поведение из коробки"),
+            ('FLA',      "FLA",      "Считаем что Fastman92 Limit Adjuster установлен: глушим warnings про ID > 19999, interior > 18, COL surface > 178"),
+            ('STRICT',   "Строгий", "Жёстче пороги: draw_distance > 800m, mat > 50, vert > 16k, 2DFX > 100, texture > 512px. Для QA сборки"),
+            ('LENIENT',  "Мягкий",  "Прячем все INFO-уровни. Для легаси-проектов где informational шум перевешивает сигнал"),
+        ],
+        default='STANDARD')
+
+    # ── Viewport Floater ──────────────────────────────────────
+    # Plавающее окно с инфо по активному объекту. State for the
+    # gpu+blf-drawn panel in ops/viewport_floater.py. Default OFF so
+    # opening Blender never shows the floater until user toggles it.
+    inu_floater_visible: BoolProperty(default=False)
+    inu_floater_collapsed: BoolProperty(default=False)
+    inu_floater_locked: BoolProperty(default=False)
+    inu_floater_workspace: StringProperty(default="")
+    inu_floater_x: IntProperty(default=40, min=-9999, max=9999)
+    inu_floater_y: IntProperty(default=200, min=-9999, max=9999)
+
+    # Import/Export floater (second instance, framework-driven)
+    inu_floater_ie_visible: BoolProperty(default=False)
+    inu_floater_ie_collapsed: BoolProperty(default=False)
+    inu_floater_ie_locked: BoolProperty(default=False)
+    inu_floater_ie_workspace: StringProperty(default="")
+    inu_floater_ie_x: IntProperty(default=340, min=-9999, max=9999)
+    inu_floater_ie_y: IntProperty(default=200, min=-9999, max=9999)
+
+    # Validation floater (Проверка перед экспортом)
+    inu_floater_val_visible: BoolProperty(default=False)
+    inu_floater_val_collapsed: BoolProperty(default=False)
+    inu_floater_val_locked: BoolProperty(default=False)
+    inu_floater_val_workspace: StringProperty(default="")
+    inu_floater_val_x: IntProperty(default=640, min=-9999, max=9999)
+    inu_floater_val_y: IntProperty(default=200, min=-9999, max=9999)
+
+    # Lighting floater
+    inu_floater_light_visible: BoolProperty(default=False)
+    inu_floater_light_collapsed: BoolProperty(default=False)
+    inu_floater_light_locked: BoolProperty(default=False)
+    inu_floater_light_workspace: StringProperty(default="")
+    inu_floater_light_x: IntProperty(default=340, min=-9999, max=9999)
+    inu_floater_light_y: IntProperty(default=400, min=-9999, max=9999)
+
+    # IDE / IPL / IMG floater
+    inu_floater_iii_visible: BoolProperty(default=False)
+    inu_floater_iii_collapsed: BoolProperty(default=False)
+    inu_floater_iii_locked: BoolProperty(default=False)
+    inu_floater_iii_workspace: StringProperty(default="")
+    inu_floater_iii_x: IntProperty(default=640, min=-9999, max=9999)
+    inu_floater_iii_y: IntProperty(default=400, min=-9999, max=9999)
 
     # ── CollectionProperty fields with custom item types ──────
     inu_validate_issues: CollectionProperty(type=INUValidateIssue)

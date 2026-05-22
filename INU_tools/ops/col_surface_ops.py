@@ -8,9 +8,12 @@ from bpy.props import (
 )
 
 from .. import T
-from ..tools.compat import safe_icon
-
-
+from ..tools.compat import safe_icon, inu_icon
+from ..data.surface_materials import (
+    GTA_SA_SURFACE_MATERIALS,
+    COL_SURFACE_CATEGORIES,
+    get_surface_name,
+)
 class GTATOOLS_OT_set_col_surface(bpy.types.Operator):
     """Назначить тип поверхности GTA SA для COL коллизии"""
     bl_idname = "gtatools.set_col_surface"
@@ -79,7 +82,7 @@ class GTATOOLS_OT_col_surface_menu(bpy.types.Operator):
 
     def draw(self, context):
         layout = self.layout
-        layout.prop(self, "search", text="", icon=safe_icon('VIEWZOOM'))
+        layout.prop(self, "search", text="", **inu_icon(safe_icon('VIEWZOOM')))
 
         search_lower = self.search.lower()
         name_lookup = {sid: name for sid, name, desc in GTA_SA_SURFACE_MATERIALS}
@@ -99,8 +102,8 @@ class GTATOOLS_OT_col_surface_menu(bpy.types.Operator):
 
                 box = layout.box()
                 row = box.row()
-                icon=safe_icon('DISCLOSURE_TRI_DOWN') if is_open else 'DISCLOSURE_TRI_RIGHT'
-                row.prop(self, prop_name, text=f"{cat_name} ({len(cat_ids)})", icon=icon, emboss=False)
+                icon = safe_icon('DISCLOSURE_TRI_DOWN') if is_open else 'DISCLOSURE_TRI_RIGHT'
+                row.prop(self, prop_name, text=f"{cat_name} ({len(cat_ids)})", **inu_icon(icon), emboss=False)
 
                 if is_open:
                     col = box.column(align=True)
@@ -180,7 +183,7 @@ class GTATOOLS_OT_batch_set_distance(bpy.types.Operator):
         sub.prop(self, "lod_draw_distance")
 
         n = sum(1 for o in context.selected_objects if o.type == 'MESH')
-        layout.label(text=f"{n} {T('объектов будет изменено')}", icon=safe_icon('INFO'))
+        layout.label(text=f"{n} {T('объектов будет изменено')}", **inu_icon(safe_icon('INFO')))
 
     def execute(self, context):
         if not self.apply_draw and not self.apply_lod:

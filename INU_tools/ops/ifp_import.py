@@ -26,6 +26,35 @@ def _create_action_fcurves(action, armature):
     return channelbag.fcurves
 
 
+def _action_has_fcurves(action):
+    """True if ``action`` has any fcurves — works for both legacy and
+    layered (4.4+/5.x) actions. Legacy: action.fcurves directly.
+    Layered: drill into layers → strips → channelbags."""
+    if not _USE_LAYERED:
+        return bool(getattr(action, 'fcurves', None)) and len(action.fcurves) > 0
+    if getattr(action, 'fcurves', None) and len(action.fcurves) > 0:
+        return True
+    for layer in getattr(action, 'layers', []):
+        for strip in getattr(layer, 'strips', []):
+            cbs = getattr(strip, 'channelbags', None)
+            if cbs is None:
+                cb_call = getattr(strip, 'channelbag', None)
+                if callable(cb_call) and getattr(action, 'slots', None):
+                    try:
+                        cb = cb_call(action.slots[0])
+                    except Exception:
+                        cb = None
+                    cbs = [cb] if cb else []
+                else:
+                    cbs = []
+            for cb in cbs:
+                if cb is None:
+                    continue
+                if len(getattr(cb, 'fcurves', [])) > 0:
+                    return True
+    return False
+
+
 def import_ifp(filepath: str, context=None):
     """Import IFP file — parse and cache animations.
 
@@ -64,9 +93,36 @@ def apply_ifp_action(action_name: str, armature, context=None):
     if not action:
         return False, f"Action '{action_name}' not found"
 
+    # If the action already carries keyframes (user-authored anim from
+    # animobj_ops, or a previously-applied IFP action), there is nothing
+    # to "import" — just bind it to the armature.
+    #
+    # IMPORTANT: animobj_ops tags actions with ``ifp_source = action_name``
+    # purely as a marker so the IFP exporter picks them up; that value
+    # is NOT a filepath. We must short-circuit on fcurves BEFORE trying
+    # to read_ifp(), otherwise read_ifp('windmill') raises FileNotFoundError.
+    if _action_has_fcurves(action):
+        if not armature.animation_data:
+            armature.animation_data_create()
+        armature.animation_data.action = action
+        if _USE_LAYERED and action.slots:
+            try:
+                armature.animation_data.action_slot = action.slots[0]
+            except Exception:
+                pass
+        return True, f"Applied '{action_name}'"
+
     filepath = action.get('ifp_source')
     if not filepath:
         return False, "Not an IFP action"
+
+    # The marker set by animobj_ops is the action name, not a path;
+    # don't try to open it as a file.
+    import os
+    if not os.path.isfile(filepath):
+        return False, (
+            f"Action '{action_name}' has no keyframes and no IFP source "
+            f"file to load from (ifp_source='{filepath}')")
 
     # Get cached IFP data
     ifp = _ifp_cache.get(filepath)
@@ -86,31 +142,6 @@ def apply_ifp_action(action_name: str, armature, context=None):
             break
     if not anim:
         return False, f"Animation '{action_name}' not found in IFP"
-
-    # Check if action already has fcurves (already applied)
-    has_curves = False
-    try:
-        has_curves = len(action.fcurves) > 0
-    except AttributeError:
-        if hasattr(action, 'layers') and action.layers:
-            for layer in action.layers:
-                for strip in layer.strips:
-                    if hasattr(strip, 'channelbags'):
-                        for cb in strip.channelbags:
-                            if len(cb.fcurves) > 0:
-                                has_curves = True
-
-    if has_curves:
-        # Already applied, just assign
-        if not armature.animation_data:
-            armature.animation_data_create()
-        armature.animation_data.action = action
-        if _USE_LAYERED and action.slots:
-            try:
-                armature.animation_data.action_slot = action.slots[0]
-            except Exception:
-                pass
-        return True, f"Applied '{action_name}'"
 
     # Create fcurves
     try:
@@ -167,6 +198,11 @@ def apply_ifp_action(action_name: str, armature, context=None):
             else:
                 rest_inv = mathutils.Quaternion()
 
+            # Round to integer Blender frames to avoid fractional-frame
+            # collisions when scene fps != 30. Без round() ключи ложились
+            # на 0.8, 1.6, 2.4 … (при fps=24) — навигация frame-by-frame
+            # показывала пропуски а близкие fractional frames могли
+            # схлопнуться через keyframe_points.insert overwrite.
             if abone.key_type & HAS_ROT:
                 fc_rw = fc_container.new(data_path_rot, index=0)
                 fc_rx = fc_container.new(data_path_rot, index=1)
@@ -174,7 +210,7 @@ def apply_ifp_action(action_name: str, armature, context=None):
                 fc_rz = fc_container.new(data_path_rot, index=3)
 
                 for kf in abone.keyframes:
-                    frame = kf.time * fps
+                    frame = round(kf.time * fps)
                     qx, qy, qz, qw = kf.rotation
                     gta_quat = mathutils.Quaternion((qw, qx, qy, qz))
                     bl_quat = rest_inv @ gta_quat
@@ -183,19 +219,27 @@ def apply_ifp_action(action_name: str, armature, context=None):
                     fc_ry.keyframe_points.insert(frame, bl_quat.y, options={'FAST'})
                     fc_rz.keyframe_points.insert(frame, bl_quat.z, options={'FAST'})
 
+                # FAST option skips sorting + handle recompute. Call
+                # update() so handle types and curve evaluation are
+                # consistent — иначе keyframe могут не отрисовываться
+                # корректно в Curves Editor пока не дёрнешь fcurve.
+                fc_rw.update(); fc_rx.update(); fc_ry.update(); fc_rz.update()
+
             if abone.key_type & HAS_TRANS:
                 fc_lx = fc_container.new(data_path_loc, index=0)
                 fc_ly = fc_container.new(data_path_loc, index=1)
                 fc_lz = fc_container.new(data_path_loc, index=2)
 
                 for kf in abone.keyframes:
-                    frame = kf.time * fps
+                    frame = round(kf.time * fps)
                     tx, ty, tz = kf.translation
                     gta_loc = mathutils.Vector((tx, ty, tz))
                     bl_loc = rest_inv.to_matrix() @ gta_loc
                     fc_lx.keyframe_points.insert(frame, bl_loc.x, options={'FAST'})
                     fc_ly.keyframe_points.insert(frame, bl_loc.y, options={'FAST'})
                     fc_lz.keyframe_points.insert(frame, bl_loc.z, options={'FAST'})
+
+                fc_lx.update(); fc_ly.update(); fc_lz.update()
         except Exception:
             continue
 

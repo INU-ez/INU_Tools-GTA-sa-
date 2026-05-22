@@ -120,6 +120,60 @@ def safe_icon(name):
 ICON_CHECK = safe_icon('CHECKMARK')
 
 
+# ── Icon source toggle ────────────────────────────────────────────
+# When True, the addon prefers its custom Lucide PNG bake (under
+# data/icons/) over Blender's stock icons — gives a recognisable
+# uniform look across the N-panel and floater windows.
+# When False, falls back to native Blender icons everywhere. Floaters
+# still need PNGs to render via GPU (Blender's icon enum isn't
+# accessible from custom draw handlers), so they go text-only on
+# this path — but the N-panel and dialogs look fully native.
+#
+# Kept as a module-level flag so a one-line edit flips the look back
+# without touching every call site. The data/icons/ folder is NOT
+# deleted on flip — the PNGs stay so the switch is reversible.
+USE_CUSTOM_ICONS = False
+
+
+def inu_icon(name):
+    """Return UILayout icon kwargs for `name`.
+
+    When ``USE_CUSTOM_ICONS`` is True (custom Lucide bake mode):
+    returns ``{'icon_value': <preview-id>}`` if the addon's PNG bake
+    has a matching glyph, else falls back to ``{'icon':
+    safe_icon(name)}``.
+
+    When False (native mode, current default): always returns
+    ``{'icon': safe_icon(name)}`` — Blender draws its built-in icon.
+
+    Usage::
+
+        layout.operator('foo.bar', text='X', **inu_icon('FILE_FOLDER'))
+
+    The argument can be any expression that yields a Blender icon
+    string at call time (literal or e.g. ``'HIDE_OFF' if on else
+    'HIDE_ON'``) — resolution happens at draw time, not at import.
+
+    ВАЖНО: некоторые UILayout-методы НЕ принимают ``icon_value`` —
+    только string ``icon``. К таким относятся:
+
+      * ``prop_search()`` — TypeError на ``icon_value``
+      * большинство ``template_*()`` шаблонов
+
+    Для них используй ``icon=safe_icon('NAME')`` напрямую вместо
+    ``**inu_icon('NAME')`` — иначе TypeError при попытке отрисовки."""
+    if not USE_CUSTOM_ICONS:
+        return {'icon': safe_icon(name)}
+    try:
+        from ..data import icon_previews
+        pid = icon_previews.get(name.lower())
+    except Exception:
+        pid = 0
+    if pid:
+        return {'icon_value': pid}
+    return {'icon': safe_icon(name)}
+
+
 # ── Vertex color attribute helpers ───────────────────────────────────
 # Унифицированный API поверх mesh.color_attributes (3.2+) и старого
 # mesh.vertex_colors (≤ 3.1). Все вызывающие модули должны
@@ -234,6 +288,59 @@ def setup_mix_rgba_node(node, *, blend='MIX'):
     node.blend_type = blend
 
 
+# ── ShaderNodeMix socket resolvers ──────────────────────────────────
+# На 3.4+ ShaderNodeMix имеет ТРИ пары сокетов A/B (Float/Vector/Color).
+# `node.inputs['B']` возвращает ПЕРВЫЙ — Float — даже когда data_type=
+# 'RGBA' и Float-сокеты помечены как hidden/unavail. Прямое присваивание
+# `node.inputs['B'].default_value = (1,1,1,1)` падает с TypeError на
+# Float-сокете. Поэтому ниже хелперы фильтруют по `sock.type == 'RGBA'`,
+# которые надёжно достают именно Color-сокеты на любой версии.
+
+def _find_socket_by_name_and_type(sockets, name, sock_type):
+    """Helper: прокрутить collection (inputs/outputs) и вернуть первый
+    сокет с заданным `.name` и `.type`. None если не нашли."""
+    for sock in sockets:
+        if sock.name == name and sock.type == sock_type:
+            return sock
+    return None
+
+
+def mix_input_factor(node):
+    """Float Factor input (обоих node-типов одинаковый)."""
+    if HAS_SHADER_NODE_MIX:
+        s = _find_socket_by_name_and_type(node.inputs, 'Factor', 'VALUE')
+        if s is not None:
+            return s
+    return node.inputs.get('Fac') or node.inputs.get('Factor')
+
+
+def mix_input_a(node):
+    """Color A input (RGBA-typed) для blend operations."""
+    if HAS_SHADER_NODE_MIX:
+        s = _find_socket_by_name_and_type(node.inputs, 'A', 'RGBA')
+        if s is not None:
+            return s
+    return node.inputs.get('Color1') or node.inputs.get('A')
+
+
+def mix_input_b(node):
+    """Color B input (RGBA-typed) для blend operations."""
+    if HAS_SHADER_NODE_MIX:
+        s = _find_socket_by_name_and_type(node.inputs, 'B', 'RGBA')
+        if s is not None:
+            return s
+    return node.inputs.get('Color2') or node.inputs.get('B')
+
+
+def mix_output_result(node):
+    """Color Result output (RGBA-typed) для дальнейших links."""
+    if HAS_SHADER_NODE_MIX:
+        s = _find_socket_by_name_and_type(node.outputs, 'Result', 'RGBA')
+        if s is not None:
+            return s
+    return node.outputs.get('Color') or node.outputs.get('Result')
+
+
 class _MixWrap:
     """Унифицированный handle поверх ShaderNodeMix или ShaderNodeMixRGB.
 
@@ -263,11 +370,14 @@ def make_mix_rgba(nodes, *, blend='MIX', name=None, label=None):
         n = nodes.new('ShaderNodeMix')
         n.data_type = 'RGBA'
         n.blend_type = blend
+        # IMPORTANT: ShaderNodeMix has TRIPLE A/B/Result sockets per
+        # data_type. `n.inputs['A']` returns the Float A — broken for
+        # RGBA mode. Use the resolvers that filter by socket .type.
         wrap = _MixWrap(n,
-                        factor=n.inputs['Factor'],
-                        a=n.inputs['A'],
-                        b=n.inputs['B'],
-                        result=n.outputs['Result'])
+                        factor=mix_input_factor(n),
+                        a=mix_input_a(n),
+                        b=mix_input_b(n),
+                        result=mix_output_result(n))
     else:
         n = nodes.new('ShaderNodeMixRGB')
         n.blend_type = blend
@@ -290,10 +400,10 @@ def find_mix_rgba(nodes, name):
         return None
     if n.bl_idname == 'ShaderNodeMix':
         return _MixWrap(n,
-                        factor=n.inputs['Factor'],
-                        a=n.inputs['A'],
-                        b=n.inputs['B'],
-                        result=n.outputs['Result'])
+                        factor=mix_input_factor(n),
+                        a=mix_input_a(n),
+                        b=mix_input_b(n),
+                        result=mix_output_result(n))
     if n.bl_idname == 'ShaderNodeMixRGB':
         return _MixWrap(n,
                         factor=n.inputs['Fac'],
