@@ -193,9 +193,10 @@ class GTATOOLS_OT_weight_merge_start(bpy.types.Operator):
         bpy.ops.object.mode_set(mode='WEIGHT_PAINT')
 
         removed = len(backup_mesh.vertices) - len(obj.data.vertices)
+        cluster_word = T("cluster'ов,")
         self.report({'INFO'},
                     f"{T('Merged для weight paint:')} "
-                    f"{cluster_count} {T('cluster\'ов,')} "
+                    f"{cluster_count} {cluster_word} "
                     f"-{removed} {T('вершин. Не меняй геометрию!')}")
         return {'FINISHED'}
 
