@@ -60,6 +60,7 @@
 
 - 🪟 **Floater окна** — 5 свободно-плавающих GPU-окон для частых операций без скролла N-панели: **Info / Import-Export / Validation / Lighting / IDE-IPL-IMG**. SDF-шейдеры, своё AA, тема-адаптивная палитра, drag/resize/collapse/dock между workspace'ами. Кликабельная иконка в шапке каждой панели открывает соответствующий floater.
 - 🌐 **Поддержка GTA III / VC / SA** — авто-детект игры по содержимому файла, отдельные таблицы IDE flags / surface IDs / ped masks для каждой игры, корректное чтение/запись III/VC форматов IMG / DFF / COL / IPL / IDE
+- 📱 **Поддержка Mobile (iOS / Android)** — переключатель **PC / Mobile** в Scene settings. Импорт авто-детектит мобильные DFF по Native Data PLG чанкам и сам переключает сцену. Экспорт DFF умеет писать Mobile-вариант (флипнутые triangle winding'и + Native Data). Детект 4-файлового mobile-TXD контейнера (`.pvr` / `.etc` / `.dxt` + `.txt` / `.toc` / `.dat` / `.tmb`) с подсказкой на TxdGen для PVRTC/ETC1 конвертации
 - 🔍 **Game Validator** — кросс-файловые проверки IDE/IPL: пропущенные ссылки, дубликаты ID, конфликты, IMG-cross-check. Sub-panel «Анализ карты» с группировкой Critical / Warning / Info
 - 🧪 **Lint Profiles** — переключатель **STANDARD / FLA / STRICT / LENIENT** для File Scanner и Game Validator (FLA-сборки имеют другие лимиты, LENIENT для legacy-проектов)
 - 🖼️ **Texture Browser** — UIList со всеми текстурами из выбранного источника (IMG/папка/IDE-список), с превью, поиском и cross-ref «где используется»
