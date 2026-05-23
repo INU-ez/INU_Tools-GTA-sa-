@@ -194,10 +194,14 @@ class GTATOOLS_OT_weight_merge_start(bpy.types.Operator):
 
         removed = len(backup_mesh.vertices) - len(obj.data.vertices)
         cluster_word = T("cluster'ов,")
-        self.report({'INFO'},
-                    f"{T('Merged для weight paint:')} "
-                    f"{cluster_count} {cluster_word} "
-                    f"-{removed} {T('вершин. Не меняй геометрию!')}")
+        msg = "{prefix} {n} {word} -{r} {suffix}".format(
+            prefix=T('Merged для weight paint:'),
+            n=cluster_count,
+            word=cluster_word,
+            r=removed,
+            suffix=T('вершин. Не меняй геометрию!'),
+        )
+        self.report({'INFO'}, msg)
         return {'FINISHED'}
 
 
@@ -236,9 +240,9 @@ class GTATOOLS_OT_weight_merge_apply(bpy.types.Operator):
                 except RuntimeError:
                     pass
             self.report({'WARNING'},
-                        T(f"Backup '{backup_name}' исчез (вероятно Undo). "
-                          f"Тэг очищен, текущая геометрия принята как есть. "
-                          f"Изменения весов сделанные после Undo сохранены."))
+                        (T("Backup '{n}' исчез (вероятно Undo). ").format(n=backup_name)
+                         + T("Тэг очищен, текущая геометрия принята как есть. ")
+                         + T("Изменения весов сделанные после Undo сохранены.")))
             return {'FINISHED'}
 
         # Считываем веса с TEKУЩЕГО (merged) меша.
@@ -273,9 +277,12 @@ class GTATOOLS_OT_weight_merge_apply(bpy.types.Operator):
         # Восстанавливаем Weight Paint mode.
         bpy.ops.object.mode_set(mode='WEIGHT_PAINT')
 
-        self.report({'INFO'},
-                    f"{T('Веса применены к')} {updated} "
-                    f"{T('вершинам, split-геометрия восстановлена')}")
+        msg = "{prefix} {n} {suffix}".format(
+            prefix=T('Веса применены к'),
+            n=updated,
+            suffix=T('вершинам, split-геометрия восстановлена'),
+        )
+        self.report({'INFO'}, msg)
         return {'FINISHED'}
 
 
@@ -309,8 +316,8 @@ class GTATOOLS_OT_weight_merge_cancel(bpy.types.Operator):
             except RuntimeError:
                 pass
             self.report({'WARNING'},
-                        T(f"Backup '{backup_name}' исчез (вероятно Undo). "
-                          f"Тэг очищен, текущая геометрия принята как есть."))
+                        (T("Backup '{n}' исчез (вероятно Undo). ").format(n=backup_name)
+                         + T("Тэг очищен, текущая геометрия принята как есть.")))
             return {'FINISHED'}
 
         if obj.mode != 'OBJECT':

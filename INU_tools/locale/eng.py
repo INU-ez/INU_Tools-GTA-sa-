@@ -3187,4 +3187,14 @@ LANG = {
     "Нет анимированных pivot'ов — IFP будет пустой":
         "No animated pivots — IFP would be empty",
 
+    # === weight_paint_ops.py (Py 3.11 f-string fix) ===
+    "Backup '{n}' исчез (вероятно Undo). ":
+        "Backup '{n}' disappeared (Undo'd?). ",
+    'Тэг очищен, текущая геометрия принята как есть. ':
+        'Tag cleared, current geometry kept as-is. ',
+    'Тэг очищен, текущая геометрия принята как есть.':
+        'Tag cleared, current geometry kept as-is.',
+    'Изменения весов сделанные после Undo сохранены.':
+        'Weight changes made after Undo are preserved.',
+
 }
