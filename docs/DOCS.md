@@ -1921,173 +1921,285 @@ Source: [`core/paths.py`](INU_tools/core/paths.py) → `FLA4_MAGIC`, `FLA4_PATH_
 
 ```
 INU_tools/
-├── __init__.py          # Main addon: operators, panels, registration (~9700 lines)
-├── core/                # Pure Python parsers (no Blender dependency)
-│   ├── dff.py           # RenderWare DFF reader/writer
-│   ├── col.py           # COL1/2/3/4 collision format
-│   ├── txd.py           # TXD texture dictionary (numpy DXT decompression)
-│   ├── ide.py           # IDE definition file I/O
-│   ├── ipl.py           # IPL instance file I/O (text + binary)
-│   ├── ifp.py           # IFP animation format
-│   ├── img.py           # IMG v2 archive (read/write/extract/replace)
-│   ├── paths.py         # Path data (flight, track, nodes)
-│   ├── water.py         # water.dat format
-│   ├── gta_dat.py       # gta.dat/gta_int.dat parser
-│   └── rwbinary.py      # Low-level RenderWare binary helpers
-├── ops/                 # Blender operators (import/export logic)
-│   ├── dff_import.py    # DFF → Blender mesh
-│   ├── dff_export.py    # Blender mesh → DFF
-│   ├── col_import.py    # COL → Blender mesh
-│   ├── col_export.py    # Blender mesh → COL
-│   ├── txd_import.py    # TXD → Blender images
-│   ├── ide_import.py    # IDE → object properties
-│   ├── ide_export.py    # Object properties → IDE
-│   ├── ipl_import.py    # IPL → object placement
-│   ├── ipl_export.py    # Object transforms → IPL
-│   ├── ipl_sections.py  # IPL sections ↔ Blender collections
-│   ├── ifp_import.py    # IFP → Blender Actions
-│   ├── ifp_export.py    # Blender Actions → IFP
-│   ├── path_import.py   # Paths → Blender curves
-│   ├── path_export.py   # Blender curves → paths
-│   ├── water_import.py  # water.dat → mesh
-│   ├── water_export.py  # Mesh → water.dat
-│   └── fx_preview.py    # 2DFX light preview visualization
-├── tools/               # Utility modules
-│   ├── txd_export.py    # TXD compilation (CPU/GPU)
-│   ├── prelight.py      # Vertex color baking & post-processing
-│   ├── col_light.py     # COL lighting preview & bake
-│   ├── uv_tools.py      # UV grid tools & panel
-│   └── model_utils.py   # Model detection by suffixes
+├── __init__.py                  # Addon entry: bl_info, registration, top-level props (~4400 lines)
+├── blender_manifest.toml        # extensions.blender.org manifest (id, version, permissions)
+├── scene_settings.py            # INUSceneSettings PropertyGroup (240 fields)
+│
+├── core/                        # Pure-Python parsers (no Blender dependency, unit-testable)
+│   ├── dff.py                   # RenderWare DFF reader/writer (Clump, Frame, Geometry, Skin/2DFX/BinMesh PLG)
+│   ├── col.py                   # COL1/2/3/4 collision format
+│   ├── txd.py                   # TXD texture dictionary (DXT1/3/5, RASTER_*, PAL8)
+│   ├── txd_mobile.py            # Mobile (iOS/Android) 4-file TXD container detection
+│   ├── dxt.py                   # Pure-numpy DXT1/BC3 encoder (replaces NVTT subprocess)
+│   ├── dxt_gpu.py               # Optional GPU compute-shader DXT path
+│   ├── ide.py                   # IDE definition file I/O
+│   ├── ide_flag_translate.py    # Per-game IDE flag bit translation (III/VC/SA)
+│   ├── ipl.py                   # IPL instance file I/O (text + binary)
+│   ├── ifp.py                   # IFP animation format (ANP3 / ANPK / ANP2)
+│   ├── img.py                   # IMG v2 / v1 archive (read/write/extract/replace)
+│   ├── paths.py                 # paths.ipl + tracks.dat + nodes*.dat
+│   ├── water.py                 # water.dat (vertex quads + types)
+│   ├── gta_dat.py               # gta.dat / gta_int.dat / default.dat parser
+│   ├── fxp.py                   # effects.fxp parser/writer (FXSystem/FXEmitter/FXCurve)
+│   ├── cst.py                   # CST text COL format (Steve's editor)
+│   ├── rwbinary.py              # Low-level RenderWare binary chunk helpers
+│   ├── validate.py              # Pre-export sanity checks (quaternions, paintjob pairs, …)
+│   ├── file_lint.py             # On-disk DFF/COL/TXD crash-pattern linter
+│   ├── lint_profile.py          # STANDARD / FLA / STRICT / LENIENT profiles
+│   ├── map_lint.py              # Cross-file IDE↔IPL validator
+│   ├── game_versions.py         # III / VC / SA detection by file signatures
+│   ├── surface_translate.py     # COL surface ID translation tables (per-game)
+│   ├── ped_mask_translate.py    # Ped mask bit mapping (III/VC/SA)
+│   ├── texture_index.py         # Fast IMG/TXD texture inventory
+│   ├── bitmap_diff.py           # Find orphaned images/materials in .blend
+│   └── vc_layers.py             # Vertex-color layers — naming + composite math
+│
+├── ops/                         # Blender operators (51 modules, ~140 operators total)
+│   ├── floater/                 # GPU-rendered free-floating windows package
+│   │   ├── base.py              # Floater base class + modal + draw handler
+│   │   ├── theme.py             # Palette/radius/sizes pulled from current Blender theme
+│   │   ├── gpu_shaders.py       # SDF rounded-rect + icon shaders
+│   │   ├── text_atlas.py        # BLF glyph atlas via baked texture
+│   │   ├── widgets.py           # _draw_button / toggle / slider / dropdown / box
+│   │   ├── layout_solver.py     # Mini UILayout port (Column/Row/Box solver)
+│   │   ├── info.py              # Info floater
+│   │   ├── ie.py                # Import/Export floater
+│   │   ├── validation.py        # Validation floater
+│   │   ├── lighting.py          # Lighting floater
+│   │   └── iii.py               # IDE/IPL/IMG floater
+│   ├── dff_import.py, dff_export.py       # DFF ↔ Blender mesh (rigged + 2DFX + multi-game)
+│   ├── col_import.py, col_export.py       # COL ↔ Blender (mesh + sphere/box empties)
+│   ├── cst_import.py, cst_export.py       # CST text COL format
+│   ├── txd_import.py, txd_export.py       # TXD ↔ Blender Images
+│   ├── ide_import.py, ide_export.py       # IDE ↔ object props
+│   ├── ipl_import.py, ipl_export.py       # IPL ↔ object placement
+│   ├── ipl_sections.py                    # IPL Cull/Garage/Enex/Pickup/Cars/Auzo/Jump/Zone/Occl
+│   ├── ifp_import.py, ifp_export.py       # IFP ↔ Blender Actions
+│   ├── ifp_ops.py                         # IFP batch / range-apply
+│   ├── img_ops.py                         # IMG archive ops (extract / rebuild / scan)
+│   ├── inu_export.py                      # File → Export → INU Export (unified dialog)
+│   ├── map_ops.py                         # Import Map + map region scan + bbox
+│   ├── map_analyzer_ops.py                # Cross-file Map Analyzer (Game Validator)
+│   ├── id_manager_ops.py                  # ID Manager (model_id allocation, FLA range)
+│   ├── ide_ipl.py                         # IDE/IPL helper ops
+│   ├── effects_ops.py                     # 2DFX presets + particle effects + attach/detach
+│   ├── particle_sim.py                    # 30 Hz particle viewport simulator
+│   ├── fx_preview.py                      # 2DFX static preview (billboards / corona / shadow)
+│   ├── animobj_ops.py                     # Animated Map Object (empty-rig flow)
+│   ├── ik_rig.py                          # Skinned ped IK rig + FK↔IK bake
+│   ├── frame_hierarchy.py                 # Frame Hierarchy Editor (DFF frame tree)
+│   ├── vehicle.py                         # Vehicle helpers (damage variants, _ok/_dam)
+│   ├── paintjob_ops.py                    # Vehicle paintjob pairs
+│   ├── light_ops.py                       # Prelight bake + preview + scatter (45 ops)
+│   ├── prelight_preset_ops.py             # Prelight preset save/load/apply
+│   ├── texture_ops.py                     # Material texture management
+│   ├── texture_browser_ops.py             # Texture Browser UIList
+│   ├── col_surface_ops.py                 # COL surface assignment + day/night light
+│   ├── water_import.py, water_export.py   # water.dat ↔ mesh
+│   ├── water_geometry_ops.py              # Water quad creation helpers
+│   ├── path_import.py, path_export.py     # paths.ipl + nodes*.dat ↔ Blender curves
+│   ├── path_curves.py                     # Path curve helpers (segment ops)
+│   ├── world_ops.py                       # World-space operators (track export, toggle viz)
+│   ├── radar_ops.py                       # X Radar Maker (minimap tiles)
+│   ├── build_library_ops.py               # Asset Library builder operator
+│   ├── object_utils_ops.py                # Generic object utilities (reset xform, hide by type)
+│   ├── check.py                           # Check panel ops (vertex / n-gon / materials)
+│   ├── validate_scene.py                  # Pre-export validation + auto-fix ops
+│   ├── file_scanner_ops.py                # On-disk DFF/COL/TXD lint operator
+│   ├── graph_keys_ops.py                  # Graph editor key utilities
+│   ├── weight_paint_ops.py                # Weight paint helpers (start/apply/cancel merge)
+│   ├── onboarding_ops.py                  # First-launch onboarding flow
+│   └── viewport_floater.py                # Floater lifecycle host (register/cleanup/restore)
+│
+├── tools/                       # Utility modules (Blender-aware helpers)
+│   ├── txd_export.py            # TXD compile pipeline (CPU/GPU/parallel)
+│   ├── prelight.py              # Vertex-color bake + scatter + smooth + post-FX
+│   ├── col_light.py             # COL light preview + bake
+│   ├── uv_tools.py              # UV grid tools (panel in UV Editor)
+│   ├── model_utils.py           # DFF/LOD/COL detection by suffix, MapGroup
+│   ├── map_export.py            # Unified scene → IPL+IDE+DFF+COL+TXD pipeline
+│   ├── build_library.py         # Asset Library builder (worker-side)
+│   ├── compat.py                # Blender version-feature flags + shader-node-mix shim
+│   ├── user_data.py             # bpy.utils.extension_path_user helper
+│   ├── profiles.py              # N-sidebar layout profiles (JSON)
+│   ├── profiler.py              # Lightweight performance probe
+│   ├── bitmaps_manager.py       # Bitmap browser / unused cleanup
+│   ├── gta_material_panel.py    # GTA Material panel (SURFACE/EFFECTS/PIPELINE)
+│   ├── vehicle_scale.py         # Vehicle proportion helper
+│   └── vc_layers.py             # Vertex Color Layers (Blender-side PropertyGroup + UIList)
+│
+├── ui/                          # UI infrastructure (panels + layout system)
+│   ├── panels.py                # All N-sidebar / Properties panels
+│   ├── registry.py              # Zone-based panel order (single source of truth)
+│   ├── layout_rules.py          # Blender-native layout metrics (widget_unit, box_pad, …)
+│   └── library_panel.py         # Asset Library builder panel
+│
 ├── data/
-│   ├── surface_materials.py  # 179 GTA SA surface types
-│   └── id_manager.py         # Model ID allocation
-└── locale/
-    ├── __init__.py       # Translation loader
-    └── eng.py            # English translations
+│   ├── surface_materials.py     # 179 GTA SA surface types
+│   ├── material_presets.py      # Material preset bundles (used by SURFACE/EFFECTS tabs)
+│   ├── id_manager.py            # Model ID allocation state
+│   ├── icon_previews.py         # bpy.utils.previews collection for PNG icons
+│   ├── icons/                   # Lucide / native PNG icon bake (used by floaters)
+│   ├── fonts/                   # Inter font atlas for floater text rendering
+│   ├── fx_textures/             # Corona/shadow textures for 2DFX preview
+│   ├── presets/                 # Bundled prelight + paintjob JSON presets
+│   └── models/                  # Bundled DFFs (Army.dff, Admiral.dff for Shift+A menu)
+│
+├── locale/
+│   ├── __init__.py              # T() function + active language picker
+│   ├── eng.py                   # English translations (2049 keys)
+│   └── spa.py                   # Spanish translations (2370 keys)
+│
+└── scripts/
+    └── build_library_worker.py  # Subprocess for Asset Library build (background Blender)
 ```
 
 ### Core Modules
 
 #### dff.py — RenderWare DFF Format
-Reads/writes RenderWare binary streams. Handles: Clump, Frame List, Geometry List, Geometry (vertices, normals, UV, vertex colors), Material List, Material, Texture, Atomic, Skin PLG, 2DFX PLG, BinMesh PLG.
+Reads/writes RenderWare binary streams. Supports: Clump, Frame List, Geometry List, Geometry (vertices, normals, UV, vertex colors), Material List, Material, Texture, Atomic, **Skin PLG** (bone weights), **2DFX PLG** (Light / Particle / Ped Attractor / Sun Glare entries), **BinMesh PLG**, **MatFX PLG** (env map / bump map / reflections), **UV Animation Dictionary** (chunk 0x2B), **Native Data PLG** (mobile geometry), **HAnim PLG** (bone hierarchy), **breakable objects** (chunk 0x253F2FD). Round-trip preserves non-Clump first chunks (e.g. UV anim dict).
 
 #### col.py — Collision Format
-Supports COL1, COL2, COL3 (GTA SA default), COL4. Reads/writes: mesh faces, vertices, face groups, spheres, boxes, surface properties (material, flags, brightness, light).
+Supports COL1, COL2, COL3 (GTA SA default), COL4. Reads/writes: mesh faces, vertices, face groups, **spheres**, **boxes** (with `display_type='CUBE'` empties), surface properties (material, flags, brightness, day/night light nibbles).
 
-#### txd.py — Texture Dictionary
-Numpy-accelerated DXT decompression. Handles: DXT1, DXT3, DXT5, RASTER_8888, RASTER_888 (32-bit BGRX), RASTER_565, RASTER_1555, RASTER_4444, PAL8 (paletted). Platform: D3D8/D3D9.
+#### txd.py + dxt.py — Texture Dictionary
+Pure-numpy DXT1/BC3 encoder/decoder (~7× faster than NVTT). Handles DXT1, DXT3, DXT5, RASTER_8888, RASTER_888 (32-bit BGRX), RASTER_565, RASTER_1555, RASTER_4444, PAL8 (paletted). Platform: D3D8/D3D9. Optional `dxt_gpu.py` for compute-shader path.
 
-#### ide.py — Item Definition
-All sections: objs (static), tobj (timed), anim (animated), cars (vehicles), peds (pedestrians), weap (weapons), hier (hierarchy), txdp (TXD parents).
+#### txd_mobile.py — Mobile TXD container
+Detects the 4-file mobile container (`.pvr` / `.etc` / `.dxt` + `.txt` / `.toc` / `.dat` / `.tmb`). Pixel decode delegated to TxdGen (no in-tree PVRTC/ETC1 codec).
+
+#### ide.py + ide_flag_translate.py — Item Definition
+All sections: objs (static), tobj (timed), anim (animated), cars (vehicles), peds (pedestrians), weap (weapons), hier (hierarchy), txdp (TXD parents). Per-game flag bit translation in `ide_flag_translate.py` — same logical flag (e.g. "drawlast") has different bit positions in III/VC/SA.
 
 #### ipl.py — Item Placement
-All sections: inst (instances), cull (cull zones), grge (garages), enex (entry/exit), pick (pickups), cars (parked vehicles), auzo (audio zones), jump (stunt jumps), occl (occlusion), tcyc (time cycle), zone (map zones). Supports binary IPL (`bnry` header).
+All sections: inst (instances), cull (cull zones), grge (garages), enex (entry/exit), pick (pickups), cars (parked vehicles), auzo (audio zones), jump (stunt jumps), occl (occlusion), tcyc (time cycle), zone (map zones). Supports both **text** and **binary** IPL (`bnry` header). FLA `real_interior` (12-th column) optional.
 
-#### img.py — IMG v2 Archive
-`ImgReader` context manager for fast sequential reads. Functions: `read_directory`, `extract_file`, `replace_or_add`, `remove_file`, `create_img`. Sector-aligned (2048 bytes).
+#### img.py — IMG Archive
+v2 (GTA SA) and v1 (GTA III/VC). `ImgReader` context manager for fast sequential reads. Functions: `read_directory`, `extract_file`, `replace_or_add`, `remove_file`, `create_img`. Sector-aligned (2048 bytes).
+
+#### ifp.py — Animation Format
+Three sub-formats: **ANP3** (SA), **ANPK** (III/VC), **ANP2** (custom). `source_format` is preserved on round-trip. KF time is in **seconds** canonically; importer converts.
+
+#### paths.py — Path Data
+- `paths.ipl` — vehicle/pedestrian path text format (pre-compiled)
+- `tracks.dat` — train tracks
+- `nodes*.dat` — compiled binary path nodes (vehicle / ped / navi) with FLA4 extension support and structured `navi_links` / `link_lengths` / `path_intersections` post-link tail
+
+#### fxp.py — Particle Effects File
+Pure-text effects.fxp parser. Dataclass hierarchy: `FXFile → FXSystem → FXEmitter → FXInfoBlock`. Curves stored as `FXCurve` with piecewise-linear `sample(t)`. CRLF output preserved. `load_cached(path)` with mtime-based invalidation.
+
+#### water.py — water.dat
+Quad definitions with per-vertex flow speed (X/Y/Z) and water type (0–3). MTA round-trip compatible.
 
 #### gta_dat.py — Game Data
-Parses `gta.dat` and `gta_int.dat`. Extracts IDE/IPL/IMG paths. `extract_regions()` returns folder names from MAPS directory for dynamic region filtering.
+Parses `gta.dat`, `gta_int.dat`, `default.dat`. Extracts IDE/IPL/IMG paths in declaration order. `extract_regions()` returns folder names from MAPS directory for dynamic region filtering.
+
+#### game_versions.py — Multi-game detection
+Detects III / VC / SA by file content signatures (RW version, IPL header markers, IDE column counts). `game_of_scene(scene)` returns the active game; `game_of_file(path)` for stand-alone detection.
+
+#### file_lint.py + lint_profile.py + map_lint.py — Linting
+- `file_lint.py` — on-disk DFF/COL/TXD scanner; emits `LintIssue(code, severity, file, message)` records.
+- `lint_profile.py` — STANDARD / FLA / STRICT / LENIENT profiles override default thresholds + post-filter issues by code/severity.
+- `map_lint.py` — cross-file IDE↔IPL validator (orphan references, duplicate IDs, IMG cross-verify).
+
+#### vc_layers.py — Vertex Color Layers
+Pure-logic naming and composite math (Photoshop-style layers). `recompose_stack(mesh, scope)` blends `VCL_<scope>_*` layers into `Day` / `Night` base attributes.
+
+#### rwbinary.py — RenderWare Chunk Helpers
+Low-level utilities used by dff/txd/col writers: chunk header pack/unpack, alignment, RW version encoding.
+
+#### validate.py — Pre-export Sanity Checks
+Quaternion normalisation, paintjob `_ok ↔ _dam` pair checks, modulate-color sanity, duplicate model_id detection.
 
 ### File Formats
 
 | Format | Extension | Description |
 |--------|-----------|-------------|
-| DFF | .dff | RenderWare model (geometry, materials, UV, vertex colors, 2DFX) |
-| COL | .col | Collision mesh with surface properties |
-| TXD | .txd | Texture archive (DXT compressed) |
+| DFF | .dff | RenderWare model (geometry, materials, UV, vertex colors, 2DFX, skin) |
+| COL | .col | Collision (COL1/2/3/4) mesh + sphere/box + surface props |
+| CST | .cst | Steve's COL Editor text format (twin of COL) |
+| TXD | .txd | Texture archive (DXT compressed, D3D8/D3D9) |
+| TXD mobile | (4 files) | `<name>.<fmt>.txt/.toc/.dat/.tmb` container (PVRTC/ETC1) |
 | IDE | .ide | Object definitions (text, comma-separated) |
 | IPL | .ipl | Object placement (text or binary with `bnry` header) |
-| IFP | .ifp | Skeletal animations |
-| IMG | .img | VER2 archive containing DFF/COL/TXD/IPL files |
+| IFP | .ifp | Skeletal animations (ANP3/ANPK/ANP2) |
+| IMG | .img | VER2 (SA) or VER1 (III/VC) archive |
+| FXP | .fxp | `effects.fxp` particle systems (text despite extension) |
 | water.dat | .dat | Water quad definitions |
-| paths.ipl | .ipl | Vehicle/pedestrian path definitions |
+| paths.ipl | .ipl | Vehicle / pedestrian path definitions |
 | tracks.dat | .dat | Train track definitions |
 | NODES*.dat | .dat | Compiled binary path nodes |
+| gta.dat | .dat | Master file listing IDE/IPL/IMG to load |
 
 ### Object Properties (INUObjectProps)
 
-Accessed via `obj.inu` on any Blender object.
+`obj.inu` — 102 fields. Grouped by feature:
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| type | Enum | OBJ | OBJ / COL / SHA / 2DFX / NON |
-| model_id | Int | 0 | GTA SA model ID |
-| txd_name | String | "" | Texture dictionary name |
-| draw_distance | Float | 300.0 | Render distance |
-| ide_flags | Int | 0 | IDE flags (bitfield) |
-| interior_id | Int | 0 | Interior ID (0=exterior) |
-| lod_index | Int | -1 | LOD model index (-1=none) |
-| pipeline | Enum | NONE | NONE / Building / Reflections / Custom |
-| light | Bool | True | rpGEOMETRYLIGHT flag |
-| modulate_color | Bool | True | rpGEOMETRYMODULATEMATERIALCOLOR flag |
-| export_normals | Bool | True | Export vertex normals |
-| export_binsplit | Bool | True | Export BinMesh PLG |
-| uv_map1/2 | Bool | True | Export UV maps |
-| day_cols / night_cols | Bool | True | Export vertex colors |
-| effect_2dfx | Enum | LIGHT | 2DFX effect type |
-| color_2dfx | RGBA | (1,1,0.78,1) | 2DFX color |
-| preset_2dfx | Enum | DEFAULT | Light preset |
-| corona_tex_2dfx | Enum | coronastar | Corona texture (34 options) |
-| shadow_tex_2dfx | Enum | shad_exp | Shadow texture |
-| show_mode_2dfx | Enum | 0 | Display mode (6 options) |
-| flare_type_2dfx | Enum | 0 | Lens flare type (4 options) |
+**Core type & ID** (8) — `type` (OBJ/COL/SHA/2DFX/NON), `model_id`, `txd_name`, `col_name`, `lod_object` (round-trip), `draw_distance`, `lod_distance`, `interior_id`
+
+**IDE flags** (15) — per-flag booleans translated to per-game bits via `ide_flag_translate.py`: `flag_is_road`, `flag_draw_last`, `flag_additive`, `flag_no_zbuffer`, `flag_no_shadows`, `flag_no_backface`, `flag_damagable`, `flag_breakable`, `flag_is_tree`, `flag_is_palm`, `flag_glass_1`, `flag_glass_2`, `flag_garage_door`, `flag_no_flyer_col`, `flag_is_tag`
+
+**DFF export flags** (10) — `light`, `modulate_color`, `set_material_alpha`, `light_beam_asi`, `export_normals`, `export_binsplit`, `uv_map1`, `uv_map2`, `day_cols`, `night_cols`
+
+**Pipeline** (2) — `pipeline` (NONE / 0x53F2009A Vehicle / 0x53F20098 D/N / 0x53F2009C Building / PED), `real_interior` (FLA optional)
+
+**Breakable Object** (5) — `breakable_enable`, `breakable_vertices_count`, `breakable_faces_count`, `breakable_materials_count`, `breakable_position_index`
+
+**2DFX Light** (15) — `effect_2dfx`, `color_2dfx`, `preset_2dfx`, `corona_size_2dfx`, `shadow_size_2dfx`, `corona_tex_2dfx` (34 textures), `shadow_tex_2dfx`, `show_mode_2dfx`, `flare_type_2dfx`, plus custom props for `corona_far_clip`, `pointlight_range`, `shadow_z_distance`, `flags1/2`, `look_direction`
+
+**2DFX Particle** (28) — see [Particle Effects](#particle-effects-effectsfxp) — `particle_effect_2dfx`, `particle_emitter_index`, `particle_texture`, `particle_src_blend`/`dst_blend`, `particle_color_start/mid/end`, `particle_size_start/end`, `particle_life`/`life_bias`, `particle_rate`, `particle_speed`/`speed_bias`, `particle_direction`, `particle_angle_min`/`max`, `particle_volume`/`volume_radius`/`volume_min`, `particle_force`, `particle_friction`, `particle_wind`, `particle_noise`, `particle_jitter`, `particle_rotation_min`/`max`, `particle_rotspeed_min`/`max`, `particle_ground_bounce`/`speedmult`, `particle_sys_length`/`playmode`/`culldist`, `particle_curve_name`, `particle_curve_keys` (CollectionProperty), `particle_curve_key_index`
+
+**Vehicle damage** (3) — `damage_kind` (none/ok/dam), `damage_pair_name`, `damage_role`
+
+**Prelight V-offset** (3) — `gtatools_v_offset_day`, `gtatools_v_offset_night`, `gtatools_v_offset_auto`
 
 ### Material Properties (INUMaterialProps)
 
-Accessed via `mat.inu` on any Blender material.
+`mat.inu` — 38 fields. Grouped by tab:
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| ambient | Float | 1.0 | Ambient shading |
-| col_mat_index | Int | 0 | COL surface ID (0-178) |
-| col_flags | Int | 0 | Collision flags |
-| col_brightness | Int | 0 | Surface brightness |
-| col_light | Int | 0 | Surface light |
-| col_day_light | Int | 0 | Day light (0-15) |
-| col_night_light | Int | 0 | Night light (0-15) |
-| export_env_map | Bool | False | Enable environment map |
-| env_map_tex | String | "" | Env map texture name |
-| env_map_coef | Float | 0.5 | Env map coefficient |
-| export_bump_map | Bool | False | Enable bump map |
-| bump_map_tex | String | "" | Bump map texture name |
-| export_reflection | Bool | False | Enable reflection |
-| reflection_scale_x/y | Float | 0 | Reflection scale |
-| reflection_offset_x/y | Float | 0 | Reflection offset |
-| reflection_intensity | Float | 0 | Reflection intensity |
-| export_specular | Bool | False | Enable specular |
-| specular_level | Float | 0 | Specular level |
-| specular_texture | String | "" | Specular texture |
-| export_dual_tex | Bool | False | Enable dual texture |
-| dual_tex_src_blend | Enum | 5 | Source blend mode (11 options) |
-| dual_tex_dst_blend | Enum | 6 | Dest blend mode (11 options) |
-| dual_tex_texture | String | "" | Second texture name |
-| export_animation | Bool | False | Enable UV animation |
-| animation_name | String | "" | Animation name |
+**SURFACE** (7) — `col_mat_index` (0-178), `col_flags`, `col_brightness`, `col_light` (legacy raw byte), `col_day_light` (0-15), `col_night_light` (0-15), `col_pipeline`
 
-### Scene Properties
+**EFFECTS — Env Map** (3) — `export_env_map`, `env_map_tex`, `env_map_coef`
 
-All scene-level settings stored in `bpy.types.Scene`:
+**EFFECTS — Bump Map** (3) — `export_bump_map`, `bump_map_tex`, `bump_map_coef`
 
-| Property | Description |
-|----------|-------------|
-| gtatools_game_root | GTA SA installation path |
-| gtatools_ide_path | Active IDE file path |
-| gtatools_ipl_path | Active IPL file path |
-| gtatools_img_path | Active IMG archive path |
-| gtatools_map_region | Map region (dynamic from gta.dat) |
-| gtatools_img_skip_lod | Skip LOD on import |
-| gtatools_img_load_txd | Auto-load TXD on import |
-| gtatools_img_export_dff/col/txd | IMG export toggles |
-| gtatools_export_all_dff/col/lod/txd | Export All toggles |
-| gtatools_export_pipeline | Pipeline selection |
-| gtatools_txd_auto_import | Auto TXD on DFF import |
-| gtatools_texture_path1/2 | Texture search paths |
-| gtatools_dxt_backend | DXT compression backend (numpy / numpy_fast / gpu) |
-| gtatools_suffix_dff/lod/col | Model suffixes |
-| gtatools_bake_ambient/intensity/gamma | Prelight settings |
-| gtatools_bake_shadows | Enable shadow baking |
-| gtatools_water_flag | Water type (0-3) |
-| gtatools_water_speed_x/y/z | Water flow speed |
-| gtatools_uv_grid_cols/rows | UV grid dimensions |
+**EFFECTS — Specular** (3) — `export_specular`, `specular_level`, `specular_texture`
+
+**EFFECTS — Reflection** (5) — `export_reflection`, `reflection_scale_x/y`, `reflection_offset_x/y`, `reflection_intensity`
+
+**EFFECTS — Dual Texture** (4) — `export_dual_tex`, `dual_tex_src_blend` (11 options), `dual_tex_dst_blend` (11 options), `dual_tex_texture`
+
+**EFFECTS — UV Animation** (2) — `export_animation`, `animation_name`
+
+**PIPELINE & misc** (11) — `ambient`, `material_tab` (active tab persisted per-material), Modulate Color params (`modulate_mix`, `modulate_contrast`, `modulate_gamma`), etc.
+
+### Scene Properties (INUSceneSettings)
+
+Accessed via `scene.inu_settings`. 240 fields registered as a single `PointerProperty` (one slot on `bpy.types.Scene`). Grouped by feature area:
+
+**Paths** — `gtatools_game_root`, `gtatools_ide_path`, `gtatools_ipl_path`, `gtatools_img_path`, `gtatools_texture_path1/2`, `gtatools_map_region`
+
+**Multi-game** — `gtatools_game_version` (III/VC/SA), `gtatools_platform` (PC/MOBILE)
+
+**Import options** — `gtatools_img_skip_lod`, `gtatools_img_load_txd`, `gtatools_map_load_col`, `gtatools_txd_auto_import`, `gtatools_dxt_backend` (numpy / numpy_fast / gpu)
+
+**Export options** — `gtatools_img_export_dff/col/txd`, `gtatools_export_all_dff/col/lod/txd`, `gtatools_export_pipeline`, `gtatools_suffix_dff/lod/col`
+
+**Prelight** — `gtatools_bake_ambient/intensity/gamma`, `gtatools_bake_shadows`, `gtatools_modulate_mode`, `gtatools_modulate_mix/contrast/gamma`, `gtatools_prelight_preset`
+
+**2DFX & Particles** — `gtatools_particle_sim` (live simulation toggle), `gtatools_show_dff_flags`, `gtatools_show_suffix_settings`
+
+**Water** — `gtatools_water_flag` (0-3), `gtatools_water_speed_x/y/z`
+
+**UV Editor** — `gtatools_uv_grid_cols/rows`, `gtatools_uv_lock_islands`, `gtatools_uv_align_position`
+
+**Validation / Lint** — `gtatools_lint_profile` (STANDARD/FLA/STRICT/LENIENT), `gtatools_validate_*` collections (issues list)
+
+**Floater state** — per-floater `inu_floater_*_visible`/`_collapsed`/`_locked`/`_workspace`/`_x`/`_y` (six props × 5 floaters = 30 fields)
+
+**ID Manager** — `gtatools_id_pool_*`, `gtatools_id_manager_*` (preset state, conflict detection)
+
+**Map analyzer / texture browser** — input sources (IDE/IPL/IMG lists), result UILists, filters
+
+> Full list: see `INU_tools/scene_settings.py:405` (class `INUSceneSettings`). Property bag is intentionally consolidated into one PropertyGroup — extensions.blender.org review requirement (no per-prop `bpy.types.Scene.x = …` direct attachments).
 

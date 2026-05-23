@@ -2237,173 +2237,285 @@ END
 
 ```
 INU_tools/
-├── __init__.py          # Основной файл: операторы, панели, регистрация (~9700 строк)
-├── core/                # Чистый Python (без Blender)
-│   ├── dff.py           # RenderWare DFF чтение/запись
-│   ├── col.py           # COL1/2/3/4 формат коллизий
-│   ├── txd.py           # TXD текстуры (numpy DXT декомпрессия)
-│   ├── ide.py           # IDE файлы определений
-│   ├── ipl.py           # IPL файлы размещения (текст + бинарный)
-│   ├── ifp.py           # IFP анимации
-│   ├── img.py           # IMG v2 архивы (чтение/запись/извлечение/замена)
-│   ├── paths.py         # Пути (flight, track, nodes)
-│   ├── water.py         # water.dat формат
-│   ├── gta_dat.py       # Парсер gta.dat/gta_int.dat
-│   └── rwbinary.py      # RenderWare бинарные утилиты
-├── ops/                 # Операторы Blender (логика импорта/экспорта)
-│   ├── dff_import.py    # DFF → меш Blender
-│   ├── dff_export.py    # Меш Blender → DFF
-│   ├── col_import.py    # COL → меш Blender
-│   ├── col_export.py    # Меш Blender → COL
-│   ├── txd_import.py    # TXD → изображения Blender
-│   ├── ide_import.py    # IDE → свойства объектов
-│   ├── ide_export.py    # Свойства → IDE
-│   ├── ipl_import.py    # IPL → размещение объектов
-│   ├── ipl_export.py    # Трансформы → IPL
-│   ├── ipl_sections.py  # Секции IPL ↔ коллекции Blender
-│   ├── ifp_import.py    # IFP → Actions Blender
-│   ├── ifp_export.py    # Actions → IFP
-│   ├── path_import.py   # Пути → кривые Blender
-│   ├── path_export.py   # Кривые → пути
-│   ├── water_import.py  # water.dat → меш
-│   ├── water_export.py  # Меш → water.dat
-│   └── fx_preview.py    # 2DFX превью визуализация
-├── tools/               # Утилиты
-│   ├── txd_export.py    # Компиляция TXD (CPU/GPU)
-│   ├── prelight.py      # Запекание vertex colors и пост-обработка
-│   ├── col_light.py     # COL Light превью и запекание
-│   ├── uv_tools.py      # UV инструменты и панель
-│   └── model_utils.py   # Определение моделей по суффиксам
+├── __init__.py                  # Точка входа: bl_info, регистрация, top-level props (~4400 строк)
+├── blender_manifest.toml        # Манифест для extensions.blender.org (id, версия, permissions)
+├── scene_settings.py            # INUSceneSettings PropertyGroup (240 полей)
+│
+├── core/                        # Чистый Python (без Blender, поддаётся unit-тестам)
+│   ├── dff.py                   # RenderWare DFF reader/writer (Clump/Frame/Geometry/Skin/2DFX/BinMesh PLG)
+│   ├── col.py                   # COL1/2/3/4 формат коллизии
+│   ├── txd.py                   # TXD текстуры (DXT1/3/5, RASTER_*, PAL8)
+│   ├── txd_mobile.py            # Mobile (iOS/Android) 4-файловый TXD-контейнер
+│   ├── dxt.py                   # Pure-numpy DXT1/BC3 энкодер (заменяет NVTT subprocess)
+│   ├── dxt_gpu.py               # Опциональный GPU compute-shader DXT
+│   ├── ide.py                   # IDE definition file I/O
+│   ├── ide_flag_translate.py    # Перевод IDE-флагов между играми (III/VC/SA)
+│   ├── ipl.py                   # IPL placement (text + binary)
+│   ├── ifp.py                   # IFP анимации (ANP3 / ANPK / ANP2)
+│   ├── img.py                   # IMG v2 / v1 архивы (read/write/extract/replace)
+│   ├── paths.py                 # paths.ipl + tracks.dat + nodes*.dat
+│   ├── water.py                 # water.dat (vertex quads + types)
+│   ├── gta_dat.py               # gta.dat / gta_int.dat / default.dat парсер
+│   ├── fxp.py                   # effects.fxp parser/writer (FXSystem/FXEmitter/FXCurve)
+│   ├── cst.py                   # CST текстовый COL формат (Steve's editor)
+│   ├── rwbinary.py              # Low-level RW chunk helpers
+│   ├── validate.py              # Pre-export sanity checks
+│   ├── file_lint.py             # On-disk DFF/COL/TXD crash-pattern линтер
+│   ├── lint_profile.py          # STANDARD / FLA / STRICT / LENIENT профили
+│   ├── map_lint.py              # Cross-file IDE↔IPL валидатор
+│   ├── game_versions.py         # III / VC / SA детект по сигнатурам файлов
+│   ├── surface_translate.py     # Per-game таблицы трансляции surface ID
+│   ├── ped_mask_translate.py    # Ped mask bit mapping (III/VC/SA)
+│   ├── texture_index.py         # Быстрая инвентаризация IMG/TXD текстур
+│   ├── bitmap_diff.py           # Поиск orphaned images/materials в .blend
+│   └── vc_layers.py             # Vertex-color layers — naming + composite math
+│
+├── ops/                         # Операторы Blender (51 модуль, ~140 операторов всего)
+│   ├── floater/                 # GPU-рендеренные плавающие окна (package)
+│   │   ├── base.py              # Базовый класс Floater + modal + draw handler
+│   │   ├── theme.py             # Палитра/радиусы/размеры из текущей темы Blender
+│   │   ├── gpu_shaders.py       # SDF rounded-rect + icon шейдеры
+│   │   ├── text_atlas.py        # BLF glyph atlas через baked текстуру
+│   │   ├── widgets.py           # _draw_button / toggle / slider / dropdown / box
+│   │   ├── layout_solver.py     # Mini UILayout port (Column/Row/Box solver)
+│   │   ├── info.py              # Info floater
+│   │   ├── ie.py                # Import/Export floater
+│   │   ├── validation.py        # Validation floater
+│   │   ├── lighting.py          # Lighting floater
+│   │   └── iii.py               # IDE/IPL/IMG floater
+│   ├── dff_import.py, dff_export.py       # DFF ↔ Blender mesh (rigged + 2DFX + multi-game)
+│   ├── col_import.py, col_export.py       # COL ↔ Blender (mesh + sphere/box empties)
+│   ├── cst_import.py, cst_export.py       # CST текстовый COL формат
+│   ├── txd_import.py, txd_export.py       # TXD ↔ Blender Images
+│   ├── ide_import.py, ide_export.py       # IDE ↔ object props
+│   ├── ipl_import.py, ipl_export.py       # IPL ↔ object placement
+│   ├── ipl_sections.py                    # IPL Cull/Garage/Enex/Pickup/Cars/Auzo/Jump/Zone/Occl
+│   ├── ifp_import.py, ifp_export.py       # IFP ↔ Blender Actions
+│   ├── ifp_ops.py                         # IFP batch / range-apply
+│   ├── img_ops.py                         # IMG архивные операции (extract / rebuild / scan)
+│   ├── inu_export.py                      # File → Export → INU Export (унифицированный диалог)
+│   ├── map_ops.py                         # Import Map + сканирование региона карты + bbox
+│   ├── map_analyzer_ops.py                # Cross-file Map Analyzer (Game Validator)
+│   ├── id_manager_ops.py                  # ID Manager (model_id allocation, FLA range)
+│   ├── ide_ipl.py                         # IDE/IPL helper операторы
+│   ├── effects_ops.py                     # 2DFX presets + particle effects + attach/detach
+│   ├── particle_sim.py                    # 30 Hz viewport симулятор частиц
+│   ├── fx_preview.py                      # 2DFX статическое превью (billboards / corona / shadow)
+│   ├── animobj_ops.py                     # Animated Map Object (empty-rig флоу)
+│   ├── ik_rig.py                          # Skinned ped IK rig + FK↔IK bake
+│   ├── frame_hierarchy.py                 # Frame Hierarchy Editor (DFF frame tree)
+│   ├── vehicle.py                         # Vehicle helpers (damage variants, _ok/_dam)
+│   ├── paintjob_ops.py                    # Vehicle paintjob pairs
+│   ├── light_ops.py                       # Prelight bake + preview + scatter (45 операторов)
+│   ├── prelight_preset_ops.py             # Prelight preset save/load/apply
+│   ├── texture_ops.py                     # Material texture management
+│   ├── texture_browser_ops.py             # Texture Browser UIList
+│   ├── col_surface_ops.py                 # COL surface assignment + day/night light
+│   ├── water_import.py, water_export.py   # water.dat ↔ mesh
+│   ├── water_geometry_ops.py              # Water quad creation helpers
+│   ├── path_import.py, path_export.py     # paths.ipl + nodes*.dat ↔ Blender curves
+│   ├── path_curves.py                     # Path curve helpers (segment ops)
+│   ├── world_ops.py                       # World-space операторы (track export, toggle viz)
+│   ├── radar_ops.py                       # X Radar Maker (minimap tiles)
+│   ├── build_library_ops.py               # Asset Library builder оператор
+│   ├── object_utils_ops.py                # Generic object утилиты (reset xform, hide by type)
+│   ├── check.py                           # Check панель операторов (vertex / n-gon / materials)
+│   ├── validate_scene.py                  # Pre-export валидация + auto-fix операторы
+│   ├── file_scanner_ops.py                # On-disk DFF/COL/TXD lint оператор
+│   ├── graph_keys_ops.py                  # Graph editor key утилиты
+│   ├── weight_paint_ops.py                # Weight paint helpers (start/apply/cancel merge)
+│   ├── onboarding_ops.py                  # First-launch onboarding флоу
+│   └── viewport_floater.py                # Floater lifecycle host (register/cleanup/restore)
+│
+├── tools/                       # Утилиты (Blender-aware helpers)
+│   ├── txd_export.py            # TXD compile pipeline (CPU/GPU/parallel)
+│   ├── prelight.py              # Vertex-color bake + scatter + smooth + post-FX
+│   ├── col_light.py             # COL light preview + bake
+│   ├── uv_tools.py              # UV grid tools (панель в UV Editor)
+│   ├── model_utils.py           # DFF/LOD/COL детект по суффиксу, MapGroup
+│   ├── map_export.py            # Унифицированный scene → IPL+IDE+DFF+COL+TXD pipeline
+│   ├── build_library.py         # Asset Library builder (worker-side)
+│   ├── compat.py                # Blender version-feature flags + shader-node-mix shim
+│   ├── user_data.py             # bpy.utils.extension_path_user helper
+│   ├── profiles.py              # N-sidebar layout profiles (JSON)
+│   ├── profiler.py              # Lightweight performance probe
+│   ├── bitmaps_manager.py       # Bitmap browser / unused cleanup
+│   ├── gta_material_panel.py    # GTA Material панель (SURFACE/EFFECTS/PIPELINE)
+│   ├── vehicle_scale.py         # Vehicle proportion helper
+│   └── vc_layers.py             # Vertex Color Layers (Blender-side PropertyGroup + UIList)
+│
+├── ui/                          # UI инфраструктура (панели + layout система)
+│   ├── panels.py                # Все N-sidebar / Properties панели
+│   ├── registry.py              # Zone-based panel order (single source of truth)
+│   ├── layout_rules.py          # Blender-native layout метрики (widget_unit, box_pad, …)
+│   └── library_panel.py         # Asset Library builder панель
+│
 ├── data/
-│   ├── surface_materials.py  # 179 типов поверхностей GTA SA
-│   └── id_manager.py         # Менеджер ID моделей
-└── locale/
-    ├── __init__.py       # Загрузчик переводов
-    └── eng.py            # Английские переводы
+│   ├── surface_materials.py     # 179 типов поверхностей GTA SA
+│   ├── material_presets.py      # Material preset bundles (используется SURFACE/EFFECTS табами)
+│   ├── id_manager.py            # Состояние Model ID allocation
+│   ├── icon_previews.py         # bpy.utils.previews collection для PNG-иконок
+│   ├── icons/                   # Lucide / native PNG-бэйк иконок (для floater'ов)
+│   ├── fonts/                   # Inter font atlas для рендеринга текста floater'ов
+│   ├── fx_textures/             # Corona/shadow текстуры для 2DFX preview
+│   ├── presets/                 # Bundled prelight + paintjob JSON-пресеты
+│   └── models/                  # Bundled DFF'ы (Army.dff, Admiral.dff для Shift+A меню)
+│
+├── locale/
+│   ├── __init__.py              # T() функция + active language picker
+│   ├── eng.py                   # Английские переводы (2049 ключей)
+│   └── spa.py                   # Испанские переводы (2370 ключей)
+│
+└── scripts/
+    └── build_library_worker.py  # Subprocess для Asset Library build (background Blender)
 ```
 
 ### Модули ядра
 
 #### dff.py — RenderWare DFF
-Чтение/запись бинарных RW потоков. Обрабатывает: Clump, Frame List, Geometry List, Geometry (вершины, нормали, UV, vertex colors), Material List, Material, Texture, Atomic, Skin PLG, 2DFX PLG, BinMesh PLG.
+Чтение/запись бинарных RW потоков. Поддерживает: Clump, Frame List, Geometry List, Geometry (вершины, нормали, UV, vertex colors), Material List, Material, Texture, Atomic, **Skin PLG** (веса костей), **2DFX PLG** (Light / Particle / Ped Attractor / Sun Glare), **BinMesh PLG**, **MatFX PLG** (env map / bump / reflections), **UV Animation Dictionary** (chunk 0x2B), **Native Data PLG** (mobile геометрия), **HAnim PLG** (bone hierarchy), **breakable objects** (chunk 0x253F2FD). Round-trip сохраняет не-Clump первые чанки.
 
 #### col.py — Формат коллизий
-Поддержка COL1, COL2, COL3 (стандарт GTA SA), COL4. Чтение/запись: полигоны, вершины, группы, сферы, боксы, свойства поверхностей (материал, флаги, яркость, свет).
+Поддержка COL1, COL2, COL3 (стандарт GTA SA), COL4. Чтение/запись: полигоны, вершины, группы, **сферы**, **боксы** (через empties с `display_type='CUBE'`), свойства поверхностей (материал, флаги, яркость, day/night light nibbles).
 
-#### txd.py — Текстуры
-Numpy-ускоренная DXT декомпрессия. Форматы: DXT1, DXT3, DXT5, RASTER_8888, RASTER_888 (32-bit BGRX), RASTER_565, RASTER_1555, RASTER_4444, PAL8 (палитра). Платформа: D3D8/D3D9.
+#### txd.py + dxt.py — Текстуры
+Pure-numpy DXT1/BC3 энкодер/декодер (~7× быстрее NVTT). Форматы: DXT1, DXT3, DXT5, RASTER_8888, RASTER_888 (32-bit BGRX), RASTER_565, RASTER_1555, RASTER_4444, PAL8. Платформа: D3D8/D3D9. Опциональный `dxt_gpu.py` для compute-shader пути.
 
-#### ide.py — Определения объектов
-Все секции: objs (статика), tobj (по времени), anim (анимированные), cars (транспорт), peds (пешеходы), weap (оружие), hier (иерархия), txdp (родители TXD).
+#### txd_mobile.py — Mobile TXD контейнер
+Детект 4-файлового мобильного контейнера (`.pvr` / `.etc` / `.dxt` + `.txt` / `.toc` / `.dat` / `.tmb`). Pixel-декодирование делегировано TxdGen (нет in-tree PVRTC/ETC1 кодека).
 
-#### ipl.py — Размещение объектов
-Все секции: inst (экземпляры), cull (зоны отсечения), grge (гаражи), enex (входы/выходы), pick (подбираемые), cars (припаркованные), auzo (аудио зоны), jump (трюковые прыжки), occl (окклюзия), tcyc (циклы времени), zone (зоны карты). Поддержка бинарного IPL (`bnry`).
+#### ide.py + ide_flag_translate.py — Item Definition
+Все секции: objs (статика), tobj (time-based), anim (анимированные), cars (транспорт), peds (пешеходы), weap (оружие), hier (иерархия), txdp (TXD-родители). Per-game перевод бит флагов в `ide_flag_translate.py` — один логический флаг (например "drawlast") имеет разные битовые позиции в III/VC/SA.
 
-#### img.py — IMG v2 архивы
-Контекстный менеджер `ImgReader` для быстрого последовательного чтения. Функции: `read_directory`, `extract_file`, `replace_or_add`, `remove_file`, `create_img`. Выравнивание по секторам (2048 байт).
+#### ipl.py — Item Placement
+Все секции: inst (экземпляры), cull (zones), grge (гаражи), enex (input/exit), pick (pickups), cars (припаркованные), auzo (audio zones), jump (трюковые прыжки), occl (occlusion), tcyc (time cycle), zone (zones). Поддерживает **текстовый** и **бинарный** IPL (`bnry`). FLA `real_interior` (12-я колонка) опционально.
 
-#### gta_dat.py — Данные игры
-Парсинг `gta.dat` и `gta_int.dat`. Извлечение путей IDE/IPL/IMG. `extract_regions()` возвращает имена папок из директории MAPS для динамической фильтрации регионов.
+#### img.py — IMG архивы
+v2 (GTA SA) и v1 (GTA III/VC). Context manager `ImgReader` для быстрого sequential чтения. Функции: `read_directory`, `extract_file`, `replace_or_add`, `remove_file`, `create_img`. Sector-aligned (2048 байт).
+
+#### ifp.py — Анимации
+Три суб-формата: **ANP3** (SA), **ANPK** (III/VC), **ANP2** (custom). `source_format` сохраняется при round-trip. KF time канонически в **секундах**; импортёр конвертирует.
+
+#### paths.py — Данные путей
+- `paths.ipl` — vehicle/pedestrian path текстовый формат
+- `tracks.dat` — ж/д пути
+- `nodes*.dat` — скомпилированные бинарные path nodes (vehicle / ped / navi) с FLA4 расширением и структурированным `navi_links` / `link_lengths` / `path_intersections` post-link tail
+
+#### fxp.py — Particle Effects File
+Pure-text effects.fxp парсер. Иерархия dataclass: `FXFile → FXSystem → FXEmitter → FXInfoBlock`. Кривые хранятся как `FXCurve` с piecewise-linear `sample(t)`. CRLF output сохраняется. `load_cached(path)` с invalidation по mtime.
+
+#### water.py — water.dat
+Quad-определения с per-vertex flow speed (X/Y/Z) и water type (0–3). MTA round-trip совместим.
+
+#### gta_dat.py — Game Data
+Парсинг `gta.dat`, `gta_int.dat`, `default.dat`. Извлекает пути IDE/IPL/IMG в порядке объявления. `extract_regions()` возвращает имена папок из MAPS для динамического region filtering.
+
+#### game_versions.py — Multi-game детект
+Детектит III / VC / SA по сигнатурам контента (RW версия, IPL header markers, IDE column counts). `game_of_scene(scene)` возвращает активную игру; `game_of_file(path)` для stand-alone детекта.
+
+#### file_lint.py + lint_profile.py + map_lint.py — Линтинг
+- `file_lint.py` — on-disk DFF/COL/TXD сканер; выдаёт `LintIssue(code, severity, file, message)` записи.
+- `lint_profile.py` — STANDARD / FLA / STRICT / LENIENT профили переопределяют дефолтные пороги + post-filter issues по code/severity.
+- `map_lint.py` — cross-file IDE↔IPL валидатор (висячие ссылки, дубликаты ID, IMG cross-verify).
+
+#### vc_layers.py — Vertex Color Layers
+Pure-logic naming и composite math (Photoshop-style layers). `recompose_stack(mesh, scope)` блендит `VCL_<scope>_*` слои в `Day` / `Night` базовые атрибуты.
+
+#### rwbinary.py — RenderWare Chunk Helpers
+Low-level утилиты для dff/txd/col writer'ов: chunk header pack/unpack, выравнивание, RW version encoding.
+
+#### validate.py — Pre-export Sanity Checks
+Нормализация кватернионов, проверка paintjob `_ok ↔ _dam` пар, sanity модулюции цвета, детект дубликатов model_id.
 
 ### Форматы файлов
 
 | Формат | Расширение | Описание |
 |--------|-----------|----------|
-| DFF | .dff | Модель RenderWare (геометрия, материалы, UV, vertex colors, 2DFX) |
-| COL | .col | Коллизия с типами поверхностей |
-| TXD | .txd | Архив текстур (DXT сжатие) |
-| IDE | .ide | Определения объектов (текст, через запятую) |
-| IPL | .ipl | Размещение объектов (текст или бинарный с `bnry`) |
-| IFP | .ifp | Скелетные анимации |
-| IMG | .img | VER2 архив с DFF/COL/TXD/IPL файлами |
-| water.dat | .dat | Определения водных квадов |
-| paths.ipl | .ipl | Пути транспорта/пешеходов |
+| DFF | .dff | Модель RenderWare (геометрия, материалы, UV, vertex colors, 2DFX, skin) |
+| COL | .col | Коллизия (COL1/2/3/4) меш + сфера/бокс + свойства поверхности |
+| CST | .cst | Steve's COL Editor текстовый формат (twin COL) |
+| TXD | .txd | Архив текстур (DXT-сжатие, D3D8/D3D9) |
+| TXD mobile | (4 файла) | `<name>.<fmt>.txt/.toc/.dat/.tmb` контейнер (PVRTC/ETC1) |
+| IDE | .ide | Определения объектов (текст, comma-separated) |
+| IPL | .ipl | Размещение объектов (текст или binary с `bnry`) |
+| IFP | .ifp | Скелетные анимации (ANP3/ANPK/ANP2) |
+| IMG | .img | VER2 (SA) или VER1 (III/VC) архив |
+| FXP | .fxp | `effects.fxp` particle systems (текст, несмотря на расширение) |
+| water.dat | .dat | Определения water quads |
+| paths.ipl | .ipl | Пути транспорта / пешеходов |
 | tracks.dat | .dat | Ж/д пути |
-| NODES*.dat | .dat | Скомпилированные бинарные ноды путей |
+| NODES*.dat | .dat | Скомпилированные бинарные path nodes |
+| gta.dat | .dat | Master-файл со списком IDE/IPL/IMG для загрузки |
 
 ### Свойства объекта (INUObjectProps)
 
-Доступ через `obj.inu` на любом объекте Blender.
+`obj.inu` — 102 поля. Сгруппировано по фиче:
 
-| Свойство | Тип | По умолчанию | Описание |
-|----------|-----|-------------|----------|
-| type | Enum | OBJ | OBJ / COL / SHA / 2DFX / NON |
-| model_id | Int | 0 | ID модели GTA SA |
-| txd_name | String | "" | Имя словаря текстур |
-| draw_distance | Float | 300.0 | Дальность прорисовки |
-| ide_flags | Int | 0 | Флаги IDE (битовое поле) |
-| interior_id | Int | 0 | ID интерьера (0=экстерьер) |
-| lod_index | Int | -1 | Индекс LOD модели (-1=нет) |
-| pipeline | Enum | NONE | NONE / Building / Reflections / Custom |
-| light | Bool | True | Флаг rpGEOMETRYLIGHT |
-| modulate_color | Bool | True | Флаг rpGEOMETRYMODULATEMATERIALCOLOR |
-| export_normals | Bool | True | Экспорт нормалей вершин |
-| export_binsplit | Bool | True | Экспорт BinMesh PLG |
-| uv_map1/2 | Bool | True | Экспорт UV карт |
-| day_cols / night_cols | Bool | True | Экспорт vertex colors |
-| effect_2dfx | Enum | LIGHT | Тип 2DFX эффекта |
-| color_2dfx | RGBA | (1,1,0.78,1) | Цвет 2DFX |
-| preset_2dfx | Enum | DEFAULT | Пресет света |
-| corona_tex_2dfx | Enum | coronastar | Текстура короны (34 варианта) |
-| shadow_tex_2dfx | Enum | shad_exp | Текстура тени |
-| show_mode_2dfx | Enum | 0 | Режим показа (6 вариантов) |
-| flare_type_2dfx | Enum | 0 | Тип блика (4 варианта) |
+**Core type & ID** (8) — `type` (OBJ/COL/SHA/2DFX/NON), `model_id`, `txd_name`, `col_name`, `lod_object` (round-trip), `draw_distance`, `lod_distance`, `interior_id`
+
+**IDE-флаги** (15) — per-flag булевы транслируемые в per-game биты через `ide_flag_translate.py`: `flag_is_road`, `flag_draw_last`, `flag_additive`, `flag_no_zbuffer`, `flag_no_shadows`, `flag_no_backface`, `flag_damagable`, `flag_breakable`, `flag_is_tree`, `flag_is_palm`, `flag_glass_1`, `flag_glass_2`, `flag_garage_door`, `flag_no_flyer_col`, `flag_is_tag`
+
+**DFF export флаги** (10) — `light`, `modulate_color`, `set_material_alpha`, `light_beam_asi`, `export_normals`, `export_binsplit`, `uv_map1`, `uv_map2`, `day_cols`, `night_cols`
+
+**Pipeline** (2) — `pipeline` (NONE / 0x53F2009A Vehicle / 0x53F20098 D/N / 0x53F2009C Building / PED), `real_interior` (FLA опционально)
+
+**Breakable Object** (5) — `breakable_enable`, `breakable_vertices_count`, `breakable_faces_count`, `breakable_materials_count`, `breakable_position_index`
+
+**2DFX Light** (15) — `effect_2dfx`, `color_2dfx`, `preset_2dfx`, `corona_size_2dfx`, `shadow_size_2dfx`, `corona_tex_2dfx` (34 текстуры), `shadow_tex_2dfx`, `show_mode_2dfx`, `flare_type_2dfx`, плюс custom props для `corona_far_clip`, `pointlight_range`, `shadow_z_distance`, `flags1/2`, `look_direction`
+
+**2DFX Particle** (28) — см. [Particle Effects](#particle-effects-effectsfxp) — `particle_effect_2dfx`, `particle_emitter_index`, `particle_texture`, `particle_src_blend`/`dst_blend`, `particle_color_start/mid/end`, `particle_size_start/end`, `particle_life`/`life_bias`, `particle_rate`, `particle_speed`/`speed_bias`, `particle_direction`, `particle_angle_min`/`max`, `particle_volume`/`volume_radius`/`volume_min`, `particle_force`, `particle_friction`, `particle_wind`, `particle_noise`, `particle_jitter`, `particle_rotation_min`/`max`, `particle_rotspeed_min`/`max`, `particle_ground_bounce`/`speedmult`, `particle_sys_length`/`playmode`/`culldist`, `particle_curve_name`, `particle_curve_keys` (CollectionProperty), `particle_curve_key_index`
+
+**Vehicle damage** (3) — `damage_kind` (none/ok/dam), `damage_pair_name`, `damage_role`
+
+**Prelight V-offset** (3) — `gtatools_v_offset_day`, `gtatools_v_offset_night`, `gtatools_v_offset_auto`
 
 ### Свойства материала (INUMaterialProps)
 
-Доступ через `mat.inu` на любом материале Blender.
+`mat.inu` — 38 полей. Сгруппировано по табу:
 
-| Свойство | Тип | По умолчанию | Описание |
-|----------|-----|-------------|----------|
-| ambient | Float | 1.0 | Ambient освещение |
-| col_mat_index | Int | 0 | ID поверхности COL (0-178) |
-| col_flags | Int | 0 | Флаги коллизии |
-| col_brightness | Int | 0 | Яркость поверхности |
-| col_light | Int | 0 | Свет поверхности |
-| col_day_light | Int | 0 | Дневной свет (0-15) |
-| col_night_light | Int | 0 | Ночной свет (0-15) |
-| export_env_map | Bool | False | Включить карту окружения |
-| env_map_tex | String | "" | Текстура env map |
-| env_map_coef | Float | 0.5 | Коэффициент env map |
-| export_bump_map | Bool | False | Включить bump map |
-| bump_map_tex | String | "" | Текстура bump map |
-| export_reflection | Bool | False | Включить отражение |
-| reflection_scale_x/y | Float | 0 | Масштаб отражения |
-| reflection_offset_x/y | Float | 0 | Смещение отражения |
-| reflection_intensity | Float | 0 | Интенсивность отражения |
-| export_specular | Bool | False | Включить specular |
-| specular_level | Float | 0 | Уровень specular |
-| specular_texture | String | "" | Текстура specular |
-| export_dual_tex | Bool | False | Включить dual texture |
-| dual_tex_src_blend | Enum | 5 | Режим смешивания Source (11 вариантов) |
-| dual_tex_dst_blend | Enum | 6 | Режим смешивания Dest (11 вариантов) |
-| dual_tex_texture | String | "" | Имя второй текстуры |
-| export_animation | Bool | False | Включить UV анимацию |
-| animation_name | String | "" | Имя анимации |
+**SURFACE** (7) — `col_mat_index` (0-178), `col_flags`, `col_brightness`, `col_light` (legacy raw byte), `col_day_light` (0-15), `col_night_light` (0-15), `col_pipeline`
 
-### Свойства сцены
+**EFFECTS — Env Map** (3) — `export_env_map`, `env_map_tex`, `env_map_coef`
 
-Все настройки сцены хранятся в `bpy.types.Scene`:
+**EFFECTS — Bump Map** (3) — `export_bump_map`, `bump_map_tex`, `bump_map_coef`
 
-| Свойство | Описание |
-|----------|----------|
-| gtatools_game_root | Путь к установке GTA SA |
-| gtatools_ide_path | Активный IDE файл |
-| gtatools_ipl_path | Активный IPL файл |
-| gtatools_img_path | Активный IMG архив |
-| gtatools_map_region | Регион карты (динамически из gta.dat) |
-| gtatools_img_skip_lod | Пропускать LOD при импорте |
-| gtatools_img_load_txd | Автозагрузка TXD при импорте |
-| gtatools_img_export_dff/col/txd | Переключатели экспорта IMG |
-| gtatools_export_all_dff/col/lod/txd | Переключатели Export All |
-| gtatools_export_pipeline | Выбор Pipeline |
-| gtatools_txd_auto_import | Авто TXD при импорте DFF |
-| gtatools_texture_path1/2 | Пути поиска текстур |
-| gtatools_dxt_backend | Бэкенд DXT-сжатия (numpy / numpy_fast / gpu) |
-| gtatools_suffix_dff/lod/col | Суффиксы моделей |
-| gtatools_bake_ambient/intensity/gamma | Настройки прелайта |
-| gtatools_bake_shadows | Тени при запекании |
-| gtatools_water_flag | Тип воды (0-3) |
-| gtatools_water_speed_x/y/z | Скорость течения |
-| gtatools_uv_grid_cols/rows | Размеры UV сетки |
+**EFFECTS — Specular** (3) — `export_specular`, `specular_level`, `specular_texture`
+
+**EFFECTS — Reflection** (5) — `export_reflection`, `reflection_scale_x/y`, `reflection_offset_x/y`, `reflection_intensity`
+
+**EFFECTS — Dual Texture** (4) — `export_dual_tex`, `dual_tex_src_blend` (11 вариантов), `dual_tex_dst_blend` (11 вариантов), `dual_tex_texture`
+
+**EFFECTS — UV Animation** (2) — `export_animation`, `animation_name`
+
+**PIPELINE & misc** (11) — `ambient`, `material_tab` (активный таб сохраняется per-material), параметры Modulate Color (`modulate_mix`, `modulate_contrast`, `modulate_gamma`), и т.д.
+
+### Свойства сцены (INUSceneSettings)
+
+Доступ через `scene.inu_settings`. 240 полей зарегистрированы как один `PointerProperty` (один slot на `bpy.types.Scene`). Сгруппировано по фиче:
+
+**Пути** — `gtatools_game_root`, `gtatools_ide_path`, `gtatools_ipl_path`, `gtatools_img_path`, `gtatools_texture_path1/2`, `gtatools_map_region`
+
+**Multi-game** — `gtatools_game_version` (III/VC/SA), `gtatools_platform` (PC/MOBILE)
+
+**Опции импорта** — `gtatools_img_skip_lod`, `gtatools_img_load_txd`, `gtatools_map_load_col`, `gtatools_txd_auto_import`, `gtatools_dxt_backend` (numpy / numpy_fast / gpu)
+
+**Опции экспорта** — `gtatools_img_export_dff/col/txd`, `gtatools_export_all_dff/col/lod/txd`, `gtatools_export_pipeline`, `gtatools_suffix_dff/lod/col`
+
+**Прелайт** — `gtatools_bake_ambient/intensity/gamma`, `gtatools_bake_shadows`, `gtatools_modulate_mode`, `gtatools_modulate_mix/contrast/gamma`, `gtatools_prelight_preset`
+
+**2DFX и Частицы** — `gtatools_particle_sim` (live simulation toggle), `gtatools_show_dff_flags`, `gtatools_show_suffix_settings`
+
+**Вода** — `gtatools_water_flag` (0-3), `gtatools_water_speed_x/y/z`
+
+**UV Editor** — `gtatools_uv_grid_cols/rows`, `gtatools_uv_lock_islands`, `gtatools_uv_align_position`
+
+**Validation / Lint** — `gtatools_lint_profile` (STANDARD/FLA/STRICT/LENIENT), `gtatools_validate_*` коллекции (issues list)
+
+**Floater state** — per-floater `inu_floater_*_visible`/`_collapsed`/`_locked`/`_workspace`/`_x`/`_y` (шесть props × 5 floater'ов = 30 полей)
+
+**ID Manager** — `gtatools_id_pool_*`, `gtatools_id_manager_*` (preset state, conflict detection)
+
+**Map analyzer / texture browser** — input sources (IDE/IPL/IMG lists), UILists результатов, фильтры
+
+> Полный список: см. `INU_tools/scene_settings.py:405` (класс `INUSceneSettings`). Property bag намеренно консолидирован в одном PropertyGroup — требование review extensions.blender.org (никаких per-prop `bpy.types.Scene.x = …` direct attachments).
 
