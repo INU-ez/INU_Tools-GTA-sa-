@@ -903,97 +903,337 @@ Create and configure 2DFX effects that export into DFF files.
 
 ## Particle Effects (effects.fxp)
 
-Full GTA SA `effects.fxp` editor — text file with 82 particle systems (fire, smoke, blood, sparks, water, etc.).
+Full editor for GTA SA's `effects.fxp` — a plain-text file containing **82 particle systems** (fire, smoke, blood, sparks, water, gun shells, etc.) that the engine plays when an object with a `Particle` 2DFX entry is loaded.
 
-**File location:** `GTA SA/models/effects.fxp` (auto-detected from game root)
+**File location:** `<game_root>/models/effects.fxp` — auto-resolved from `gtatools_game_root` Scene property.
+**Texture source:** `<game_root>/models/particle.txd` — sprite atlas referenced by emitters via the `TEXTURE` field.
 
-### Basic workflow
+### End-to-end pipeline
 
-1. Create a 2DFX Particle via 2DFX panel → **Particle**
-2. In particle properties, pick an effect from dropdown (`prt_blood`, `prt_fire`, `prt_water_splash`, ...)
-3. Enable **Simulation** — particles start flying in viewport
-4. Edit parameters — changes are visible instantly
-5. **Save to effects.fxp** — auto-backup `.fxp.bak` is created on first write
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│  1. SETTING UP THE SCENE                                              │
+│  Game Root → effects.fxp is parsed → dropdown populated with 82 names │
+└────────────────────────────────────────────────────────────────────────┘
+              │
+              ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│  2. ATTACHING A PARTICLE TO A MODEL                                   │
+│  2DFX panel → Create Effect → Particle → Empty appears at cursor      │
+│  Pick effect name from particle_effect_2dfx dropdown                  │
+│  Select DFF mesh + Shift-click Empty → Attach to Model button         │
+└────────────────────────────────────────────────────────────────────────┘
+              │
+              ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│  3. EDITING THE EMITTER                                               │
+│  Properties → emitter Empty → INU Particle Properties                 │
+│  Tweak texture, blend, colors, size, life, force, etc.                │
+│  Add curves for time-varying params (size growth, color fade)         │
+└────────────────────────────────────────────────────────────────────────┘
+              │
+              ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│  4. VIEWPORT PREVIEW (live)                                           │
+│  Refresh Preview → particles spawn in viewport at 30 FPS              │
+│  Camera-facing billboards, real color/alpha-over-life shader          │
+└────────────────────────────────────────────────────────────────────────┘
+              │
+              ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│  5. SAVING TO effects.fxp                                             │
+│  Save Particle Effect → write edits back (auto .fxp.bak on first run) │
+│  Optionally Overwrite checkbox to update an existing system           │
+│  Or save as a new system name (e.g. prt_fire_custom_1)                │
+└────────────────────────────────────────────────────────────────────────┘
+              │
+              ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│  6. EXPORTING THE DFF                                                 │
+│  Export DFF → particle Empty's `2dfx_effect_name` is written into     │
+│  the DFF's 2DFX section as a string referencing the system name       │
+└────────────────────────────────────────────────────────────────────────┘
+              │
+              ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│  7. IN-GAME                                                           │
+│  Replace <game>/models/gta3.img DFF + drop effects.fxp into models/   │
+│  Engine reads 2DFX → looks up effect by name → plays the system       │
+└────────────────────────────────────────────────────────────────────────┘
+```
 
-### Emitter parameters
+### 1. Setting up the scene
 
-**Sprite & blending:**
-| Parameter | Description |
-|-----------|-------------|
-| Texture | Sprite name from `particle.txd` (sphere, smoke, fire, etc.) |
-| SrcBlend / DstBlend | D3D9 blend factors (4=SrcAlpha, 5=InvSrcAlpha, 2=One for additive) |
+Set **Game Root** in **N-sidebar → GTA Tools → Import Map** (collapsible block). The dropdown of available particle effects is fed by `<game_root>/models/effects.fxp`:
 
-**Color (start → end):**
-- Start, middle, end RGBA colors interpolated over particle lifetime
-- Middle color toggle for three-point interpolation
+- File is parsed once on first dropdown open and cached (key = path + mtime); re-parsed automatically when you save a new system.
+- If Game Root is empty or `effects.fxp` is missing — dropdown shows `<Game Root not set>` / `<effects.fxp not found>`.
+- Use **Reload effects.fxp** operator if you edited the file externally.
 
-**Size:**
-- Start and end size with smooth transition
+### 2. Attaching a particle to a model
 
-**Emission:**
-| Parameter | Description |
-|-----------|-------------|
-| Life | Particle lifetime in seconds |
-| Speed | Initial speed |
-| Direction | Emission direction vector |
-| Rate | Particles per second |
-| Angle | Cone spread angle |
-| Volume box | Spawn volume |
+A particle effect is bound to a mesh via a child **Empty** with a `Particle` 2DFX tag.
 
-**Physics:**
-| Parameter | Description |
-|-----------|-------------|
-| Force | Gravity force (XYZ vector) |
-| Friction | Air resistance |
-| Wind | Wind influence |
-| Noise | Perlin noise turbulence |
-| Jitter | Random jitter |
-| Ground bounce | Ground collision response |
+1. Open **N-sidebar → GTA Tools → 2DFX Effects** (or open the **2DFX floater** with the 🪟 icon).
+2. **Create Effect ▾ → Particle** — an Empty is created at the 3D cursor and tagged with `effect_2dfx = 'PARTICLE'`.
+3. With the Empty selected, open **Properties → Object → INU Tools: Model** → scroll to the **Particle Effect** dropdown. Pick a system name (e.g. `prt_blood`, `prt_fire_med`, `prt_smoke_huge`).
+4. **Attach to model:**
+   - Select the DFF mesh you want to attach the effect to.
+   - **Shift-click the particle Empty** so it becomes the active object (Empty active + mesh additionally selected).
+   - In the 2DFX panel click **Attach to Model** (`gtatools.attach_2dfx`).
+   - The Empty becomes a child of the mesh, world position is preserved.
 
-**System:**
-| Parameter | Description |
-|-----------|-------------|
-| LENGTH | Total system duration (seconds) |
-| PLAYMODE | Playback mode (0-3) |
-| CULLDIST | Culling distance for LOD |
-| Bounding sphere | Radius for culling |
+If you need to break the link later — click **Detach from Model** (single effect) or **Detach All from Mesh** (batch unparent of every 2DFX child of the selected mesh).
 
-### Curves (keyframes)
+The Empty now references a system in `effects.fxp`. Its local transform relative to the parent mesh = spawn point + emission orientation in the model's local space.
 
-Any parameter can be **animated over particle lifetime** via keyframe curves:
+### 3. Editing the emitter
 
-1. In "Curves" section, pick a parameter (e.g. `SIZE.SIZEX` or `COLOUR.RED`)
-2. A list of keys appears with **+** and **-** buttons
-3. Each key is a `(TIME, VAL)` pair where TIME = 0..1 (normalized lifetime)
-4. After editing click **"Write curve to effects.fxp"**
+When a particle Empty is active, **Properties → Object → INU Particle Properties** exposes the full emitter:
 
-Example: for fire — size grows from 0.5 to 2.0, color transitions from yellow to red to black, alpha from 1.0 to 0.0.
+**Sprite & blending**
 
-### Operators
+| Property | Default | Description |
+|---|---|---|
+| `Texture` | from system | Sprite name in `particle.txd` (e.g. `sphere`, `smoke3`, `flame`) |
+| `SrcBlend` | 4 | D3D9 source blend factor (`4`=SrcAlpha for additive-alpha, `2`=One for pure additive) |
+| `DstBlend` | 5 | D3D9 destination blend factor (`5`=InvSrcAlpha) |
 
-| Operator | Description |
-|----------|-------------|
-| New Effect | Create new effect (cloned from current template) |
-| Delete Effect | Remove effect from effects.fxp |
-| Switch Emitter | Browse emitters within multi-emitter system (e.g. `prt_cardebris` has 4 emitters) |
-| Reload effects.fxp | Re-read file from disk (clear cache) |
-| Save to effects.fxp | Write edits back to file with auto-backup |
+> **Common blend recipes:** SrcAlpha + InvSrcAlpha = alpha-blended sprite (smoke, blood). One + One = additive (fire, magic glow). One + InvSrcAlpha = pre-multiplied (modern engines).
 
-### Simulation
+**Colors over lifetime**
 
-- **30 FPS** particle position updates via frame_change handler
-- Up to **64 particles per emitter** (shared mesh pool, memory efficient)
-- **Camera-facing billboards** via draw handler — particles always face viewport
-- **Vertex color emission** shader — real color/alpha by particle age
-- Simulation is **non-destructive** — DFF model is unchanged
+- `color_start` — RGBA at birth (time = 0)
+- `color_end` — RGBA at death (time = 1)
+- `color_mid_enabled` + `color_mid` + `color_mid_time` — optional third point for 3-stop interpolation (e.g. fire: yellow → red-orange → black)
 
-### Important notes
+**Size**
 
-> **When switching effects** all unsaved edits are reset — save first via **"Save to effects.fxp"**
+- `size_start` — particle size at birth (world units)
+- `size_end` — at death
 
-> **Backup:** on first write `effects.fxp.bak` is created next to the original — you can revert if something goes wrong
+**Emission**
 
-> **Particle textures** are stored in `particle.txd` (next to effects.fxp). Import the TXD into Blender to see sprites in materials browser
+| Property | Description |
+|---|---|
+| `life` | Particle lifetime in seconds (e.g. 1.5 for smoke, 0.3 for sparks) |
+| `life_bias` | ± random offset around base life |
+| `rate` | Particles per second |
+| `speed` | Initial speed (world units / sec) |
+| `speed_bias` | ± random offset |
+| `direction` | Emission direction (XYZ vector, normalised) |
+| `angle_min` / `angle_max` | Cone spread (radians, 0 = laser, π = full sphere) |
+| `volume` (XYZ extents) | Spawn box around origin |
+| `volume_radius` | Spawn sphere radius (overrides box when > 0) |
+| `volume_min` | Inner box (annular spawn for ring effects) |
+| `offset` | Spawn offset from emitter origin |
+| `rotation_min` / `rotation_max` | Initial sprite rotation (radians) |
+| `rotspeed_min` / `rotspeed_max` | Sprite spin speed |
+
+**Physics**
+
+| Property | Description |
+|---|---|
+| `force` | Constant force vector (gravity goes here, e.g. `(0, 0, -9.8)`) |
+| `friction` | Velocity damping (1.0 = no friction, 0.5 = strong drag) |
+| `wind` | Multiplier on engine wind vector (0 = no wind, 1 = full coupling) |
+| `noise` | Perlin-noise turbulence magnitude |
+| `jitter` | Per-frame random jitter (≠ noise — jitter is uncorrelated) |
+| `ground_bounce` | Collision response with ground plane (0 = pass through, 1 = full bounce) |
+| `ground_speedmult` | Velocity multiplier after bounce |
+
+**System (whole effect, not per-emitter)**
+
+| Property | Description |
+|---|---|
+| `sys_length` | Total system duration in seconds (0 = infinite, e.g. fire) |
+| `sys_playmode` | Playback mode: 0 = play once, 1 = loop, 2 = one-shot burst, 3 = continuous-with-fade |
+| `sys_culldist` | Distance at which the engine stops simulating (LOD cull) |
+
+### 4. Viewport preview & simulation
+
+Two visual feedback modes — **static preview** (default) and **live simulation** (opt-in).
+
+**Static preview** — a single camera-facing quad child of the Empty, textured with the effect's first emitter sprite and tinted with `color_start`. No animation, no spawning — just shows where the effect lives and what it looks like at birth.
+
+- Created automatically when you create a 2DFX Particle or pick an effect name.
+- Updated when you change the texture / color via **Refresh Preview** button (also fires automatically after `Switch Emitter` and `Save Particle Effect`).
+- Removed via **Remove Preview** button (or `gtatools.remove_2dfx_preview`).
+- Billboard rotation handled by a background timer that aligns the quad to the active 3D viewport's camera.
+
+**Live simulation** — actual GPU-driven particle simulator. Scene-wide toggle, runs at 30 Hz:
+
+- Toggle: **N-sidebar → 2DFX panel → Симуляция** checkbox (`▶` / `⏸` icon depending on state). Scene property `gtatools_particle_sim`.
+- On enable, registers a `bpy.app.timers` tick at `1/30 s` and walks every PARTICLE Empty in the scene.
+- Each Empty gets a child mesh `<empty_name>_psim` with a pool of up to **`MAX_PARTICLES_PER_EMITTER = 64`** quads.
+- Per-particle state (position, velocity, age, life) lives in module-level dicts — ephemeral, not saved to `.blend`.
+- Quads always face the active 3D viewport (orthonormal basis derived from `region_3d.view_rotation`).
+- Off-screen → particles tick but no mesh updates.
+- On disable, all `_psim` meshes are removed.
+
+> **Static preview** vs **simulation** can both be on at the same time — the preview is the «what does this effect look like in screenshots» reference, simulation is for tuning emission/forces in motion. Simulation is gated globally because each emitter consumes a small per-tick CPU cost (32 emitters × 64 particles × 30 Hz = ~60K vector ops/sec).
+
+### 5. Curves (parameter animation)
+
+Any per-particle parameter can be **animated over particle lifetime** with a piecewise-linear curve. Curves replace static values at runtime: e.g. instead of constant size, the game will sample size from the curve at each particle's normalised age.
+
+**Curve editor location:** scroll past the static properties to the **Particle Curves** section.
+
+**Workflow:**
+
+1. Pick a curve channel from the dropdown — `SIZE.SIZEX`, `COLOUR.RED`, `COLOUR.GREEN`, `COLOUR.BLUE`, `COLOUR.ALPHA`, `EMRATE`, `EMSPEED`, etc.
+2. The keyframe list appears with `+` (add row), `−` (remove row), and a UIList for selecting active row.
+3. Each row is a `(TIME, VAL)` pair:
+   - `TIME` ∈ `[0, 1]` — normalised particle age (0 = birth, 1 = death)
+   - `VAL` — channel value at that time
+4. Keys are sorted automatically on write.
+5. Click **Write Curve to effects.fxp** to persist this curve to disk.
+
+**Example — fire size growth:**
+
+```
+SIZE.SIZEX:
+  (0.00, 0.5)   ← birth: small ember
+  (0.30, 2.0)   ← peak flame
+  (1.00, 0.1)   ← death: dissipated
+```
+
+**Example — fire color fade:**
+
+```
+COLOUR.RED:    (0.0, 1.0) → (1.0, 0.3)
+COLOUR.GREEN:  (0.0, 0.8) → (1.0, 0.0)
+COLOUR.BLUE:   (0.0, 0.2) → (1.0, 0.0)
+COLOUR.ALPHA:  (0.0, 1.0) → (0.7, 0.5) → (1.0, 0.0)
+```
+
+> Curves OVERRIDE the static `color_start` / `color_end` / `size_start` / `size_end` values for that channel. To disable a curve, remove all its keys.
+
+### 6. Multi-emitter systems
+
+Many vanilla systems contain multiple emitters that play together. Example: `prt_cardebris` has 4 emitters (chunks, sparks, dust, smoke) for a single car crash effect.
+
+- **Switch Emitter ▾** dropdown in INU Particle Properties cycles between the system's emitters.
+- Each emitter has its own sprite, blend, colors, curves — they're independent.
+- When you save the effect, all emitters are written.
+- When you create a new effect via **New Effect**, only **one** emitter is created — to add more, edit `effects.fxp` directly or clone from a multi-emitter template.
+
+### 7. Saving to effects.fxp
+
+One save operator (`gtatools.save_particle_effect`) with two behaviours selected via a popup dialog:
+
+| Field | What it does |
+|---|---|
+| `effect_name` | Target system name. Defaults to the currently-selected effect — keep it the same to save in place, or type a new name to **clone** the current effect under that name. |
+| `overwrite` | When checked AND the target name already exists, the existing system is overwritten. When unchecked AND the name exists → operator errors out (safety net against accidental overwrite). Ignored when `effect_name` is new. |
+
+Plus two related operators:
+
+| Operator | What it does |
+|---|---|
+| **Particle Effect New** (`gtatools.particle_effect_new`) | Create a blank new effect from scratch (not a clone). Single emitter with a `sphere` texture, white color fading to alpha=0, life=1.0, rate=10. |
+| **Particle Effect Delete** (`gtatools.particle_effect_delete`) | Remove the currently-selected effect from `effects.fxp` after a confirmation dialog. |
+| **Reload effects.fxp** (`gtatools.reload_effects_fxp`) | Drop the in-memory FXP cache. Useful if you edited the file externally and need the dropdown / preview to re-read from disk. |
+
+**Save algorithm — what actually happens on click:**
+
+1. Re-reads `effects.fxp` from disk (not from cache — avoids stale state).
+2. If `effect_name` is **new** → deep-copies the current system, renames it, appends.
+3. If `effect_name` **exists** + `overwrite` checked → reuses the existing system in place.
+4. Calls `_apply_particle_props_to_emitter` which writes **only the fields that DIFFER** from the current emitter state (dirty check):
+   - Static fields (texture, blend, color, size, life, force, etc.) are compared one-by-one.
+   - Curves with more than one keyframe and matching the static value are **NOT touched** — preserves multi-keyframe animations the user hasn't edited.
+   - System header (`LENGTH`, `PLAYMODE`, `CULLDIST`) is dirty-checked separately.
+5. **No-op early exit:** if not cloning AND zero fields changed → message «No changes — file untouched», nothing written.
+6. **Auto-backup** on first actual write of the session — creates `effects.fxp.bak` (only if no `.bak` exists yet). Subsequent writes don't update the backup, so `.bak` is always «session start» state.
+7. Write file with CRLF line endings, then `clear_cache()` so the next dropdown open re-reads.
+
+**Saving a single curve** is separate — **Write Curve to FXP** (`gtatools.particle_curve_write`) writes ONLY the currently-edited curve channel (e.g. `COLOUR.RED`), leaving all other curves and scalar fields untouched. Use this for iterative curve tuning without the full-system save.
+
+> **Edit buffer behaviour:** when you switch the dropdown to a different effect, all unsaved edits are reset to the new system's values. **Save before switching**, or your changes are lost.
+
+### 8. Exporting the DFF
+
+The particle binding is stored on the Empty as a custom property `2dfx_effect_name = '<system_name>'`. DFF export reads this and writes a `PARTICLE` 2DFX entry into the DFF's 2DFX chunk: a **24-byte ASCII zero-padded string** containing the system name (truncated if longer than 24 chars).
+
+Nothing else needs to be exported — the particle parameters live in `effects.fxp`, not in the DFF.
+
+**Export path:** `File → Export → INU Export` (or N-panel → Export → DFF) → the DFF picks up every particle Empty parented to the mesh and emits one 2DFX entry per Empty.
+
+### 9. In-game
+
+1. Replace the model in `gta_sa/models/gta3.img` (use **IMG Export** to rebuild the archive with your DFF).
+2. Replace `gta_sa/models/effects.fxp` with the edited file.
+3. Backup vanilla files first (always).
+4. Run the game — particles play at the Empty's local position relative to the model, oriented along the emitter's local axes.
+
+> For testing on **MTA:SA** the workflow is the same, but particles only spawn when a MOD-loaded model with that 2DFX entry is in view.
+
+### Common recipes
+
+**Chimney smoke**
+
+```
+Texture: smoke3
+SrcBlend / DstBlend: 4 / 5 (alpha-blended)
+color_start: (0.4, 0.4, 0.4, 0.8)   light grey, opaque
+color_end:   (0.2, 0.2, 0.2, 0.0)   dark grey, transparent
+size_start: 0.3 → size_end: 2.5
+life: 4.0
+rate: 5
+direction: (0, 0, 1) — straight up
+speed: 0.8, angle_min/max: 0/0.3 (slight cone)
+force: (0, 0, 0.3) — buoyancy
+wind: 0.5
+```
+
+**Sparks (e.g. broken wire)**
+
+```
+Texture: spark
+SrcBlend / DstBlend: 2 / 2 (additive)
+color_start: (1.0, 0.9, 0.4, 1.0) → color_end: (1.0, 0.2, 0.0, 0.0)
+size: 0.05 → 0.02
+life: 0.4
+rate: 30
+direction: (0, 0, 1) + angle_max π/3 (45° cone)
+speed: 3.0, speed_bias: 1.0
+force: (0, 0, -9.8) — gravity pulls them down
+ground_bounce: 0.3
+```
+
+**Fountain water**
+
+```
+Texture: water_drop
+SrcBlend / DstBlend: 4 / 5
+color: white-tinted blue, alpha 1 → 0
+size: 0.1 → 0.05
+life: 1.5
+rate: 80
+direction: (0, 0, 1), angle 0.2
+speed: 5.0
+force: (0, 0, -9.8)
+```
+
+### Troubleshooting
+
+| Symptom | Cause / fix |
+|---|---|
+| Dropdown shows `<Game Root not set>` | Set `gtatools_game_root` in Import Map panel |
+| Dropdown shows `<effects.fxp not found>` | Check that `<game_root>/models/effects.fxp` exists |
+| Particles don't appear in viewport | Click **Refresh Preview** — preview cache may be stale |
+| Particles spawn but no texture | `particle.txd` is missing or the texture name doesn't match any entry — see the texture browser to verify |
+| Edits disappear when switching effects | You must **Save** before switching — unsaved buffer is reset |
+| Edits don't show in game | `effects.fxp` not copied to game folder, OR engine cache: delete `gta_sa.set` to force re-read |
+| Curves not applying | Make sure curve has at least 2 keys; single-key curves are ignored |
+
+### Implementation reference
+
+- Parser / writer: [core/fxp.py](../INU_tools/core/fxp.py) — `read_fxp(path)`, `write_fxp(path, fxf)`, cached by `load_cached()`
+- Per-object props: `INUObjectProps.particle_*` in `__init__.py:1103+`
+- Operators: [ops/effects_ops.py](../INU_tools/ops/effects_ops.py) — 17 operators total (CRUD + curve editing + 2DFX attach)
+- Viewport simulator: [ops/fx_preview.py](../INU_tools/ops/fx_preview.py) — 30 FPS update via `frame_change_post`, billboard GPU material with vertex color emission
 
 ---
 
