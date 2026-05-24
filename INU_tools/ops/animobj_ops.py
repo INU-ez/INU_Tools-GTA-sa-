@@ -147,6 +147,16 @@ class GTATOOLS_OT_animobj_export(bpy.types.Operator):
             "крана и флюгера в один файл"),
         default="",
     )
+    existing_ifp_path: StringProperty(
+        name=T("Существующий IFP (опционально)"),
+        description=T(
+            "Указать конкретный .ifp файл куда дополнить анимацию. "
+            "Когда задан — игнорируется «Папка» и «Имя IFP», анимация "
+            "пишется СЮДА. Удобно для merge'а в <game>/anim/myhood.ifp "
+            "или подобных общих файлов вне папки экспорта DFF"),
+        default="",
+        subtype='FILE_PATH',
+    )
     ifp_mode: EnumProperty(
         name=T("Режим IFP"),
         description=T(
@@ -261,13 +271,24 @@ class GTATOOLS_OT_animobj_export(bpy.types.Operator):
         # subsequent export grow the file safely.
         ifp_box = col.box()
         ifp_box.label(text=T("IFP файл"), **inu_icon(safe_icon('ACTION')))
-        # Show resolved filename next to the input — user can sanity-
-        # check that it'll go where they expect.
-        resolved = (self.ifp_name.strip() or self.base_name.strip()
-                    or "<пусто>")
-        ifp_box.prop(self, "ifp_name", text=T("Имя"))
-        ifp_box.label(
-            text=f"→ {resolved}.ifp", **inu_icon(safe_icon('FILE_BLANK')))
+
+        # Explicit target file (file-picker) — overrides directory + ifp_name
+        # when set. Lets user point at an existing .ifp outside the DFF
+        # export folder (e.g. <game>/anim/myhood.ifp).
+        ifp_box.prop(self, "existing_ifp_path", text=T("Дополнить файл"))
+
+        explicit = bpy.path.abspath(self.existing_ifp_path).strip()
+        if explicit:
+            ifp_box.label(
+                text=f"→ {os.path.basename(explicit)}",
+                **inu_icon(safe_icon('FILE_BLANK')))
+        else:
+            # Standard path — directory + ifp_name (or base_name).
+            resolved = (self.ifp_name.strip() or self.base_name.strip()
+                        or "<пусто>")
+            ifp_box.prop(self, "ifp_name", text=T("Имя"))
+            ifp_box.label(
+                text=f"→ {resolved}.ifp", **inu_icon(safe_icon('FILE_BLANK')))
         ifp_box.prop(self, "ifp_mode", text=T("Режим"))
         ifp_box.prop(self, "ifp_format")
 
@@ -310,10 +331,22 @@ class GTATOOLS_OT_animobj_export(bpy.types.Operator):
         Writes DFF via gtatools.export_dff (the hierarchy path already
         handles Empty parents and our `_build_frame` change emits HAnim).
         Writes IFP via build_ifp_from_empty_rig.
+
+        IFP destination resolution:
+        * `existing_ifp_path` set → use it verbatim (lets the user point at
+          `<game>/anim/myhood.ifp` outside the DFF export folder)
+        * otherwise → `<directory>/<ifp_name or base>.ifp`
         """
         ifp_basename = self.ifp_name.strip() or base
         dff_path = os.path.join(self.directory, f"{base}.dff")
-        ifp_path = os.path.join(self.directory, f"{ifp_basename}.ifp")
+        explicit_ifp = bpy.path.abspath(self.existing_ifp_path).strip()
+        if explicit_ifp:
+            ifp_path = explicit_ifp
+            # Use the existing file's basename for status messages and
+            # internal package name fallback.
+            ifp_basename = os.path.splitext(os.path.basename(ifp_path))[0]
+        else:
+            ifp_path = os.path.join(self.directory, f"{ifp_basename}.ifp")
 
         # Collect rig + meshes for the DFF selection.
         rig_objs = [root_empty]
@@ -333,6 +366,16 @@ class GTATOOLS_OT_animobj_export(bpy.types.Operator):
                 except Exception as ex:
                     print(f"[INU] empty rig rebuild skipped on {o.name}: {ex}")
 
+        # Backfill `dff_frame_write_name` flag on every Empty in the rig.
+        # Earlier versions of `animobj_setup` didn't set this, so DFFs
+        # exported then shipped with empty frame names — engine couldn't
+        # match the IFP track to the pivot frame in some builds. Set the
+        # flag now so re-exports from old rigs pick up named frames
+        # without the user having to recreate the hierarchy.
+        for o in rig_objs:
+            if o.type == 'EMPTY' and not o.get('dff_frame_write_name'):
+                o['dff_frame_write_name'] = True
+
         # DFF export — select rig + meshes, reuse the file operator.
         for o in bpy.data.objects:
             o.select_set(False)
@@ -351,8 +394,14 @@ class GTATOOLS_OT_animobj_export(bpy.types.Operator):
         try:
             from .ifp_export import build_ifp_from_empty_rig
             from ..core.ifp import write_ifp, read_ifp, IFPFile
+            # Animation name MUST equal the IDE entry's anim_file
+            # (which is `base`, the model name) — that's how
+            # CClumpAnimMgr finds the track inside the IFP pack.
+            # Falling back to Action.name would break game lookup if the
+            # user named the Action with non-ASCII chars (Cyrillic
+            # action.name → 8 `?` in ANP3 header → game can't match).
             new_ifp = build_ifp_from_empty_rig(
-                root_empty, package_name=ifp_basename)
+                root_empty, action_name=base, package_name=ifp_basename)
             if not new_ifp.animations:
                 self.report({'WARNING'},
                             T("Empty rig: ни один pivot не дал ключей — IFP не записан"))
@@ -733,12 +782,17 @@ class GTATOOLS_OT_animobj_setup(bpy.types.Operator):
             target_coll = active.users_collection[0]
 
         # Root Empty: anchors the rig hierarchy. BoneID=0 — root frame in IFP.
+        # `dff_frame_write_name = True` flags _build_frame in dff_export to
+        # emit the Frame extension chunk (0x253F2FE) with the Empty's name —
+        # without it, animated map objects ship with empty frame names which
+        # breaks animation matching in some game builds / engine forks.
         root = bpy.data.objects.new(f"{base}_root", None)
         root.empty_display_type = 'ARROWS'
         root.empty_display_size = 0.5
         root.location = origin
         root['inu_animobj_empty_root'] = True
         root['inu_bone_id'] = 0
+        root['dff_frame_write_name'] = True
         target_coll.objects.link(root)
 
         # Pivot Empty: carries the rotation animation. BoneID=1.
@@ -750,6 +804,7 @@ class GTATOOLS_OT_animobj_setup(bpy.types.Operator):
         pivot['inu_animobj_empty_pivot'] = True
         pivot['inu_bone_id'] = 1
         pivot['inu_animobj_action_name'] = self.action_name
+        pivot['dff_frame_write_name'] = True
         target_coll.objects.link(pivot)
 
         # Seed pivot props + build action.
@@ -1028,6 +1083,7 @@ def _create_pivot_under_root(root, axis: str = 'Z', turns: int = 1,
     pivot['inu_animobj_empty_pivot'] = True
     pivot['inu_bone_id'] = next_bone_id
     pivot['inu_animobj_action_name'] = suffix
+    pivot['dff_frame_write_name'] = True
     for col in root.users_collection:
         col.objects.link(pivot)
 
@@ -1076,6 +1132,7 @@ def _create_default_rig(context, base_name='animobj'):
     root.location = origin
     root['inu_animobj_empty_root'] = True
     root['inu_bone_id'] = 0
+    root['dff_frame_write_name'] = True
     target_coll.objects.link(root)
     return root
 
@@ -1339,6 +1396,7 @@ class GTATOOLS_OT_animobj_add_pivot(bpy.types.Operator):
         pivot['inu_animobj_empty_pivot'] = True
         pivot['inu_bone_id'] = next_bone_id
         pivot['inu_animobj_action_name'] = suffix
+        pivot['dff_frame_write_name'] = True
         for col in rig.users_collection:
             col.objects.link(pivot)
 

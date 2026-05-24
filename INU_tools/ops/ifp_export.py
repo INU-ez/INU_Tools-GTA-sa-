@@ -492,7 +492,8 @@ def _empty_action_keyframes(action) -> set:
     return times
 
 
-def _build_animation_from_empty_rig(action_name: str, root_empty, fps: float) -> Animation:
+def _build_animation_from_empty_rig(action_name: str, root_empty, fps: float,
+                                     frame_start: float = 0.0) -> Animation:
     """Build one IFP Animation from a Kams-style Empty rig hierarchy.
 
     Walks every descendant Empty of *root_empty* that has ``inu_bone_id``
@@ -503,6 +504,12 @@ def _build_animation_from_empty_rig(action_name: str, root_empty, fps: float) ->
     Empty's rotation_quaternion is already absolute in parent space,
     which is what IFP encodes natively. This is the main reason the
     Empty flow sidesteps the stepping bug.
+
+    Animated map objects use bone_id=-1 (game matches by frame.name, not
+    HAnim ID — verified against vanilla counxref.ifp). Keyframe times
+    are shifted so the first key lands at t=0.0 by subtracting
+    *frame_start* before dividing by *fps* (vanilla IFPs always start
+    at exactly t=0.000000).
     """
     from .animobj_ops import _collect_empty_rig_descendants
 
@@ -511,7 +518,13 @@ def _build_animation_from_empty_rig(action_name: str, root_empty, fps: float) ->
         return anim
 
     for emp in _collect_empty_rig_descendants(root_empty):
-        bone_id = int(emp.get('inu_bone_id', 0))
+        # Skip the rig root — vanilla animated map objects (verified
+        # against derrick01.ifp / counxref.ifp) only put CHILD frames
+        # into the IFP bone list. The root is a transform anchor; if
+        # it's also animated the whole clump rotates, including any
+        # static sibling frames, which is virtually never desired.
+        if emp.get('inu_animobj_empty_root'):
+            continue
         ad = emp.animation_data
         if ad is None or ad.action is None:
             # Static frame (root with BoneID=0, no animation) — no track needed.
@@ -568,7 +581,10 @@ def _build_animation_from_empty_rig(action_name: str, root_empty, fps: float) ->
                 has_rot = False
 
         bone = AnimBone(name=emp.name)
-        bone.bone_id = bone_id
+        # Animated map objects: bone_id=-1, game matches by frame.name.
+        # Verified vs. vanilla counxref.ifp (derrick01, nt_windmill,
+        # nt_noddonkbase, oilplodbitbase) — all use bone_id=-1.
+        bone.bone_id = -1
         bone.key_type = 0
         if has_rot or has_euler:
             bone.key_type |= HAS_ROT
@@ -589,7 +605,7 @@ def _build_animation_from_empty_rig(action_name: str, root_empty, fps: float) ->
             'XYZ', 'XZY', 'YXZ', 'YZX', 'ZXY', 'ZYX') else 'XYZ'
 
         for frame in sorted(times):
-            kf = KeyFrame(time=frame / fps)
+            kf = KeyFrame(time=(frame - frame_start) / fps)
 
             if has_rot:
                 quat = [0.0, 0.0, 0.0, 1.0]  # W, X, Y, Z indices
@@ -639,7 +655,12 @@ def build_ifp_from_empty_rig(root_empty, action_name: str = "",
     each produce their own .ifp via separate calls.
     """
     fps = bpy.context.scene.render.fps
-    ifp = IFPFile(name=package_name)
+    frame_start = float(bpy.context.scene.frame_start)
+    # ANP3 is the SA-native compressed IFP format — vanilla map object
+    # IFPs (counxref.ifp / airport.ifp / derrick01) all use ANP3.
+    # Without this, write_ifp falls back to ANPK (text-chunked) which
+    # may load but isn't the canonical SA encoding.
+    ifp = IFPFile(name=package_name, source_format='ANP3')
 
     # Resolve animation name from the first animated pivot if not provided.
     if not action_name:
@@ -652,7 +673,7 @@ def build_ifp_from_empty_rig(root_empty, action_name: str = "",
         if not action_name:
             action_name = package_name
 
-    anim = _build_animation_from_empty_rig(action_name, root_empty, fps)
+    anim = _build_animation_from_empty_rig(action_name, root_empty, fps, frame_start)
     if anim.bones:
         ifp.animations.append(anim)
 

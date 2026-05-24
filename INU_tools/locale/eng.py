@@ -3197,4 +3197,12 @@ LANG = {
     'Изменения весов сделанные после Undo сохранены.':
         'Weight changes made after Undo are preserved.',
 
+    # === animobj_export — explicit existing-IFP picker ===
+    'Дополнить файл':
+        'Append to file',
+    'Существующий IFP (опционально)':
+        'Existing IFP (optional)',
+    "Указать конкретный .ifp файл куда дополнить анимацию. Когда задан — игнорируется «Папка» и «Имя IFP», анимация пишется СЮДА. Удобно для merge'а в <game>/anim/myhood.ifp или подобных общих файлов вне папки экспорта DFF":
+        "Pick a specific .ifp file to append the animation into. When set, «Folder» and «IFP name» are ignored — the animation goes HERE. Useful for merging into <game>/anim/myhood.ifp or other shared files outside the DFF export folder",
+
 }

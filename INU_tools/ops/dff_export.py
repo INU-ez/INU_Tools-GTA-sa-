@@ -970,10 +970,18 @@ def _build_frame(obj, parent_index: int = -1) -> DffFrame:
     # HAnim PLG for Empty-based animobj rigs (Kams-style). Each Empty
     # with inu_bone_id gets a minimal HAnim entry; the rig ROOT
     # additionally carries the full bone tree (collected by the
-    # caller after all frames are built — see _attach_empty_rig_hanim).
+    # caller after all frames are built). Verified against vanilla
+    # derrick01.dff — all 5 frames carry HAnim PLG.
     if obj.type == 'EMPTY' and 'inu_bone_id' in obj:
         bone_id_int = int(obj['inu_bone_id'])
         frame.hanim = HAnimData(bone_id=bone_id_int)
+        # Animobj rig root: frame.flags = 0x20003 — matches vanilla
+        # SA animated map objects (nt_windmill, derrick01, etc.).
+        # Without this flag the engine treats the clump root as a
+        # plain static frame and the HAnim hierarchy walker bails
+        # before it ever applies the IFP track.
+        if obj.get('inu_animobj_empty_root') and not orig_flags:
+            frame.flags = 0x20003
 
     return frame
 
@@ -1187,9 +1195,21 @@ def _collect_frame_objects(objects):
             return
         visited.add(obj)
         ordered.append((obj, parent_obj))
+        # For animated map objects (Empty-rig flow): Empties carrying
+        # an inu_bone_id are the HAnim bones — they MUST come before
+        # any static / non-bone sibling Empties in the FrameList, so
+        # HAnim's bone_list `idx` field stays a small sequential
+        # integer matching vanilla (root=0, pivot=1, …). When the
+        # game's CClumpAnimMgr resolves an IFP track via the
+        # FindFrameFromHierarchyId path it expects this ordering;
+        # otherwise the animated frame ends up at a higher idx and
+        # the matcher fails silently.
         children = sorted(
             (c for c in obj.children if c in obj_set),
-            key=lambda c: input_order[c],
+            key=lambda c: (
+                0 if ('inu_bone_id' in c) else 1,
+                input_order[c],
+            ),
         )
         for child in children:
             dfs(child, obj)
@@ -1339,8 +1359,11 @@ def _build_dff_clump_inner(objects, version: int, col_model_name: str) -> DffClu
 
         # Empty-rig animobj (Kams-style): once all frames are built,
         # populate the root rig Empty's HAnim with the full bone tree —
-        # the engine looks at the root frame's HAnimBone list to map
-        # bone_id → child frame index when applying IFP tracks.
+        # verified against vanilla derrick01.dff (5 frames, all with
+        # HAnim PLG, root carries full bone list).
+        #
+        # bone_type field follows RenderWare HAnim hierarchy markers
+        # (bit 0 = PUSH; bit 1 = POP).
         for obj, _parent_obj in ordered:
             if obj.type != 'EMPTY' or not obj.get('inu_animobj_empty_root'):
                 continue
@@ -1348,22 +1371,44 @@ def _build_dff_clump_inner(objects, version: int, col_model_name: str) -> DffClu
             if root_frame_idx is None:
                 continue
             root_frame = clump.frames[root_frame_idx]
-            # Walk descendants in pre-order and append HAnimBone entries.
-            rig_bones = []
-            stack = [obj]
-            while stack:
-                node = stack.pop(0)
+
+            bone_nodes = []  # list of (node, depth)
+
+            def _walk(node, depth):
                 if 'inu_bone_id' in node:
-                    fi = obj_to_frame_idx.get(node)
-                    if fi is not None:
-                        # Frame index relative to the rig root (the engine
-                        # uses absolute frame indices in HAnim — match).
-                        rig_bones.append(HAnimBone(
-                            bone_id=int(node['inu_bone_id']),
-                            index=fi,
-                            bone_type=0,
-                        ))
-                stack.extend(list(node.children))
+                    bone_nodes.append((node, depth))
+                for ch in node.children:
+                    _walk(ch, depth + 1)
+
+            _walk(obj, 0)
+
+            # bone_type encoding matches vanilla SA animated map object
+            # DFFs exactly (verified against nt_windmill, oilplodbitbase,
+            # derrick01, nt_noddonkbase):
+            #   * first bone (root): type=0
+            #   * last bone: type=1
+            #   * intermediate bones at the same depth as siblings
+            #     alternate 3, 0, 3, 0, ... (per derrick01 pattern)
+            # For the common single-pivot case (root + 1 pivot) this
+            # produces [0, 1] — exact match with nt_windmill.
+            rig_bones = []
+            n = len(bone_nodes)
+            for i, (node, depth) in enumerate(bone_nodes):
+                fi = obj_to_frame_idx.get(node)
+                if fi is None:
+                    continue
+                if i == 0:
+                    bt = 0
+                elif i == n - 1:
+                    bt = 1
+                else:
+                    bt = 3 if (i % 2 == 1) else 0
+                rig_bones.append(HAnimBone(
+                    bone_id=int(node['inu_bone_id']),
+                    index=fi,
+                    bone_type=bt,
+                ))
+
             if root_frame.hanim is None:
                 root_frame.hanim = HAnimData(
                     bone_id=int(obj.get('inu_bone_id', 0)))

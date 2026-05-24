@@ -1218,7 +1218,12 @@ class DffAtomic:
     """Links a frame to a geometry."""
     frame_index: int = 0
     geometry_index: int = 0
-    flags: int = 0x04
+    # bit 0 (1) = rpATOMICCOLLISIONTEST, bit 2 (4) = rpATOMICRENDER.
+    # Vanilla SA atomics (verified vs. nt_windmill, derrick01, etc.)
+    # all use 5 = render + collision; flags=4 produces atomics the
+    # collision tester silently rejects, which can crash CClumpAnimMgr
+    # when applying an IFP track to an animated map object.
+    flags: int = 0x05
     unused: int = 0
 
 
