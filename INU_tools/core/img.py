@@ -96,13 +96,36 @@ def sectors_needed(byte_size: int) -> int:
 
 def _parse_dir_records(raw: bytes) -> list[ImgEntry]:
     """Decode N × 32-byte directory records into ``ImgEntry`` objects.
-    Used for both formats — VER2 reads from inside the .img after the
-    8-byte header, VER1 reads from the entire .dir file."""
+
+    IMG VER2 entry layout (San Andreas docs / GTA wiki):
+      offset       : u32 — sector offset (sectors of 2048 bytes)
+      size_stream  : u16 — streaming size in sectors (THE actual size)
+      size_archive : u16 — archive size in sectors (legacy, often 0
+                          or equal to size_stream)
+      name         : 24 bytes — zero-padded ASCII
+
+    Earlier this used ``<II`` (two u32s) which folded the high u16 of
+    the size field plus the low u16 of size_archive into a bogus huge
+    sector count — e.g. for an entry with stream=2053, archive=2053 it
+    produced size=0x08050805 ≈ 134M sectors ≈ 275 GB. ``self._f.read``
+    with that count raised ``MemoryError`` on many systems; the outer
+    operator's ``except Exception: pass`` swallowed it silently, so
+    affected IMG archives appeared to extract zero files.
+
+    Vanilla ``gta3.img`` worked by accident: the bogus size made
+    ``file.read(N)`` return at most the file's actual remaining bytes,
+    and downstream TXD/DFF parsers stopped at their own embedded
+    length fields, ignoring the trailing junk. But large mod IMGs
+    with high sector indices (Silent Hill TC etc.) tripped the
+    MemoryError before parsing could happen."""
     entries = []
     n = len(raw) // DIR_ENTRY_SIZE
     for i in range(n):
         rec = raw[i * DIR_ENTRY_SIZE : (i + 1) * DIR_ENTRY_SIZE]
-        off, sz = struct.unpack_from('<II', rec, 0)
+        off, size_stream, size_archive = struct.unpack_from('<IHH', rec, 0)
+        # Use streaming size when present; some custom archives leave it
+        # 0 and put the real size in `size_archive` (legacy VER1-like).
+        sz = size_stream if size_stream > 0 else size_archive
         name_bytes = rec[8:8 + NAME_SIZE]
         name = name_bytes.split(b'\x00', 1)[0].decode('ascii', errors='replace')
         entries.append(ImgEntry(name=name, offset=off, size=sz))

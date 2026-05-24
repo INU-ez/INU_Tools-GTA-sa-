@@ -128,18 +128,55 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
 
         info = find_all_resources(game_root)
 
-        # Collect all IMG archives — standard gta3.img + gta.dat-listed
-        # archives + the user's manually-set fallback.
+        # Collect all IMG archives — four sources, dedup by absolute path:
+        #   1. Standard vanilla path: <game>/models/gta3.img
+        #   2. Paths declared in gta.dat / gta_int.dat (via find_all_resources)
+        #   3. User-set fallback (`gtatools_img_path`)
+        #   4. Anything else with a `.img` extension anywhere under game_root —
+        #      catches custom installs, mod archives, additional `playerN.img`,
+        #      `cutscene.img`, district-split mods, etc. that aren't declared
+        #      in gta.dat.
         img_paths = []
-        std = os.path.join(game_root, 'models', 'gta3.img')
-        if os.path.isfile(std):
-            img_paths.append(std)
+
+        def _add(path: str):
+            if not path:
+                return
+            absp = os.path.normcase(os.path.abspath(path))
+            if not os.path.isfile(path):
+                return
+            for existing in img_paths:
+                if os.path.normcase(os.path.abspath(existing)) == absp:
+                    return
+            img_paths.append(path)
+
+        _add(os.path.join(game_root, 'models', 'gta3.img'))
         for p in info.img_paths:
-            if os.path.isfile(p) and p not in img_paths:
-                img_paths.append(p)
-        fallback = bpy.path.abspath(scene.inu_settings.gtatools_img_path)
-        if fallback and os.path.isfile(fallback) and fallback not in img_paths:
-            img_paths.append(fallback)
+            _add(p)
+        _add(bpy.path.abspath(scene.inu_settings.gtatools_img_path))
+
+        # Recursive fallback — walk the whole game_root for `.img` files. Done
+        # AFTER the priority sources so anything declared in gta.dat keeps its
+        # position; only "extra" archives get appended at the end. Skip common
+        # cache / hidden dirs to avoid scanning a 50-GB user backup folder.
+        _SKIP_DIRS = {'.git', '.svn', '__pycache__', '.inu_cache', 'node_modules'}
+        extra_count = 0
+        for dirpath, dirnames, filenames in os.walk(game_root):
+            dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
+            for fn in filenames:
+                if fn.lower().endswith('.img'):
+                    full = os.path.join(dirpath, fn)
+                    before = len(img_paths)
+                    _add(full)
+                    if len(img_paths) > before:
+                        extra_count += 1
+        # Always log the final IMG list — helps users diagnose why some
+        # archives weren't picked up (path typos / permission errors / etc.).
+        print(f"\n[Extract Resources] game_root = {game_root}")
+        print(f"[Extract Resources] {extra_count} extra .img file(s) via recursive walk")
+        print(f"[Extract Resources] {len(img_paths)} IMG archive(s) to process:")
+        for ip in img_paths:
+            print(f"  - {ip}")
+        print()
 
         if not img_paths:
             self.report({'ERROR'}, T("Не найден IMG архив"))
@@ -493,8 +530,16 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
                     finally:
                         pool.shutdown(wait=False)
                         self._pool = None
-            except Exception:
-                pass
+            except Exception as _ip_err:
+                # Don't let one bad archive abort the whole extraction —
+                # but DO surface the failure so users can diagnose.
+                # Silent swallowing here previously masked a parser bug
+                # that made every Silent Hill TC IMG appear to extract
+                # zero files for over a year.
+                import traceback as _tb
+                print(f"\n[Extract Resources] FAILED on {ip}:")
+                _tb.print_exc()
+                print()
 
         if prof.enabled:
             prof.print_report()
