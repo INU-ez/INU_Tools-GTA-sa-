@@ -273,6 +273,7 @@ def create_light_preview(parent_obj):
     billboard.data.materials.append(mat)
 
     _lock_child(billboard, lock_rotation=False)
+    register_billboard(billboard)
 
     return light_obj, billboard
 
@@ -539,6 +540,7 @@ def create_particle_preview(parent_obj):
     billboard.data.materials.append(mat)
 
     _lock_child(billboard, lock_rotation=False)
+    register_billboard(billboard)
     _face_billboard_to_view(billboard)
     return billboard
 
@@ -587,6 +589,7 @@ def remove_preview_children(parent_obj):
             children_to_remove.append(child)
 
     for child in children_to_remove:
+        unregister_billboard(child.name)
         mesh_data = child.data if child.type == 'MESH' else None
         light_data = child.data if child.type == 'LIGHT' else None
         bpy.data.objects.remove(child, do_unlink=True)
@@ -719,55 +722,39 @@ def _set_corona_emission(corona_obj, strength):
                     break
 
 
-def _update_billboard_rotations():
-    """Timer: rotate all corona billboards to face the active 3D viewport camera."""
-    try:
-        # Find active 3D viewport — check all windows (not just context.screen)
-        view_quat = None
-        wm = bpy.context.window_manager
-        if wm is None:
-            print("[2DFX Billboard] No window_manager")
-            return 0.1
-        for window in wm.windows:
-            screen = window.screen
-            if screen is None:
-                continue
-            for area in screen.areas:
-                if area.type == 'VIEW_3D':
-                    for space in area.spaces:
-                        if space.type == 'VIEW_3D':
-                            view_quat = space.region_3d.view_rotation.copy()
-                            break
-                    if view_quat:
-                        break
-            if view_quat:
-                break
-
-        if view_quat is None:
-            return 0.1
-
-        billboard_euler = view_quat.to_euler()
-
-        for obj in bpy.data.objects:
-            if (obj.type == 'MESH'
-                    and '_corona' in obj.name
-                    and getattr(obj, 'inu', None)
-                    and obj.inu.type == 'NON'):
-                obj.rotation_euler = billboard_euler
-
-                # Apply show mode animation if parent is a 2DFX object
-                parent = obj.parent
-                if parent and getattr(parent, 'inu', None) and parent.inu.type == '2DFX':
-                    _apply_show_mode_visibility(obj, parent)
-
-    except Exception as e:
-        print(f"[2DFX Billboard] Timer error: {e}")
-
-    return 0.1  # Repeat every 0.1 sec
-
-
+# Registry of billboard objects — populated by create_*_preview() and
+# emptied by remove_preview_children(). Iterating this small set is
+# O(N_billboards) instead of O(N_scene_objects); on imported maps the
+# scene can have 50K+ objects, and bpy.data.objects is a notoriously
+# slow iterator (depsgraph translation per access).
+_billboards: set[str] = set()
 _billboard_draw_handler = None
 _last_view_quat = None
+
+# Show-mode visibility update — slow timer (1 Hz) decoupled from the
+# per-frame billboard rotation. Show modes (random flicker, rain pulse,
+# strobe) don't need 60 Hz precision; updating once per second keeps
+# the visual «alive» at a fraction of the cost.
+_last_show_mode_update = 0.0
+
+
+def _purge_dead_billboards():
+    """Drop names whose objects no longer exist in bpy.data."""
+    if _billboards:
+        names_now = set(bpy.data.objects.keys())
+        dead = _billboards - names_now
+        if dead:
+            _billboards.difference_update(dead)
+
+
+def register_billboard(obj):
+    """Add an object name to the billboard registry — call from create_*_preview."""
+    _billboards.add(obj.name)
+
+
+def unregister_billboard(name):
+    """Drop a name from the billboard registry — call from remove_preview_children."""
+    _billboards.discard(name)
 
 
 def _current_view_rotation():
@@ -806,58 +793,79 @@ def _face_billboard_to_view(obj):
 
 
 def _billboard_draw_callback():
-    """Draw handler: runs on every VIEW_3D redraw, updates billboards to face camera."""
-    global _last_view_quat
+    """POST_VIEW draw handler — runs on every VIEW_3D redraw.
+
+    Hot path: must be O(N_billboards), NOT O(N_scene_objects). Earlier
+    version walked the full bpy.data.objects on every redraw and set
+    `rotation_euler` on every match, which triggered a depsgraph update
+    that scheduled another redraw → feedback loop. On a freshly imported
+    SA map (50k+ objects) this stalled basic editing like adding a 2DFX
+    empty for several seconds per click.
+
+    Now we iterate only `_billboards` (registered names) and short-
+    circuit when the view hasn't changed."""
+    global _last_view_quat, _last_show_mode_update
+    if not _billboards:
+        return
     try:
         region_3d = bpy.context.region_data
         if region_3d is None:
             return
         view_quat = region_3d.view_rotation.copy()
 
-        # Skip if view hasn't changed (optimization)
+        # Skip if view hasn't changed — billboards stay correctly oriented.
+        view_changed = True
         if _last_view_quat is not None:
             diff = (view_quat - _last_view_quat).magnitude
-            if diff < 0.0001:
-                return
+            view_changed = diff > 0.0001
+
+        # Show-mode pulse update is throttled to 1 Hz independently of
+        # the rotation update — show modes (flicker / strobe / rain
+        # pulse) are visual flavor and don't need 60-Hz precision.
+        now = time.time()
+        do_show_mode = (now - _last_show_mode_update) > 1.0
+        if do_show_mode:
+            _last_show_mode_update = now
+
+        if not view_changed and not do_show_mode:
+            return
         _last_view_quat = view_quat
 
-        billboard_euler = view_quat.to_euler()
+        billboard_euler = view_quat.to_euler() if view_changed else None
 
-        for obj in bpy.data.objects:
-            if (obj.type == 'MESH'
-                    and ('_corona' in obj.name or '_particle' in obj.name)
-                    and getattr(obj, 'inu', None)
-                    and obj.inu.type == 'NON'):
+        # Iterate registry — drop stale names lazily.
+        dead = []
+        for name in _billboards:
+            obj = bpy.data.objects.get(name)
+            if obj is None:
+                dead.append(name)
+                continue
+            if billboard_euler is not None:
                 obj.rotation_euler = billboard_euler
-
+            if do_show_mode and '_corona' in name:
                 parent = obj.parent
-                if parent and getattr(parent, 'inu', None) and parent.inu.type == '2DFX':
-                    if '_corona' in obj.name:
-                        _apply_show_mode_visibility(obj, parent)
+                if (parent and getattr(parent, 'inu', None)
+                        and parent.inu.type == '2DFX'):
+                    _apply_show_mode_visibility(obj, parent)
+        for name in dead:
+            _billboards.discard(name)
     except Exception as e:
         print(f"[2DFX Billboard] Draw handler error: {e}")
 
 
 def start_billboard_timer():
-    """Register draw handler for billboard rotation updates."""
+    """Register the POST_VIEW draw handler for billboard rotation."""
     global _billboard_draw_handler
-    # Keep timer fallback too
-    if bpy.app.timers.is_registered(_update_billboard_rotations):
-        bpy.app.timers.unregister(_update_billboard_rotations)
-    bpy.app.timers.register(_update_billboard_rotations, first_interval=0.1)
-
-    # Register draw handler on VIEW_3D space
     if _billboard_draw_handler is None:
         try:
             _billboard_draw_handler = bpy.types.SpaceView3D.draw_handler_add(
                 _billboard_draw_callback, (), 'WINDOW', 'POST_VIEW')
-            print("[2DFX Billboard] Draw handler registered")
         except Exception as e:
             print(f"[2DFX Billboard] Failed to register draw handler: {e}")
 
 
 def stop_billboard_timer():
-    """Unregister draw handler and timer."""
+    """Unregister draw handler."""
     global _billboard_draw_handler
     if _billboard_draw_handler is not None:
         try:
@@ -865,3 +873,4 @@ def stop_billboard_timer():
         except Exception:
             pass
         _billboard_draw_handler = None
+    _billboards.clear()

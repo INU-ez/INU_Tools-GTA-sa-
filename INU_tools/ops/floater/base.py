@@ -1077,31 +1077,35 @@ class Floater:
 
 # ── Draw callback + modal + toggle operator (shared) ─────────────────
 
-_DBG_DRAW_TICKS = 0
-
 def _draw_callback():
-    global _DBG_DRAW_TICKS
-    _DBG_DRAW_TICKS += 1
-    # Печатаем первые 3 тика и каждый 60-й (=1 раз в секунду на 60fps)
-    # чтобы по консольному ритму видеть жив ли draw_handler. Дешёво:
-    # ~60 print'ов в секунду максимум, и только пока юзер не уберёт
-    # debug.
-    if _DBG_DRAW_TICKS <= 3 or _DBG_DRAW_TICKS % 60 == 0:
-        print(f"[INU Floater DBG] _draw_callback tick #{_DBG_DRAW_TICKS}")
+    """POST_PIXEL draw hook — runs on EVERY viewport redraw.
+
+    Hot path: keep this O(1) when no floater is visible. The earlier
+    version unconditionally refreshed theme colors, reloaded icons,
+    and ran the watchdog every tick, plus printed debug lines on a
+    1-per-second cadence — combined with Blender's 60+ FPS redraw
+    rate that made simple operations (adding a 2DFX empty, etc.) lag
+    visibly because the user wasn't using any floater at all."""
     ctx = bpy.context
-    # Sync color constants AND text style with Blender's current theme
-    # and UI scale before drawing any floater. Cheap (attribute reads)
-    # and runs once per redraw.
+    scene = ctx.scene
+    # Cheap visibility gate — skip ALL per-frame work when no floater
+    # is on. `_any_visible` is a 5-attr prop read; if every floater's
+    # `_visible` prop is False we bail immediately.
+    if scene is None or not _any_visible(scene):
+        return
+
+    # From here on at least one floater wants to draw. Sync theme +
+    # text style with Blender's current theme. Cheap (attribute reads
+    # + small composite math) but only worth doing when we'll actually
+    # paint something.
     try:
         TH._apply_theme()
-    except Exception as _e:
-        import traceback as _tb
-        print(f"[INU Floater DBG] _apply_theme crashed: {_e}")
-        _tb.print_exc()
+    except Exception:
+        pass
     try:
         TA._refresh_ui_text_style()
-    except Exception as _e:
-        print(f"[INU Floater DBG] _refresh_ui_text_style crashed: {_e}")
+    except Exception:
+        pass
     # Defensive icon load — prewarm timer is supposed to populate this,
     # but in some Blender contexts (background, headless, GPU not ready
     # at +1s after register) it can no-op. GS._load_icons() short-circuits
@@ -1121,31 +1125,20 @@ def _draw_callback():
     # a draw handler directly, hence the 0-interval timer.
     global _modal_running
     try:
-        import time as _time
         if _modal_running and (time.monotonic() - _modal_last_tick) > 0.5:
             _modal_running = False
-        if not _modal_running and _any_visible(ctx.scene):
+        if not _modal_running:
             if not bpy.app.timers.is_registered(_relaunch_modal_timer):
                 bpy.app.timers.register(
                     _relaunch_modal_timer, first_interval=0.0)
     except Exception as e:
         print(f"[INU Floater] watchdog crashed: {e}")
 
-    # Debug: log status of each floater on first tick + every 60th
-    # tick so user sees what's happening without 60-per-sec spam.
-    _dbg = (_DBG_DRAW_TICKS <= 3 or _DBG_DRAW_TICKS % 60 == 0)
     for name, f in _floaters.items():
         try:
-            active = f.is_active_here(ctx)
-            visible = f.is_visible(ctx.scene)
-            if _dbg:
-                print(f"[INU Floater DBG]   '{name}': visible={visible}, "
-                      f"active_here={active}")
-            if active:
+            if f.is_active_here(ctx):
                 f.draw(ctx)
-                if _dbg:
-                    print(f"[INU Floater DBG]   '{name}': drew OK")
-        except Exception as _e:
+        except Exception:
             # Isolate per-floater failures so one broken instance
             # doesn't take down everyone else's draw.
             import traceback as _tb
@@ -1279,31 +1272,23 @@ class GTATOOLS_OT_floater_toggle(bpy.types.Operator):
         # Split on commas so a single button can flip multiple floaters
         # (used to keep production + sandbox lighting windows in sync).
         names = [n.strip() for n in self.floater_name.split(',') if n.strip()]
-        print(f"[INU Floater DBG] toggle '{self.floater_name}' invoked")
-        print(f"[INU Floater DBG]   _floaters keys: {list(_floaters.keys())}")
         any_found = False
         for nm in names:
             f = _floaters.get(nm)
             if f is None:
-                print(f"[INU Floater DBG]   ❌ floater '{nm}' not in registry")
                 continue
-            print(f"[INU Floater DBG]   '{nm}' found, visible={f.is_visible(context.scene)}")
             f.toggle_visible(context)
-            print(f"[INU Floater DBG]   '{nm}' after toggle, visible={f.is_visible(context.scene)}")
             any_found = True
         if not any_found:
             self.report({'WARNING'},
                         f"Unknown floater '{self.floater_name}'")
             return {'CANCELLED'}
-        print(f"[INU Floater DBG]   _any_visible={_any_visible(context.scene)}, _modal_running={_modal_running}")
         # Start the shared modal lazily on first visible floater
         if _any_visible(context.scene) and not _modal_running:
-            print(f"[INU Floater DBG]   starting modal...")
             try:
                 bpy.ops.gtatools.floater_modal('INVOKE_DEFAULT')
-                print(f"[INU Floater DBG]   modal invoked, running={_modal_running}")
             except Exception as e:
-                print(f"[INU Floater DBG]   ❌ modal invoke failed: {e}")
+                print(f"[INU Floater] modal invoke failed: {e}")
         _tag_redraw_view3d(context)
         return {'FINISHED'}
 
