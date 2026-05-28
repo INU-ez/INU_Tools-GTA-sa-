@@ -395,23 +395,6 @@ class GTATOOLS_PT_ide_ipl_panel(bpy.types.Panel):
         bc = box.column(align=True)
         row = bc.row(align=True)
         row.label(text="IDE", **inu_icon(safe_icon('TEXT')))
-        ide_path = bpy.path.abspath(scn.inu_settings.gtatools_ide_path)
-        if ide_path and os.path.isfile(ide_path):
-            try:
-                from ..core.ide import read_ide
-                _ide = read_ide(ide_path)
-                counts = []
-                if _ide.objects: counts.append(f"objs: {len(_ide.objects)}")
-                if _ide.anims: counts.append(f"anim: {len(_ide.anims)}")
-                if _ide.cars: counts.append(f"cars: {len(_ide.cars)}")
-                if _ide.peds: counts.append(f"peds: {len(_ide.peds)}")
-                if _ide.txdps: counts.append(f"txdp: {len(_ide.txdps)}")
-                if counts:
-                    info_text = ", ".join(counts)
-                    op = row.operator("gtatools.info_tooltip", text=info_text, **inu_icon(safe_icon('INFO')), emboss=False)
-                    op.tooltip = T("Количество записей в IDE файле")
-            except Exception:
-                pass
         # Short un-translated labels — icons already carry the
         # meaning, and "Add/Del/Import/Export" are universally
         # readable across both Russian and English UIs. translate=
@@ -427,33 +410,54 @@ class GTATOOLS_PT_ide_ipl_panel(bpy.types.Panel):
         row.operator("gtatools.export_ide", text="Export",
                      **inu_icon(safe_icon('EXPORT')), translate=False)
 
+        # ── IDE file info + active object status (inside the box) ──
+        ide_path = bpy.path.abspath(scn.inu_settings.gtatools_ide_path)
+        if ide_path and os.path.isfile(ide_path):
+            try:
+                from ..core.ide import read_ide
+                _ide = read_ide(ide_path)
+                ide_counts = []
+                if _ide.objects: ide_counts.append(f"objs: {len(_ide.objects)}")
+                if _ide.anims: ide_counts.append(f"anim: {len(_ide.anims)}")
+                if _ide.cars: ide_counts.append(f"cars: {len(_ide.cars)}")
+                if _ide.peds: ide_counts.append(f"peds: {len(_ide.peds)}")
+                if _ide.txdps: ide_counts.append(f"txdp: {len(_ide.txdps)}")
+                if ide_counts:
+                    info_row = bc.row(align=True)
+                    info_row.scale_y = 0.85
+                    info_row.label(text=", ".join(ide_counts),
+                                   **inu_icon(safe_icon('INFO')))
+            except Exception:
+                pass
+        ao_ide = context.active_object
+        if ao_ide is not None and ao_ide.type == 'MESH' and hasattr(ao_ide, 'inu'):
+            inu_ao = ao_ide.inu
+            ide_row = bc.row(align=True)
+            ide_row.scale_y = 0.85
+            if not inu_ao.ide_linked or inu_ao.model_id <= 0:
+                ide_row.label(text=T("Не в IDE"),
+                              **inu_icon(safe_icon('RADIOBUT_OFF')))
+            else:
+                drifted_ide = (
+                    abs(inu_ao.draw_distance - inu_ao.ide_last_draw_distance) > 1e-3
+                    or (inu_ao.txd_name or '') != (inu_ao.ide_last_txd_name or '')
+                    or int(inu_ao.ide_flags) != int(inu_ao.ide_last_flags)
+                )
+                if drifted_ide:
+                    ide_row.label(
+                        text=T("В IDE, параметры разошлись"),
+                        **inu_icon(safe_icon('ERROR')))
+                else:
+                    tgt = os.path.basename(inu_ao.ide_target_file or '') or '?'
+                    ide_row.label(
+                        text=T("В IDE ({0})").format(tgt),
+                        **inu_icon(safe_icon('CHECKMARK')))
+
         # IPL section
         box = col_ipl.box()
         bc = box.column(align=True)
         row = bc.row(align=True)
         row.label(text="IPL", **inu_icon(safe_icon('EMPTY_AXIS')))
-        ipl_path = bpy.path.abspath(scn.inu_settings.gtatools_ipl_path)
-        if ipl_path and os.path.isfile(ipl_path):
-            try:
-                from ..core.ipl import read_ipl
-                _ipl = read_ipl(ipl_path)
-                counts = []
-                if _ipl.instances: counts.append(f"inst: {len(_ipl.instances)}")
-                if _ipl.culls: counts.append(f"cull: {len(_ipl.culls)}")
-                if _ipl.garages: counts.append(f"grge: {len(_ipl.garages)}")
-                if _ipl.enexs: counts.append(f"enex: {len(_ipl.enexs)}")
-                if _ipl.pickups: counts.append(f"pick: {len(_ipl.pickups)}")
-                if _ipl.cars: counts.append(f"cars: {len(_ipl.cars)}")
-                if _ipl.jumps: counts.append(f"jump: {len(_ipl.jumps)}")
-                if _ipl.auzos: counts.append(f"auzo: {len(_ipl.auzos)}")
-                if _ipl.occls: counts.append(f"occl: {len(_ipl.occls)}")
-                if _ipl.zones: counts.append(f"zone: {len(_ipl.zones)}")
-                if counts:
-                    info_text = ", ".join(counts)
-                    op = row.operator("gtatools.info_tooltip", text=info_text, **inu_icon(safe_icon('INFO')), emboss=False)
-                    op.tooltip = T("Количество записей в IPL файле")
-            except Exception:
-                pass
         row = bc.row(align=True)
         row.operator("gtatools.upsert_ipl", text="Add",
                      **inu_icon(safe_icon('ADD')), translate=False)
@@ -465,9 +469,81 @@ class GTATOOLS_PT_ide_ipl_panel(bpy.types.Panel):
         row.operator("gtatools.export_ipl", text="Export",
                      **inu_icon(safe_icon('EXPORT')), translate=False)
 
+        # ── IPL file info + active object status (inside the box) ──
+        ipl_path = bpy.path.abspath(scn.inu_settings.gtatools_ipl_path)
+        if ipl_path and os.path.isfile(ipl_path):
+            try:
+                from ..core.ipl import read_ipl
+                _ipl = read_ipl(ipl_path)
+                ipl_counts = []
+                if _ipl.instances: ipl_counts.append(f"inst: {len(_ipl.instances)}")
+                if _ipl.culls: ipl_counts.append(f"cull: {len(_ipl.culls)}")
+                if _ipl.garages: ipl_counts.append(f"grge: {len(_ipl.garages)}")
+                if _ipl.enexs: ipl_counts.append(f"enex: {len(_ipl.enexs)}")
+                if _ipl.pickups: ipl_counts.append(f"pick: {len(_ipl.pickups)}")
+                if _ipl.cars: ipl_counts.append(f"cars: {len(_ipl.cars)}")
+                if _ipl.jumps: ipl_counts.append(f"jump: {len(_ipl.jumps)}")
+                if _ipl.auzos: ipl_counts.append(f"auzo: {len(_ipl.auzos)}")
+                if _ipl.occls: ipl_counts.append(f"occl: {len(_ipl.occls)}")
+                if _ipl.zones: ipl_counts.append(f"zone: {len(_ipl.zones)}")
+                if ipl_counts:
+                    info_row = bc.row(align=True)
+                    info_row.scale_y = 0.85
+                    info_row.label(text=", ".join(ipl_counts),
+                                   **inu_icon(safe_icon('INFO')))
+            except Exception:
+                pass
+        ao_ipl = context.active_object
+        if ao_ipl is not None and ao_ipl.type == 'MESH' and hasattr(ao_ipl, 'inu'):
+            inu_ao_ipl = ao_ipl.inu
+            ipl_row = bc.row(align=True)
+            ipl_row.scale_y = 0.85
+            if not inu_ao_ipl.ipl_uuid:
+                ipl_row.label(text=T("Не в IPL"),
+                              **inu_icon(safe_icon('RADIOBUT_OFF')))
+            else:
+                cur_pos = ao_ipl.matrix_world.translation
+                last_pos = inu_ao_ipl.ipl_last_pos
+                drifted_ipl = (
+                    abs(cur_pos.x - last_pos[0]) > 1e-4
+                    or abs(cur_pos.y - last_pos[1]) > 1e-4
+                    or abs(cur_pos.z - last_pos[2]) > 1e-4
+                )
+                if drifted_ipl:
+                    ipl_row.label(
+                        text=T("В IPL, координаты разошлись"),
+                        **inu_icon(safe_icon('ERROR')))
+                else:
+                    tgt = os.path.basename(inu_ao_ipl.ipl_target_file or '') or '?'
+                    ipl_row.label(
+                        text=T("В IPL ({0})").format(tgt),
+                        **inu_icon(safe_icon('CHECKMARK')))
+
         # Below the two columns — niche IPL utilities + IMG section,
         # все fused в общий outer.
         bottom_col = outer.column(align=True)
+
+        # ── Unified link tracking row (works on both IDE + IPL) ──
+        # Sync pulls file→Blender for both formats (positions from IPL,
+        # draw_distance/txd/flags from IDE).  Unlink removes the
+        # selected objects' records from both files.  Verify reports
+        # sidecar/file consistency for both.  Placed right above
+        # "Секции IPL" per UI request — flush against the bottom utils.
+        # ``translate=False`` keeps labels literally English; Blender's
+        # built-in i18n otherwise rewrites them to localised forms
+        # ("Синхронизация" / "Отсоединить") which clash with how the
+        # rest of the link-tracking workflow is labelled in INU.
+        link_row = bottom_col.row(align=True)
+        link_row.operator("gtatools.link_sync", text="Sync",
+                          translate=False,
+                          **inu_icon(safe_icon('FILE_REFRESH')))
+        link_row.operator("gtatools.link_unlink", text="Unlink",
+                          translate=False,
+                          **inu_icon(safe_icon('UNLINKED')))
+        link_row.operator("gtatools.link_verify", text="Verify",
+                          translate=False,
+                          **inu_icon(safe_icon('CHECKMARK')))
+
         row = bottom_col.row(align=True)
         row.operator("gtatools.import_ipl_sections", text=T("Секции IPL"), **inu_icon(safe_icon('IMPORT')))
         row.operator("gtatools.export_ipl_sections", text=T("Секции IPL"), **inu_icon(safe_icon('EXPORT')))
@@ -2355,6 +2431,46 @@ class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
                     bi_col = bi_box.column(align=True)
                     for item in scene.inu_settings.gtatools_binary_ipls:
                         bi_col.prop(item, "enabled", text=item.name)
+
+            # Text IPL selector — parallel to binary above.  Populated
+            # by the same Scan operator (which now scans both formats)
+            # so the user never has to think about format mid-import.
+            ti_box = box.box()
+            ti_row = ti_box.row(align=True)
+            ti_row.prop(
+                scene.inu_settings, "gtatools_show_text_ipls",
+                **inu_icon(safe_icon('TRIA_DOWN') if scene.inu_settings.gtatools_show_text_ipls else 'TRIA_RIGHT'),
+                emboss=False,
+                text=T("Текстовые IPL") + f": {len(scene.inu_settings.gtatools_text_ipls)}",
+            )
+            ti_row.operator(
+                "gtatools.scan_binary_ipls", text="", **inu_icon(safe_icon('FILE_REFRESH')),
+            )
+            if scene.inu_settings.gtatools_show_text_ipls:
+                if not scene.inu_settings.gtatools_text_ipls:
+                    ti_box.label(
+                        text=T("Список пуст — нажмите Scan"),
+                        **inu_icon(safe_icon('INFO')),
+                    )
+                else:
+                    ti_row2 = ti_box.row(align=True)
+                    op_all = ti_row2.operator(
+                        "gtatools.text_ipl_toggle_all",
+                        text=T("Все"), **inu_icon(safe_icon('CHECKBOX_HLT')),
+                    )
+                    op_all.enable = True
+                    op_none = ti_row2.operator(
+                        "gtatools.text_ipl_toggle_all",
+                        text=T("Никакие"), **inu_icon(safe_icon('CHECKBOX_DEHLT')),
+                    )
+                    op_none.enable = False
+                    ti_col = ti_box.column(align=True)
+                    for item in scene.inu_settings.gtatools_text_ipls:
+                        # Suffix "(IMG)" / "(loose)" so the user knows
+                        # where each text IPL is sourced from.
+                        src = "IMG" if item.img_source else "loose"
+                        ti_col.prop(item, "enabled",
+                                    text=f"{item.name}  [{src}]")
 
             # Cache dir lives next to the .blend. When the scene is
             # unsaved, wrap the (disabled) button + warning label in

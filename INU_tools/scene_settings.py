@@ -331,6 +331,20 @@ class GTATOOLS_BinaryIplEntry(bpy.types.PropertyGroup):
     img_source: StringProperty()
 
 
+class GTATOOLS_TextIplEntry(bpy.types.PropertyGroup):
+    """One text IPL file (loose on disk via gta.dat, or inside an IMG)
+    — parallel to GTATOOLS_BinaryIplEntry but for human-readable IPLs.
+
+    ``name`` is the display label.  ``path`` holds either an absolute
+    loose-file path (when ``img_source`` is empty) or the entry name
+    within ``img_source`` IMG.
+    """
+    name: StringProperty()
+    enabled: BoolProperty(name="", default=True)
+    path: StringProperty()
+    img_source: StringProperty()
+
+
 class GTATOOLS_LintIssueItem(bpy.types.PropertyGroup):
     """One row in the binary file scanner UIList. Mirrors core/file_lint.LintIssue.
 
@@ -529,6 +543,10 @@ class INUSceneSettings(bpy.types.PropertyGroup):
     gtatools_show_binary_ipls: BoolProperty(
         name="Show binary IPLs",
         description="Развернуть список бинарных IPL для галочек",
+        default=False)
+    gtatools_show_text_ipls: BoolProperty(
+        name="Show text IPLs",
+        description="Развернуть список текстовых IPL для галочек",
         default=False)
     gtatools_map_skip_2dfx: BoolProperty(
         name="Skip 2DFX",
@@ -1380,4 +1398,5 @@ class INUSceneSettings(bpy.types.PropertyGroup):
     # ── CollectionProperty fields with custom item types ──────
     inu_validate_issues: CollectionProperty(type=INUValidateIssue)
     gtatools_binary_ipls: CollectionProperty(type=GTATOOLS_BinaryIplEntry)
+    gtatools_text_ipls: CollectionProperty(type=GTATOOLS_TextIplEntry)
     gtatools_img_entries: CollectionProperty(type=GTATOOLS_ImgFileEntry)

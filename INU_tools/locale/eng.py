@@ -3205,4 +3205,304 @@ LANG = {
     "Указать конкретный .ifp файл куда дополнить анимацию. Когда задан — игнорируется «Папка» и «Имя IFP», анимация пишется СЮДА. Удобно для merge'а в <game>/anim/myhood.ifp или подобных общих файлов вне папки экспорта DFF":
         "Pick a specific .ifp file to append the animation into. When set, «Folder» and «IFP name» are ignored — the animation goes HERE. Useful for merging into <game>/anim/myhood.ifp or other shared files outside the DFF export folder",
 
+    # === IPL/IDE link tracking + Export dialog ===
+    "DFF Flags (активный объект, из N-панели):":
+        "DFF Flags (active object, from N-panel):",
+    "Draw distance на момент последнего Add to IDE":
+        "Draw distance at the last Add to IDE",
+    "IDE файл не найден": "IDE file not found",
+    "IDE: удалено {0} записей": "IDE: removed {0} entries",
+    "IPL правили извне: {0} ссылок исправлено, {1} удалено":
+        "IPL edited externally: {0} links repaired, {1} removed",
+    "IPL файл не найден": "IPL file not found",
+    "Model ID на момент последнего экспорта в IPL (для content-match при рассинхроне sidecar'а)":
+        "Model ID at the last IPL export (for content-match when the sidecar is out of sync)",
+    "Object flags на момент последнего Add to IDE":
+        "Object flags at the last Add to IDE",
+    "Sync IDE: linked {0}, пропущено {1}":
+        "Sync IDE: linked {0}, skipped {1}",
+    "Sync: linked {0}, обновлено {1}, пропущено {2}":
+        "Sync: linked {0}, updated {1}, skipped {2}",
+    "TXD имя на момент последнего Add to IDE":
+        "TXD name at the last Add to IDE",
+    "True если model_id этого объекта был успешно записан в IDE через Add":
+        "True if this object's model_id was successfully written to the IDE via Add",
+    "В IDE ({0})": "In IDE ({0})",
+    "В IDE, параметры разошлись": "In IDE, parameters drifted",
+    "В IPL ({0})": "In IPL ({0})",
+    "В IPL, координаты разошлись": "In IPL, coordinates drifted",
+    "Выделите объекты с Model ID > 0": "Select objects with Model ID > 0",
+    "Выделите объекты с привязкой к IPL": "Select objects linked to an IPL",
+    "Кватернион (x,y,z,w) на момент последнего экспорта в IPL":
+        "Quaternion (x,y,z,w) at the last IPL export",
+    "Координаты на момент последнего экспорта в IPL. Если текущая позиция отличается — Add to IPL обновит существующую строку вместо добавления новой":
+        "Coordinates at the last IPL export. If the current position differs, Add to IPL updates the existing row instead of appending a new one",
+    "Не в IDE": "Not in IDE",
+    "Не в IPL": "Not in IPL",
+    "Не найдено записей для удаления": "No entries found to remove",
+    "Нет связанных объектов для этого IPL": "No linked objects for this IPL",
+    "Проверка: {0} ссылок ОК, {1} исправлено, {2} удалено, {3} orphan":
+        "Verify: {0} links OK, {1} repaired, {2} removed, {3} orphan",
+    "Путь к IDE-файлу куда этот объект был экспортирован последним":
+        "Path to the IDE file this object was last exported to",
+    "Путь к IPL-файлу куда этот объект был экспортирован последним":
+        "Path to the IPL file this object was last exported to",
+    "Стабильный ID этой расстановки в IPL. Пустой = объект ещё не экспортировался в IPL. Авто-генерируется при первом «Add to IPL»":
+        "Stable ID of this placement in the IPL. Empty = object not yet exported to IPL. Auto-generated on the first «Add to IPL»",
+    "Текстовые IPL": "Text IPLs",
+    "Удалено из IPL: {0}, осталось записей: {1}":
+        "Removed from IPL: {0}, entries left: {1}",
+    "Уже в списке: {0}": "Already in list: {0}",
+    "все без Model ID": "all without Model ID",
+    "все целевые строки уже заняты другими объектами":
+        "all target rows already taken by other objects",
+    "ни одного совпадения по (model_id+pos) в этом IPL":
+        "no match by (model_id+pos) in this IPL",
+
+
+    # === property descriptions audit batch ===
+    'Сдвиг границы COL освещения':
+        'COL lighting boundary offset',
+    'Порог яркости':
+        'Brightness threshold',
+    'Замерять время операций':
+        'Measure operation timing',
+    'Развернуть список текстовых IPL для галочек':
+        'Expand the text IPL list for checkboxes',
+    'Не импортировать 2DFX-эффекты при импорте':
+        "Don't import 2DFX effects on import",
+    'Искать все IDE/IPL через gta.dat':
+        'Find all IDE/IPL via gta.dat',
+    'Загружать коллизии из кеша при импорте карты':
+        'Load collisions from cache on map import',
+    'Создавать отдельную коллекцию на каждый IPL-файл':
+        'Create a separate collection per IPL file',
+    'Целевая игра для экспорта / валидации. Импорт авто-детектит игру по RW-версии':
+        'Target game for export / validation. Import auto-detects the game by RW version',
+    'Платформа':
+        'Platform',
+    'Целевая платформа: PC (vanilla) или Mobile (iOS/Android, Native Data PLG)':
+        'Target platform: PC (vanilla) or Mobile (iOS/Android, Native Data PLG)',
+    'Путь к IDE файлу GTA SA':
+        'Path to GTA SA IDE file',
+    'Путь к IPL файлу GTA SA':
+        'Path to GTA SA IPL file',
+    'Имя общего TXD файла':
+        'Shared TXD file name',
+    'Папка для поиска TXD при импорте DFF':
+        'Folder to search for TXD on DFF import',
+    'Папка куда писать собранную Asset Library (13 .blend файлов + blender_assets.cats.txt + textures/)':
+        'Folder to write the built Asset Library to (13 .blend files + blender_assets.cats.txt + textures/)',
+    'Без превью':
+        'No previews',
+    'Не рендерить превьюшки. В ~3× быстрее, но Asset Browser показывает заглушки вместо миниатюр':
+        "Don't render previews. ~3x faster, but the Asset Browser shows placeholders instead of thumbnails",
+    'Размер превью':
+        'Preview size',
+    'Размер превьюшек в пикселях. 128 — стандарт Blender, 256 крупнее но в 4× медленнее на рендере':
+        'Preview size in pixels. 128 is the Blender standard, 256 is larger but 4x slower to render',
+    'Пропускать готовые':
+        'Skip existing',
+    'Пропускать категории чьи .blend уже существуют в Output. Удобно при инкрементальном добавлении новых моделей после установки модов':
+        'Skip categories whose .blend already exists in Output. Handy for incrementally adding new models after installing mods',
+    'После успешной сборки библиотеки удалить папку .inu_cache/ (DFF, COL, исходные PNG). Освобождает много места на диске. Текстуры в самой библиотеке остаются — при включённой галочке они принудительно копируются в библиотеку (не симлинком). Будь готов что Import Map после этого потребует повторно «Извлечь ресурсы»':
+        'After a successful library build, delete the .inu_cache/ folder (DFF, COL, source PNG). Frees a lot of disk space. Textures in the library itself stay — when enabled they are force-copied into the library (not symlinked). Note that Import Map will then need «Extract resources» again',
+    'Включить в сборку машины/мотоциклы/лодки/самолёты. Имеет смысл только при выбранном регионе — при ALL категория всё равно строится':
+        'Include cars/bikes/boats/planes in the build. Only meaningful with a region selected — with ALL the category is built anyway',
+    'Включить в сборку модели NPC / игрока. Имеет смысл только при выбранном регионе':
+        'Include NPC / player models in the build. Only meaningful with a region selected',
+    'Включить в сборку модели оружия. Имеет смысл только при выбранном регионе':
+        'Include weapon models in the build. Only meaningful with a region selected',
+    'Включить в сборку Interior-объекты (data/maps/interior). Имеет смысл только при выбранном регионе':
+        'Include interior objects (data/maps/interior) in the build. Only meaningful with a region selected',
+    'Currently hiding DFF meshes via the «Проверка» toggle':
+        'Currently hiding DFF meshes via the «Check» toggle',
+    'Currently hiding LOD meshes via the «Проверка» toggle':
+        'Currently hiding LOD meshes via the «Check» toggle',
+    'Currently hiding COL meshes via the «Проверка» toggle':
+        'Currently hiding COL meshes via the «Check» toggle',
+    'Currently hiding shadow meshes via the «Проверка» toggle':
+        'Currently hiding shadow meshes via the «Check» toggle',
+    'Бэкенд сжатия DXT-текстур.\nPure numpy, без NVTT и внешних бинарей — соответствует требованиям\nextensions.blender.org. Поверх любого бэкенда работает кэш по\nsession_uid: повторный экспорт без правок текстур почти мгновенный.':
+        'DXT texture compression backend.\nPure numpy, no NVTT or external binaries — meets the\nextensions.blender.org requirements. A session_uid cache sits on top of\nany backend: re-export without texture edits is near-instant.',
+    'Куда привесить выбранный пипеткой меш:\n  Новый pivot — анимированная часть (своя ось/скорость)\n  К существующему pivot — на тот же pivot что и предыдущая\n  К root — статичная часть без анимации':
+        'Where to attach the eyedropper-picked mesh:\n  New pivot — animated part (own axis/speed)\n  To existing pivot — same pivot as the previous one\n  To root — static part without animation',
+    "Кликни на пипетку и выбери меш в сцене или 3D-окне. Если rig'а ещё нет — он создастся автоматически. После пика поле очищается — можно сразу подбирать следующий":
+        "Click the eyedropper and pick a mesh in the scene or 3D view. If there's no rig yet — it's created automatically. After picking the field clears so you can pick the next one right away",
+    'Какие панели показывать в N-sidebar':
+        'Which panels to show in the N-sidebar',
+    'Активный файл со списком ID':
+        'Active file with the ID list',
+    'Развернуть редкие операции':
+        'Expand rare operations',
+    'Цвет всех IK-контрольных костей':
+        'Color of all IK control bones',
+    'Высота виртуальной коллизии над плоскостью-полом':
+        'Height of the virtual collision above the floor plane',
+    'Настройки пола, коллизии, цвета IK':
+        'Floor, collision and IK color settings',
+    'Включить для анимаций которые двигают персонажа':
+        'Enable for animations that move the character',
+    'Утилиты для исправления sign-discontinuities':
+        'Utilities to fix sign discontinuities',
+    'Первый кадр диапазона':
+        'First frame of the range',
+    'Последний кадр диапазона':
+        'Last frame of the range',
+    'Ось вдоль которой сглаживать ключи между опорными. ALL — все каналы в локальных координатах кости; WORLD_X/Y/Z — только translation, в мировых координатах (медленнее, but учитывает поворот родителей)':
+        "Axis along which to smooth keys between anchors. ALL — all channels in the bone's local space; WORLD_X/Y/Z — translation only, in world space (slower, but accounts for parent rotation)",
+    'Визуальный сдвиг кубов IK для рук и ног':
+        'Visual offset of the IK cubes for hands and feet',
+    'Множитель размера всех IK-контролов':
+        'Size multiplier for all IK controls',
+    'Показывать кубы запястий и ступней':
+        'Show wrist and foot cubes',
+    'Показывать кубы-маркеры на локтях и коленях':
+        'Show marker cubes on elbows and knees',
+    'Показывать кубы головы, верхнего торса и ключиц':
+        'Show head, upper torso and clavicle cubes',
+    'Показывать корневой куб':
+        'Show the root cube',
+    'Базовый рассеянный свет':
+        'Base ambient light',
+    'Множитель интенсивности света':
+        'Light intensity multiplier',
+    'Гамма-коррекция':
+        'Gamma correction',
+    'Включить тени при запекании':
+        'Enable shadows during baking',
+    'Preview-режим':
+        'Preview mode',
+    'Сколько ambient добавлять к prelight':
+        'How much ambient to add to prelight',
+    'Контраст финального изображения':
+        'Final image contrast',
+    'Гамма финального изображения':
+        'Final image gamma',
+    'Смещение яркости':
+        'Brightness offset',
+    'Сглаживание vertex colors между соседними вершинами.\nIterations — количество проходов.\nБольше проходов = плавнее переходы':
+        'Smooth vertex colors between neighbouring vertices.\nIterations — number of passes.\nMore passes = smoother transitions',
+    'Сила сглаживания за один проход (0-1).\n0 — без эффекта, 1 — vertex берёт полное среднее соседей':
+        'Smoothing strength per pass (0-1).\n0 — no effect, 1 — vertex takes the full average of neighbours',
+    'Контраст vertex colors.\n1.0 — без изменений\n< 1.0 — меньше контраст\n> 1.0 — больше контраст':
+        'Vertex color contrast.\n1.0 — unchanged\n< 1.0 — less contrast\n> 1.0 — more contrast',
+    'Яркость vertex colors (additive offset).\n0.0 — без изменений\n> 0 — светлее\n< 0 — темнее':
+        'Vertex color brightness (additive offset).\n0.0 — unchanged\n> 0 — lighter\n< 0 — darker',
+    'Подтягивает тёмные участки к самой яркой точке, сохраняя шаг между гранями.\n0 — без изменений\n0.3-0.5 — рекомендуемый диапазон\n1 — все цвета доходят до max (теряется визуальный шаг)':
+        'Pulls dark areas towards the brightest point while preserving the step between faces.\n0 — unchanged\n0.3-0.5 — recommended range\n1 — all colors reach max (the visual step is lost)',
+    'Гамма-коррекция vertex colors.\n1.0 — без изменений\n< 1.0 — светлее (lift тени)\n> 1.0 — темнее (deepen тени)':
+        'Vertex color gamma correction.\n1.0 — unchanged\n< 1.0 — lighter (lift shadows)\n> 1.0 — darker (deepen shadows)',
+    'Скорость затухания света':
+        'Light falloff rate',
+    'Радиус поиска соседних граней':
+        'Neighbour face search radius',
+    'Цвет, которым заливаются вершины вокруг выделенных полигонов':
+        'Color used to fill vertices around the selected polygons',
+    'Сила вклада цвета в центре. 0 — ничего не делать, 1 — полностью заменить vcols в центре на выбранный цвет':
+        'Strength of the color contribution at the center. 0 — do nothing, 1 — fully replace center vcols with the chosen color',
+    'Радиус как доля половины bbox-диагонали меша. 0 — только выделенные вершины, 1 — расходится на половину диагонали':
+        'Radius as a fraction of half the mesh bbox diagonal. 0 — selected vertices only, 1 — spreads across half the diagonal',
+    'Режим прореживания':
+        'Decimation mode',
+    'Оставить каждый N-ный из выделенных (2 = удалить каждый второй)':
+        'Keep every Nth of the selected (2 = remove every second)',
+    'Порог ошибки':
+        'Error threshold',
+    'Чем выше — тем агрессивнее срез избыточных ключей':
+        'The higher, the more aggressively redundant keys are culled',
+    'Интерполяция':
+        'Interpolation',
+    'Писать все коллизии в один .col файл':
+        'Write all collisions into a single .col file',
+    'Имя общего .col файла без расширения':
+        'Shared .col file name without extension',
+    'Писать все текстуры в один общий .txd файл':
+        'Write all textures into one shared .txd file',
+    'Имя общего .txd файла без расширения':
+        'Shared .txd file name without extension',
+    'Папка с DFF/COL/TXD для сканирования':
+        'Folder with DFF/COL/TXD to scan',
+    'Включая подпапки':
+        'Include subfolders',
+    'Рекурсивный обход подпапок. По умолчанию выключено, чтобы случайно не просканировать всю систему':
+        'Recursively walk subfolders. Off by default to avoid accidentally scanning the whole system',
+    'Только ERROR':
+        'ERROR only',
+    'Скрыть WARN/INFO в списке (фильтр draw, коллекция не пересоздаётся)':
+        'Hide WARN/INFO in the list (draw filter, collection not rebuilt)',
+    'Куда сохранять отчёт':
+        'Where to save the report',
+    'Папка для отчёта':
+        'Report folder',
+    'Источник':
+        'Source',
+    '.dat файл':
+        '.dat file',
+    'Папка с IDE/IPL':
+        'Folder with IDE/IPL',
+    'Рекурсивный обход подпапок при FOLDER-режиме':
+        'Recursively walk subfolders in FOLDER mode',
+    'Авто-поиск всех *.img в области скана (DAT-строки / FOLDER walk / CUSTOM parent dirs) и cross-check IDE entries — flag missing DFF/TXD':
+        'Auto-find all *.img in the scan area (DAT lines / FOLDER walk / CUSTOM parent dirs) and cross-check IDE entries — flag missing DFF/TXD',
+    'Скрыть WARN/INFO в списке (фильтр draw)':
+        'Hide WARN/INFO in the list (draw filter)',
+    'Откуда брать TXD-файлы для индекса':
+        'Where to take TXD files for the index from',
+    'Папка со стандалон-TXD для сканирования':
+        'Folder with standalone TXD to scan',
+    'Подсчитать сколько IDE-моделей используют каждый TXD (используется тот же набор IDE что и у Map Analyzer)':
+        'Count how many IDE models use each TXD (uses the same IDE set as Map Analyzer)',
+    'Поиск':
+        'Search',
+    'Фильтр по имени текстуры или TXD':
+        'Filter by texture or TXD name',
+    'Стандарт (vanilla SA) / FLA / Строгий / Мягкий':
+        'Standard (vanilla SA) / FLA / Strict / Lenient',
+    'Оставить каждый N-ный ключ (2 = удалить каждый второй)':
+        'Keep every Nth key (2 = remove every second)',
+    'True — кубический ease-in/out (без углов на анкорах). False — линейная интерполяция':
+        'True — cubic ease-in/out (no corners at anchors). False — linear interpolation',
+    'Ось вдоль которой сглаживать':
+        'Axis along which to smooth',
+
+    # === f-string error/report templates ===
+    'геометрия #{0}: {1} вершин — RenderWare хранит индексы треугольников в uint16 (максимум {2} вершин). Разбей меш на части или упрости (Decimate).':
+        'geometry #{0}: {1} vertices — RenderWare stores triangle indices as uint16 (max {2} vertices). Split the mesh or simplify it (Decimate).',
+    'геометрия #{0}: {1} треугольников — много для одной геометрии. Экспорт продолжен (счётчик треугольников u32), но движок/инструменты могут тормозить. Рекомендуется разбить меш на части.':
+        'geometry #{0}: {1} triangles — a lot for a single geometry. Export continued (triangle count is u32), but the engine/tools may lag. Splitting the mesh is recommended.',
+    'геометрия #{0}: {1} материалов — RenderWare хранит material-индекс в uint16 (максимум {2}). Используй меньше материалов.':
+        'geometry #{0}: {1} materials — RenderWare stores the material index as uint16 (max {2}). Use fewer materials.',
+    'геометрия #{0}: {1} UV-слоёв — флаги геометрии хранят кол-во UV в uint8 (максимум {2}). GTA SA рендерит максимум 2.':
+        'geometry #{0}: {1} UV layers — geometry flags store the UV count as uint8 (max {2}). GTA SA renders at most 2.',
+    'геометрия #{0}: skin.num_bones={1} — RenderWare skin хранит счётчики костей в uint8 (максимум {2}).':
+        'geometry #{0}: skin.num_bones={1} — RenderWare skin stores bone counts as uint8 (max {2}).',
+    'геометрия #{0}: skin.num_used={1} > {2} (uint8).':
+        'geometry #{0}: skin.num_used={1} > {2} (uint8).',
+    'геометрия #{0}: skin.max_weights={1} > {2} (uint8).':
+        'geometry #{0}: skin.max_weights={1} > {2} (uint8).',
+    'геометрия #{0}: skin.bones_used содержит индекс {1} вне 0..{2} (uint8).':
+        'geometry #{0}: skin.bones_used contains index {1} outside 0..{2} (uint8).',
+    'геометрия #{0}: skin.bone_indices[{1}] содержит индекс {2} вне 0..{3} (uint8). Слишком много костей в арматуре.':
+        'geometry #{0}: skin.bone_indices[{1}] contains index {2} outside 0..{3} (uint8). Too many bones in the armature.',
+    "'{0}': model_id={1} вне диапазона 0..{2} (заголовок COL хранит ID в uint16)":
+        "'{0}': model_id={1} out of range 0..{2} (the COL header stores the ID as uint16)",
+    "'{0}': {1} сфер — COL2/3/4 поддерживает максимум {2}":
+        "'{0}': {1} spheres — COL2/3/4 supports at most {2}",
+    "'{0}': {1} боксов — COL2/3/4 поддерживает максимум {2}":
+        "'{0}': {1} boxes — COL2/3/4 supports at most {2}",
+    "'{0}': {1} треугольников — COL формат поддерживает максимум {2}. Разбей меш на части или упрости коллизию (Decimate).":
+        "'{0}': {1} triangles — the COL format supports at most {2}. Split the mesh or simplify the collision (Decimate).",
+    "'{0}': {1} вершин — COL хранит индексы в uint16 (максимум {2} вершин). Разбей меш на части или упрости коллизию (Decimate).":
+        "'{0}': {1} vertices — COL stores indices as uint16 (max {2} vertices). Split the mesh or simplify the collision (Decimate).",
+    "'{0}': {1} shadow-треугольников — максимум {2}":
+        "'{0}': {1} shadow triangles — max {2}",
+    "'{0}': {1} shadow-вершин — максимум {2}":
+        "'{0}': {1} shadow vertices — max {2}",
+    'OK: {0} Empties, {1} с анимацией, {2} меш(а)':
+        'OK: {0} Empties, {1} animated, {2} mesh(es)',
+    'Не получилось вызвать decimate: {0}. Активируй окно Graph Editor.':
+        'Failed to call decimate: {0}. Activate a Graph Editor window.',
+    'ANP3 не поддерживается в {0} — переключаюсь на ANPK':
+        'ANP3 is not supported in {0} — switching to ANPK',
 }

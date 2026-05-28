@@ -67,6 +67,20 @@ class GTATOOLS_OT_binary_ipl_toggle_all(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class GTATOOLS_OT_text_ipl_toggle_all(bpy.types.Operator):
+    """Включить или выключить все текстовые IPL в списке одной кнопкой"""
+    bl_idname = "gtatools.text_ipl_toggle_all"
+    bl_label = "INU: Toggle All Text IPLs"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    enable: BoolProperty(default=True)
+
+    def execute(self, context):
+        for item in context.scene.inu_settings.gtatools_text_ipls:
+            item.enabled = self.enable
+        return {'FINISHED'}
+
+
 class GTATOOLS_OT_scan_binary_ipls(bpy.types.Operator):
     """Сканировать IMG архивы и собрать список бинарных IPL для выбранного района. После скана можно галочками включать/выключать конкретные файлы"""
     bl_idname = "gtatools.scan_binary_ipls"
@@ -96,10 +110,13 @@ class GTATOOLS_OT_scan_binary_ipls(bpy.types.Operator):
                 img_paths.append(p)
 
         # Remember previously enabled entries so rescans don't lose user picks
-        prev_state = {i.name.lower(): i.enabled
-                      for i in scene.inu_settings.gtatools_binary_ipls}
+        prev_bin = {i.name.lower(): i.enabled
+                    for i in scene.inu_settings.gtatools_binary_ipls}
+        prev_txt = {i.name.lower(): i.enabled
+                    for i in scene.inu_settings.gtatools_text_ipls}
 
         scene.inu_settings.gtatools_binary_ipls.clear()
+        scene.inu_settings.gtatools_text_ipls.clear()
         total_checked = 0
         for ip in img_paths:
             try:
@@ -108,28 +125,114 @@ class GTATOOLS_OT_scan_binary_ipls(bpy.types.Operator):
                     if not nm.endswith('.ipl'):
                         continue
                     total_checked += 1
-                    # Peek first 4 bytes — skip text .ipl files, those are
-                    # human-readable and shouldn't appear in the binary list.
+                    # Peek first 4 bytes — bnry → binary; anything else
+                    # → treat as text IPL.
                     try:
                         from ..core.img import extract_file
                         head = extract_file(ip, e.name)
-                        if not head or head[:4] != b'bnry':
-                            continue
                     except Exception:
                         continue
+                    if not head:
+                        continue
+                    is_binary = head[:4] == b'bnry'
+                    # IMG entry names have no path — region match falls
+                    # back to basename prefix only.  Mod IPLs inside IMG
+                    # rarely use region prefixes, so consider "ALL" the
+                    # safer default for the IMG path; users still pick
+                    # individual files via the checkbox list.
                     if region_u != 'ALL' and not e.name.upper().startswith(region_u):
                         continue
-                    item = scene.inu_settings.gtatools_binary_ipls.add()
-                    item.name = e.name
-                    item.img_source = ip
-                    item.enabled = prev_state.get(nm, True)
+                    if is_binary:
+                        item = scene.inu_settings.gtatools_binary_ipls.add()
+                        item.name = e.name
+                        item.img_source = ip
+                        item.enabled = prev_bin.get(nm, True)
+                    else:
+                        item = scene.inu_settings.gtatools_text_ipls.add()
+                        item.name = e.name
+                        item.path = e.name  # name inside IMG
+                        item.img_source = ip
+                        item.enabled = prev_txt.get(nm, True)
             except Exception as ex:
                 self.report({'WARNING'}, f"{os.path.basename(ip)}: {ex}")
 
+        # Loose text IPLs — collected from two sources:
+        #   1. ``info.ipl_paths`` (gta.dat references)
+        #   2. Recursive disk scan of <game_root> for *.ipl files
+        # Both sources are de-duped by absolute path; the recursive
+        # walk catches mods that don't register in gta.dat or have
+        # gta.dat in a non-standard location.
+        loose_paths = set()
+        from_gta_dat = 0
+        for tp in info.ipl_paths:
+            if os.path.isfile(tp):
+                loose_paths.add(os.path.normcase(os.path.abspath(tp)))
+                from_gta_dat += 1
+        print(f"[Scan IPL] game_root: {game_root!r}")
+        print(f"[Scan IPL] info.ipl_paths from gta.dat: {len(info.ipl_paths)}")
+        print(f"[Scan IPL] found on disk via gta.dat refs: {from_gta_dat}")
+
+        # Recursive disk fallback over the whole game_root.  Mod packs
+        # drop IPLs in arbitrary places: data/maps/<custom>, models/,
+        # CleanIDE/, custom roots.  We aggressively walk the whole
+        # tree and only skip housekeeping dirs (.git etc.) — false
+        # positives are basically free (regex match on extension).
+        from_disk = 0
+        before = len(loose_paths)
+        # Folders that NEVER contain IPLs and would just slow us down.
+        # NB: ``models/`` is NOT skipped — some mods store loose IPLs
+        # there alongside their DFFs.
+        SKIP_DIRS = {'.git', '.svn', '__pycache__',
+                     'audio', 'movies', 'anim', 'text', 'fonts'}
+        for dirpath, dirnames, filenames in os.walk(game_root):
+            dirnames[:] = [d for d in dirnames
+                           if d.lower() not in SKIP_DIRS]
+            for fn in filenames:
+                if not fn.lower().endswith('.ipl'):
+                    continue
+                full = os.path.normcase(os.path.abspath(
+                    os.path.join(dirpath, fn)))
+                if full not in loose_paths:
+                    loose_paths.add(full)
+                    from_disk += 1
+        print(f"[Scan IPL] additionally found on disk: {from_disk}")
+        print(f"[Scan IPL] total unique loose IPLs: {len(loose_paths)}")
+
+        # Region filter: matches either by ``MAPS/<region>/`` segment
+        # in the path (handles ``data/maps/Props_obj/foo.ipl`` where
+        # the region is "PROPS_OBJ" picked from the folder name) OR
+        # by basename prefix (handles ``LAn.ipl`` for region "LA").
+        # The basename-only check used previously dropped 100% of mod
+        # IPLs whose region is encoded in the folder path, not the name.
+        def _matches_region(p: str) -> bool:
+            if region_u == 'ALL':
+                return True
+            parts = p.replace('\\', '/').upper().split('/')
+            for i, part in enumerate(parts):
+                if part == 'MAPS' and i + 1 < len(parts):
+                    return parts[i + 1] == region_u
+            return os.path.basename(p).upper().startswith(region_u)
+
+        region_filtered = 0
+        for tp in sorted(loose_paths):
+            base = os.path.basename(tp)
+            nm = base.lower()
+            if not _matches_region(tp):
+                region_filtered += 1
+                continue
+            item = scene.inu_settings.gtatools_text_ipls.add()
+            item.name = base
+            item.path = tp        # absolute loose path
+            item.img_source = ""  # empty → loose file marker
+            item.enabled = prev_txt.get(nm, True)
+        if region_filtered:
+            print(f"[Scan IPL] region '{region}' filtered out: {region_filtered}")
+
         scene['gtatools_binary_ipls_region'] = region
         self.report({'INFO'},
-                    f"{len(scene.inu_settings.gtatools_binary_ipls)} binary IPL(s) for region '{region}' "
-                    f"(scanned {total_checked} .ipl entries)")
+                    f"{len(scene.inu_settings.gtatools_binary_ipls)} binary + "
+                    f"{len(scene.inu_settings.gtatools_text_ipls)} text IPL(s) "
+                    f"for region '{region}' (scanned {total_checked} IMG-entries)")
         return {'FINISHED'}
 
 
@@ -472,9 +575,28 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
         # tagged on so the optional Group-by-IPL collection scheme can
         # bin them later — this metadata is throwaway, dropped after
         # the import loop completes.
+        #
+        # ``gtatools_text_ipls`` (when the user populated it via Scan)
+        # acts as a per-file allowlist: only loose IPL paths whose
+        # basename appears as enabled in the collection are processed.
+        # Empty collection = take everything that passes the region
+        # filter (preserves the old behaviour for users who skip Scan).
+        ti_entries = scene.inu_settings.gtatools_text_ipls
+        ti_enabled_loose = {i.name.lower() for i in ti_entries
+                            if i.enabled and not i.img_source}
+        ti_enabled_img = {i.name.lower() for i in ti_entries
+                          if i.enabled and i.img_source}
+        ti_use_selection = len(ti_entries) > 0
+
         instances = []
         for p in info.ipl_paths:
-            if os.path.isfile(p) and _ipl_matches_region(p):
+            if not (os.path.isfile(p) and _ipl_matches_region(p)):
+                continue
+            if ti_use_selection:
+                base_lc = os.path.basename(p).lower()
+                if base_lc not in ti_enabled_loose:
+                    continue
+            if True:
                 try:
                     ipl = read_ipl(p)
                     base = len(instances)
@@ -518,25 +640,61 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
                     key = e.name.lower()
                     if not key.endswith('.ipl'):
                         continue
-                    if bi_use_selection:
+                    # Format auto-detect happens below; first apply the
+                    # right allowlist depending on whether THIS entry
+                    # turns out binary or text.  We peek the file once
+                    # and reuse the bytes to avoid double IMG read.
+                    try:
+                        ipl_data = extract_file(ip, e.name)
+                    except Exception:
+                        continue
+                    if not ipl_data:
+                        continue
+                    is_binary = ipl_data[:4] == b'bnry'
+
+                    # Per-format allowlist (if user populated the lists);
+                    # otherwise fall back to region filter alone.
+                    if is_binary and bi_use_selection:
                         if key not in bi_enabled:
+                            continue
+                    elif (not is_binary) and ti_use_selection:
+                        if key not in ti_enabled_img:
                             continue
                     elif not _ipl_matches_region(key):
                         continue
+
                     try:
-                        ipl_data = extract_file(ip, e.name)
-                        if ipl_data and ipl_data[:4] == b'bnry':
+                        if is_binary:
                             ipl_parsed = _read_binary_ipl(ipl_data)
-                            base = len(instances)
-                            n_local = len(ipl_parsed.instances)
-                            ipl_basename = os.path.splitext(e.name)[0]
-                            for inst in ipl_parsed.instances:
-                                if 0 <= inst.lod_index < n_local:
-                                    inst.lod_index = base + inst.lod_index
-                                else:
-                                    inst.lod_index = -1
-                                inst._source_ipl = ipl_basename
-                                instances.append(inst)
+                        else:
+                            # Text IPL inside IMG — decode and parse via
+                            # the same loose-file path.  IPL parser
+                            # accepts text body; we use a temp file to
+                            # keep the public API single-purpose.
+                            import tempfile
+                            with tempfile.NamedTemporaryFile(
+                                    mode='wb', suffix='.ipl',
+                                    delete=False) as tf:
+                                tf.write(ipl_data)
+                                tmp_path = tf.name
+                            try:
+                                ipl_parsed = read_ipl(tmp_path)
+                            finally:
+                                try:
+                                    os.unlink(tmp_path)
+                                except OSError:
+                                    pass
+
+                        base = len(instances)
+                        n_local = len(ipl_parsed.instances)
+                        ipl_basename = os.path.splitext(e.name)[0]
+                        for inst in ipl_parsed.instances:
+                            if 0 <= inst.lod_index < n_local:
+                                inst.lod_index = base + inst.lod_index
+                            else:
+                                inst.lod_index = -1
+                            inst._source_ipl = ipl_basename
+                            instances.append(inst)
                     except Exception:
                         pass
             except Exception:
@@ -1071,6 +1229,7 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
 classes = (
     GTATOOLS_OT_discover_game,
     GTATOOLS_OT_binary_ipl_toggle_all,
+    GTATOOLS_OT_text_ipl_toggle_all,
     GTATOOLS_OT_scan_binary_ipls,
     GTATOOLS_OT_toggle_links,
     GTATOOLS_OT_toggle_bbox,

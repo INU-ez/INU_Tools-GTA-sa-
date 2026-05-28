@@ -20,6 +20,53 @@ from . import widgets as WG
 from . import base as B
 
 
+def _invoke_op_from_npanel(context, op_id: str):
+    """Invoke ``op_id`` (e.g. ``gtatools.link_sync``) as if the user
+    clicked the equivalent N-panel button.
+
+    Synchronous, no timer — runs inside the floater's click event
+    handler with a live ``bpy.context`` and a region override that
+    pretends to come from a 3D-View N-panel (``UI`` region).  This
+    makes Blender route ``self.report({'INFO'}, ...)`` through the
+    same visibility path a real N-panel click uses.
+    """
+    live = bpy.context
+    target_window = None
+    target_area = None
+    target_region = None
+    for window in live.window_manager.windows:
+        for area in window.screen.areas:
+            if area.type != 'VIEW_3D':
+                continue
+            for region in area.regions:
+                if region.type == 'UI':
+                    target_window = window
+                    target_area = area
+                    target_region = region
+                    break
+            if target_region is not None:
+                break
+        if target_region is not None:
+            break
+
+    parts = op_id.split('.')
+    op = bpy.ops
+    for p in parts:
+        op = getattr(op, p)
+
+    try:
+        if target_region is not None:
+            with live.temp_override(
+                    window=target_window,
+                    area=target_area,
+                    region=target_region):
+                op('INVOKE_DEFAULT')
+        else:
+            op('INVOKE_DEFAULT')
+    except Exception as ex:
+        print(f"[IDE/IPL Floater] {op_id} failed: {ex}")
+
+
 # Padding between the section box's outline and its inner content.
 # Asymmetric: top is tight (header читается ближе к верхней рамке),
 # bottom + sides шире — даёт «дышать» нижнему ряду кнопок и не
@@ -61,13 +108,21 @@ class IdeIplImgFloater(B.Floater):
 
     # ── Heights ─────────────────────────────────────────────────────
 
+    # Compact text-label row height used for counts + status lines
+    # inside each box.  Smaller than full buttons since they're
+    # read-only display, not clickable.
+    _LABEL_H = 14
+
     def _ide_ipl_box_h(self):
-        # 3 inner rows: header + Add/Del + Import/Export. Header is
-        # separated by `_BTN_GAP` from the action cluster; the 2-row
-        # action cluster itself uses 1-px vertical overlap.
+        # 3 button rows + 2 label rows (file counts + per-object status).
+        # Header is separated by `_BTN_GAP` from the action cluster;
+        # the 2-row action cluster itself uses 1-px vertical overlap;
+        # label rows sit below the action cluster with a small gap.
         return (3 * TH._BUTTON_H
                 + WG._BTN_GAP                        # header → row1
                 + (-_FUSED_OVERLAP)                  # row1 ↔ row2 overlap
+                + 4                                  # row2 → counts label
+                + 2 * self._LABEL_H + 2              # counts + status + gap
                 + _BOX_PAD_TOP + _BOX_PAD_BOT)
 
     def _img_box_h(self):
@@ -77,11 +132,12 @@ class IdeIplImgFloater(B.Floater):
                 + _BOX_PAD_TOP + _BOX_PAD_BOT)
 
     def compute_body_height(self, context):
-        # Outer blocks (IDE/IPL pair, Секции IPL, Заменить Empty, IMG)
-        # фузятся overlap'ом тоже — единый вертикальный кластер без
-        # 18-px gap'ов.
+        # Outer blocks (IDE/IPL pair, Sync/Unlink/Verify row,
+        # Секции IPL, Заменить Empty, IMG) фузятся overlap'ом тоже —
+        # единый вертикальный кластер без 18-px gap'ов.
         return (
             self._ide_ipl_box_h()
+            - _FUSED_OVERLAP + TH._BUTTON_H   # Sync/Unlink/Verify row
             - _FUSED_OVERLAP + TH._BUTTON_H   # "Секции IPL" row
             - _FUSED_OVERLAP + TH._BUTTON_H   # "Заменить Empty" row
             - _FUSED_OVERLAP + self._img_box_h()
@@ -122,12 +178,19 @@ class IdeIplImgFloater(B.Floater):
             # row1 ↔ row2: 1-px vertical overlap so the two action rows
             # read as one fused 2×2 cluster.
             row2_y = row1_y - TH._BUTTON_H + _FUSED_OVERLAP
+            # Counts + status — two compact text-only rows below the
+            # action cluster.  4-px gap separates them from the
+            # buttons (they're informational, not interactive).
+            counts_y = row2_y - 4 - self._LABEL_H
+            status_y = counts_y - 2 - self._LABEL_H
             r1_l, r1_r = WG._enum_row_rects((ix, row1_y, iw, TH._BUTTON_H), 2)
             r2_l, r2_r = WG._enum_row_rects((ix, row2_y, iw, TH._BUTTON_H), 2)
             return {
                 'header': (ix, header_y, iw, TH._BUTTON_H),
                 'r1_l': r1_l, 'r1_r': r1_r,
                 'r2_l': r2_l, 'r2_r': r2_r,
+                'counts': (ix, counts_y, iw, self._LABEL_H),
+                'status': (ix, status_y, iw, self._LABEL_H),
             }
 
         ide_r = _layout_box_rows(L['ide_box_rect'])
@@ -136,6 +199,8 @@ class IdeIplImgFloater(B.Floater):
         L['ide_del_rect']    = ide_r['r1_r']
         L['ide_import_rect'] = ide_r['r2_l']
         L['ide_export_rect'] = ide_r['r2_r']
+        L['ide_counts_rect'] = ide_r['counts']
+        L['ide_status_rect'] = ide_r['status']
 
         ipl_r = _layout_box_rows(L['ipl_box_rect'])
         L['ipl_header_rect'] = ipl_r['header']
@@ -143,11 +208,19 @@ class IdeIplImgFloater(B.Floater):
         L['ipl_del_rect']    = ipl_r['r1_r']
         L['ipl_import_rect'] = ipl_r['r2_l']
         L['ipl_export_rect'] = ipl_r['r2_r']
+        L['ipl_counts_rect'] = ipl_r['counts']
+        L['ipl_status_rect'] = ipl_r['status']
+
+        # ── Unified Sync / Unlink / Verify row (works on both IDE+IPL) ──
+        # Прижата к IDE/IPL коробкам через 1-px overlap.
+        link_y = ide_ipl_y + _FUSED_OVERLAP - TH._BUTTON_H
+        (L['link_sync_rect'],
+         L['link_unlink_rect'],
+         L['link_verify_rect']) = WG._enum_row_rects(
+            (inner_x, link_y, inner_w, TH._BUTTON_H), 3)
 
         # ── Full-width "Секции IPL" Import / Export — fused pair ──
-        # Прилегает к IDE/IPL коробкам через 1-px overlap (вместо
-        # 18-px gap), формируя единый кластер до самого низа панели.
-        sec_y = ide_ipl_y + _FUSED_OVERLAP - TH._BUTTON_H
+        sec_y = link_y + _FUSED_OVERLAP - TH._BUTTON_H
         L['sec_import_rect'], L['sec_export_rect'] = WG._enum_row_rects(
             (inner_x, sec_y, inner_w, TH._BUTTON_H), 2)
 
@@ -183,6 +256,132 @@ class IdeIplImgFloater(B.Floater):
         L['img_remove_rect'] = (ix, rem_y, iw, TH._BUTTON_H)
 
     # ── Draw ────────────────────────────────────────────────────────
+
+    # ── Label helpers (read-only info inside IDE / IPL boxes) ──
+
+    def _draw_label_line(self, rect, text, icon_name=None,
+                         color=None):
+        """Compact single-line label with optional left-icon.
+        Used for counts and status — read-only, no hit testing."""
+        if rect is None or not text:
+            return
+        x, y, w, h = rect
+        ix = x + 4
+        # Optional 12-px icon at the left edge.
+        icon_w = 0
+        if icon_name:
+            icon_size = max(10, min(12, h - 2))
+            iy = y + (h - icon_size) // 2
+            GS._draw_icon((ix, iy, icon_size, icon_size),
+                          icon_name, tint=(color or TH._C_LABEL))
+            ix += icon_size + 3
+            icon_w = icon_size + 3
+        # Compute max text width that fits, truncate with ellipsis
+        # so long IDE/IPL paths don't overflow the column.
+        avail = max(0, w - 8 - icon_w)
+        tw, th = TA._text_dims(text)
+        if tw > avail:
+            # naive char-trim — TA._text_dims is per-string, so iterate.
+            while text and TA._text_dims(text + "…")[0] > avail:
+                text = text[:-1]
+            text = text + "…" if text else ""
+        ty = y + (h - th) // 2
+        TA._text(int(ix), int(ty), text, color or TH._C_LABEL)
+
+    def _draw_ide_counts(self, context, rect):
+        scn = context.scene
+        path = bpy.path.abspath(scn.inu_settings.gtatools_ide_path)
+        import os
+        if not (path and os.path.isfile(path)):
+            return
+        try:
+            from ...core.ide import read_ide
+            ide = read_ide(path)
+            parts = []
+            if ide.objects: parts.append(f"objs: {len(ide.objects)}")
+            if ide.anims:   parts.append(f"anim: {len(ide.anims)}")
+            if ide.cars:    parts.append(f"cars: {len(ide.cars)}")
+            if ide.peds:    parts.append(f"peds: {len(ide.peds)}")
+            if ide.txdps:   parts.append(f"txdp: {len(ide.txdps)}")
+            if parts:
+                self._draw_label_line(rect, ", ".join(parts),
+                                      icon_name='info')
+        except Exception:
+            pass
+
+    def _draw_ipl_counts(self, context, rect):
+        scn = context.scene
+        path = bpy.path.abspath(scn.inu_settings.gtatools_ipl_path)
+        import os
+        if not (path and os.path.isfile(path)):
+            return
+        try:
+            from ...core.ipl import read_ipl
+            ipl = read_ipl(path)
+            parts = []
+            if ipl.instances: parts.append(f"inst: {len(ipl.instances)}")
+            if ipl.culls:     parts.append(f"cull: {len(ipl.culls)}")
+            if ipl.garages:   parts.append(f"grge: {len(ipl.garages)}")
+            if ipl.enexs:     parts.append(f"enex: {len(ipl.enexs)}")
+            if ipl.pickups:   parts.append(f"pick: {len(ipl.pickups)}")
+            if ipl.cars:      parts.append(f"cars: {len(ipl.cars)}")
+            if ipl.jumps:     parts.append(f"jump: {len(ipl.jumps)}")
+            if ipl.auzos:     parts.append(f"auzo: {len(ipl.auzos)}")
+            if ipl.occls:     parts.append(f"occl: {len(ipl.occls)}")
+            if ipl.zones:     parts.append(f"zone: {len(ipl.zones)}")
+            if parts:
+                self._draw_label_line(rect, ", ".join(parts),
+                                      icon_name='info')
+        except Exception:
+            pass
+
+    def _draw_ide_status(self, context, rect):
+        import os
+        ao = context.active_object
+        if ao is None or ao.type != 'MESH' or not hasattr(ao, 'inu'):
+            return
+        inu = ao.inu
+        if not inu.ide_linked or inu.model_id <= 0:
+            self._draw_label_line(rect, "Не в IDE",
+                                  icon_name='radiobut_off')
+            return
+        drifted = (
+            abs(inu.draw_distance - inu.ide_last_draw_distance) > 1e-3
+            or (inu.txd_name or '') != (inu.ide_last_txd_name or '')
+            or int(inu.ide_flags) != int(inu.ide_last_flags)
+        )
+        if drifted:
+            self._draw_label_line(rect, "В IDE, разошлись",
+                                  icon_name='error')
+        else:
+            tgt = os.path.basename(inu.ide_target_file or '') or '?'
+            self._draw_label_line(rect, f"В IDE ({tgt})",
+                                  icon_name='checkmark')
+
+    def _draw_ipl_status(self, context, rect):
+        import os
+        ao = context.active_object
+        if ao is None or ao.type != 'MESH' or not hasattr(ao, 'inu'):
+            return
+        inu = ao.inu
+        if not inu.ipl_uuid:
+            self._draw_label_line(rect, "Не в IPL",
+                                  icon_name='radiobut_off')
+            return
+        cur = ao.matrix_world.translation
+        lp = inu.ipl_last_pos
+        drifted = (
+            abs(cur.x - lp[0]) > 1e-4
+            or abs(cur.y - lp[1]) > 1e-4
+            or abs(cur.z - lp[2]) > 1e-4
+        )
+        if drifted:
+            self._draw_label_line(rect, "В IPL, разошлись",
+                                  icon_name='error')
+        else:
+            tgt = os.path.basename(inu.ipl_target_file or '') or '?'
+            self._draw_label_line(rect, f"В IPL ({tgt})",
+                                  icon_name='checkmark')
 
     def _draw_section_header(self, rect, label, icon_name):
         """Section header inside a `_draw_box`: icon at left edge, label
@@ -250,6 +449,31 @@ class IdeIplImgFloater(B.Floater):
                         hovered=(h == 'ipl_export'), icon='export',
                         translate=False, corner_mask=GS.CORNER_BR)
 
+        # ── Counts + status labels (read-only, inside each box) ──
+        # Mirror panels.py: file counts on top row, active-object
+        # link status on the bottom row.  Read-only — no hover/click.
+        self._draw_ide_counts(context, L.get('ide_counts_rect'))
+        self._draw_ide_status(context, L.get('ide_status_rect'))
+        self._draw_ipl_counts(context, L.get('ipl_counts_rect'))
+        self._draw_ipl_status(context, L.get('ipl_status_rect'))
+
+        # ── Sync / Unlink / Verify row — unified link tracking ──
+        # Single fused 3-button strip that drives both IDE and IPL
+        # via the wrapper operators in ops/ide_ipl.py.  ``translate=
+        # False`` keeps the labels literally English; without it
+        # Blender's built-in i18n rewrites them to localised forms
+        # ("Синхронизация" / "Отсоединить") which clash with how the
+        # rest of the link-tracking workflow is labelled in INU.
+        WG._draw_button(L['link_sync_rect'], "Sync",
+                        hovered=(h == 'link_sync'), icon='file_refresh',
+                        translate=False, corner_mask=GS.CORNER_NONE)
+        WG._draw_button(L['link_unlink_rect'], "Unlink",
+                        hovered=(h == 'link_unlink'), icon='unlinked',
+                        translate=False, corner_mask=GS.CORNER_NONE)
+        WG._draw_button(L['link_verify_rect'], "Verify",
+                        hovered=(h == 'link_verify'), icon='checkmark',
+                        translate=False, corner_mask=GS.CORNER_NONE)
+
         # Секции IPL pair и Заменить Empty — все сидят в едином fused
         # столбце между IDE/IPL коробками сверху и IMG коробкой снизу.
         # Никакая сторона свободной не остаётся, поэтому CORNER_NONE
@@ -311,6 +535,9 @@ class IdeIplImgFloater(B.Floater):
         ('ipl_del',       'ipl_del_rect'),
         ('ipl_import',    'ipl_import_rect'),
         ('ipl_export',    'ipl_export_rect'),
+        ('link_sync',     'link_sync_rect'),
+        ('link_unlink',   'link_unlink_rect'),
+        ('link_verify',   'link_verify_rect'),
         ('sec_import',    'sec_import_rect'),
         ('sec_export',    'sec_export_rect'),
         ('replace_empty', 'replace_empty_rect'),
@@ -345,6 +572,9 @@ class IdeIplImgFloater(B.Floater):
         'ipl_del':       "gtatools.remove_ipl",
         'ipl_import':    "gtatools.import_ipl",
         'ipl_export':    "gtatools.export_ipl",
+        'link_sync':     "gtatools.link_sync",
+        'link_unlink':   "gtatools.link_unlink",
+        'link_verify':   "gtatools.link_verify",
         'sec_import':    "gtatools.import_ipl_sections",
         'sec_export':    "gtatools.export_ipl_sections",
         'replace_empty': "gtatools.replace_ipl_placeholders",
@@ -378,7 +608,17 @@ class IdeIplImgFloater(B.Floater):
         for key, op_id in self._BUTTON_OPS.items():
             r = L.get(f'{key}_rect')
             if r and B._hit(mx, my, *r):
-                B._invoke_operator(op_id, {})
+                if key.startswith('link_'):
+                    # Force-route through the N-panel's UI region —
+                    # operators invoked there get their self.report()
+                    # surfaced to Blender's visible status feedback the
+                    # same way a real N-panel button click does.  The
+                    # default ``_invoke_operator`` timer path lands in
+                    # the modal's own region context where reports go
+                    # only to the Info log, never the popup.
+                    _invoke_op_from_npanel(context, op_id)
+                else:
+                    B._invoke_operator(op_id, {})
                 return True
 
         return False

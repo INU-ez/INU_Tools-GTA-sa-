@@ -1241,6 +1241,25 @@ class DffLight:
 _U16_MAX = 65535
 _U8_MAX = 255
 
+# Non-fatal warnings collected during the last DFF validation/export.
+# Triangle-count "over limit" is NOT a hard format limit (count is u32),
+# so it lands here instead of raising — the export operator reads this
+# list after writing and surfaces it via self.report({'WARNING'}).
+# Cleared at the start of every _validate_dff_writable().
+DFF_EXPORT_WARNINGS = []
+
+
+def _t(s: str) -> str:
+    """Lazy translation for user-facing error/warning text in this
+    otherwise Blender-free core module. Falls back to the raw Russian
+    string when bpy/T isn't available (standalone unit tests), so the
+    module stays import-safe outside Blender."""
+    try:
+        from .. import T
+        return T(s)
+    except Exception:
+        return s
+
 
 class DffLimitError(ValueError):
     """Raised when a DffClump exceeds the binary format's uint16/uint8 limits.
@@ -1259,66 +1278,63 @@ def _validate_geometry_writable(geom: 'DffGeometry', idx: int):
     UV layer count is packed into 8 bits of the geometry flags. Skin data
     packs bone counts and per-vertex bone indices as u8 (max 255).
     """
-    label = f"геометрия #{idx}"
-
     n_verts = len(geom.vertices)
     if n_verts > _U16_MAX + 1:
-        raise DffLimitError(
-            f"{label}: {n_verts} вершин — RenderWare хранит индексы треугольников "
-            f"в uint16 (максимум {_U16_MAX + 1} вершин). Разбей меш на части или упрости (Decimate)."
-        )
+        raise DffLimitError(_t(
+            "геометрия #{0}: {1} вершин — RenderWare хранит индексы треугольников в uint16 (максимум {2} вершин). Разбей меш на части или упрости (Decimate)."
+        ).format(idx, n_verts, _U16_MAX + 1))
 
     n_tris = len(geom.triangles)
     if n_tris > _U16_MAX + 1:
-        # Triangle count is u32 in the struct, but each triangle's vertex
-        # indices are u16 — so the practical limit is the same as vertices.
-        # Flag this as a sanity check anyway.
-        raise DffLimitError(
-            f"{label}: {n_tris} треугольников — слишком много для одной геометрии. "
-            f"Разбей меш на части."
-        )
+        # Triangle COUNT is stored as u32 — this is NOT a hard format
+        # limit. Only the per-triangle vertex INDICES are u16, and those
+        # are bounded by the vertex check above. So a mesh with many
+        # triangles but ≤65536 vertices is perfectly valid. Warn (so the
+        # user knows the mesh is heavy and some old tools/engine paths
+        # may struggle) but DON'T block the export.
+        _w = _t(
+            "геометрия #{0}: {1} треугольников — много для одной геометрии. Экспорт продолжен (счётчик треугольников u32), но движок/инструменты могут тормозить. Рекомендуется разбить меш на части."
+        ).format(idx, n_tris)
+        DFF_EXPORT_WARNINGS.append(_w)
+        print(f"[DFF Export WARNING] {_w}")
 
     n_mats = len(geom.materials)
     if n_mats > _U16_MAX + 1:
-        raise DffLimitError(
-            f"{label}: {n_mats} материалов — RenderWare хранит material-индекс "
-            f"в uint16 (максимум {_U16_MAX + 1}). Используй меньше материалов."
-        )
+        raise DffLimitError(_t(
+            "геометрия #{0}: {1} материалов — RenderWare хранит material-индекс в uint16 (максимум {2}). Используй меньше материалов."
+        ).format(idx, n_mats, _U16_MAX + 1))
 
     n_uv = len(geom.uv_layers)
     if n_uv > _U8_MAX:
-        raise DffLimitError(
-            f"{label}: {n_uv} UV-слоёв — флаги геометрии хранят кол-во UV в uint8 "
-            f"(максимум {_U8_MAX}). GTA SA рендерит максимум 2."
-        )
+        raise DffLimitError(_t(
+            "геометрия #{0}: {1} UV-слоёв — флаги геометрии хранят кол-во UV в uint8 (максимум {2}). GTA SA рендерит максимум 2."
+        ).format(idx, n_uv, _U8_MAX))
 
     if geom.skin is not None:
         skin = geom.skin
         if skin.num_bones > _U8_MAX:
-            raise DffLimitError(
-                f"{label}: skin.num_bones={skin.num_bones} — RenderWare skin "
-                f"хранит счётчики костей в uint8 (максимум {_U8_MAX})."
-            )
+            raise DffLimitError(_t(
+                "геометрия #{0}: skin.num_bones={1} — RenderWare skin хранит счётчики костей в uint8 (максимум {2})."
+            ).format(idx, skin.num_bones, _U8_MAX))
         if skin.num_used > _U8_MAX:
-            raise DffLimitError(
-                f"{label}: skin.num_used={skin.num_used} > {_U8_MAX} (uint8)."
-            )
+            raise DffLimitError(_t(
+                "геометрия #{0}: skin.num_used={1} > {2} (uint8)."
+            ).format(idx, skin.num_used, _U8_MAX))
         if skin.max_weights > _U8_MAX:
-            raise DffLimitError(
-                f"{label}: skin.max_weights={skin.max_weights} > {_U8_MAX} (uint8)."
-            )
+            raise DffLimitError(_t(
+                "геометрия #{0}: skin.max_weights={1} > {2} (uint8)."
+            ).format(idx, skin.max_weights, _U8_MAX))
         for bu in skin.bones_used:
             if not (0 <= bu <= _U8_MAX):
-                raise DffLimitError(
-                    f"{label}: skin.bones_used содержит индекс {bu} вне 0..{_U8_MAX} (uint8)."
-                )
+                raise DffLimitError(_t(
+                    "геометрия #{0}: skin.bones_used содержит индекс {1} вне 0..{2} (uint8)."
+                ).format(idx, bu, _U8_MAX))
         for vi, indices in enumerate(skin.bone_indices):
             for bi in indices:
                 if not (0 <= bi <= _U8_MAX):
-                    raise DffLimitError(
-                        f"{label}: skin.bone_indices[{vi}] содержит индекс {bi} "
-                        f"вне 0..{_U8_MAX} (uint8). Слишком много костей в арматуре."
-                    )
+                    raise DffLimitError(_t(
+                        "геометрия #{0}: skin.bone_indices[{1}] содержит индекс {2} вне 0..{3} (uint8). Слишком много костей в арматуре."
+                    ).format(idx, vi, bi, _U8_MAX))
 
 
 def _validate_dff_writable(clump: 'DffClump'):
@@ -1327,6 +1343,7 @@ def _validate_dff_writable(clump: 'DffClump'):
     Skips geometries when ``raw_geometry_list`` is set (round-trip path —
     those bytes are reused as-is and don't go through ``geom.to_bytes``).
     """
+    DFF_EXPORT_WARNINGS.clear()
     if clump.raw_geometry_list:
         return
     for idx, geom in enumerate(clump.geometries):

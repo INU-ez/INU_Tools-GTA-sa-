@@ -970,9 +970,8 @@ class GTATOOLS_OT_animobj_validate(bpy.types.Operator):
             return {'FINISHED'}
 
         self.report({'INFO'},
-                    f"OK: {len(descendants)} Empties, "
-                    f"{len(pivots_with_anim)} с анимацией, "
-                    f"{len(mesh_children)} меш(а)")
+                    T("OK: {0} Empties, {1} с анимацией, {2} меш(а)").format(
+                        len(descendants), len(pivots_with_anim), len(mesh_children)))
         return {'FINISHED'}
 
 

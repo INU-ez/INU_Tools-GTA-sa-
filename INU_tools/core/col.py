@@ -330,6 +330,16 @@ class ColLimitError(ValueError):
     pass
 
 
+def _t(s: str) -> str:
+    """Lazy translation — falls back to raw Russian outside Blender so
+    this pure-Python module stays import-safe for standalone tests."""
+    try:
+        from .. import T
+        return T(s)
+    except Exception:
+        return s
+
+
 def _validate_col_writable(model: 'ColModel'):
     """Reject models that would overflow COL's uint16 fields.
 
@@ -341,51 +351,48 @@ def _validate_col_writable(model: 'ColModel'):
     name = model.model_name or "<unnamed>"
 
     if not (0 <= model.model_id <= _U16_MAX):
-        raise ColLimitError(
-            f"'{name}': model_id={model.model_id} вне диапазона 0..{_U16_MAX} "
-            f"(заголовок COL хранит ID в uint16)"
-        )
+        raise ColLimitError(_t(
+            "'{0}': model_id={1} вне диапазона 0..{2} (заголовок COL хранит ID в uint16)"
+        ).format(name, model.model_id, _U16_MAX))
 
     if model.version == 1:
         return
 
     n_spheres = len(model.spheres)
     if n_spheres > _U16_MAX:
-        raise ColLimitError(
-            f"'{name}': {n_spheres} сфер — COL2/3/4 поддерживает максимум {_U16_MAX}"
-        )
+        raise ColLimitError(_t(
+            "'{0}': {1} сфер — COL2/3/4 поддерживает максимум {2}"
+        ).format(name, n_spheres, _U16_MAX))
 
     n_boxes = len(model.boxes)
     if n_boxes > _U16_MAX:
-        raise ColLimitError(
-            f"'{name}': {n_boxes} боксов — COL2/3/4 поддерживает максимум {_U16_MAX}"
-        )
+        raise ColLimitError(_t(
+            "'{0}': {1} боксов — COL2/3/4 поддерживает максимум {2}"
+        ).format(name, n_boxes, _U16_MAX))
 
     n_faces = len(model.faces)
     if n_faces > _U16_MAX:
-        raise ColLimitError(
-            f"'{name}': {n_faces} треугольников — COL формат поддерживает максимум {_U16_MAX}. "
-            f"Разбей меш на части или упрости коллизию (Decimate)."
-        )
+        raise ColLimitError(_t(
+            "'{0}': {1} треугольников — COL формат поддерживает максимум {2}. Разбей меш на части или упрости коллизию (Decimate)."
+        ).format(name, n_faces, _U16_MAX))
 
     n_verts = len(model.vertices)
     if n_verts > _U16_MAX + 1:
-        raise ColLimitError(
-            f"'{name}': {n_verts} вершин — COL хранит индексы в uint16 (максимум {_U16_MAX + 1} вершин). "
-            f"Разбей меш на части или упрости коллизию (Decimate)."
-        )
+        raise ColLimitError(_t(
+            "'{0}': {1} вершин — COL хранит индексы в uint16 (максимум {2} вершин). Разбей меш на части или упрости коллизию (Decimate)."
+        ).format(name, n_verts, _U16_MAX + 1))
 
     n_sh_faces = len(model.shadow_faces)
     if n_sh_faces > _U16_MAX:
-        raise ColLimitError(
-            f"'{name}': {n_sh_faces} shadow-треугольников — максимум {_U16_MAX}"
-        )
+        raise ColLimitError(_t(
+            "'{0}': {1} shadow-треугольников — максимум {2}"
+        ).format(name, n_sh_faces, _U16_MAX))
 
     n_sh_verts = len(model.shadow_vertices)
     if n_sh_verts > _U16_MAX + 1:
-        raise ColLimitError(
-            f"'{name}': {n_sh_verts} shadow-вершин — максимум {_U16_MAX + 1}"
-        )
+        raise ColLimitError(_t(
+            "'{0}': {1} shadow-вершин — максимум {2}"
+        ).format(name, n_sh_verts, _U16_MAX + 1))
 
 
 def _write_vec3(w: BinaryWriter, v: Vec3):

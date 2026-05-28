@@ -28,7 +28,7 @@
 bl_info = {
     "name": "INU_tools(gta_sa)",
     "author": "INU",
-    "version": (2, 0, 1),
+    "version": (2, 0, 2),
     # Минимум 2.83 LTS — поддержка через tools/compat.py:
     # • bake / preview / DFF I/O работают через legacy mesh.vertex_colors
     # • prelight preview shader использует ShaderNodeMixRGB на ≤3.3
@@ -473,6 +473,7 @@ from .scene_settings import (
     INUSceneSettings,
     INUValidateIssue,
     GTATOOLS_BinaryIplEntry,
+    GTATOOLS_TextIplEntry,
     GTATOOLS_ImgFileEntry,
     GTATOOLS_LintIssueItem,
     GTATOOLS_PathItem,
@@ -1772,6 +1773,80 @@ class INUObjectProps(bpy.types.PropertyGroup):
         description=T("Индекс LOD модели в IPL (-1 = нет LOD)"),
     )
 
+    # ── IPL link tracking ──
+    # Per-object persistent identity for IPL upsert.  When an object is
+    # first added to an IPL we mint a UUID and stash the exported
+    # transform (last_pos / last_rot).  On the next ``Add to IPL`` we
+    # compare the current world transform with ``ipl_last_pos``: if it
+    # drifted, the existing IPL line is overwritten instead of a new
+    # row being appended (avoids duplicate placements when iterating).
+    # The sidecar (``<blend>/.inu_cache/ipl_links.json``) holds the
+    # uuid → ``line_idx`` map plus a hash of the IPL file for external-
+    # edit detection.  Fields are kept compact (no PointerProperty) so
+    # an entire rig of duplicates costs ~80 bytes / obj.
+    ipl_uuid : StringProperty(
+        name="IPL UUID",
+        description=T("Стабильный ID этой расстановки в IPL. Пустой = объект ещё не экспортировался в IPL. Авто-генерируется при первом «Add to IPL»"),
+        default="",
+    )
+    ipl_target_file : StringProperty(
+        name="IPL Target",
+        subtype='FILE_PATH',
+        description=T("Путь к IPL-файлу куда этот объект был экспортирован последним"),
+        default="",
+    )
+    ipl_last_pos : FloatVectorProperty(
+        name="IPL Last Pos",
+        size=3,
+        default=(0.0, 0.0, 0.0),
+        description=T("Координаты на момент последнего экспорта в IPL. Если текущая позиция отличается — Add to IPL обновит существующую строку вместо добавления новой"),
+    )
+    ipl_last_rot : FloatVectorProperty(
+        name="IPL Last Rot",
+        size=4,
+        default=(0.0, 0.0, 0.0, 1.0),
+        description=T("Кватернион (x,y,z,w) на момент последнего экспорта в IPL"),
+    )
+    ipl_last_model_id : IntProperty(
+        name="IPL Last Model ID",
+        default=0,
+        description=T("Model ID на момент последнего экспорта в IPL (для content-match при рассинхроне sidecar'а)"),
+    )
+
+    # ── IDE link tracking ──
+    # IDE entries are keyed by ``model_id`` (natural primary key) so we
+    # don't need a UUID like IPL.  We only track the *last-exported
+    # values* of fields the user can change in Blender — draw distance,
+    # TXD name, flags — so the panel can show a "drifted" badge when
+    # those drift away from the file, and Sync can push file→Blender
+    # for the inverse direction (after an external IDE edit).
+    ide_target_file : StringProperty(
+        name="IDE Target",
+        subtype='FILE_PATH',
+        description=T("Путь к IDE-файлу куда этот объект был экспортирован последним"),
+        default="",
+    )
+    ide_last_draw_distance : FloatProperty(
+        name="IDE Last Draw Distance",
+        default=0.0,
+        description=T("Draw distance на момент последнего Add to IDE"),
+    )
+    ide_last_txd_name : StringProperty(
+        name="IDE Last TXD",
+        default="",
+        description=T("TXD имя на момент последнего Add to IDE"),
+    )
+    ide_last_flags : IntProperty(
+        name="IDE Last Flags",
+        default=0,
+        description=T("Object flags на момент последнего Add to IDE"),
+    )
+    ide_linked : BoolProperty(
+        name="IDE Linked",
+        default=False,
+        description=T("True если model_id этого объекта был успешно записан в IDE через Add"),
+    )
+
     # Collision sphere/cone properties
     col_material : IntProperty(default=12, description=T("Материал для Sphere/Cone"))
     col_flags : IntProperty(default=0, description=T("Флаги для Sphere/Cone"))
@@ -2139,6 +2214,7 @@ def _clean_model_name_ide(name):
 from .ops.map_ops import (
     GTATOOLS_OT_discover_game,
     GTATOOLS_OT_binary_ipl_toggle_all,
+    GTATOOLS_OT_text_ipl_toggle_all,
     GTATOOLS_OT_scan_binary_ipls,
 )
 
@@ -2192,6 +2268,15 @@ def _append_export_report(report_path: str, title: str, rows, max_chars: int = 2
 from .ops.ide_ipl import (
     GTATOOLS_OT_upsert_ide,
     GTATOOLS_OT_upsert_ipl,
+    GTATOOLS_OT_ide_sync_from_file,
+    GTATOOLS_OT_ide_remove_link,
+    GTATOOLS_OT_ide_verify_links,
+    GTATOOLS_OT_ipl_sync_from_file,
+    GTATOOLS_OT_ipl_remove_link,
+    GTATOOLS_OT_ipl_verify_links,
+    GTATOOLS_OT_link_sync,
+    GTATOOLS_OT_link_unlink,
+    GTATOOLS_OT_link_verify,
     GTATOOLS_OT_remove_ide,
     GTATOOLS_OT_remove_ipl,
     GTATOOLS_OT_export_ide,
@@ -2833,6 +2918,7 @@ classes = (
     INUMaterialProps,
     GTATOOLS_ImgFileEntry,
     GTATOOLS_BinaryIplEntry,
+    GTATOOLS_TextIplEntry,
     GTATOOLS_LintIssueItem,
     GTATOOLS_PathItem,
     GTATOOLS_TextureBrowserItem,
@@ -2843,6 +2929,7 @@ classes = (
     GTATOOLS_OT_discover_game,
     GTATOOLS_OT_scan_binary_ipls,
     GTATOOLS_OT_binary_ipl_toggle_all,
+    GTATOOLS_OT_text_ipl_toggle_all,
     GTATOOLS_FillColorItem,
     GTATOOLS_OT_toggle_visibility,
     GTATOOLS_OT_snap_to_dff,
@@ -3025,6 +3112,15 @@ classes = (
     GTATOOLS_OT_remove_from_img,
     GTATOOLS_OT_upsert_ide,
     GTATOOLS_OT_upsert_ipl,
+    GTATOOLS_OT_ide_sync_from_file,
+    GTATOOLS_OT_ide_remove_link,
+    GTATOOLS_OT_ide_verify_links,
+    GTATOOLS_OT_ipl_sync_from_file,
+    GTATOOLS_OT_ipl_remove_link,
+    GTATOOLS_OT_ipl_verify_links,
+    GTATOOLS_OT_link_sync,
+    GTATOOLS_OT_link_unlink,
+    GTATOOLS_OT_link_verify,
     GTATOOLS_OT_remove_ide,
     GTATOOLS_OT_remove_ipl,
     GTATOOLS_OT_export_ide,

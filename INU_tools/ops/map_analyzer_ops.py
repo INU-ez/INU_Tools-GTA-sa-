@@ -207,6 +207,12 @@ class GTATOOLS_OT_map_analyzer_add_ide(bpy.types.Operator):
         if not self.filepath:
             return {'CANCELLED'}
         coll = context.scene.inu_settings.gtatools_map_analyzer_custom_ides
+        norm = os.path.normcase(os.path.normpath(self.filepath))
+        for existing in coll:
+            if os.path.normcase(os.path.normpath(existing.path)) == norm:
+                self.report({'INFO'},
+                            T("Уже в списке: {0}").format(os.path.basename(self.filepath)))
+                return {'CANCELLED'}
         item = coll.add()
         item.path = self.filepath
         return {'FINISHED'}
@@ -229,6 +235,12 @@ class GTATOOLS_OT_map_analyzer_add_ipl(bpy.types.Operator):
         if not self.filepath:
             return {'CANCELLED'}
         coll = context.scene.inu_settings.gtatools_map_analyzer_custom_ipls
+        norm = os.path.normcase(os.path.normpath(self.filepath))
+        for existing in coll:
+            if os.path.normcase(os.path.normpath(existing.path)) == norm:
+                self.report({'INFO'},
+                            T("Уже в списке: {0}").format(os.path.basename(self.filepath)))
+                return {'CANCELLED'}
         item = coll.add()
         item.path = self.filepath
         return {'FINISHED'}

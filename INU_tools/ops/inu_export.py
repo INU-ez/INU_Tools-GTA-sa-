@@ -219,8 +219,20 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
             row.prop(scn.inu_settings, "gtatools_export_all_txd_shared_name",
                      text="", placeholder="textures")
 
+        # ── Pipeline + DFF flags — shared N-panel mirror ──
+        from .dff_export import draw_dff_flags_block
+        draw_dff_flags_block(layout, context)
+
     def export_model_group(self, context, base_name, models, skip_dff, skip_col, skip_lod, skip_txd, backend):
-        """Export a single model group (DFF + LOD + COL + TXD)"""
+        """Export a single model group (DFF + LOD + COL + TXD).
+
+        DFF/geometry flags come straight from each object's
+        ``obj.inu.*`` — the same values shown (and edited) in the
+        N-panel DFF Flags. The N-panel's flag-toggle update callback
+        already propagates a change to every selected mesh and stores
+        a per-pipeline global default, so there's no separate export
+        override here: whatever's set in the N-panel is what ships.
+        """
         exported = []
         errors = []
 
@@ -238,6 +250,8 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
                         dff_objects.append(child)
                 inu_export_dff(filepath=dff_path, objects=dff_objects,
                                version=rw_ver, target_platform=tp)
+                from ..core.dff import DFF_EXPORT_WARNINGS
+                self._tri_warnings.extend(DFF_EXPORT_WARNINGS)
                 exported.append(f"{base_name}.dff")
             except Exception as e:
                 errors.append(f"{base_name}.dff: {str(e)}")
@@ -251,6 +265,8 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
                 tp = getattr(context.scene.inu_settings, 'gtatools_platform', 'PC')
                 inu_export_dff(filepath=lod_path, objects=[models['LOD']],
                                version=rw_ver, target_platform=tp)
+                from ..core.dff import DFF_EXPORT_WARNINGS
+                self._tri_warnings.extend(DFF_EXPORT_WARNINGS)
                 exported.append(f"LOD{base_name}.dff")
             except Exception as e:
                 errors.append(f"LOD{base_name}.dff: {str(e)}")
@@ -343,6 +359,7 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
 
         all_exported = []
         all_errors = []
+        self._tri_warnings = []  # non-fatal high-triangle-count warnings
         wm = context.window_manager
 
         # Настройки экспорта
@@ -472,6 +489,8 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
             preview = '; '.join(all_errors[:5])
             more = f" (+{len(all_errors) - 5})" if len(all_errors) > 5 else ""
             self.report({'WARNING'}, f"{T('Ошибки:')} {preview}{more}")
+        for w in dict.fromkeys(self._tri_warnings):  # dedup, keep order
+            self.report({'WARNING'}, w)
 
         return {'FINISHED'}
 
@@ -557,8 +576,9 @@ class GTATOOLS_OT_inu_export(bpy.types.Operator, ExportHelper):
             box.label(text="DFF:", **inu_icon(safe_icon('MESH_DATA')))
             box.prop(self, "dff_include_2dfx")
             box.prop(self, "dff_auto_lod")
-            # Pipeline
-            box.prop(context.scene.inu_settings, "gtatools_export_pipeline", text="Pipeline")
+            # Pipeline buttons + DFF flags column — shared N-panel mirror.
+            from .dff_export import draw_dff_flags_block
+            draw_dff_flags_block(box, context)
 
         # COL settings
         if self.export_col:

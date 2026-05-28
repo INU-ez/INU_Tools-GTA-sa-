@@ -3000,4 +3000,304 @@ LANG = {
     "Указать конкретный .ifp файл куда дополнить анимацию. Когда задан — игнорируется «Папка» и «Имя IFP», анимация пишется СЮДА. Удобно для merge'а в <game>/anim/myhood.ifp или подобных общих файлов вне папки экспорта DFF":
         "Seleccionar un archivo .ifp específico para añadir la animación. Cuando se establece, se ignoran «Carpeta» y «Nombre IFP» — la animación va AQUÍ. Útil para fusionar con <game>/anim/myhood.ifp u otros archivos compartidos fuera de la carpeta de exportación DFF",
 
+    # === IPL/IDE link tracking + Export dialog ===
+    "DFF Flags (активный объект, из N-панели):":
+        "Flags DFF (objeto activo, del panel N):",
+    "Draw distance на момент последнего Add to IDE":
+        "Distancia de dibujo en el último Add to IDE",
+    "IDE файл не найден": "Archivo IDE no encontrado",
+    "IDE: удалено {0} записей": "IDE: {0} entradas eliminadas",
+    "IPL правили извне: {0} ссылок исправлено, {1} удалено":
+        "IPL editado externamente: {0} enlaces reparados, {1} eliminados",
+    "IPL файл не найден": "Archivo IPL no encontrado",
+    "Model ID на момент последнего экспорта в IPL (для content-match при рассинхроне sidecar'а)":
+        "Model ID en la última exportación a IPL (para content-match cuando el sidecar está desincronizado)",
+    "Object flags на момент последнего Add to IDE":
+        "Flags del objeto en el último Add to IDE",
+    "Sync IDE: linked {0}, пропущено {1}":
+        "Sync IDE: vinculados {0}, omitidos {1}",
+    "Sync: linked {0}, обновлено {1}, пропущено {2}":
+        "Sync: vinculados {0}, actualizados {1}, omitidos {2}",
+    "TXD имя на момент последнего Add to IDE":
+        "Nombre TXD en el último Add to IDE",
+    "True если model_id этого объекта был успешно записан в IDE через Add":
+        "True si el model_id de este objeto se escribió correctamente en el IDE mediante Add",
+    "В IDE ({0})": "En IDE ({0})",
+    "В IDE, параметры разошлись": "En IDE, parámetros divergieron",
+    "В IPL ({0})": "En IPL ({0})",
+    "В IPL, координаты разошлись": "En IPL, coordenadas divergieron",
+    "Выделите объекты с Model ID > 0": "Selecciona objetos con Model ID > 0",
+    "Выделите объекты с привязкой к IPL": "Selecciona objetos vinculados a un IPL",
+    "Кватернион (x,y,z,w) на момент последнего экспорта в IPL":
+        "Cuaternión (x,y,z,w) en la última exportación a IPL",
+    "Координаты на момент последнего экспорта в IPL. Если текущая позиция отличается — Add to IPL обновит существующую строку вместо добавления новой":
+        "Coordenadas en la última exportación a IPL. Si la posición actual difiere, Add to IPL actualiza la fila existente en lugar de añadir una nueva",
+    "Не в IDE": "No en IDE",
+    "Не в IPL": "No en IPL",
+    "Не найдено записей для удаления": "No se encontraron entradas para eliminar",
+    "Нет связанных объектов для этого IPL": "No hay objetos vinculados para este IPL",
+    "Проверка: {0} ссылок ОК, {1} исправлено, {2} удалено, {3} orphan":
+        "Verificación: {0} enlaces OK, {1} reparados, {2} eliminados, {3} huérfanos",
+    "Путь к IDE-файлу куда этот объект был экспортирован последним":
+        "Ruta al archivo IDE donde se exportó este objeto por última vez",
+    "Путь к IPL-файлу куда этот объект был экспортирован последним":
+        "Ruta al archivo IPL donde se exportó este objeto por última vez",
+    "Стабильный ID этой расстановки в IPL. Пустой = объект ещё не экспортировался в IPL. Авто-генерируется при первом «Add to IPL»":
+        "ID estable de esta colocación en el IPL. Vacío = el objeto aún no se exportó al IPL. Se autogenera en el primer «Add to IPL»",
+    "Текстовые IPL": "IPL de texto",
+    "Удалено из IPL: {0}, осталось записей: {1}":
+        "Eliminado del IPL: {0}, entradas restantes: {1}",
+    "Уже в списке: {0}": "Ya está en la lista: {0}",
+    "все без Model ID": "todos sin Model ID",
+    "все целевые строки уже заняты другими объектами":
+        "todas las filas objetivo ya están ocupadas por otros objetos",
+    "ни одного совпадения по (model_id+pos) в этом IPL":
+        "ninguna coincidencia por (model_id+pos) en este IPL",
+
+
+    # === property descriptions audit batch ===
+    'Сдвиг границы COL освещения':
+        'Desplazamiento del límite de iluminación COL',
+    'Порог яркости':
+        'Umbral de brillo',
+    'Замерять время операций':
+        'Medir el tiempo de las operaciones',
+    'Развернуть список текстовых IPL для галочек':
+        'Expandir la lista de IPL de texto para casillas',
+    'Не импортировать 2DFX-эффекты при импорте':
+        'No importar efectos 2DFX al importar',
+    'Искать все IDE/IPL через gta.dat':
+        'Buscar todos los IDE/IPL mediante gta.dat',
+    'Загружать коллизии из кеша при импорте карты':
+        'Cargar colisiones desde caché al importar el mapa',
+    'Создавать отдельную коллекцию на каждый IPL-файл':
+        'Crear una colección separada por cada archivo IPL',
+    'Целевая игра для экспорта / валидации. Импорт авто-детектит игру по RW-версии':
+        'Juego objetivo para exportar / validar. La importación detecta el juego por la versión RW',
+    'Платформа':
+        'Plataforma',
+    'Целевая платформа: PC (vanilla) или Mobile (iOS/Android, Native Data PLG)':
+        'Plataforma objetivo: PC (vanilla) o Mobile (iOS/Android, Native Data PLG)',
+    'Путь к IDE файлу GTA SA':
+        'Ruta al archivo IDE de GTA SA',
+    'Путь к IPL файлу GTA SA':
+        'Ruta al archivo IPL de GTA SA',
+    'Имя общего TXD файла':
+        'Nombre del archivo TXD compartido',
+    'Папка для поиска TXD при импорте DFF':
+        'Carpeta para buscar TXD al importar DFF',
+    'Папка куда писать собранную Asset Library (13 .blend файлов + blender_assets.cats.txt + textures/)':
+        'Carpeta donde escribir la Asset Library compilada (13 archivos .blend + blender_assets.cats.txt + textures/)',
+    'Без превью':
+        'Sin vistas previas',
+    'Не рендерить превьюшки. В ~3× быстрее, но Asset Browser показывает заглушки вместо миниатюр':
+        'No renderizar vistas previas. ~3x más rápido, pero el Asset Browser muestra marcadores en vez de miniaturas',
+    'Размер превью':
+        'Tamaño de vista previa',
+    'Размер превьюшек в пикселях. 128 — стандарт Blender, 256 крупнее но в 4× медленнее на рендере':
+        'Tamaño de las vistas previas en píxeles. 128 es el estándar de Blender, 256 es más grande pero 4x más lento al renderizar',
+    'Пропускать готовые':
+        'Omitir existentes',
+    'Пропускать категории чьи .blend уже существуют в Output. Удобно при инкрементальном добавлении новых моделей после установки модов':
+        'Omitir categorías cuyo .blend ya existe en Output. Útil para añadir modelos nuevos de forma incremental tras instalar mods',
+    'После успешной сборки библиотеки удалить папку .inu_cache/ (DFF, COL, исходные PNG). Освобождает много места на диске. Текстуры в самой библиотеке остаются — при включённой галочке они принудительно копируются в библиотеку (не симлинком). Будь готов что Import Map после этого потребует повторно «Извлечь ресурсы»':
+        'Tras compilar la biblioteca con éxito, eliminar la carpeta .inu_cache/ (DFF, COL, PNG fuente). Libera mucho espacio. Las texturas de la biblioteca permanecen — si está activado se copian a la fuerza a la biblioteca (sin symlink). Ten en cuenta que Import Map necesitará «Extraer recursos» de nuevo',
+    'Включить в сборку машины/мотоциклы/лодки/самолёты. Имеет смысл только при выбранном регионе — при ALL категория всё равно строится':
+        'Incluir coches/motos/barcos/aviones en la compilación. Solo tiene sentido con una región seleccionada — con ALL la categoría se compila igualmente',
+    'Включить в сборку модели NPC / игрока. Имеет смысл только при выбранном регионе':
+        'Incluir modelos de NPC / jugador en la compilación. Solo tiene sentido con una región seleccionada',
+    'Включить в сборку модели оружия. Имеет смысл только при выбранном регионе':
+        'Incluir modelos de armas en la compilación. Solo tiene sentido con una región seleccionada',
+    'Включить в сборку Interior-объекты (data/maps/interior). Имеет смысл только при выбранном регионе':
+        'Incluir objetos de interior (data/maps/interior) en la compilación. Solo tiene sentido con una región seleccionada',
+    'Currently hiding DFF meshes via the «Проверка» toggle':
+        'Actualmente ocultando mallas DFF mediante el botón «Comprobar»',
+    'Currently hiding LOD meshes via the «Проверка» toggle':
+        'Actualmente ocultando mallas LOD mediante el botón «Comprobar»',
+    'Currently hiding COL meshes via the «Проверка» toggle':
+        'Actualmente ocultando mallas COL mediante el botón «Comprobar»',
+    'Currently hiding shadow meshes via the «Проверка» toggle':
+        'Actualmente ocultando mallas de sombra mediante el botón «Comprobar»',
+    'Бэкенд сжатия DXT-текстур.\nPure numpy, без NVTT и внешних бинарей — соответствует требованиям\nextensions.blender.org. Поверх любого бэкенда работает кэш по\nsession_uid: повторный экспорт без правок текстур почти мгновенный.':
+        'Backend de compresión de texturas DXT.\nNumpy puro, sin NVTT ni binarios externos — cumple los requisitos de\nextensions.blender.org. Sobre cualquier backend funciona una caché por\nsession_uid: reexportar sin editar texturas es casi instantáneo.',
+    'Куда привесить выбранный пипеткой меш:\n  Новый pivot — анимированная часть (своя ось/скорость)\n  К существующему pivot — на тот же pivot что и предыдущая\n  К root — статичная часть без анимации':
+        'Dónde adjuntar la malla elegida con el cuentagotas:\n  Nuevo pivot — parte animada (eje/velocidad propios)\n  A pivot existente — el mismo pivot que la anterior\n  A root — parte estática sin animación',
+    "Кликни на пипетку и выбери меш в сцене или 3D-окне. Если rig'а ещё нет — он создастся автоматически. После пика поле очищается — можно сразу подбирать следующий":
+        'Haz clic en el cuentagotas y elige una malla en la escena o vista 3D. Si aún no hay rig, se crea automáticamente. Tras elegir, el campo se limpia para elegir la siguiente enseguida',
+    'Какие панели показывать в N-sidebar':
+        'Qué paneles mostrar en la barra lateral N',
+    'Активный файл со списком ID':
+        'Archivo activo con la lista de ID',
+    'Развернуть редкие операции':
+        'Expandir operaciones poco frecuentes',
+    'Цвет всех IK-контрольных костей':
+        'Color de todos los huesos de control IK',
+    'Высота виртуальной коллизии над плоскостью-полом':
+        'Altura de la colisión virtual sobre el plano del suelo',
+    'Настройки пола, коллизии, цвета IK':
+        'Ajustes de suelo, colisión y color IK',
+    'Включить для анимаций которые двигают персонажа':
+        'Activar para animaciones que mueven al personaje',
+    'Утилиты для исправления sign-discontinuities':
+        'Utilidades para corregir discontinuidades de signo',
+    'Первый кадр диапазона':
+        'Primer fotograma del rango',
+    'Последний кадр диапазона':
+        'Último fotograma del rango',
+    'Ось вдоль которой сглаживать ключи между опорными. ALL — все каналы в локальных координатах кости; WORLD_X/Y/Z — только translation, в мировых координатах (медленнее, but учитывает поворот родителей)':
+        'Eje a lo largo del cual suavizar las claves entre anclas. ALL — todos los canales en el espacio local del hueso; WORLD_X/Y/Z — solo traslación, en espacio mundial (más lento, pero tiene en cuenta la rotación de los padres)',
+    'Визуальный сдвиг кубов IK для рук и ног':
+        'Desplazamiento visual de los cubos IK para manos y pies',
+    'Множитель размера всех IK-контролов':
+        'Multiplicador de tamaño de todos los controles IK',
+    'Показывать кубы запястий и ступней':
+        'Mostrar cubos de muñecas y pies',
+    'Показывать кубы-маркеры на локтях и коленях':
+        'Mostrar cubos marcadores en codos y rodillas',
+    'Показывать кубы головы, верхнего торса и ключиц':
+        'Mostrar cubos de cabeza, torso superior y clavículas',
+    'Показывать корневой куб':
+        'Mostrar el cubo raíz',
+    'Базовый рассеянный свет':
+        'Luz ambiental base',
+    'Множитель интенсивности света':
+        'Multiplicador de intensidad de luz',
+    'Гамма-коррекция':
+        'Corrección de gamma',
+    'Включить тени при запекании':
+        'Activar sombras durante el horneado',
+    'Preview-режим':
+        'Modo de vista previa',
+    'Сколько ambient добавлять к prelight':
+        'Cuánto ambiente añadir al prelight',
+    'Контраст финального изображения':
+        'Contraste de la imagen final',
+    'Гамма финального изображения':
+        'Gamma de la imagen final',
+    'Смещение яркости':
+        'Desplazamiento de brillo',
+    'Сглаживание vertex colors между соседними вершинами.\nIterations — количество проходов.\nБольше проходов = плавнее переходы':
+        'Suavizado de colores de vértice entre vértices vecinos.\nIterations — número de pasadas.\nMás pasadas = transiciones más suaves',
+    'Сила сглаживания за один проход (0-1).\n0 — без эффекта, 1 — vertex берёт полное среднее соседей':
+        'Intensidad de suavizado por pasada (0-1).\n0 — sin efecto, 1 — el vértice toma la media completa de los vecinos',
+    'Контраст vertex colors.\n1.0 — без изменений\n< 1.0 — меньше контраст\n> 1.0 — больше контраст':
+        'Contraste de colores de vértice.\n1.0 — sin cambios\n< 1.0 — menos contraste\n> 1.0 — más contraste',
+    'Яркость vertex colors (additive offset).\n0.0 — без изменений\n> 0 — светлее\n< 0 — темнее':
+        'Brillo de colores de vértice (desplazamiento aditivo).\n0.0 — sin cambios\n> 0 — más claro\n< 0 — más oscuro',
+    'Подтягивает тёмные участки к самой яркой точке, сохраняя шаг между гранями.\n0 — без изменений\n0.3-0.5 — рекомендуемый диапазон\n1 — все цвета доходят до max (теряется визуальный шаг)':
+        'Acerca las zonas oscuras al punto más brillante manteniendo el paso entre caras.\n0 — sin cambios\n0.3-0.5 — rango recomendado\n1 — todos los colores llegan al máximo (se pierde el paso visual)',
+    'Гамма-коррекция vertex colors.\n1.0 — без изменений\n< 1.0 — светлее (lift тени)\n> 1.0 — темнее (deepen тени)':
+        'Corrección de gamma de colores de vértice.\n1.0 — sin cambios\n< 1.0 — más claro (levanta sombras)\n> 1.0 — más oscuro (intensifica sombras)',
+    'Скорость затухания света':
+        'Tasa de atenuación de luz',
+    'Радиус поиска соседних граней':
+        'Radio de búsqueda de caras vecinas',
+    'Цвет, которым заливаются вершины вокруг выделенных полигонов':
+        'Color con el que se rellenan los vértices alrededor de los polígonos seleccionados',
+    'Сила вклада цвета в центре. 0 — ничего не делать, 1 — полностью заменить vcols в центре на выбранный цвет':
+        'Intensidad del aporte de color en el centro. 0 — no hacer nada, 1 — reemplazar por completo los vcols del centro con el color elegido',
+    'Радиус как доля половины bbox-диагонали меша. 0 — только выделенные вершины, 1 — расходится на половину диагонали':
+        'Radio como fracción de la mitad de la diagonal del bbox de la malla. 0 — solo vértices seleccionados, 1 — se extiende media diagonal',
+    'Режим прореживания':
+        'Modo de diezmado',
+    'Оставить каждый N-ный из выделенных (2 = удалить каждый второй)':
+        'Conservar cada N de los seleccionados (2 = eliminar uno de cada dos)',
+    'Порог ошибки':
+        'Umbral de error',
+    'Чем выше — тем агрессивнее срез избыточных ключей':
+        'Cuanto más alto, más agresivamente se recortan las claves redundantes',
+    'Интерполяция':
+        'Interpolación',
+    'Писать все коллизии в один .col файл':
+        'Escribir todas las colisiones en un único archivo .col',
+    'Имя общего .col файла без расширения':
+        'Nombre del archivo .col compartido sin extensión',
+    'Писать все текстуры в один общий .txd файл':
+        'Escribir todas las texturas en un archivo .txd compartido',
+    'Имя общего .txd файла без расширения':
+        'Nombre del archivo .txd compartido sin extensión',
+    'Папка с DFF/COL/TXD для сканирования':
+        'Carpeta con DFF/COL/TXD para escanear',
+    'Включая подпапки':
+        'Incluir subcarpetas',
+    'Рекурсивный обход подпапок. По умолчанию выключено, чтобы случайно не просканировать всю систему':
+        'Recorrer subcarpetas recursivamente. Desactivado por defecto para no escanear todo el sistema por accidente',
+    'Только ERROR':
+        'Solo ERROR',
+    'Скрыть WARN/INFO в списке (фильтр draw, коллекция не пересоздаётся)':
+        'Ocultar WARN/INFO en la lista (filtro de dibujo, la colección no se reconstruye)',
+    'Куда сохранять отчёт':
+        'Dónde guardar el informe',
+    'Папка для отчёта':
+        'Carpeta del informe',
+    'Источник':
+        'Fuente',
+    '.dat файл':
+        'Archivo .dat',
+    'Папка с IDE/IPL':
+        'Carpeta con IDE/IPL',
+    'Рекурсивный обход подпапок при FOLDER-режиме':
+        'Recorrer subcarpetas recursivamente en modo FOLDER',
+    'Авто-поиск всех *.img в области скана (DAT-строки / FOLDER walk / CUSTOM parent dirs) и cross-check IDE entries — flag missing DFF/TXD':
+        'Buscar automáticamente todos los *.img en el área de escaneo (líneas DAT / FOLDER walk / dirs CUSTOM) y cruzar entradas IDE — marcar DFF/TXD faltantes',
+    'Скрыть WARN/INFO в списке (фильтр draw)':
+        'Ocultar WARN/INFO en la lista (filtro de dibujo)',
+    'Откуда брать TXD-файлы для индекса':
+        'De dónde tomar los archivos TXD para el índice',
+    'Папка со стандалон-TXD для сканирования':
+        'Carpeta con TXD independientes para escanear',
+    'Подсчитать сколько IDE-моделей используют каждый TXD (используется тот же набор IDE что и у Map Analyzer)':
+        'Contar cuántos modelos IDE usan cada TXD (usa el mismo conjunto IDE que Map Analyzer)',
+    'Поиск':
+        'Buscar',
+    'Фильтр по имени текстуры или TXD':
+        'Filtrar por nombre de textura o TXD',
+    'Стандарт (vanilla SA) / FLA / Строгий / Мягкий':
+        'Estándar (vanilla SA) / FLA / Estricto / Indulgente',
+    'Оставить каждый N-ный ключ (2 = удалить каждый второй)':
+        'Conservar cada N clave (2 = eliminar una de cada dos)',
+    'True — кубический ease-in/out (без углов на анкорах). False — линейная интерполяция':
+        'True — ease-in/out cúbico (sin esquinas en las anclas). False — interpolación lineal',
+    'Ось вдоль которой сглаживать':
+        'Eje a lo largo del cual suavizar',
+
+    # === f-string error/report templates ===
+    'геометрия #{0}: {1} вершин — RenderWare хранит индексы треугольников в uint16 (максимум {2} вершин). Разбей меш на части или упрости (Decimate).':
+        'geometría #{0}: {1} vértices — RenderWare almacena los índices de triángulo como uint16 (máx {2} vértices). Divide la malla o simplifícala (Decimate).',
+    'геометрия #{0}: {1} треугольников — много для одной геометрии. Экспорт продолжен (счётчик треугольников u32), но движок/инструменты могут тормозить. Рекомендуется разбить меш на части.':
+        'geometría #{0}: {1} triángulos — muchos para una sola geometría. Exportación continuada (el contador de triángulos es u32), pero el motor/las herramientas pueden ralentizarse. Se recomienda dividir la malla.',
+    'геометрия #{0}: {1} материалов — RenderWare хранит material-индекс в uint16 (максимум {2}). Используй меньше материалов.':
+        'geometría #{0}: {1} materiales — RenderWare almacena el índice de material como uint16 (máx {2}). Usa menos materiales.',
+    'геометрия #{0}: {1} UV-слоёв — флаги геометрии хранят кол-во UV в uint8 (максимум {2}). GTA SA рендерит максимум 2.':
+        'geometría #{0}: {1} capas UV — los flags de geometría almacenan el número de UV como uint8 (máx {2}). GTA SA renderiza como máximo 2.',
+    'геометрия #{0}: skin.num_bones={1} — RenderWare skin хранит счётчики костей в uint8 (максимум {2}).':
+        'geometría #{0}: skin.num_bones={1} — el skin de RenderWare almacena los contadores de huesos como uint8 (máx {2}).',
+    'геометрия #{0}: skin.num_used={1} > {2} (uint8).':
+        'geometría #{0}: skin.num_used={1} > {2} (uint8).',
+    'геометрия #{0}: skin.max_weights={1} > {2} (uint8).':
+        'geometría #{0}: skin.max_weights={1} > {2} (uint8).',
+    'геометрия #{0}: skin.bones_used содержит индекс {1} вне 0..{2} (uint8).':
+        'geometría #{0}: skin.bones_used contiene el índice {1} fuera de 0..{2} (uint8).',
+    'геометрия #{0}: skin.bone_indices[{1}] содержит индекс {2} вне 0..{3} (uint8). Слишком много костей в арматуре.':
+        'geometría #{0}: skin.bone_indices[{1}] contiene el índice {2} fuera de 0..{3} (uint8). Demasiados huesos en el armature.',
+    "'{0}': model_id={1} вне диапазона 0..{2} (заголовок COL хранит ID в uint16)":
+        "'{0}': model_id={1} fuera del rango 0..{2} (la cabecera COL almacena el ID como uint16)",
+    "'{0}': {1} сфер — COL2/3/4 поддерживает максимум {2}":
+        "'{0}': {1} esferas — COL2/3/4 admite como máximo {2}",
+    "'{0}': {1} боксов — COL2/3/4 поддерживает максимум {2}":
+        "'{0}': {1} cajas — COL2/3/4 admite como máximo {2}",
+    "'{0}': {1} треугольников — COL формат поддерживает максимум {2}. Разбей меш на части или упрости коллизию (Decimate).":
+        "'{0}': {1} triángulos — el formato COL admite como máximo {2}. Divide la malla o simplifica la colisión (Decimate).",
+    "'{0}': {1} вершин — COL хранит индексы в uint16 (максимум {2} вершин). Разбей меш на части или упрости коллизию (Decimate).":
+        "'{0}': {1} vértices — COL almacena los índices como uint16 (máx {2} vértices). Divide la malla o simplifica la colisión (Decimate).",
+    "'{0}': {1} shadow-треугольников — максимум {2}":
+        "'{0}': {1} triángulos de sombra — máx {2}",
+    "'{0}': {1} shadow-вершин — максимум {2}":
+        "'{0}': {1} vértices de sombra — máx {2}",
+    'OK: {0} Empties, {1} с анимацией, {2} меш(а)':
+        'OK: {0} Empties, {1} animados, {2} malla(s)',
+    'Не получилось вызвать decimate: {0}. Активируй окно Graph Editor.':
+        'No se pudo llamar a decimate: {0}. Activa una ventana del Editor de Gráficos.',
+    'ANP3 не поддерживается в {0} — переключаюсь на ANPK':
+        'ANP3 no es compatible con {0} — cambiando a ANPK',
 }

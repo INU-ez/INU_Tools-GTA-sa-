@@ -146,8 +146,7 @@ class GTATOOLS_OT_export_ifp(bpy.types.Operator):
             _fmt = self.ifp_format
             if _fmt == 'ANP3' and _scene_game != 'SA':
                 self.report({'WARNING'},
-                    f"ANP3 не поддерживается в {_scene_game} — "
-                    f"переключаюсь на ANPK")
+                    T("ANP3 не поддерживается в {0} — переключаюсь на ANPK").format(_scene_game))
                 _fmt = 'ANPK'
 
             count = write_ifp(self.filepath, ifp, format=_fmt)

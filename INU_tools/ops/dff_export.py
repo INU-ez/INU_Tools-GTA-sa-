@@ -1515,6 +1515,64 @@ def export_dff(filepath: str, objects, version: int = GTA_SA_VERSION,
     write_dff_file(filepath, clump)
 
 
+def draw_dff_flags_block(layout, context):
+    """Reusable Pipeline-buttons + DFF-flags-column block.
+
+    Mirrors the N-panel DFF Flags section 1:1 (panels.py): pipeline as
+    expanded scene-level buttons, then the active object's obj.inu.*
+    flags in a single column with per-pipeline red-alert hinting on
+    forbidden flags.  Shared by every DFF export dialog (single Export
+    DFF, Export All, INU Export All) so the look + behaviour is
+    identical everywhere.  Edits propagate to all selected + persist
+    per-pipeline through the props' own update callbacks.
+    """
+    from .. import T
+    scn = context.scene
+
+    layout.separator()
+    layout.label(text=T("Pipeline:"))
+    row = layout.row(align=True)
+    row.prop(scn.inu_settings, "gtatools_export_pipeline", expand=True)
+
+    ao = context.active_object
+    if ao is None or ao.type != 'MESH' or not hasattr(ao, 'inu'):
+        return
+    inu = ao.inu
+    from ..core import game_versions as _gv
+    _is_sa = (_gv.game_of_scene(scn) == 'SA')
+    pipeline = scn.inu_settings.gtatools_export_pipeline
+    _PIPE_FORBIDDEN = {
+        '0x53F2009A': {'day_cols', 'night_cols', 'light_beam_asi'},
+        '0x53F20098': {'uv_map2'},
+        '0x53F2009C': {'night_cols', 'uv_map2', 'light_beam_asi'},
+        'PED': {'day_cols', 'night_cols', 'modulate_color',
+                'set_material_alpha', 'light_beam_asi', 'uv_map2'},
+    }.get(pipeline, set())
+
+    box = layout.box()
+    box.label(text=T("DFF Flags (активный объект, из N-панели):"))
+    fc = box.column(align=True)
+
+    def _flag(prop_key, label):
+        r = fc.row(align=True)
+        if prop_key in _PIPE_FORBIDDEN:
+            r.alert = True
+        r.prop(inu, prop_key, text=label)
+
+    _flag("export_normals",    "Normals")
+    _flag("light",             "Light")
+    _flag("modulate_color",    "Modulate Color")
+    _flag("set_material_alpha", "Set Material Alpha")
+    if _is_sa:
+        _flag("light_beam_asi", "Light Beam (SA_Light.asi)")
+    _flag("export_binsplit", "Bin Mesh PLG")
+    _flag("uv_map1", "UV1")
+    _flag("uv_map2", "UV2")
+    _flag("day_cols", "Day")
+    if _is_sa:
+        _flag("night_cols", "Night")
+
+
 # ──────────────────── Blender operator wrapper ────────────────────────
 
 class GTATOOLS_OT_export_dff(bpy.types.Operator, ExportHelper):
@@ -1524,6 +1582,12 @@ class GTATOOLS_OT_export_dff(bpy.types.Operator, ExportHelper):
     bl_options = {'PRESET'}
     filename_ext = ".dff"
     filter_glob: StringProperty(default="*.dff", options={'HIDDEN'})
+
+    def draw(self, context):
+        # File-browser sidebar: same Pipeline buttons + DFF flags
+        # column as the N-panel, so flags can be checked/tweaked at
+        # the moment of export without leaving the dialog.
+        draw_dff_flags_block(self.layout, context)
 
     def execute(self, context):
         from ..tools.prelight import setup_prelight_preview
@@ -1589,6 +1653,12 @@ class GTATOOLS_OT_export_dff(bpy.types.Operator, ExportHelper):
             for obj in prelight_was_on:
                 setup_prelight_preview(obj, enable=True)
 
+            # Surface non-fatal validation warnings (e.g. very high
+            # triangle count) — export already succeeded.
+            from ..core.dff import DFF_EXPORT_WARNINGS
+            if DFF_EXPORT_WARNINGS:
+                for w in DFF_EXPORT_WARNINGS:
+                    self.report({'WARNING'}, w)
             self.report({'INFO'}, f"Exported DFF: {self.filepath}")
             return {'FINISHED'}
         except Exception as e:

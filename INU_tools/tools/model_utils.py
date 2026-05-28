@@ -2,6 +2,16 @@
 
 import bpy
 import bmesh
+import re
+
+# Blender appends `.001`, `.002`, … when a name collides on import or
+# duplicate. Strip the suffix before any suffix/prefix-based type
+# detection so `ali_road_sign_1_col.007` is still recognised as COL.
+_BLENDER_DUP_SUFFIX = re.compile(r'\.\d{3}$')
+
+
+def _strip_dup_suffix(name: str) -> str:
+    return _BLENDER_DUP_SUFFIX.sub('', name)
 
 
 
@@ -30,7 +40,11 @@ def get_model_type(obj):
     if obj is None:
         return None, None
 
-    name = obj.name
+    # Strip Blender's `.001`/`.002`/… duplicate suffix before any
+    # suffix-based classification. Without this, copies of COL/LOD
+    # meshes get misclassified as DFF (e.g. `name_col.007` doesn't
+    # end with `_COL` literally).
+    name = _strip_dup_suffix(obj.name)
     name_upper = name.upper()
     suffixes = _get_suffixes()
     prefixes = _get_prefixes()

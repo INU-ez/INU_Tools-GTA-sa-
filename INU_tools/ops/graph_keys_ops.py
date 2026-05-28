@@ -172,8 +172,7 @@ class GTATOOLS_OT_thin_keyframes(bpy.types.Operator):
                 bpy.ops.graph.decimate(mode='ERROR',
                                        remove_error_margin=self.error)
             except RuntimeError as e:
-                self.report({'ERROR'}, f"Не получилось вызвать decimate: {e}. "
-                                       f"Активируй окно Graph Editor.")
+                self.report({'ERROR'}, T("Не получилось вызвать decimate: {0}. Активируй окно Graph Editor.").format(e))
                 return {'CANCELLED'}
             m = self._apply_interp_to_selected()
             self.report({'INFO'},
