@@ -108,12 +108,13 @@
 - 🗺️ **X Radar Maker** — генерация тайлов миникарты (8×8 / меню / полный радар) с упаковкой в TXD
 - 🧩 **Profile System** — кастомные раскладки N-sidebar (видимость / порядок панелей) в JSON, переключение между задачами
 - 🚀 **Pipeline-суффиксы** — `_DFF` / `_LOD` / `_COL` → Export All / Export to IMG в один клик
+- 📁 **Папка пресетов** — направить все пресеты/данные (профили, пресеты материалов и ID, дефолты флагов пайплайна) в любую папку; при смене существующие пресеты копируются
 
 ## 🧭 Панели UI
 
 | Расположение | Панель | Что там |
 |---|---|---|
-| `Properties > Scene` | **INU Tools** | IDE/IPL/IMG пути, текстуры, файлы IMG |
+| `Properties > Scene` | **INU Tools** | IDE/IPL/IMG пути, текстуры, файлы IMG, папка пресетов |
 | `Properties > Object` | **INU Tools: Model** | Тип (auto+manual), Model ID, TXD, Draw Dist, IDE Flags, DFF Flags, Pipeline, Breakable, 2DFX |
 | `Properties > Material` | **GTA Material** (3 вкладки) | SURFACE — тип поверхности коллизии · EFFECTS — Env Map, Bump, Reflection, Specular, UV Animation · PIPELINE |
 | `View3D > Sidebar (N)` | **GTA Tools** | пайплайн SETUP → MODEL → DATA → EXPORT (Export сверху, ID Manager, Object IDE/IPL, все остальные подпанели) |

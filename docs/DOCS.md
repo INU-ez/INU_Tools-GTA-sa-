@@ -22,6 +22,7 @@
   - [IPL (Placement)](#ipl-placement)
   - [IPL Sections](#ipl-sections)
   - [IMG Archive](#img-archive)
+  - [Preset / data folder](#preset--data-folder)
   - [BBox Mode](#bbox-mode)
   - [Suffixes / Prefixes](#suffixes--prefixes)
   - [LOD Detection](#lod-detection)
@@ -90,7 +91,7 @@
 - Blender 2.83+ (4.2+ for installs through extensions.blender.org)
 - Itera Tools 3 — optional, for vertex lighting
 
-**Settings persistence:** all paths (Game Root, IDE, IPL, IMG, textures) are saved in `INU_Preset/paths.json` next to the addons folder. Settings survive addon updates and are restored automatically when Blender starts.
+**Settings persistence:** all paths (Game Root, IDE, IPL, IMG, textures) and presets (profiles, material & ID presets, pipeline flag defaults) live in a user-writable data folder — `paths.json` plus per-feature subfolders. By default this is Blender's per-user extension directory; you can point it at any folder of your own via **Properties → Scene → INU Tools → Preset folder** (see [Preset / data folder](#preset--data-folder)). Settings survive addon updates and are restored automatically when Blender starts.
 
 ---
 
@@ -473,6 +474,22 @@ All IPL sections are supported for import/export as Blender objects:
 **Batch writer + parallel encode (big exports):** `Export to IMG` opens the archive once, appends every new payload sequentially, and rewrites the directory exactly once at the end — not per-file. Plus DFF and COL serialisation (`to_bytes()` / `write_col()`) runs in a 4-worker `ThreadPoolExecutor` (numpy/zlib release the GIL). For a full-district export this replaces ~3000 directory rewrites (~2.6 GB of redundant writes) with one, plus ~4× speedup on the CPU-bound encode — typically **5–15× end-to-end**.
 
 > 💡 **Example — batch upload to gta3.img:** you have 50 buildings ready to export. Set `gta3.img` path in Import Map settings → select the buildings → **Export to IMG** → a UIList dialog opens showing all model + TXD names (editable). Optionally toggle Shared TXD if they share textures. Click OK — all DFF+COL+LOD+TXD get encoded in parallel and written to the archive. After that make sure to **Rebuild Archive** in your IMG tool (otherwise the game keeps the old versions).
+
+### Preset / data folder
+
+**Panel:** Properties → Scene → INU Tools → ▸ **Preset folder** *(collapsible)*
+
+All INU Tools presets and saved data live under one user-writable root: `paths.json` (Game Root / IDE / IPL / IMG / texture paths) plus the `profiles/`, `material_presets/`, `id_presets/` subfolders and the per-pipeline DFF-flag defaults. By default the root is Blender's per-user extension directory (the addon never writes inside its own folder — required by the extensions platform).
+
+| Button | Operator | Description |
+|--------|----------|-------------|
+| Change | `gtatools.set_preset_dir` | Pick a new folder; existing presets are merge-copied into it, then storage switches over |
+| (open) | `gtatools.open_preset_dir` | Open the current folder in your file manager |
+| Reset to default | `gtatools.reset_preset_dir` | Forget the custom folder and go back to the default location |
+
+The chosen folder is remembered globally (across `.blend` files and Blender restarts) via a tiny pointer file at the default location. If the custom folder later goes missing (e.g. an unplugged drive), the addon silently falls back to the default. The header line shows **Default** or **Custom folder** plus the full path.
+
+> 💡 **Example — keep presets on a project drive:** open **Preset folder** → **Change** → pick `F:\GTA Project\INU presets`. Your existing profiles and material presets are copied there, and from now on everything reads/writes from that folder — handy for syncing presets between machines or keeping them next to a project.
 
 ### BBox Mode
 

@@ -53,6 +53,65 @@ class GTATOOLS_OT_discover_game(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class GTATOOLS_OT_set_preset_dir(bpy.types.Operator):
+    """Выбрать папку для хранения всех пресетов и данных INU Tools.
+    Существующие пресеты копируются в новую папку."""
+    bl_idname = "gtatools.set_preset_dir"
+    bl_label = "INU: Set Preset Folder"
+    bl_options = {'REGISTER'}
+
+    directory: StringProperty(subtype='DIR_PATH')
+
+    def invoke(self, context, event):
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        from ..tools import user_data
+        target = bpy.path.abspath(self.directory).strip()
+        if not target or not os.path.isdir(target):
+            self.report({'ERROR'}, T("Выберите существующую папку"))
+            return {'CANCELLED'}
+        copied = user_data.copy_presets_to(target)
+        user_data.set_preset_root_override(target)
+        self.report({'INFO'},
+                    T("Папка пресетов: {0} (скопировано файлов: {1})").format(
+                        target, copied))
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_reset_preset_dir(bpy.types.Operator):
+    """Вернуть папку пресетов к расположению по умолчанию"""
+    bl_idname = "gtatools.reset_preset_dir"
+    bl_label = "INU: Reset Preset Folder"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        from ..tools import user_data
+        user_data.set_preset_root_override(None)
+        self.report({'INFO'},
+                    T("Папка пресетов сброшена: {0}").format(
+                        user_data.get_default_preset_root()))
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_open_preset_dir(bpy.types.Operator):
+    """Открыть текущую папку пресетов в проводнике"""
+    bl_idname = "gtatools.open_preset_dir"
+    bl_label = "INU: Open Preset Folder"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        from ..tools import user_data
+        path = user_data.get_user_data_dir()
+        try:
+            bpy.ops.wm.path_open(filepath=path)
+        except Exception:
+            self.report({'WARNING'}, path)
+            return {'CANCELLED'}
+        return {'FINISHED'}
+
+
 class GTATOOLS_OT_binary_ipl_toggle_all(bpy.types.Operator):
     """Включить или выключить все бинарные IPL в списке одной кнопкой"""
     bl_idname = "gtatools.binary_ipl_toggle_all"

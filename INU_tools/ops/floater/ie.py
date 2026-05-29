@@ -121,7 +121,13 @@ _PIPE_FORBIDDEN = {
         'light_beam_asi',
     },
     '0x53F20098': {  # D/N Building
+        # D/N светится через prelit day+night vcols: ни свет, ни нормали,
+        # ни mat-alpha, ни light beam.
         'uv_map2',
+        'light',
+        'export_normals',
+        'set_material_alpha',
+        'light_beam_asi',
     },
     '0x53F2009C': {  # Building (без D/N)
         'night_cols',

@@ -32,15 +32,17 @@ import bpy
 _ADDON_PACKAGE = __package__.rsplit('.', 1)[0]
 
 
-def get_user_data_dir(subfolder: str = "") -> str:
-    """Return the user data directory for INU Tools.
+# Pointer file holding a user-chosen preset/data root. It ALWAYS lives
+# at the *default* base (below) so it can be located regardless of where
+# presets are currently redirected. Contents = one line, an absolute dir.
+_OVERRIDE_POINTER = 'preset_root.txt'
 
-    Args:
-        subfolder: optional sub-directory under the data root.
-            Created if missing.
 
-    Returns:
-        Absolute path. Always created (with parents) before return.
+def _default_base() -> str:
+    """The platform default data root (extension user dir / config dir).
+
+    This is where the override pointer lives — never affected by the
+    override itself, so we can always resolve it.
     """
     base = None
     if hasattr(bpy.utils, 'extension_path_user'):
@@ -52,6 +54,110 @@ def get_user_data_dir(subfolder: str = "") -> str:
     if base is None:
         # Pre-4.2 fallback or extension API rejected the package name.
         base = bpy.utils.user_resource('CONFIG', path='inu_tools')
+    try:
+        os.makedirs(base, exist_ok=True)
+    except Exception:
+        pass
+    return base
+
+
+def get_default_preset_root() -> str:
+    """Absolute path of the built-in default preset/data root."""
+    return _default_base()
+
+
+def get_preset_root_override() -> str | None:
+    """User-chosen preset root, or ``None`` when using the default.
+
+    Returns ``None`` if the pointer is missing or points at a path that
+    no longer exists (so a deleted/unplugged drive falls back to default
+    instead of erroring).
+    """
+    ptr = os.path.join(_default_base(), _OVERRIDE_POINTER)
+    try:
+        with open(ptr, encoding='utf-8') as f:
+            p = f.read().strip()
+    except OSError:
+        return None
+    if p and os.path.isdir(p):
+        return os.path.abspath(p)
+    return None
+
+
+def set_preset_root_override(path: str | None) -> None:
+    """Redirect all preset/data storage to *path*.
+
+    Pass ``None`` or ``""`` to clear the override and return to the
+    default location. The new directory is created if missing; existing
+    presets are NOT moved here automatically — use
+    :func:`copy_presets_to` for that.
+    """
+    ptr = os.path.join(_default_base(), _OVERRIDE_POINTER)
+    if not path:
+        try:
+            os.remove(ptr)
+        except OSError:
+            pass
+        return
+    path = os.path.abspath(path)
+    os.makedirs(path, exist_ok=True)
+    with open(ptr, 'w', encoding='utf-8') as f:
+        f.write(path)
+
+
+def copy_presets_to(dest: str) -> int:
+    """Merge-copy the current preset root's contents into *dest*.
+
+    Skips the override pointer and migration marker. Existing files in
+    *dest* are left untouched (only missing ones are copied). Returns the
+    number of files copied.
+    """
+    src = get_user_data_dir()
+    dest = os.path.abspath(dest)
+    if os.path.abspath(src) == dest:
+        return 0
+    os.makedirs(dest, exist_ok=True)
+    skip = {_OVERRIDE_POINTER, _MIGRATION_MARKER}
+    copied = 0
+    for entry in os.listdir(src):
+        if entry in skip:
+            continue
+        s = os.path.join(src, entry)
+        d = os.path.join(dest, entry)
+        try:
+            if os.path.isdir(s):
+                for root, _, files in os.walk(s):
+                    rel = os.path.relpath(root, s)
+                    tgt = os.path.join(d, rel) if rel != '.' else d
+                    os.makedirs(tgt, exist_ok=True)
+                    for fn in files:
+                        dst_f = os.path.join(tgt, fn)
+                        if not os.path.exists(dst_f):
+                            shutil.copy2(os.path.join(root, fn), dst_f)
+                            copied += 1
+            elif os.path.isfile(s):
+                if not os.path.exists(d):
+                    shutil.copy2(s, d)
+                    copied += 1
+        except Exception as e:
+            print(f"[INU user_data] copy error for {entry}: {e}")
+    return copied
+
+
+def get_user_data_dir(subfolder: str = "") -> str:
+    """Return the user data directory for INU Tools.
+
+    Honours a user-chosen override (see :func:`set_preset_root_override`);
+    otherwise resolves to the platform default.
+
+    Args:
+        subfolder: optional sub-directory under the data root.
+            Created if missing.
+
+    Returns:
+        Absolute path. Always created (with parents) before return.
+    """
+    base = get_preset_root_override() or _default_base()
     try:
         os.makedirs(base, exist_ok=True)
     except Exception:

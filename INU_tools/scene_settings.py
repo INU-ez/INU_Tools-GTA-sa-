@@ -867,6 +867,8 @@ class INUSceneSettings(bpy.types.PropertyGroup):
     # ── IMG / ID Manager ───────────────────────────────────────
     gtatools_show_img_list: BoolProperty(
         name="Show IMG List", default=False)
+    gtatools_show_preset_dir: BoolProperty(
+        name="Show Preset Folder", default=False)
     gtatools_img_entries_index: IntProperty(default=0)
     gtatools_show_id_manager: BoolProperty(
         name="Show ID Manager",

@@ -3300,4 +3300,13 @@ LANG = {
         'No se pudo llamar a decimate: {0}. Activa una ventana del Editor de Gráficos.',
     'ANP3 не поддерживается в {0} — переключаюсь на ANPK':
         'ANP3 no es compatible con {0} — cambiando a ANPK',
+    "Папка пресетов": "Carpeta de presets",
+    "Своя папка": "Carpeta propia",
+    "По умолчанию": "Por defecto",
+    "Изменить": "Cambiar",
+    "Сбросить на стандартную": "Restablecer por defecto",
+    "Выберите существующую папку": "Seleccione una carpeta existente",
+    "Папка пресетов: {0} (скопировано файлов: {1})":
+        "Carpeta de presets: {0} (archivos copiados: {1})",
+    "Папка пресетов сброшена: {0}": "Carpeta de presets restablecida: {0}",
 }

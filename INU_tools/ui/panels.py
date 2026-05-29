@@ -816,8 +816,13 @@ class GTATOOLS_PT_export_panel(bpy.types.Panel):
                         'light_beam_asi',  # Vehicle pipeline drops Light Beam
                     },
                     '0x53F20098': {  # D/N Building
-                        # D/N включает day+night vcols, UV2 не нужен
+                        # D/N светится через prelit day+night vcols:
+                        # ни свет, ни нормали, ни mat-alpha, ни light beam.
                         'uv_map2',
+                        'light',               # dynamic light не нужен
+                        'export_normals',      # нормали => мерцание
+                        'set_material_alpha',  # не для D/N building
+                        'light_beam_asi',      # building feature, не D/N
                     },
                     '0x53F2009C': {  # Building (без D/N)
                         'night_cols',     # plain building, не D/N
@@ -2289,8 +2294,13 @@ class GTATOOLS_PT_object_inu_tools(bpy.types.Panel):
                         'light_beam_asi',  # Vehicle pipeline drops Light Beam
                     },
                     '0x53F20098': {  # D/N Building
-                        # D/N включает day+night vcols, UV2 не нужен
+                        # D/N светится через prelit day+night vcols:
+                        # ни свет, ни нормали, ни mat-alpha, ни light beam.
                         'uv_map2',
+                        'light',               # dynamic light не нужен
+                        'export_normals',      # нормали => мерцание
+                        'set_material_alpha',  # не для D/N building
+                        'light_beam_asi',      # building feature, не D/N
                     },
                     '0x53F2009C': {  # Building (без D/N)
                         'night_cols',     # plain building, не D/N
@@ -2612,6 +2622,33 @@ class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
                 txd_c = sum(1 for e in entries if e.name.lower().endswith('.txd'))
                 box.label(text=f"DFF: {dff_c}  COL: {col_c}  TXD: {txd_c}  Total: {len(entries)}", **inu_icon(safe_icon('INFO')))
             box.operator("gtatools.refresh_img_list", text=T("Обновить список"), **inu_icon(safe_icon('FILE_REFRESH')))
+
+        # Preset folder (collapsible) — where all INU Tools presets/data live
+        box = layout.box()
+        row = box.row()
+        row.prop(scene.inu_settings, "gtatools_show_preset_dir",
+                 **inu_icon(safe_icon('TRIA_DOWN') if scene.inu_settings.gtatools_show_preset_dir else 'TRIA_RIGHT'),
+                 text=T("Папка пресетов"), emboss=False)
+        if scene.inu_settings.gtatools_show_preset_dir:
+            from ..tools import user_data
+            cur = user_data.get_user_data_dir()
+            is_custom = user_data.get_preset_root_override() is not None
+            box.label(
+                text=(T("Своя папка") if is_custom else T("По умолчанию")),
+                **inu_icon(safe_icon('FILE_FOLDER')))
+            sub = box.box()
+            sub.scale_y = 0.85
+            for chunk in (cur[i:i + 48] for i in range(0, len(cur), 48)):
+                sub.label(text=chunk)
+            r = box.row(align=True)
+            r.operator("gtatools.set_preset_dir", text=T("Изменить"),
+                       **inu_icon(safe_icon('FILE_FOLDER')))
+            r.operator("gtatools.open_preset_dir", text="",
+                       **inu_icon(safe_icon('FILEBROWSER')))
+            if is_custom:
+                box.operator("gtatools.reset_preset_dir",
+                             text=T("Сбросить на стандартную"),
+                             **inu_icon(safe_icon('LOOP_BACK')))
 
 
 

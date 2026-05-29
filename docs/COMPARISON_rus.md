@@ -1,6 +1,6 @@
 # INU Tools vs Kams Script vs DragonFF
 
-Фокусное сравнение трёх актуальных тулчейнов для моддинга GTA San Andreas. Актуально для **INU Tools 2.0.0** (май 2026).
+Фокусное сравнение трёх актуальных тулчейнов для моддинга GTA San Andreas. Актуально для **INU Tools 2.0.2** (май 2026).
 
 > **[🇬🇧 English version](COMPARISON.md)**
 
@@ -10,7 +10,7 @@
 
 | Инструмент | Хост | Авторы | Лицензия | Версия |
 |---|---|---|---|---|
-| **INU Tools** | Blender 4.2 – 5.1 | INU | GPL-3.0 | 2.0.0 (2026) |
+| **INU Tools** | Blender 4.2 – 5.1 | INU | GPL-3.0 | 2.0.2 (2026) |
 | **Kams Script (GTA_Tools GF)** | 3ds Max | Kam, Goldfish, community | freeware (closed) | 2014–2018 |
 | **DragonFF** | Blender 2.8 – 4.x | Parik | GPL-3.0 | active |
 
@@ -34,6 +34,9 @@
 | Адаптивный grid auto-split (quadtree) | ✅ | — | — |
 | BBox для дальних объектов | ✅ | — | — |
 | Round-trip с CRLF / IPL dedup / `.NNN` ID | ✅ | partial | — |
+| Трекинг связей IDE/IPL (повторное добавление обновляет строку, без дублей) | ✅ sidecar `.inu_cache/` | — | — |
+| Детекция внешних правок + Sync / Unlink / Verify | ✅ | — | — |
+| Выбор конкретных IPL при импорте (бинарные **и** текстовые) | ✅ | — | — |
 | Cull зоны | ✅ | ✅ | ✅ |
 | Garage / Enex / Pickup / Cars / Auzo / Jump / Occl / Zone | ✅ все 8 | ✅ все 8 | — |
 | Парсинг `gta.dat` для регионов | ✅ | — | — |
@@ -51,7 +54,7 @@
 | Валидация Frame Hierarchy по vanilla SA-шаблону | ✅ 37 dummies | partial | — |
 | `_ok` / `_dam` damage-pair операторы (Add / Show / Check) | ✅ | вручную | — |
 | Paintjob (`_paintjob1/2`) Pay'n'Spray слоты | ✅ | вручную | — |
-| Vehicle Scale Helper | — | ✅ | — |
+| Vehicle Scale Helper (масштаб иерархии / dummies) | ✅ | ✅ | — |
 
 ### 🦴 Педы и анимации
 
@@ -112,7 +115,7 @@
 | FLA4 extended path format | — | ✅ | — |
 | Roadblocks / traffic-light enums | partial | ✅ | — |
 | Breakable objects chunk | ✅ | ✅ | ✅ |
-| CST (Steve's COL Editor) | — | ✅ | — |
+| CST (Steve's COL Editor) чтение / запись | ✅ | ✅ | — |
 | Object Explode (разрезка на куски) | — | ✅ | — |
 | Native renderware (GameCube / PS2 / PSP / Xbox / WDGL) | — | — | ✅ |
 | Delta Morphs | — | — | ✅ |
@@ -126,9 +129,13 @@
 | Нативный Blender (без лицензии Max) | ✅ | — | ✅ |
 | Batch-экспорт по суффиксам (`_DFF` / `_LOD` / `_COL`) | ✅ | ✅ | ✅ mass |
 | Profile system (кастомный N-sidebar) | ✅ | — | — |
-| Локализация | RU / EN | EN | EN |
+| Отрывные GPU floater-окна | ✅ | — | — |
+| Память DFF-флагов по пайплайнам + флаги в каждом диалоге экспорта | ✅ | — | — |
+| Настраиваемая папка пресетов / данных | ✅ | — | — |
+| Понятные ошибки лимитов формата (имя модели + счётчик, без сырого struct overflow) | ✅ | — | — |
+| Локализация | RU / EN / ES | EN | EN |
 | Real-time progress bar + отмена | ✅ | partial | — |
-| Встроенные тесты (~110 pytest) | ✅ | — | — |
+| Встроенные тесты (~300 pytest) | ✅ | — | — |
 
 ---
 
@@ -136,7 +143,7 @@
 
 **Бери INU Tools**, если строишь карты, педов, машины или эффекты в Blender-пайплайне. Это единственный вариант с round-trip полного IDE / IPL / IMG внутри Blender, и единственный со встроенным `effects.fxp` редактором, bone-based IK ригом, линтером бинарных файлов и векторизованным pure-numpy DXT-энкодером (без внешних бинарников).
 
-**Бери Kams Script**, если у тебя уже есть 3ds Max, продолжаешь существующий проект на Max, или нужны точечные ниши, которые ещё не закрыты в Blender-стороне (FLA4 paths, CST collision, Object Explode, Vertex Alpha инструменты). Учти: скрипт давно не обновляется — баги, в которые упрёшься, останутся с тобой.
+**Бери Kams Script**, если у тебя уже есть 3ds Max, продолжаешь существующий проект на Max, или нужны точечные ниши, которые ещё не закрыты в Blender-стороне (FLA4 paths, Object Explode, Vertex Alpha инструменты). Учти: скрипт давно не обновляется — баги, в которые упрёшься, останутся с тобой.
 
 **Бери DragonFF**, если нужен лёгкий round-trip DFF/COL/TXD в Blender с самым широким покрытием 2DFX (Cover Point, Trigger Point, Road Sign, Escalator, Enex), или если работаешь с native console сборками (PS2 / PSP / Xbox / GameCube / WDGL). Для полного SA-пайплайна (map export, IDE/IFP write, частицы, IK) — INU шире.
 
@@ -146,5 +153,5 @@
 
 - «✅» = поддерживается в текущем публичном релизе; «partial» = есть, но неполно или ограниченный workflow; «—» = не реализовано.
 - Строка Kams отражает GTA_Tools (GF) от Goldfish плюс community-аддоны (DeniskaMax, ZZPuma, EMAPTool). Точечные standalone-инструменты под Max (Water IO и т.п.) свёрнуты в колонку Kams где применимо.
-- Покрытие сверено с исходниками INU Tools 1.7.0 (`core/`, `ops/`).
+- Покрытие сверено с исходниками INU Tools 2.0.2 (`core/`, `ops/`).
 - Поправки приветствуются — открой issue или пиши `1.n.u` в Discord.

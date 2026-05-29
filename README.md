@@ -108,12 +108,13 @@ Ideas being considered. Not all of these will ship — some may turn out impract
 - 🗺️ **X Radar Maker** — minimap tile generation (8×8 / menu / full radar) with TXD packing
 - 🧩 **Profile System** — custom N-sidebar layouts (panel visibility / order) saved as JSON, switch between tasks
 - 🚀 **Pipeline suffixes** — `_DFF` / `_LOD` / `_COL` → Export All / Export to IMG in one click
+- 📁 **Preset folder** — point all presets/data (profiles, material & ID presets, pipeline flag defaults) at any folder; existing presets are copied across on switch
 
 ## 🧭 UI Panels
 
 | Location | Panel | What's there |
 |---|---|---|
-| `Properties > Scene` | **INU Tools** | IDE/IPL/IMG paths, textures, IMG files |
+| `Properties > Scene` | **INU Tools** | IDE/IPL/IMG paths, textures, IMG files, preset folder |
 | `Properties > Object` | **INU Tools: Model** | Type (auto+manual), Model ID, TXD, Draw Dist, IDE Flags, DFF Flags, Pipeline, Breakable, 2DFX |
 | `Properties > Material` | **GTA Material** (3 tabs) | SURFACE — collision surface type · EFFECTS — Env Map, Bump, Reflection, Specular, UV Animation · PIPELINE |
 | `View3D > Sidebar (N)` | **GTA Tools** | SETUP → MODEL → DATA → EXPORT pipeline (Export at top, ID Manager, Object IDE/IPL, all other sub-panels) |

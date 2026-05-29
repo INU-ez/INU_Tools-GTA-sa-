@@ -1543,7 +1543,8 @@ def draw_dff_flags_block(layout, context):
     pipeline = scn.inu_settings.gtatools_export_pipeline
     _PIPE_FORBIDDEN = {
         '0x53F2009A': {'day_cols', 'night_cols', 'light_beam_asi'},
-        '0x53F20098': {'uv_map2'},
+        '0x53F20098': {'uv_map2', 'light', 'export_normals',
+                       'set_material_alpha', 'light_beam_asi'},
         '0x53F2009C': {'night_cols', 'uv_map2', 'light_beam_asi'},
         'PED': {'day_cols', 'night_cols', 'modulate_color',
                 'set_material_alpha', 'light_beam_asi', 'uv_map2'},

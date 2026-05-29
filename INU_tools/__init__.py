@@ -919,6 +919,13 @@ _PIPE_TO_SNAP = {
     'PED':        'flags_snap_ped',
 }
 
+# Флаги, которые принудительно гасятся при выборе пайплайна, поверх
+# восстановленного snapshot. D/N building светится через prelit vcols —
+# dynamic Light не нужен и провоцирует мерцание при повороте камеры.
+_PIPE_FORCE_OFF = {
+    '0x53F20098': ('light',),  # D/N Building: dynamic light off
+}
+
 # ── Global per-pipeline flag defaults (cross-.blend persistence) ────
 # Лежат в user_data/dff_pipeline_flag_defaults.json. Файл версионирован
 # по bl_info['version'] — при апдейте аддона версия меняется, файл
@@ -1046,6 +1053,12 @@ def _inu_pipeline_changed(self, context):
                                 setattr(inu, p, bool(snap[p]))
                             except Exception:
                                 pass
+            # Force-off несовместимых флагов поверх снапшота
+            for p in _PIPE_FORCE_OFF.get(new_pipe, ()):
+                try:
+                    setattr(inu, p, False)
+                except Exception:
+                    pass
     finally:
         _inu_flag_propagating = prev_guard
 
@@ -2213,6 +2226,9 @@ def _clean_model_name_ide(name):
 # in Phase 3 of UI redesign.
 from .ops.map_ops import (
     GTATOOLS_OT_discover_game,
+    GTATOOLS_OT_set_preset_dir,
+    GTATOOLS_OT_reset_preset_dir,
+    GTATOOLS_OT_open_preset_dir,
     GTATOOLS_OT_binary_ipl_toggle_all,
     GTATOOLS_OT_text_ipl_toggle_all,
     GTATOOLS_OT_scan_binary_ipls,
@@ -2927,6 +2943,9 @@ classes = (
     GTATOOLS_UL_img_files,
     GTATOOLS_OT_refresh_img_list,
     GTATOOLS_OT_discover_game,
+    GTATOOLS_OT_set_preset_dir,
+    GTATOOLS_OT_reset_preset_dir,
+    GTATOOLS_OT_open_preset_dir,
     GTATOOLS_OT_scan_binary_ipls,
     GTATOOLS_OT_binary_ipl_toggle_all,
     GTATOOLS_OT_text_ipl_toggle_all,

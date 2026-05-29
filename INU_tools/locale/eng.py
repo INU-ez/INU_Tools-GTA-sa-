@@ -3505,4 +3505,13 @@ LANG = {
         'Failed to call decimate: {0}. Activate a Graph Editor window.',
     'ANP3 не поддерживается в {0} — переключаюсь на ANPK':
         'ANP3 is not supported in {0} — switching to ANPK',
+    "Папка пресетов": "Preset folder",
+    "Своя папка": "Custom folder",
+    "По умолчанию": "Default",
+    "Изменить": "Change",
+    "Сбросить на стандартную": "Reset to default",
+    "Выберите существующую папку": "Select an existing folder",
+    "Папка пресетов: {0} (скопировано файлов: {1})":
+        "Preset folder: {0} (files copied: {1})",
+    "Папка пресетов сброшена: {0}": "Preset folder reset: {0}",
 }
