@@ -3514,4 +3514,22 @@ LANG = {
     "Папка пресетов: {0} (скопировано файлов: {1})":
         "Preset folder: {0} (files copied: {1})",
     "Папка пресетов сброшена: {0}": "Preset folder reset: {0}",
+    "Авто-свет коллизии": "Auto COL light",
+    "Значение": "Value",
+    # COL auto-light scene-property tooltips
+    ("Заполнять байт освещения коллизии у фейсов, где он "
+     "равен 0 (нет COL-материала / day+night не заданы). "
+     "Повторяет поведение Kam's CST-экспорта (light=78), "
+     "иначе коллизия в игре остаётся неосвещённой. "
+     "Заданные вручную и импортированные значения не "
+     "трогаются"):
+        ("Fill the collision light byte on faces where it is 0 (no COL "
+         "material / day+night unset). Mirrors Kam's CST export "
+         "(light=78); otherwise the collision stays unlit in-game. "
+         "Manually set and imported values are left untouched"),
+    ("Значение байта освещения для незаполненных фейсов. "
+     "78 = день≈15 / ночь 4 (дефолт Kam). Упаковка: "
+     "день = младший ниббл, ночь = старший ниббл"):
+        ("Light byte written to unfilled faces. 78 = day≈15 / night 4 "
+         "(Kam's default). Packing: day = low nibble, night = high nibble"),
 }

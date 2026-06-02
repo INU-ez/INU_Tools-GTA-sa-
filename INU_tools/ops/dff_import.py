@@ -393,7 +393,11 @@ def _build_mesh(geom: DffGeometry, name: str, materials: list,
                 cols_np[k, 2] = c.b / 255.0
                 cols_np[k, 3] = c.a / 255.0
             loop_cols = cols_np[tri_flat]
-            attr.data.foreach_set('color', loop_cols.ravel())
+            # 'color_srgb' пишет байт напрямую без gamma-encode (Blender
+            # 4.x для BYTE_COLOR при 'color' трактует вход как LINEAR
+            # и кодирует в sRGB при хранении → байт сдвигается, round-
+            # trip ломается).
+            attr.data.foreach_set('color_srgb', loop_cols.ravel())
 
         _add_color_layer('Day', geom.prelit_colors)
         if geom.extra_colors and getattr(geom.extra_colors, 'colors', None):
@@ -416,11 +420,25 @@ def _build_mesh(geom: DffGeometry, name: str, materials: list,
 
 
 def _set_object_props(obj, geom: DffGeometry):
-    """Записываем INU свойства объекта из DFF данных."""
+    """Записываем INU свойства объекта из DFF данных.
+
+    Зеркалим то, что реально лежит в DFF: геометрические флаги
+    (NORMALS / LIGHT / MODULATE / UV2) → одноимённые галки N-панели,
+    пайплайн из CHUNK_PIPELINE_SET → enum ``inu.pipeline``. Если
+    pipeline-чанка в файле нет — оставляем 'NONE'. Чтобы галки и
+    пайплайн совпали с импортированной геометрией без ручной правки
+    после Import DFF.
+    """
     obj.inu.type = 'OBJ'
-    obj.inu.export_normals = geom.export_normals
+    # DFF geometry flag bits → per-object check-boxes (mirror N-panel)
+    obj.inu.export_normals  = geom.export_normals
+    obj.inu.light           = geom.export_light
+    obj.inu.modulate_color  = geom.export_mod_color
     obj.inu.export_binsplit = geom.write_bin_mesh
 
+    # Pipeline: значение CHUNK_PIPELINE_SET (если есть) или 'NONE'.
+    # Так после Import DFF дропдаун пайплайна сразу показывает то, что
+    # было в файле — не нужно угадывать вручную.
     if geom.pipeline:
         pipeline_hex = f"0x{geom.pipeline:08X}"
         known = {'0x53F20098', '0x53F2009A', '0x53F2009C'}
@@ -429,6 +447,8 @@ def _set_object_props(obj, geom: DffGeometry):
         else:
             obj.inu.pipeline = 'CUSTOM'
             obj.inu.custom_pipeline = pipeline_hex
+    else:
+        obj.inu.pipeline = 'NONE'
 
     # UV maps
     obj.inu.uv_map1 = len(geom.uv_layers) >= 1
@@ -771,6 +791,52 @@ def _apply_skin_weights(obj, geom, arm_obj, bone_names):
     print(f"[INU] Skin weights applied, {len(obj.vertex_groups)} vertex groups")
 
 
+_KNOWN_PIPELINES = {'0x53F20098', '0x53F2009A', '0x53F2009C'}
+
+
+def _autoset_scene_pipeline(clump):
+    """Mirror the imported DFF's pipeline onto the scene's pipeline enum.
+
+    Picks the most common ``CHUNK_PIPELINE_SET`` value across all
+    geometries; if no geometry carries a Pipeline chunk, selects
+    ``'NONE'`` (the standard RW render path). Unknown IDs route to
+    ``'CUSTOM'`` with ``scn.inu_settings.gtatools_custom_pipeline`` set
+    to the hex string. Silently no-ops when no scene is reachable
+    (e.g. tests, background import).
+    """
+    try:
+        import bpy as _bpy
+        scn = _bpy.context.scene
+        st = scn.inu_settings
+    except Exception:
+        return
+    geoms = getattr(clump, 'geometry_list', None) or getattr(clump, 'geometries', [])
+    if not geoms:
+        return
+    from collections import Counter
+    counts = Counter(int(getattr(g, 'pipeline', 0)) for g in geoms)
+    counts.pop(0, None)  # ignore "no chunk" entries — they don't dictate scene choice
+    if not counts:
+        target = 'NONE'
+        custom_hex = ''
+    else:
+        pid = counts.most_common(1)[0][0]
+        pipeline_hex = f"0x{pid:08X}"
+        if pipeline_hex in _KNOWN_PIPELINES:
+            target = pipeline_hex
+            custom_hex = ''
+        else:
+            target = 'CUSTOM'
+            custom_hex = pipeline_hex
+    try:
+        if getattr(st, 'gtatools_export_pipeline', None) != target:
+            st.gtatools_export_pipeline = target
+        if target == 'CUSTOM' and hasattr(st, 'gtatools_custom_pipeline'):
+            st.gtatools_custom_pipeline = custom_hex
+    except Exception:
+        pass
+
+
 def import_dff(filepath: str, context=None, *, skip_2dfx=None,
                bulk_mode: bool = False, target_collection=None,
                material_cache: Optional[dict] = None, profiler=None):
@@ -806,6 +872,17 @@ def import_dff(filepath: str, context=None, *, skip_2dfx=None,
             _bpy.context.scene.inu_settings.gtatools_platform = 'MOBILE'
         except Exception:
             pass
+
+    # Auto-set scene pipeline to match the imported DFF, so the N-panel
+    # pipeline button row immediately reflects what was actually in the
+    # file. Skipped for bulk Map Import — flipping the scene pipeline per
+    # geometry across thousands of buildings would thrash the per-object
+    # flag-snapshot system (_inu_pipeline_changed iterates all meshes on
+    # every change). Done BEFORE objects are built so the snapshot
+    # callback only sees pre-existing objects, leaving the freshly
+    # imported flags exactly as the file specifies.
+    if not bulk_mode:
+        _autoset_scene_pipeline(clump)
     base_name = os.path.splitext(os.path.basename(filepath))[0]
     # Always thread a material cache through — even single-DFF imports
     # benefit. A vehicle.dff has 30+ parts but typically only ~5 unique

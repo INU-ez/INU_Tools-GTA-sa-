@@ -1678,7 +1678,10 @@ def _read_geometry_chunk(r: BinaryReader, size: int, rw_version: int) -> DffGeom
 
     flags, num_tris, num_verts, morph_count = r.read('<IIII')
     geom._import_flags = flags  # store original flags for round-trip
+    geom.original_flags = flags  # full flag word, exposed for importer round-trip
     geom.export_normals = bool(flags & GEOM_NORMALS)
+    geom.export_light = bool(flags & GEOM_LIGHT)
+    geom.export_mod_color = bool(flags & GEOM_MOD_COLOR)
 
     # Old RW versions store surface properties inline
     if rw_version < 0x34000:

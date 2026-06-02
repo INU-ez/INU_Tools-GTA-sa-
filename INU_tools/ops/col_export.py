@@ -35,6 +35,39 @@ def _resolve_col_version(context=None) -> int:
     return game_versions.profile_for(game).col_version
 
 
+def _auto_light_settings():
+    """Read the scene's auto collision-light setting.
+
+    Returns ``(enabled, value)``. Kam's CST exporter hard-writes a face
+    light byte of 78 (day≈15 / night 4) so collision is lit in-game;
+    INU mirrors that by filling faces whose light byte is 0 (no COL
+    material / unconfigured) with a configurable default. Returns
+    ``(False, 0)`` when no scene is available (e.g. unit tests) so the
+    behaviour is opt-in to a live Blender session only.
+    """
+    try:
+        scn = bpy.context.scene
+        st = scn.inu_settings
+        return bool(getattr(st, 'gtatools_col_auto_light', False)), \
+            int(getattr(st, 'gtatools_col_auto_light_value', 78))
+    except Exception:
+        return False, 0
+
+
+def _draw_col_auto_light(layout, context):
+    """Shared UI block for the auto collision-light setting — used by the
+    COL and CST export dialogs and the N-panel so the control looks the
+    same everywhere."""
+    st = getattr(context.scene, 'inu_settings', None)
+    if st is None:
+        return
+    box = layout.box()
+    box.prop(st, 'gtatools_col_auto_light', text=T("Авто-свет коллизии"))
+    row = box.row()
+    row.enabled = st.gtatools_col_auto_light
+    row.prop(st, 'gtatools_col_auto_light_value', text=T("Значение"))
+
+
 def _vec3(v) -> Vec3:
     """Convert any (x,y,z) to Vec3."""
     return Vec3(v[0], v[1], v[2])
@@ -80,6 +113,7 @@ def _collect_mesh(obj, model: ColModel):
     """Triangulate a mesh object and add its vertices/faces to the model."""
     mesh = obj.data
     target_game = _COL_VERSION_TO_GAME.get(model.version, 'SA')
+    auto_light, auto_light_val = _auto_light_settings()
     bm = bmesh.new()
     try:
         bm.from_mesh(mesh)
@@ -102,6 +136,11 @@ def _collect_mesh(obj, model: ColModel):
             if face.material_index < len(obj.data.materials):
                 mat = obj.data.materials[face.material_index]
                 surface = _get_surface_from_material(mat, target_game)
+
+            # Auto collision light (Kam parity): fill faces whose light
+            # byte is still 0 (no COL material / unconfigured day+night).
+            if auto_light and surface.light == 0:
+                surface.light = auto_light_val
 
             # Swap verts[1] and verts[2] for GTA winding order
             verts = list(face.verts)
@@ -437,6 +476,11 @@ class GTATOOLS_OT_export_col(bpy.types.Operator, ExportHelper):
         description=T("Сгруппировать выделение по базовому имени (house1_COL + house1_SHA → одна запись 'house1') и записать все группы в один .col файл подряд. Так vanilla SA хранит <district>.col и vehicles.col"),
         default=False,
     )
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, 'library_mode')
+        _draw_col_auto_light(layout, context)
 
     def execute(self, context):
         from ..tools.prelight import setup_prelight_preview

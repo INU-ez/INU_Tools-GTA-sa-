@@ -47,6 +47,10 @@ class GTATOOLS_OT_export_cst(bpy.types.Operator):
         context.window_manager.fileselect_add(self)
         return {'RUNNING_MODAL'}
 
+    def draw(self, context):
+        from .col_export import _draw_col_auto_light
+        _draw_col_auto_light(self.layout, context)
+
     def execute(self, context):
         objs = [o for o in context.selected_objects
                 if o.type in ('MESH', 'EMPTY')]

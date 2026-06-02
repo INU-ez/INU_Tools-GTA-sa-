@@ -3309,4 +3309,24 @@ LANG = {
     "Папка пресетов: {0} (скопировано файлов: {1})":
         "Carpeta de presets: {0} (archivos copiados: {1})",
     "Папка пресетов сброшена: {0}": "Carpeta de presets restablecida: {0}",
+    "Авто-свет коллизии": "Auto-luz de colisión",
+    "Значение": "Valor",
+    # COL auto-light scene-property tooltips
+    ("Заполнять байт освещения коллизии у фейсов, где он "
+     "равен 0 (нет COL-материала / day+night не заданы). "
+     "Повторяет поведение Kam's CST-экспорта (light=78), "
+     "иначе коллизия в игре остаётся неосвещённой. "
+     "Заданные вручную и импортированные значения не "
+     "трогаются"):
+        ("Rellena el byte de luz de colisión en caras donde es 0 (sin "
+         "material COL / día+noche sin definir). Replica la exportación "
+         "CST de Kam (light=78); de lo contrario la colisión queda sin "
+         "iluminar en el juego. Los valores definidos manualmente e "
+         "importados no se tocan"),
+    ("Значение байта освещения для незаполненных фейсов. "
+     "78 = день≈15 / ночь 4 (дефолт Kam). Упаковка: "
+     "день = младший ниббл, ночь = старший ниббл"):
+        ("Byte de luz escrito en caras sin rellenar. 78 = día≈15 / "
+         "noche 4 (predeterminado de Kam). Empaquetado: día = nibble "
+         "bajo, noche = nibble alto"),
 }

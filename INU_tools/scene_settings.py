@@ -869,6 +869,21 @@ class INUSceneSettings(bpy.types.PropertyGroup):
         name="Show IMG List", default=False)
     gtatools_show_preset_dir: BoolProperty(
         name="Show Preset Folder", default=False)
+    gtatools_col_auto_light: BoolProperty(
+        name="Auto COL Light",
+        description=("Заполнять байт освещения коллизии у фейсов, где он "
+                     "равен 0 (нет COL-материала / day+night не заданы). "
+                     "Повторяет поведение Kam's CST-экспорта (light=78), "
+                     "иначе коллизия в игре остаётся неосвещённой. "
+                     "Заданные вручную и импортированные значения не "
+                     "трогаются"),
+        default=True)
+    gtatools_col_auto_light_value: IntProperty(
+        name="COL Light",
+        description=("Значение байта освещения для незаполненных фейсов. "
+                     "78 = день≈15 / ночь 4 (дефолт Kam). Упаковка: "
+                     "день = младший ниббл, ночь = старший ниббл"),
+        default=78, min=0, max=255)
     gtatools_img_entries_index: IntProperty(default=0)
     gtatools_show_id_manager: BoolProperty(
         name="Show ID Manager",

@@ -212,6 +212,8 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
                      text="", **inu_icon(safe_icon('PACKAGE')))
             row.prop(scn.inu_settings, "gtatools_export_all_col_library_name",
                      text="", placeholder="collision")
+            from .col_export import _draw_col_auto_light
+            _draw_col_auto_light(layout, context)
         if scn.inu_settings.gtatools_export_all_txd:
             row = layout.row(align=True)
             row.prop(scn.inu_settings, "gtatools_export_all_txd_shared",
@@ -587,6 +589,8 @@ class GTATOOLS_OT_inu_export(bpy.types.Operator, ExportHelper):
             box.prop(self, "col_library")
             if self.col_library:
                 box.prop(self, "col_library_name")
+            from .col_export import _draw_col_auto_light
+            _draw_col_auto_light(box, context)
 
         # TXD settings
         if self.export_txd:
