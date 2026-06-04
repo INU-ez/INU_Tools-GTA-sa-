@@ -28,7 +28,7 @@
 bl_info = {
     "name": "INU_tools(gta_sa)",
     "author": "INU",
-    "version": (2, 0, 2),
+    "version": (2, 0, 4),
     # Минимум 2.83 LTS — поддержка через tools/compat.py:
     # • bake / preview / DFF I/O работают через legacy mesh.vertex_colors
     # • prelight preview shader использует ShaderNodeMixRGB на ≤3.3
@@ -447,6 +447,9 @@ from .ui.panels import (  # noqa: E501
     GTATOOLS_UL_texture_browser,
     GTATOOLS_PT_vehicle_panel,
     GTATOOLS_PT_frame_hierarchy,
+    GTATOOLS_UL_bake_layers,
+    GTATOOLS_PT_bake_panel,
+    GTATOOLS_PT_bake_advanced,
     GTATOOLS_PT_2dfx_panel,
     GTATOOLS_PT_object_ide_ipl_panel,
     GTATOOLS_PT_object_inu_tools,
@@ -469,9 +472,19 @@ from .ui.panels import (  # noqa: E501
 )
 # Material context-menu hook — register/unregister append/remove it.
 from .ui.panels import _draw_sort_materials_menu
+from .ops.bake_ops import (
+    GTATOOLS_OT_bake_run,
+    GTATOOLS_OT_bake_layer_add,
+    GTATOOLS_OT_bake_layer_remove,
+    GTATOOLS_OT_bake_layer_move,
+    GTATOOLS_OT_bake_add_uv,
+    GTATOOLS_OT_bake_preview,
+    GTATOOLS_OT_bake_flatten,
+)
 from .scene_settings import (
     INUSceneSettings,
     INUValidateIssue,
+    INUBakeLayer,
     GTATOOLS_BinaryIplEntry,
     GTATOOLS_TextIplEntry,
     GTATOOLS_ImgFileEntry,
@@ -3191,6 +3204,23 @@ classes = (
     GTATOOLS_PT_id_manager_panel,
     # Phase 2: light_master must register before its 5 child light panels
     # so Blender can resolve their bl_parent_id at register time.
+    # ── Texture Bake — ВРЕМЕННО СКРЫТА из UI до доработки ──────────
+    # Код фичи (ops/bake_ops.py, tools/bake/) остаётся в дереве; здесь
+    # лишь не регистрируем операторы/панели, чтобы они не появлялись в
+    # интерфейсе и F3-поиске. Чтобы вернуть — раскомментировать блок.
+    # INUBakeLayer регистрируется ниже отдельно (нужен для
+    # CollectionProperty gtatools_bake_layers, иначе падает регистрация
+    # настроек сцены).
+    # GTATOOLS_OT_bake_run,
+    # GTATOOLS_OT_bake_layer_add,
+    # GTATOOLS_OT_bake_layer_remove,
+    # GTATOOLS_OT_bake_layer_move,
+    # GTATOOLS_OT_bake_add_uv,
+    # GTATOOLS_OT_bake_preview,
+    # GTATOOLS_OT_bake_flatten,
+    # GTATOOLS_UL_bake_layers,
+    # GTATOOLS_PT_bake_panel,
+    # GTATOOLS_PT_bake_advanced,
     GTATOOLS_PT_light_master,
     GTATOOLS_PT_itera_panel,
     GTATOOLS_PT_prelight_panel,
@@ -3250,6 +3280,7 @@ classes = (
     GTATOOLS_OT_open_release,
     GTATOOLS_OT_whats_new,
     INUValidateIssue,
+    INUBakeLayer,
     GTATOOLS_OT_validate_run,
     GTATOOLS_OT_validate_clear,
     GTATOOLS_OT_validate_goto,
@@ -4165,7 +4196,8 @@ def _on_file_load_migrate_scene_settings(dummy):
     # CollectionProperty fields can't be migrated by attribute copy —
     # each item would need to be re-added one-by-one. Users can rescan
     # binary IPLs / refresh IMG list / re-validate to repopulate.
-    SKIP = {'gtatools_binary_ipls', 'gtatools_img_entries', 'inu_validate_issues'}
+    SKIP = {'gtatools_binary_ipls', 'gtatools_img_entries', 'inu_validate_issues',
+            'gtatools_bake_layers'}
     for scene in bpy.data.scenes:
         settings = getattr(scene, 'inu_settings', None)
         if settings is None:
@@ -4263,10 +4295,31 @@ def _on_file_load_floater(dummy):
     bpy.app.timers.register(_delayed, first_interval=0.5)
 
 
+def _bake_defensive_sweep():
+    """Удалить осколки bake-подсистемы после hard-crash (finally не
+    срабатывает при сегфолте): неиспользуемые INU_Bevel_Mat /
+    INU_bake_placeholder. НЕ трогает 'Prelight_Lights' — та коллекция
+    принадлежит tools/prelight.py (C3 из плана)."""
+    for mat_name in ('INU_Bevel_Mat', 'INU_bake_placeholder', 'INU_BakePreview'):
+        m = bpy.data.materials.get(mat_name)
+        if m is not None and m.users == 0:
+            try:
+                bpy.data.materials.remove(m)
+            except Exception:
+                pass
+
+
 def unregister():
     # Drop our locale dict before any classes go away — keeps Blender's
     # translation table clean across addon reloads.
     _unregister_blender_translations()
+
+    # Bake subsystem: подчистить осколки INU_bake_* / INU_Bevel_* после
+    # возможного hard-crash. 'Prelight_Lights' не трогаем (C3).
+    try:
+        _bake_defensive_sweep()
+    except Exception:
+        pass
 
     # Release the custom icon preview collection.
     try:

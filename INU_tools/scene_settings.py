@@ -95,6 +95,74 @@ def _profile_enum_items_proxy(self, context):
     return profile_enum_items(self, context)
 
 
+# Texture-bake map enum: ДИНАМИЧЕСКИЙ (ведётся tools.bake.BAKE_MAPS,
+# который растёт по этапам). Кэшируем построенный список в module-global,
+# чтобы строки пережили GC enum-items Blender'а (иначе метки кракозябрятся)
+# — тот же приём, что у _profile_enum_items_proxy.
+_bake_map_enum_cache = []
+
+
+def _bake_map_enum_items_proxy(self, context):
+    from . import T
+    from .tools.bake import bake_map_enum_items
+    global _bake_map_enum_cache
+    _bake_map_enum_cache = [(mid, T(label), desc)
+                            for (mid, label, desc) in bake_map_enum_items()]
+    return _bake_map_enum_cache
+
+
+# Режимы смешивания композита — статичны (зеркало tools.bake.BLEND_MODES).
+# Статичные items GC-безопасны, proxy/кэш не нужны.
+_BAKE_BLEND_ITEMS = [
+    ('NORMAL',   "Normal",   "Заменяет нижний слой"),
+    ('MULTIPLY', "Multiply", "Умножение (затемнение) — AO / Shadow"),
+    ('ADD',      "Add",      "Сложение (осветление)"),
+    ('SCREEN',   "Screen",   "Экран (осветление)"),
+    ('OVERLAY',  "Overlay",  "Перекрытие — контраст / износ кромок"),
+]
+
+# Разрешения — степени двойки. X/Y привязаны к этому списку (enum), а
+# «Размер» — квадратный пресет, синхронящий оба через _bake_res_update.
+_BAKE_POT_VALUES = (32, 64, 128, 256, 512, 1024, 2048, 4096, 8192)
+_BAKE_POT_ITEMS = [(str(v), str(v), "") for v in _BAKE_POT_VALUES]
+
+
+def _nearest_pot(v):
+    return min(_BAKE_POT_VALUES, key=lambda p: abs(p - int(v)))
+
+
+def _bake_res_update(self, context):
+    # «Размер» — квадратный пресет: синхронит X и Y (числовые поля).
+    v = int(self.gtatools_bake_resolution)
+    self.gtatools_bake_res_x = v
+    self.gtatools_bake_res_y = v
+
+
+def _bake_res_x_update(self, context):
+    snapped = _nearest_pot(self.gtatools_bake_res_x)
+    if snapped != self.gtatools_bake_res_x:        # привязка к степени двойки
+        self.gtatools_bake_res_x = snapped
+
+
+def _bake_res_y_update(self, context):
+    snapped = _nearest_pot(self.gtatools_bake_res_y)
+    if snapped != self.gtatools_bake_res_y:
+        self.gtatools_bake_res_y = snapped
+
+
+def _bake_live_update(self, context):
+    # Правка слоя (opacity/blend/enabled/карта) → пересобрать живой нодовый
+    # композит на активном объекте (если он показан) → мгновенное превью.
+    obj = getattr(context, 'active_object', None)
+    if obj is None:
+        return
+    try:
+        from .ops.bake_ops import rebuild_live_composite
+        rebuild_live_composite(obj)
+    except Exception:
+        pass
+
+
 def _mat_preset_items_proxy(self, context):
     from .tools.gta_material_panel import preset_items
     return preset_items(self, context)
@@ -379,6 +447,29 @@ class GTATOOLS_TextureBrowserItem(bpy.types.PropertyGroup):
     platform_id: IntProperty(default=8)
     format_label: StringProperty(default='')
     usage_count: IntProperty(default=0)    # IDE models referencing this TXD
+
+
+class INUBakeLayer(bpy.types.PropertyGroup):
+    """Один слой в стеке запекания текстур (tools/bake/). Поля
+    contrast/gamma/influence_* объявлены сейчас с identity-дефолтами —
+    композитор их УЖЕ читает, включение = только UI, без смены схемы.
+    См. docs/BAKE_FEATURE_PLAN.md."""
+    map_id: EnumProperty(
+        name="Карта", description="Какую карту печь в этом слое",
+        items=_bake_map_enum_items_proxy, update=_bake_live_update)
+    enabled: BoolProperty(name="", default=True, update=_bake_live_update)
+    blend_mode: EnumProperty(
+        name="Режим", description="Как смешивать с нижними слоями",
+        items=_BAKE_BLEND_ITEMS, default='MULTIPLY', update=_bake_live_update)
+    opacity: FloatProperty(
+        name="Прозрачность", default=1.0, min=0.0, max=1.0, subtype='FACTOR',
+        update=_bake_live_update)
+    # ── FUTURE (identity сейчас; композитор уже читает) ──
+    contrast: FloatProperty(name="Контраст", default=1.0, min=0.0, max=4.0)
+    gamma: FloatProperty(name="Гамма", default=1.0, min=0.05, max=4.0)
+    influence_target: StringProperty(name="Влияние на", default='')
+    influence_amount: FloatProperty(
+        name="Сила влияния", default=1.0, min=0.0, max=1.0, subtype='FACTOR')
 
 
 def _on_scene_animobj_pick(self, context):
@@ -1047,6 +1138,72 @@ class INUSceneSettings(bpy.types.PropertyGroup):
         description="Включить тени при запекании",
         default=True)
 
+    # ── Texture Bake (карты → текстура; tools/bake/) ────────────
+    # Отдельная подсистема от vertex-prelight выше: печёт AO/Diffuse/
+    # Shadow/Bevel через Cycles и опц. складывает в одну diffuse-текстуру.
+    gtatools_bake_composite_mode: BoolProperty(
+        name="Композит в одну текстуру",
+        description="ВКЛ — сложить включённые слои в одну текстуру; "
+                    "ВЫКЛ — каждая карта пишется в свою картинку",
+        default=False)
+    gtatools_bake_resolution: EnumProperty(
+        name="Размер", description="Квадратный пресет размера (синхронит X/Y)",
+        items=_BAKE_POT_ITEMS, default='1024', update=_bake_res_update)
+    gtatools_bake_res_x: IntProperty(
+        name="X", description="Ширина текстуры (привязка к степеням двойки)",
+        default=1024, min=32, max=8192, update=_bake_res_x_update)
+    gtatools_bake_res_y: IntProperty(
+        name="Y", description="Высота текстуры (привязка к степеням двойки)",
+        default=1024, min=32, max=8192, update=_bake_res_y_update)
+    gtatools_bake_samples: IntProperty(
+        name="Samples",
+        description="Сэмплы Cycles для шумных карт (AO / свет)",
+        default=16, min=1, max=512)
+    gtatools_bake_margin: IntProperty(
+        name="Margin", description="Залив за края UV-островов, px",
+        default=8, min=0, max=64)
+    # Имя выходной текстуры НЕ задаётся вручную — берётся из имени модели
+    # (без префиксов/суффиксов _DFF/_LOD/_COL/hi/low) в ops/bake_ops.py.
+    # Цель запекания = ВЫДЕЛЕННАЯ UV (mesh.uv_layers.active), источник =
+    # рендер-UV (active_render, иконка 📷). Читаются прямо с меша — поэтому
+    # отдельного поля для целевой UV нет (TexTools-подход).
+    gtatools_bake_mode: EnumProperty(
+        name="Режим",
+        description="Что запекаем",
+        items=[
+            ('UV', "UV → UV",
+             "Запечь сам объект: текстуры берутся с рендер-UV (источник), "
+             "результат пишется в выделенную UV (цель). Для trim-развёрток"),
+            ('HILOW', "Hi → Low",
+             "Перенести деталь с хайполи на выделенный лоуполи (в разработке)"),
+        ],
+        default='UV')
+    gtatools_bake_bevel_size: FloatProperty(
+        name="Bevel радиус",
+        description="Радиус скругления для Bevel-карты (в единицах сцены)",
+        default=0.05, min=0.0, soft_max=1.0, precision=3)
+    gtatools_bake_bevel_samples: IntProperty(
+        name="Bevel samples", default=8, min=2, max=64)
+    gtatools_bake_light_energy_scale: FloatProperty(
+        name="Свет (экспозиция)",
+        description="Множитель энергии внутреннего свет-рига для карт "
+                    "Shadow / Diffuse-Lit. Больше — ярче",
+        default=1.0, min=0.0, soft_max=4.0)
+    # Hi→Low: суффиксы пар ФИКСИРОВАНЫ (_hi / _low, см. tools.bake.HI_SUFFIX)
+    # — поля выбора убраны намеренно. Настраивается только cage.
+    gtatools_bake_cage_extrusion: FloatProperty(
+        name="Cage",
+        description="Выдавливание cage (на сколько отодвинуть лучи от "
+                    "лоуполи к хайполи)",
+        default=0.1, min=0.0, soft_max=1.0, precision=3)
+    gtatools_bake_max_ray: FloatProperty(
+        name="Max Ray",
+        description="Макс. дистанция луча (0 = авто)",
+        default=0.0, min=0.0, soft_max=1.0, precision=3)
+    gtatools_bake_show_advanced: BoolProperty(
+        name="Дополнительно", default=False)
+    gtatools_bake_layers_index: IntProperty(default=0)
+
     # ── Modulate Color preview ──────────────────────────────────
     gtatools_modulate_mode: EnumProperty(
         name="Modulate Color",
@@ -1417,3 +1574,4 @@ class INUSceneSettings(bpy.types.PropertyGroup):
     gtatools_binary_ipls: CollectionProperty(type=GTATOOLS_BinaryIplEntry)
     gtatools_text_ipls: CollectionProperty(type=GTATOOLS_TextIplEntry)
     gtatools_img_entries: CollectionProperty(type=GTATOOLS_ImgFileEntry)
+    gtatools_bake_layers: CollectionProperty(type=INUBakeLayer)

@@ -41,6 +41,13 @@ HAS_BONE_COLLECTIONS = BL >= (4, 0, 0)
 # 'Emission Color', subsurface group reshuffled, etc.
 HAS_PRINCIPLED_V2 = BL >= (4, 0, 0)
 
+# Node-group interface API (node_tree.interface.new_socket / .items_tree)
+# — 4.0+. До этого сокеты группы создавались через
+# node_tree.inputs.new(type, name) / node_tree.outputs.new(type, name).
+# Старый API на 4.0+ удалён → прямой вызов падает. Используется
+# bake-подсистемой (Bevel node-группа). См. node_group_new_output().
+HAS_NODE_INTERFACE = BL >= (4, 0, 0)
+
 # Layered Actions API (action.layers, slots, channelbag) — 4.4+. До
 # этого action.fcurves напрямую.
 HAS_LAYERED_ACTIONS = BL >= (4, 4, 0)
@@ -420,6 +427,35 @@ def principled_emission_input(principled_node):
     """
     return (principled_node.inputs.get('Emission Color')
             or principled_node.inputs.get('Emission'))
+
+
+# ── Node-group socket helpers ────────────────────────────────────────
+# На 4.0+ интерфейс node-группы (входы/выходы) создаётся через
+# node_group.interface.new_socket(name, in_out=..., socket_type=...).
+# До 4.0 — node_group.outputs.new(type, name) / .inputs.new(type, name).
+# Старый API на 4.0+ удалён, новый на <4.0 отсутствует — поэтому любой
+# код, строящий node-группы (bake Bevel), обязан идти через эти shim'ы.
+
+def node_group_new_output(node_group, name, socket_type='NodeSocketColor'):
+    """Создать output-сокет node-группы кросс-версионно. Возвращает
+    созданный socket / interface-item.
+
+    socket_type — RNA-имя типа: 'NodeSocketShader' (поверхность),
+    'NodeSocketColor', 'NodeSocketFloat', 'NodeSocketVector'.
+    """
+    if HAS_NODE_INTERFACE:
+        return node_group.interface.new_socket(
+            name=name, in_out='OUTPUT', socket_type=socket_type)
+    return node_group.outputs.new(socket_type, name)
+
+
+def node_group_new_input(node_group, name, socket_type='NodeSocketFloat'):
+    """Создать input-сокет node-группы кросс-версионно.
+    См. node_group_new_output()."""
+    if HAS_NODE_INTERFACE:
+        return node_group.interface.new_socket(
+            name=name, in_out='INPUT', socket_type=socket_type)
+    return node_group.inputs.new(socket_type, name)
 
 
 # ── Operator gating helpers ──────────────────────────────────────────

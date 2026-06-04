@@ -1147,7 +1147,7 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
         from .col_export import _resolve_col_version
         dff_rw_version = _resolve_export_version(context)
         col_version = _resolve_col_version(context)
-        dff_target_platform = getattr(scene.inu_settings,
+        dff_target_platform = getattr(context.scene.inu_settings,
                                       'gtatools_platform', 'PC')
 
         # Progress estimate. Exact TXD-bucket count is only known after

@@ -921,6 +921,20 @@ class DffGeometry:
             else:
                 flags &= ~GEOM_NORMALS
 
+            # Light / Modulate Color — user-toggleable on the N-panel,
+            # honor the current value over what was in original_flags.
+            # Без этого пользовательский inu.light = False игнорируется
+            # на ре-экспорте импортированной модели (original_flags
+            # перезаписывает галку из UI).
+            if self.export_light:
+                flags |= GEOM_LIGHT
+            else:
+                flags &= ~GEOM_LIGHT
+            if self.export_mod_color:
+                flags |= GEOM_MOD_COLOR
+            else:
+                flags &= ~GEOM_MOD_COLOR
+
             flags = (flags & 0xFFFF) | ((num_uv & 0xFF) << 16)
             return flags
 

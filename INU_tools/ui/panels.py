@@ -4220,6 +4220,182 @@ def _gate_vertex_paint_panel(cls):
     return cls
 
 
+# ── Texture Bake (карты → текстура; tools/bake/) ───────────────────
+
+class GTATOOLS_UL_bake_layers(bpy.types.UIList):
+    """Стек слоёв запекания. Порядок = порядок смешивания (низ = база)."""
+    bl_idname = "GTATOOLS_UL_bake_layers"
+
+    def draw_item(self, context, layout, data, item, icon, active_data,
+                  active_property, index):
+        from ..tools.bake import get_map
+        row = layout.row(align=True)
+        row.prop(item, "enabled", text="",
+                 **inu_icon(safe_icon('HIDE_OFF' if item.enabled else 'HIDE_ON')))
+        md = get_map(item.map_id)
+        row.label(text=(T(md.label_key) if md else item.map_id))
+        sub = row.row(align=True)
+        sub.active = item.enabled and context.scene.inu_settings.gtatools_bake_composite_mode
+        sub.label(text=item.blend_mode.title())
+
+
+class GTATOOLS_PT_bake_panel(bpy.types.Panel):
+    """Запекание текстур — AO / Diffuse / Bevel (и др.) через Cycles, с
+    опциональным композитом нескольких карт в одну diffuse-текстуру.
+    Свет генерируется самой подсистемой; внешние источники не нужны.
+
+    Живёт в N-панели UV/Image-редактора, вкладка «GTA Tools» (там же, где
+    TexTools), top-level — не подпанель."""
+    bl_label = "Texture Bake"
+    bl_idname = "GTATOOLS_PT_bake_panel"
+    bl_space_type = 'IMAGE_EDITOR'
+    bl_region_type = 'UI'
+    bl_category = "GTA Tools"
+
+    def draw_header(self, context):
+        self.layout.label(text="", **inu_icon(safe_icon('RENDER_STILL')))
+
+    def draw(self, context):
+        layout = self.layout
+        s = context.scene.inu_settings
+        obj = context.active_object
+
+        # ── Размер (плоско, серые числовые поля X/Y) ──
+        col = layout.column(align=True)
+        col.prop(s, "gtatools_bake_resolution", text=T("Размер"))
+        xy = col.row(align=True)
+        xy.prop(s, "gtatools_bake_res_x", text="X")
+        xy.prop(s, "gtatools_bake_res_y", text="Y")
+        col.prop(s, "gtatools_bake_margin", text="Padding")
+        # Имя текстуры берётся из имени модели — поле убрано намеренно.
+
+        # ── Запекание: переключатель режима + инфо под него ──
+        box = layout.box()
+        box.label(text=T("Запекание"), **inu_icon(safe_icon('RENDER_STILL')))
+        mode_row = box.row(align=True)
+        mode_row.prop(s, "gtatools_bake_mode", expand=True)
+
+        # Инфо показываем ТОЛЬКО когда меш реально ВЫДЕЛЕН (active_object
+        # сохраняется после снятия выделения — иначе подпись «висит»).
+        sel = obj if (obj and obj.type == 'MESH' and obj.select_get()) else None
+
+        if s.gtatools_bake_mode == 'UV':
+            # UV→UV: источник = рендер-UV (📷), цель = выделенная UV.
+            if sel is None:
+                box.label(text=T("Выделите модель"), **inu_icon(safe_icon('INFO')))
+            elif len(sel.data.uv_layers):
+                me = sel.data
+                src = next((u.name for u in me.uv_layers if u.active_render), None) or "—"
+                tgt = me.uv_layers.active.name if me.uv_layers.active else "—"
+                info = box.column(align=True)
+                info.scale_y = 0.85
+                info.label(text=T("Активная UV: ") + src,
+                           **inu_icon(safe_icon('RESTRICT_RENDER_OFF')))
+                info.label(text=T("Запекать в UV: ") + tgt,
+                           **inu_icon(safe_icon('RENDER_STILL')))
+                box.operator("gtatools.bake_add_uv",
+                             text=T("Создать UV для запекания"),
+                             **inu_icon(safe_icon('ADD')))
+            else:
+                box.label(text=T("У объекта нет UV-развёртки"),
+                          **inu_icon(safe_icon('ERROR')))
+        else:  # HILOW — детект пары по фиксированным _hi / _low
+            if sel is None:
+                box.label(text=T("Выделите модель"), **inu_icon(safe_icon('INFO')))
+            else:
+                from ..tools.bake import find_hilow_pair, HI_SUFFIX, LOW_SUFFIX
+                high, low = find_hilow_pair(sel, HI_SUFFIX, LOW_SUFFIX)
+                info = box.column(align=True)
+                info.scale_y = 0.85
+                info.label(text="High:  " + (high.name if high else "—"),
+                           **inu_icon(safe_icon('MOD_MULTIRES')))
+                info.label(text="Low:  " + (low.name if low else "—"),
+                           **inu_icon(safe_icon('MESH_DATA')))
+                if high is None or low is None:
+                    box.label(text=T("Нет пары _hi / _low"),
+                              **inu_icon(safe_icon('ERROR')))
+                box.prop(s, "gtatools_bake_cage_extrusion")
+
+        box.prop(
+            s, "gtatools_bake_composite_mode", toggle=True,
+            **inu_icon(safe_icon('IMAGE_RGB' if s.gtatools_bake_composite_mode
+                                 else 'IMAGE_DATA')))
+
+        row = box.row()
+        row.template_list("GTATOOLS_UL_bake_layers", "",
+                          s, "gtatools_bake_layers",
+                          s, "gtatools_bake_layers_index", rows=4)
+        side = row.column(align=True)
+        side.operator("gtatools.bake_layer_add", text="",
+                      **inu_icon(safe_icon('ADD')))
+        side.operator("gtatools.bake_layer_remove", text="",
+                      **inu_icon(safe_icon('REMOVE')))
+        side.separator()
+        side.operator("gtatools.bake_layer_move", text="",
+                      **inu_icon(safe_icon('TRIA_UP'))).direction = 'UP'
+        side.operator("gtatools.bake_layer_move", text="",
+                      **inu_icon(safe_icon('TRIA_DOWN'))).direction = 'DOWN'
+
+        layers = s.gtatools_bake_layers
+        idx = s.gtatools_bake_layers_index
+        if 0 <= idx < len(layers):
+            L = layers[idx]
+            d = box.box()
+            d.prop(L, "map_id")
+            det = d.column(align=True)
+            det.active = s.gtatools_bake_composite_mode
+            det.prop(L, "blend_mode")
+            det.prop(L, "opacity", slider=True)
+
+        box.operator("gtatools.bake_run", text=T("Запечь"),
+                     **inu_icon(safe_icon('RENDER_STILL')))
+
+        # После запекания: показать/скрыть результат на модели + свести в
+        # одну текстуру (numpy).
+        if obj and obj.type == 'MESH' and obj.get("inu_bake_base"):
+            on = bool(obj.get("inu_bake_preview_on", 0))
+            box.operator(
+                "gtatools.bake_preview",
+                text=T("Скрыть текстуру") if on else T("Показать текстуру"),
+                depress=on,
+                **inu_icon(safe_icon('HIDE_OFF' if on else 'HIDE_ON')))
+            box.operator("gtatools.bake_flatten",
+                         text=T("Свести в одну текстуру"),
+                         **inu_icon(safe_icon('IMAGE_DATA')))
+
+
+class GTATOOLS_PT_bake_advanced(bpy.types.Panel):
+    """Дополнительные настройки запекания текстур: сэмплы, параметры
+    Bevel, и per-слой контраст/гамма. Дом для будущих настроек влияния."""
+    bl_label = "Дополнительно"
+    bl_idname = "GTATOOLS_PT_bake_advanced"
+    bl_space_type = 'IMAGE_EDITOR'
+    bl_region_type = 'UI'
+    bl_parent_id = "GTATOOLS_PT_bake_panel"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw(self, context):
+        layout = self.layout
+        s = context.scene.inu_settings
+
+        col = layout.column(align=True)
+        col.prop(s, "gtatools_bake_samples")
+        col.prop(s, "gtatools_bake_light_energy_scale")
+        col.prop(s, "gtatools_bake_bevel_size")
+        col.prop(s, "gtatools_bake_bevel_samples")
+        col.prop(s, "gtatools_bake_max_ray")
+
+        layers = s.gtatools_bake_layers
+        idx = s.gtatools_bake_layers_index
+        if 0 <= idx < len(layers):
+            L = layers[idx]
+            box = layout.box()
+            box.label(text=T("Коррекция слоя:"))
+            c = box.column(align=True)
+            c.prop(L, "contrast")
+            c.prop(L, "gamma")
+
+
 # NOTE: GTATOOLS_PT_main_panel — top-level container N-sidebar, у него
 # bl_parent_id отсутствует. Все остальные панели (включая light_master)
 # — его дети. Гейтить main_panel НЕЛЬЗЯ — спрячется вся вкладка

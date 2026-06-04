@@ -1373,10 +1373,241 @@ def _pick_best_txd(search_dirs: list, dff_basename: str,
     return None
 
 
+# ──────────────────── Modal import (progress, no freeze) ──────────────
+#
+# Both the file-picker (`import_dff`) and drag-drop (`drop_dff`) operators
+# used to run the whole import synchronously in `execute()`, which froze
+# Blender ("Not Responding") for the entire parse + build + TXD-decode of
+# every file — exactly the hang the Map / COL importers already avoid.
+#
+# `_iter_import_dff_files` turns the work into a generator yielding
+# ``(current, total, label)`` after each stage, and `_DFFImportModalMixin`
+# drives it from a timer-based modal loop with a window progress bar and
+# ESC cancel — the same scaffolding the COL importer uses.
+
+
+def _iter_import_dff_files(paths, context, stats, *,
+                           import_game=None, link_alpha=False):
+    """Yield ``(current, total, label)`` while importing each .dff in
+    ``paths`` and auto-pulling its matching .txd.
+
+    Args:
+        paths: list of .dff file paths.
+        import_game: ``None`` skips game-source detection (drag-drop
+            behaviour); an enum value ('AUTO'/'III'/'VC'/'SA') runs the
+            same detect-or-switch logic the file-picker import did.
+        link_alpha: run ``link_material_alpha_if_textured`` over all
+            materials after a TXD loads (legacy single-import behaviour).
+
+    Fills ``stats`` with: ``imported`` (int), ``txd_loaded`` (int),
+    ``errors`` [(name, err)], ``warnings`` [str], ``infos`` [str].
+    """
+    from .txd_import import import_txd as inu_import_txd
+
+    stats.setdefault('imported', 0)
+    stats.setdefault('txd_loaded', 0)
+    stats.setdefault('errors', [])
+    stats.setdefault('warnings', [])
+    stats.setdefault('infos', [])
+
+    settings = getattr(context.scene, 'inu_settings', None)
+    auto_txd = bool(getattr(settings, 'gtatools_txd_auto_import', True))
+    custom_dir = getattr(settings, 'gtatools_txd_import_path', '') or ''
+    if custom_dir:
+        custom_dir = bpy.path.abspath(custom_dir)
+
+    total = max(len(paths), 1)
+
+    for i, path in enumerate(paths):
+        name = os.path.basename(path)
+        yield (i, total, f"DFF: {name}")
+
+        # Snapshot existing materials BEFORE the import so we can tell
+        # which materials THIS DFF adds — keeps the auto-TXD picker and
+        # `name_filter` scoped to the current file during a batch drop.
+        mats_before = {m.name for m in bpy.data.materials}
+        try:
+            import_dff(filepath=path, context=context)
+            stats['imported'] += 1
+        except Exception as e:
+            stats['errors'].append((name, str(e)))
+            continue
+
+        # Source-game resolution (file-picker only — drag-drop passes
+        # import_game=None and keeps its previous no-detection behaviour).
+        if import_game is not None:
+            try:
+                from ..core import game_versions as gv
+                if import_game == 'AUTO':
+                    detected = gv.detect_game_from_dff(path)
+                else:
+                    detected = import_game
+                switched = gv.maybe_set_game_from_import(context.scene, detected)
+                if switched:
+                    stats['infos'].append(f"{name} → game={detected}")
+                else:
+                    warn = gv.check_game_mismatch_warning(context.scene, detected)
+                    if warn:
+                        stats['warnings'].append(warn)
+            except Exception:
+                pass
+
+        if not auto_txd:
+            continue
+
+        # Auto-pull a matching TXD: same-name → content-coverage → solo.
+        yield (i, total, f"TXD: {name}")
+        dff_name = os.path.splitext(name)[0]
+        search_dirs = []
+        if custom_dir and os.path.isdir(custom_dir):
+            search_dirs.append(custom_dir)
+        search_dirs.append(os.path.dirname(path))
+
+        needed = _collect_new_dff_texture_names(mats_before)
+        txd_file = _pick_best_txd(search_dirs, dff_name, needed_names=needed)
+        if txd_file:
+            try:
+                # Only decode textures the just-imported DFF references —
+                # avoids spawning dozens of orphan images (and a long DXT
+                # decode freeze) from shared archives like vehicle.txd.
+                images = inu_import_txd(
+                    filepath=txd_file,
+                    name_filter=needed if needed else None)
+                stats['txd_loaded'] += 1
+                stats['infos'].append(
+                    f"TXD: {len(images)} ({os.path.basename(txd_file)})")
+                if link_alpha:
+                    # Legacy "Connect Textures": per-pixel alpha test so
+                    # foliage/fences/windows pick up alpha-test transparency
+                    # automatically. Idempotent.
+                    from .texture_ops import link_material_alpha_if_textured
+                    for material in bpy.data.materials:
+                        link_material_alpha_if_textured(material)
+            except Exception as e:
+                stats['warnings'].append(
+                    f"{name}: TXD {os.path.basename(txd_file)}: {e}")
+        else:
+            dirs_str = " | ".join(search_dirs)
+            stats['warnings'].append(
+                f"{name}: {T('TXD не найден')} '{dff_name}.txd' "
+                f"({T('и нет .txd с покрытием ≥50% в')} {dirs_str})")
+
+    yield (total, total, T("готово"))
+
+
+class _DFFImportModalMixin:
+    """Shared modal-loop scaffolding for the two DFF import operators.
+
+    Owns the timer / progress-bar / status-bar plumbing so the operators
+    only provide ``_collect_paths()`` and the import options via
+    ``_import_game`` / ``_link_alpha``. Mirrors ``_COLImportModalMixin``.
+    """
+
+    _timer = None
+    _gen = None
+    _stats: dict = None
+    # Subclasses override these to tune per-source behaviour.
+    _import_game = None   # None → skip game detection (drag-drop)
+    _link_alpha = False   # True → run alpha-link after TXD (file-picker)
+
+    def _collect_paths(self) -> list:
+        raise NotImplementedError
+
+    def _start_modal(self, context):
+        paths = self._collect_paths()
+        if not paths:
+            self.report({'WARNING'}, T("Не выбран ни один .dff файл"))
+            return {'CANCELLED'}
+
+        self._stats = {}
+        self._gen = _iter_import_dff_files(
+            paths, context, self._stats,
+            import_game=self._import_game, link_alpha=self._link_alpha)
+
+        wm = context.window_manager
+        wm.progress_begin(0, 100)
+        self._timer = wm.event_timer_add(0.05, window=context.window)
+        wm.modal_handler_add(self)
+        context.workspace.status_text_set(T("DFF Import: подготовка..."))
+        return {'RUNNING_MODAL'}
+
+    def modal(self, context, event):
+        if event.type == 'ESC':
+            self._finish(context)
+            self.report({'WARNING'}, T("DFF Import отменён"))
+            return {'CANCELLED'}
+
+        if event.type != 'TIMER':
+            return {'PASS_THROUGH'}
+
+        import time
+        wm = context.window_manager
+        deadline = time.monotonic() + 0.05  # ~20 fps frame budget
+
+        while time.monotonic() < deadline:
+            try:
+                current, total, label = next(self._gen)
+            except StopIteration:
+                self._finish(context)
+                return self._report_done()
+            except Exception as e:
+                self._finish(context)
+                self.report({'ERROR'}, f"{T('Ошибка импорта DFF')}: {e}")
+                print(f"[dff_import] aborted: {e}")
+                import traceback
+                traceback.print_exc()
+                return {'CANCELLED'}
+
+            pct = int(100 * current / max(total, 1))
+            wm.progress_update(pct)
+            context.workspace.status_text_set(
+                f"DFF Import: {current}/{total} — {label}")
+
+        return {'RUNNING_MODAL'}
+
+    def _report_done(self):
+        stats = self._stats or {}
+        imported = stats.get('imported', 0)
+        errors = stats.get('errors', [])
+        if errors and not imported:
+            err_msg = '; '.join(f"{n}: {e}" for n, e in errors[:3])
+            self.report({'ERROR'}, f"DFF: {err_msg}")
+            return {'CANCELLED'}
+        # Surface accumulated warnings (TXD-not-found, game mismatch).
+        for w in stats.get('warnings', []):
+            self.report({'WARNING'}, w)
+        msg = f"DFF: {imported}"
+        txd = stats.get('txd_loaded', 0)
+        if txd:
+            msg += f", TXD: {txd}"
+        if errors:
+            msg += f" ({len(errors)} {T('с ошибкой')})"
+        self.report({'INFO'}, msg)
+        return {'FINISHED'}
+
+    def _finish(self, context):
+        if self._timer:
+            try:
+                context.window_manager.event_timer_remove(self._timer)
+            except Exception:
+                pass
+            self._timer = None
+        try:
+            context.window_manager.progress_end()
+        except Exception:
+            pass
+        try:
+            context.workspace.status_text_set(None)
+        except Exception:
+            pass
+        self._gen = None
+
+
 # ──────────────────── Blender operator wrapper ────────────────────────
 
-class GTATOOLS_OT_import_dff(bpy.types.Operator):
-    """Импорт DFF модели GTA SA"""
+class GTATOOLS_OT_import_dff(_DFFImportModalMixin, bpy.types.Operator):
+    """Импорт DFF модели GTA SA с прогресс-баром.
+    ESC прерывает импорт, уже созданные объекты остаются в сцене."""
     bl_idname = "gtatools.import_dff"
     bl_label = "INU: Import DFF (.dff)"
     bl_options = {'REGISTER', 'UNDO'}
@@ -1441,97 +1672,21 @@ class GTATOOLS_OT_import_dff(bpy.types.Operator):
             box.label(text=f"+ {T('доп. папка')}: {custom_dir}",
                       **inu_icon(safe_icon('FILE_FOLDER')))
 
+    _link_alpha = True  # run legacy alpha-link after TXD loads
+
+    def _collect_paths(self):
+        return [self.filepath] if self.filepath else []
+
     def execute(self, context):
-        from .txd_import import import_txd as inu_import_txd
-        # Snapshot existing materials BEFORE the import so we can
-        # tell which materials this DFF actually adds. Batch character
-        # imports would otherwise see the "needed textures" set grow
-        # with every prior DFF, causing the TXD picker to drift and
-        # `name_filter` to over-decode shared textures.
-        mats_before = {m.name for m in bpy.data.materials}
-        try:
-            import_dff(filepath=self.filepath, context=context)
-            # Source-game resolution: explicit user choice overrides
-            # auto-detection. AUTO falls through to RW-version-based
-            # detection (Phase 8). Either way the picked game drives
-            # scene-flip-or-warn below + tags imported objects.
-            from ..core import game_versions as gv
-            if self.import_game == 'AUTO':
-                detected = gv.detect_game_from_dff(self.filepath)
-            else:
-                detected = self.import_game
-            switched = gv.maybe_set_game_from_import(context.scene, detected)
-            tag = f" → game={detected}" if switched else ""
-            self.report({'INFO'}, f"Imported DFF: {self.filepath}{tag}")
-            if not switched:
-                warn = gv.check_game_mismatch_warning(context.scene, detected)
-                if warn:
-                    self.report({'WARNING'}, warn)
-        except Exception as e:
-            self.report({'ERROR'}, f"DFF import error: {str(e)}")
-            return {'CANCELLED'}
-
-        # Auto-import matching .txd from same folder (or user-set search path)
-        if not getattr(context.scene.inu_settings, 'gtatools_txd_auto_import', True):
-            return {'FINISHED'}
-        dff_name = os.path.splitext(os.path.basename(self.filepath))[0]
-        custom_dir = getattr(context.scene.inu_settings, 'gtatools_txd_import_path', '')
-        if custom_dir:
-            custom_dir = bpy.path.abspath(custom_dir)
-
-        search_dirs = []
-        if custom_dir and os.path.isdir(custom_dir):
-            search_dirs.append(custom_dir)
-        search_dirs.append(os.path.dirname(self.filepath))
-
-        # Compute the just-imported DFF's texture set once, reuse it
-        # for both the TXD picker and `name_filter`.
-        needed = _collect_new_dff_texture_names(mats_before)
-        txd_file = _pick_best_txd(search_dirs, dff_name, needed_names=needed)
-
-        if txd_file:
-            try:
-                # Only decode textures that the just-imported DFF
-                # actually references. Loading every texture in a
-                # 150-texture vehicle.txd for one car door used to
-                # spawn dozens of orphan images and freeze Blender on
-                # the DXT decode pass. `needed` (computed above) is
-                # scoped to the new materials this DFF added — keeps
-                # `name_filter` accurate even across batch imports.
-                images = inu_import_txd(
-                    filepath=txd_file,
-                    name_filter=needed if needed else None)
-                self.report({'INFO'}, f"TXD: {len(images)} textures ({os.path.basename(txd_file)})")
-
-                # Now that pixels are in bpy.data.images, run the per-
-                # pixel alpha test on every material whose texture node
-                # has an image. This is the legacy "Connect Textures"
-                # behaviour: foliage / fences / windows automatically
-                # pick up alpha-test transparency without the user
-                # clicking anything. Idempotent — leaves alpha-already-
-                # linked materials and opaque textures alone.
-                from .texture_ops import link_material_alpha_if_textured
-                for material in bpy.data.materials:
-                    link_material_alpha_if_textured(material)
-            except Exception as e:
-                self.report({'WARNING'}, f"TXD import error: {str(e)}")
-        else:
-            # Tell the user explicitly — the materials will look black in
-            # the viewport otherwise and they have no idea why. The
-            # warning travels to both the status bar and the Info editor.
-            # Include EVERY directory that was scanned so the user can
-            # check whether they need to point gtatools_txd_import_path
-            # somewhere else.
-            dirs_str = " | ".join(search_dirs)
-            self.report({'WARNING'},
-                        f"TXD: {T('не найден ни по имени')} '{dff_name}.txd' "
-                        f"{T('ни по покрытию ≥50% текстур в')} {dirs_str}")
-
-        return {'FINISHED'}
+        # Game-source detection runs per-file inside the generator;
+        # thread the user's choice through so AUTO still falls back to
+        # RW-version detection and explicit III/VC/SA bypasses it.
+        self._import_game = self.import_game
+        return self._start_modal(context)
 
 
-class GTATOOLS_OT_drop_dff(bpy.types.Operator):
-    """Импорт DFF при перетаскивании во viewport.
+class GTATOOLS_OT_drop_dff(_DFFImportModalMixin, bpy.types.Operator):
+    """Импорт DFF при перетаскивании во viewport (батч, прогресс + ESC).
 
     Принимает несколько файлов сразу (батч), каждый импортируется
     как отдельная модель. Та же логика автоматического подцепления
@@ -1545,66 +1700,16 @@ class GTATOOLS_OT_drop_dff(bpy.types.Operator):
     files: CollectionProperty(type=bpy.types.OperatorFileListElement)
     directory: StringProperty(subtype='DIR_PATH')
 
-    def execute(self, context):
-        from .txd_import import import_txd as inu_import_txd
-        auto_txd = bool(getattr(
-            context.scene, 'gtatools_txd_auto_import', True))
-        custom_dir = getattr(
-            context.scene, 'gtatools_txd_import_path', '')
-        if custom_dir:
-            custom_dir = bpy.path.abspath(custom_dir)
-
-        imported = 0
+    def _collect_paths(self):
+        out = []
         for f in self.files:
             path = os.path.join(self.directory, f.name)
-            if not (os.path.isfile(path)
-                    and path.lower().endswith('.dff')):
-                continue
-            # Per-file material snapshot — see `GTATOOLS_OT_import_dff`
-            # for why this matters during a batch import.
-            mats_before = {m.name for m in bpy.data.materials}
-            try:
-                import_dff(filepath=path, context=context)
-                imported += 1
-            except Exception as e:
-                self.report({'WARNING'},
-                            f"{os.path.basename(path)}: {e}")
-                continue
+            if os.path.isfile(path) and path.lower().endswith('.dff'):
+                out.append(path)
+        return out
 
-            if not auto_txd:
-                continue
-            # Auto-pull a matching TXD using the smart picker:
-            # same-name first, then content-based scoring against the
-            # imported material set, then any .txd as last resort.
-            dff_name = os.path.splitext(os.path.basename(path))[0]
-            search_dirs = []
-            if custom_dir and os.path.isdir(custom_dir):
-                search_dirs.append(custom_dir)
-            search_dirs.append(os.path.dirname(path))
-
-            needed = _collect_new_dff_texture_names(mats_before)
-            txd_file = _pick_best_txd(search_dirs, dff_name, needed_names=needed)
-            if txd_file:
-                try:
-                    # Same name-filter trick as in import_dff — avoid
-                    # loading 100+ unrelated textures from shared
-                    # archives like vehicle.txd.
-                    inu_import_txd(
-                        filepath=txd_file,
-                        name_filter=needed if needed else None)
-                except Exception as e:
-                    self.report({'WARNING'},
-                                f"TXD {os.path.basename(txd_file)}: {e}")
-            else:
-                # Per-file warning during batch drop — still useful so
-                # the user can see which DFFs lost their textures.
-                self.report({'WARNING'},
-                            f"{os.path.basename(path)}: "
-                            f"{T('TXD не найден')} ({dff_name}.txd "
-                            f"{T('и нет .txd с подходящими текстурами')})")
-
-        self.report({'INFO'}, f"DFF: {imported}")
-        return {'FINISHED'}
+    def execute(self, context):
+        return self._start_modal(context)
 
 
 if hasattr(bpy.types, 'FileHandler'):

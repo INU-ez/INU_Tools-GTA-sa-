@@ -48,6 +48,8 @@ PANELS = {
     'GTATOOLS_PT_vehicle_panel':        ('GTA_TOOLS', 'MODEL',    1),
     'GTATOOLS_PT_light_master':         ('GTA_TOOLS', 'MODEL',    2),
     'GTATOOLS_PT_frame_hierarchy':      ('GTA_TOOLS', 'MODEL',    3),
+    # GTATOOLS_PT_bake_panel вынесена в собственную N-вкладку «Bake»
+    # (bl_category='Bake'), поэтому в registry GTA Tools её нет.
     'GTATOOLS_PT_2dfx_panel':           ('GTA_TOOLS', 'MODEL',   12),
     'GTATOOLS_PT_anim_panel':           ('GTA_TOOLS', 'MODEL',   14),
     'GTATOOLS_PT_object_ide_ipl_panel': ('GTA_TOOLS', 'DATA',     1),

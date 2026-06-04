@@ -5,6 +5,13 @@ These tests catch regressions that pure-Python `core/dff.py` round-trip
 tests can't see: operator wiring, scene-graph construction, material/
 node-tree population, collection layout, and the full export → re-
 import path through Blender's data API.
+
+Note: like COL, the DFF import operator (`gtatools.import_dff`) now runs
+as a *modal* operator with a progress-bar timer. In `--background` mode
+the modal loop never steps, so the operator returns ``RUNNING_MODAL``
+without doing the work. These tests therefore drive the synchronous
+``import_dff(filepath)`` function directly; the modal operator wrapper is
+covered by the in-process modal pump tests instead.
 """
 
 from __future__ import annotations
@@ -40,8 +47,8 @@ def test_import_dff_creates_mesh(asset, inu_ops):
     assert len(_mesh_objects()) >= 1, "no mesh objects after DFF import"
 
 
-def test_import_dff_creates_materials(asset):
-    bpy.ops.gtatools.import_dff('EXEC_DEFAULT', filepath=asset("1.dff"))
+def test_import_dff_creates_materials(asset, inu_ops):
+    inu_ops.dff_import.import_dff(filepath=asset("1.dff"), context=bpy.context)
     mats = _all_materials()
     assert mats, "DFF import should create at least one material"
     # Every imported material must carry a node tree — otherwise the
@@ -51,8 +58,8 @@ def test_import_dff_creates_materials(asset):
         assert m.use_nodes, f"material {m.name!r} has no node tree"
 
 
-def test_import_dff_object_has_geometry(asset):
-    bpy.ops.gtatools.import_dff('EXEC_DEFAULT', filepath=asset("1.dff"))
+def test_import_dff_object_has_geometry(asset, inu_ops):
+    inu_ops.dff_import.import_dff(filepath=asset("1.dff"), context=bpy.context)
     meshes = _mesh_objects()
     assert meshes
     # Pick any mesh — they all should have non-empty vertex data.
@@ -63,13 +70,13 @@ def test_import_dff_object_has_geometry(asset):
 
 # ── Round-trip via Blender (operator → operator) ────────────────
 
-def test_dff_blender_round_trip_preserves_mesh_count(asset, tmp_path):
+def test_dff_blender_round_trip_preserves_mesh_count(asset, tmp_path, inu_ops):
     """Import a DFF, immediately export it, re-import the export, and
     check vertex/triangle counts survived. Catches regressions in the
     Blender-side mesh assembly that the pure-Python writer test can't
     see (e.g. someone breaks normal recalc and we lose verts on merge)."""
     src = asset("1.dff")
-    bpy.ops.gtatools.import_dff('EXEC_DEFAULT', filepath=src)
+    inu_ops.dff_import.import_dff(filepath=src, context=bpy.context)
 
     first = _mesh_objects()[0]
     v0, p0 = len(first.data.vertices), len(first.data.polygons)
@@ -90,7 +97,7 @@ def test_dff_blender_round_trip_preserves_mesh_count(asset, tmp_path):
     # it would cause on this machine.
     from conftest import _wipe_data_blocks
     _wipe_data_blocks()
-    bpy.ops.gtatools.import_dff('EXEC_DEFAULT', filepath=str(out))
+    inu_ops.dff_import.import_dff(filepath=str(out), context=bpy.context)
 
     second = _mesh_objects()[0]
     v1, p1 = len(second.data.vertices), len(second.data.polygons)
