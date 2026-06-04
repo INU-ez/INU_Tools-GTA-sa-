@@ -488,6 +488,54 @@ def warn_unsupported(operator, feature_name, min_ver):
     return {'CANCELLED'}
 
 
+def run_op_override(op, override, mode=None, **kwargs):
+    """Вызвать bpy.ops-оператор `op` с context-override кросс-версионно.
+
+    3.2+ → ``with bpy.context.temp_override(**override): op([mode], **kwargs)``
+    <3.2 → ``op(override, [mode], **kwargs)`` — legacy dict-override стиль
+           (override-словарь первым позиционным аргументом; убран в 3.2,
+           но единственный способ на 2.83-3.1).
+
+    `mode` — опциональный execution-context ('EXEC_DEFAULT' /
+    'INVOKE_DEFAULT'); если None — не передаётся.
+
+    None-значения из `override` отбрасываются (temp_override их молча
+    игнорирует, а legacy-стиль может на них падать)."""
+    override = {k: v for k, v in override.items() if v is not None}
+    if supports((3, 2, 0)):
+        with bpy.context.temp_override(**override):
+            return op(mode, **kwargs) if mode else op(**kwargs)
+    if mode:
+        return op(override, mode, **kwargs)
+    return op(override, **kwargs)
+
+
+def poll_version(cls, min_ver, feature_name) -> bool:
+    """Хелпер для classmethod poll(): True если Blender ≥ min_ver, иначе
+    False + tooltip-сообщение (на 3.0+) — кнопка оператора становится
+    серой/неактивной во ВСЕХ местах, где она нарисована, без правки UI.
+
+    Использование внутри оператора::
+
+        @classmethod
+        def poll(cls, context):
+            if not compat.poll_version(cls, (3, 2, 0), "Floater"):
+                return False
+            return True   # ... или существующая логика poll
+
+    poll_message_set появился в 3.0 — на 2.83-2.93 tooltip'а не будет,
+    но кнопка всё равно неактивна (что и требуется)."""
+    if supports(min_ver):
+        return True
+    setter = getattr(cls, 'poll_message_set', None)
+    if setter is not None:
+        try:
+            setter(require_version_message(feature_name, min_ver))
+        except Exception:
+            pass
+    return False
+
+
 # ── Module load sanity check ─────────────────────────────────────────
 
 if BL < MIN_SUPPORTED:

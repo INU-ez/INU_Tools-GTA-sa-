@@ -23,6 +23,7 @@ import bpy
 from .floater import gpu_shaders as GS
 from .floater import text_atlas as TA
 from .floater import base as B
+from ..tools import compat
 from .floater.info import InfoFloater
 from .floater.ie import ImportExportFloater
 from .floater.validation import ValidationFloater
@@ -113,6 +114,11 @@ def restore_floater_if_visible():
     file we just opened (floater position / visibility would all
     revert to whatever the previous session had).
     """
+    # Floater-подсистема требует 3.2+ (temp_override). На 2.83-3.1 даже
+    # если открыт .blend с сохранённым visible-флагом — не пытаемся
+    # восстанавливать (floater_modal там недоступен).
+    if not compat.supports((3, 2, 0)):
+        return None
     try:
         # Drop the cache so `_prop()` reads fresh values from the
         # newly-loaded scene's properties. Otherwise visibility,

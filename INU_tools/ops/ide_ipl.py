@@ -11,6 +11,7 @@ from bpy.props import (
     BoolProperty, StringProperty,
 )
 from .. import T
+from ..tools.compat import run_op_override
 
 
 class GTATOOLS_OT_upsert_ide(bpy.types.Operator):
@@ -856,8 +857,8 @@ def _run_with_override(context, op_callable):
     # Drop None entries — temp_override rejects them silently but a
     # cleaner dict makes debugging easier.
     override = {k: v for k, v in override.items() if v is not None}
-    with context.temp_override(**override):
-        op_callable('EXEC_DEFAULT')
+    # temp_override (3.2+) с fallback на legacy dict-override для 2.83-3.1.
+    run_op_override(op_callable, override, 'EXEC_DEFAULT')
 
 
 def _show_status_text(context, text: str, hold_seconds: float = 6.0):

@@ -103,10 +103,10 @@ _bake_map_enum_cache = []
 
 
 def _bake_map_enum_items_proxy(self, context):
-    from . import T
     from .tools.bake import bake_map_enum_items
     global _bake_map_enum_cache
-    _bake_map_enum_cache = [(mid, T(label), desc)
+    # Английские имена карт как есть (без T) — карты не переводим.
+    _bake_map_enum_cache = [(mid, label, desc)
                             for (mid, label, desc) in bake_map_enum_items()]
     return _bake_map_enum_cache
 
@@ -159,6 +159,27 @@ def _bake_live_update(self, context):
     try:
         from .ops.bake_ops import rebuild_live_composite
         rebuild_live_composite(obj)
+    except Exception:
+        pass
+
+
+def _bake_layer_index_update(self, context):
+    # Клик по слою → показать его запечённую карту в Image-редакторе.
+    obj = getattr(context, 'active_object', None)
+    if obj is None:
+        return
+    base = obj.get("inu_bake_base", "")
+    i = self.gtatools_bake_layers_index
+    layers = self.gtatools_bake_layers
+    if not base or not (0 <= i < len(layers)):
+        return
+    img = bpy.data.images.get(f"{base}_{layers[i].map_id}")
+    if img is None:
+        return
+    try:
+        for area in context.screen.areas:
+            if area.type == 'IMAGE_EDITOR':
+                area.spaces.active.image = img
     except Exception:
         pass
 
@@ -1141,11 +1162,7 @@ class INUSceneSettings(bpy.types.PropertyGroup):
     # ── Texture Bake (карты → текстура; tools/bake/) ────────────
     # Отдельная подсистема от vertex-prelight выше: печёт AO/Diffuse/
     # Shadow/Bevel через Cycles и опц. складывает в одну diffuse-текстуру.
-    gtatools_bake_composite_mode: BoolProperty(
-        name="Композит в одну текстуру",
-        description="ВКЛ — сложить включённые слои в одну текстуру; "
-                    "ВЫКЛ — каждая карта пишется в свою картинку",
-        default=False)
+    # Композит строится ВСЕГДА (живой нодовый стек) — тумблера нет.
     gtatools_bake_resolution: EnumProperty(
         name="Размер", description="Квадратный пресет размера (синхронит X/Y)",
         items=_BAKE_POT_ITEMS, default='1024', update=_bake_res_update)
@@ -1202,7 +1219,8 @@ class INUSceneSettings(bpy.types.PropertyGroup):
         default=0.0, min=0.0, soft_max=1.0, precision=3)
     gtatools_bake_show_advanced: BoolProperty(
         name="Дополнительно", default=False)
-    gtatools_bake_layers_index: IntProperty(default=0)
+    gtatools_bake_layers_index: IntProperty(
+        default=0, update=_bake_layer_index_update)
 
     # ── Modulate Color preview ──────────────────────────────────
     gtatools_modulate_mode: EnumProperty(

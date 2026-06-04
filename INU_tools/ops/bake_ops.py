@@ -12,9 +12,24 @@ import json
 import re
 
 import bpy
-from bpy.props import EnumProperty, StringProperty
+from bpy.props import EnumProperty, StringProperty, IntProperty
 
 from .. import T
+
+
+class GTATOOLS_OT_bake_select_layer(bpy.types.Operator):
+    """Выбрать слой (его карта показывается в Image-редакторе)."""
+    bl_idname = "gtatools.bake_select_layer"
+    bl_label = "Выбрать слой"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    index: IntProperty(default=0)
+
+    def execute(self, context):
+        s = context.scene.inu_settings
+        if 0 <= self.index < len(s.gtatools_bake_layers):
+            s.gtatools_bake_layers_index = self.index   # триггерит показ карты
+        return {'FINISHED'}
 
 
 def _derive_texture_name(obj, s):
@@ -52,11 +67,10 @@ def _snapshot_materials(obj):
 
 
 def _assign_material(obj, mat, uv_name):
-    """Поставить единственный материал `mat`; переключить рендер-UV на uv_name."""
+    """Поставить единственный материал `mat`. active_render НЕ трогаем —
+    превью/композит сэмплят через явные UV Map ноды, рабочая рендер-UV
+    пользователя остаётся как есть."""
     me = obj.data
-    if uv_name and uv_name in me.uv_layers:
-        for u in me.uv_layers:
-            u.active_render = (u.name == uv_name)
     me.materials.clear()
     me.materials.append(mat)
     obj["inu_bake_preview_on"] = 1
@@ -145,13 +159,17 @@ def rebuild_live_composite(obj):
 
 
 class GTATOOLS_OT_bake_run(bpy.types.Operator):
-    """Запечь карты активного объекта. В режиме «Композит» складывает
-    включённые слои в одну текстуру, иначе пишет каждую карту в свою
-    картинку. Свет для карт генерируется самой подсистемой — внешние
-    источники сцены не нужны."""
+    """Запечь карты активного объекта в свои картинки и собрать живой
+    нодовый композит. Свет для карт генерируется самой подсистемой —
+    внешние источники сцены не нужны. only_map_id — запечь только одну
+    карту (per-layer Bake)."""
     bl_idname = "gtatools.bake_run"
     bl_label = "Запечь"
     bl_options = {'REGISTER', 'UNDO'}
+
+    only_map_id: StringProperty(
+        name="", default="",
+        description="Запечь только эту карту (пусто = все включённые слои)")
 
     @classmethod
     def poll(cls, context):
@@ -173,14 +191,14 @@ class GTATOOLS_OT_bake_run(bpy.types.Operator):
             self.report({'ERROR'}, T("Cycles недоступен — включите аддон Cycles"))
             return {'CANCELLED'}
         layers = [L for L in s.gtatools_bake_layers if L.enabled]
-        if not layers:
+        if not self.only_map_id and not layers:
             self.report({'ERROR'}, T("Добавьте хотя бы один слой карты"))
             return {'CANCELLED'}
 
         res_x = int(s.gtatools_bake_res_x)
         res_y = int(s.gtatools_bake_res_y)
         margin = int(s.gtatools_bake_margin)
-        composite = bool(s.gtatools_bake_composite_mode)
+        composite = True            # ноды строятся всегда
         scene_samples = int(s.gtatools_bake_samples)
         params = {
             'bevel_size': float(s.gtatools_bake_bevel_size),
@@ -247,12 +265,15 @@ class GTATOOLS_OT_bake_run(bpy.types.Operator):
 
         # Уникальные карты (одна карта может встречаться в стеке несколько
         # раз с разными blend — печём её ОДИН раз, композит переиспользует).
-        unique = []
-        for L in layers:
-            if L.map_id not in unique and B.get_map(L.map_id) is not None:
-                unique.append(L.map_id)
+        if self.only_map_id:
+            unique = [self.only_map_id] if B.get_map(self.only_map_id) else []
+        else:
+            unique = []
+            for L in layers:
+                if L.map_id not in unique and B.get_map(L.map_id) is not None:
+                    unique.append(L.map_id)
         if not unique:
-            self.report({'ERROR'}, T("Нет валидных карт в стеке"))
+            self.report({'ERROR'}, T("Нет валидных карт"))
             return {'CANCELLED'}
 
         def _samples_for(md):
@@ -339,13 +360,17 @@ class GTATOOLS_OT_bake_layer_add(bpy.types.Operator):
     def execute(self, context):
         from ..tools.bake import BAKE_MAPS
         s = context.scene.inu_settings
-        layer = s.gtatools_bake_layers.add()
+        layer = s.gtatools_bake_layers.add()      # добавляется в конец
         first = next(iter(BAKE_MAPS.values()), None)
         if first is not None:
             layer.map_id = first.id
             layer.blend_mode = first.default_blend
             layer.opacity = first.default_opacity
-        s.gtatools_bake_layers_index = len(s.gtatools_bake_layers) - 1
+        # Список сверху-вниз → новый слой должен быть СВЕРХУ (index 0).
+        last = len(s.gtatools_bake_layers) - 1
+        if last > 0:
+            s.gtatools_bake_layers.move(last, 0)
+        s.gtatools_bake_layers_index = 0
         rebuild_live_composite(context.active_object)
         return {'FINISHED'}
 
@@ -529,4 +554,59 @@ class GTATOOLS_OT_bake_flatten(bpy.types.Operator):
             pass
 
         self.report({'INFO'}, T("Сведено в текстуру: ") + final.name)
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_bake_save_map(bpy.types.Operator):
+    """Сохранить картинку выбранной карты (<base>_<map>) в файл."""
+    bl_idname = "gtatools.bake_save_map"
+    bl_label = "Сохранить карту"
+
+    filepath: StringProperty(subtype='FILE_PATH')
+    filter_glob: StringProperty(default="*.png;*.tga;*.bmp", options={'HIDDEN'})
+    map_id: StringProperty(
+        default="", description="Какую карту сохранить (пусто = выбранный слой)")
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj is not None and obj.type == 'MESH'
+                and bool(obj.get("inu_bake_base")))
+
+    def _image(self, context):
+        obj = context.active_object
+        base = obj.get("inu_bake_base", "")
+        mid = self.map_id
+        if not mid:
+            s = context.scene.inu_settings
+            i = s.gtatools_bake_layers_index
+            if 0 <= i < len(s.gtatools_bake_layers):
+                mid = s.gtatools_bake_layers[i].map_id
+        if not base or not mid:
+            return None
+        return bpy.data.images.get(f"{base}_{mid}")
+
+    def invoke(self, context, event):
+        img = self._image(context)
+        if img is None:
+            self.report({'ERROR'}, T("Эта карта ещё не запечена"))
+            return {'CANCELLED'}
+        if not self.filepath:
+            self.filepath = img.name + ".png"
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        img = self._image(context)
+        if img is None:
+            self.report({'ERROR'}, T("Нет картинки карты"))
+            return {'CANCELLED'}
+        try:
+            img.filepath_raw = self.filepath
+            img.file_format = 'PNG'
+            img.save()
+        except Exception as e:
+            self.report({'ERROR'}, T("Не удалось сохранить: ") + str(e))
+            return {'CANCELLED'}
+        self.report({'INFO'}, T("Сохранено: ") + self.filepath)
         return {'FINISHED'}

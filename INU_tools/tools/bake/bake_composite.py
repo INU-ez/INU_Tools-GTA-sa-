@@ -93,6 +93,8 @@ def composite_layers(layer_pixels, layers, w, h, *, srgb=True):
     отсюда «скомбинировать любой поднабор».
     """
     enabled = [L for L in layers if L.enabled and L.map_id in layer_pixels]
+    # Список сверху вниз (как в фотошопе): база = НИЖНИЙ слой → разворот.
+    enabled = list(reversed(enabled))
     if not enabled:
         return np.zeros((h, w, 4), dtype=np.float32)
 

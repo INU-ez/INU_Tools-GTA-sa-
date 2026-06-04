@@ -22,6 +22,10 @@ class GTATOOLS_OT_apply_2dfx_preset(bpy.types.Operator):
             self.report({'WARNING'}, "No 2DFX object selected")
             return {'CANCELLED'}
         inu = obj.inu
+        # _PRESET_MAP / _2DFX_PRESETS живут в пакете-родителе; импорт ленивый,
+        # чтобы не ловить циклический импорт (effects_ops импортируется из
+        # __init__.py).
+        from .. import _PRESET_MAP, _2DFX_PRESETS
         preset_key = _PRESET_MAP.get(inu.preset_2dfx, 'Default')
         p = _2DFX_PRESETS[preset_key]
 

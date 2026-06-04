@@ -8,7 +8,7 @@ import os
 from gpu_extras.batch import batch_for_shader
 from bpy.props import EnumProperty
 from .. import T
-from .compat import safe_icon, inu_icon
+from .compat import safe_icon, inu_icon, run_op_override
 # Global variable for draw handler
 _uv_grid_draw_handler = None
 _uv_grid_visible = False
@@ -118,10 +118,9 @@ class GTATOOLS_OT_toggle_uv_editor(bpy.types.Operator):
                     break
 
             if view3d_area:
-                # Закрываем UV area через area_close
-                with context.temp_override(area=uv_area):
-                    bpy.ops.screen.area_close()
-                pass
+                # Закрываем UV area через area_close.
+                # temp_override (3.2+) с fallback на legacy-стиль для 2.83-3.1.
+                run_op_override(bpy.ops.screen.area_close, {'area': uv_area})
             return {'FINISHED'}
         else:
             # Открываем UV Editor — разделяем текущий 3D Viewport
@@ -135,9 +134,10 @@ class GTATOOLS_OT_toggle_uv_editor(bpy.types.Operator):
                 self.report({'ERROR'}, T("Не найден 3D Viewport"))
                 return {'CANCELLED'}
 
-            # Разделяем область вертикально (UV слева)
-            with context.temp_override(area=target_area):
-                bpy.ops.screen.area_split(direction='VERTICAL', factor=0.5)
+            # Разделяем область вертикально (UV слева).
+            # temp_override (3.2+) с fallback на legacy-стиль для 2.83-3.1.
+            run_op_override(bpy.ops.screen.area_split, {'area': target_area},
+                            direction='VERTICAL', factor=0.5)
 
             # Находим новую область (самая маленькая VIEW_3D) и меняем тип на IMAGE_EDITOR
             # После split появляется новая область VIEW_3D

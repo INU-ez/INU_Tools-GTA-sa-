@@ -22,6 +22,7 @@ from collections import OrderedDict
 import bpy
 
 from ... import T
+from ...tools import compat
 from ...ui import layout_rules as LR
 from . import theme as TH
 from . import gpu_shaders as GS
@@ -1268,7 +1269,15 @@ class GTATOOLS_OT_floater_toggle(bpy.types.Operator):
         default='info',
     )
 
+    # Плавающие окна построены на modal/timer + context.temp_override —
+    # требуют Blender 3.2+. На 2.83-3.1 кнопка неактивна с подсказкой.
+    @classmethod
+    def poll(cls, context):
+        return compat.poll_version(cls, (3, 2, 0), "INU Floater")
+
     def execute(self, context):
+        if not compat.supports((3, 2, 0)):
+            return compat.warn_unsupported(self, "INU Floater", (3, 2, 0))
         # Split on commas so a single button can flip multiple floaters
         # (used to keep production + sandbox lighting windows in sync).
         names = [n.strip() for n in self.floater_name.split(',') if n.strip()]

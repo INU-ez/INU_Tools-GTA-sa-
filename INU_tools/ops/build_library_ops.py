@@ -31,6 +31,7 @@ import bpy
 from bpy.props import StringProperty
 
 from .. import T
+from ..tools import compat
 
 
 # Magic prefix the worker uses to emit JSON-progress lines. Anything
@@ -93,7 +94,15 @@ class GTATOOLS_OT_build_asset_library(bpy.types.Operator):
     _log_buffer: List[str] = []
     _t_start = 0.0
 
+    # Asset Library + custom-preview (ed.lib_id_load_custom_preview через
+    # temp_override) требуют Blender 3.2+. На 2.83-3.1 кнопка неактивна.
+    @classmethod
+    def poll(cls, context):
+        return compat.poll_version(cls, (3, 2, 0), "Asset Library Builder")
+
     def invoke(self, context, event):
+        if not compat.supports((3, 2, 0)):
+            return compat.warn_unsupported(self, "Asset Library Builder", (3, 2, 0))
         scene = context.scene
         settings = scene.inu_settings
 
@@ -389,7 +398,14 @@ class GTATOOLS_OT_regenerate_previews(bpy.types.Operator):
     _status: dict = {}
     _t_start = 0.0
 
+    # См. GTATOOLS_OT_build_asset_library — те же требования 3.2+.
+    @classmethod
+    def poll(cls, context):
+        return compat.poll_version(cls, (3, 2, 0), "Asset Library Previews")
+
     def invoke(self, context, event):
+        if not compat.supports((3, 2, 0)):
+            return compat.warn_unsupported(self, "Asset Library Previews", (3, 2, 0))
         scene = context.scene
         settings = scene.inu_settings
 

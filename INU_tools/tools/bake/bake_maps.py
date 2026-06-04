@@ -395,18 +395,18 @@ def bake_one_map(context, map_def, obj, image, *, margin=8, params=None,
 
 BAKE_MAPS = OrderedDict([
     ('AO', BakeMapDef(
-        id='AO', label_key='Ambient Occlusion', bake_type='AO',
+        id='AO', label_key='AO', bake_type='AO',
         needs_light=False, rig_kind='NONE', node_group_builder=None,
         samples=16, default_blend='MULTIPLY', default_opacity=1.0,
         default_contrast=1.0, default_gamma=1.0)),
     ('DIFFUSE', BakeMapDef(
-        id='DIFFUSE', label_key='Diffuse (Albedo)', bake_type='DIFFUSE',
+        id='DIFFUSE', label_key='Diffuse', bake_type='DIFFUSE',
         needs_light=False, rig_kind='NONE', node_group_builder=None,
         samples=1, default_blend='NORMAL', default_opacity=1.0,
         default_contrast=1.0, default_gamma=1.0,
         pass_direct=False, pass_indirect=False, pass_color=True)),
     ('DIFFUSE_LIT', BakeMapDef(
-        id='DIFFUSE_LIT', label_key='Diffuse (Lit)', bake_type='DIFFUSE',
+        id='DIFFUSE_LIT', label_key='Diffuse Lit', bake_type='DIFFUSE',
         needs_light=True, rig_kind='DOME', node_group_builder=None,
         samples=8, default_blend='NORMAL', default_opacity=1.0,
         default_contrast=1.0, default_gamma=1.0,
@@ -418,7 +418,7 @@ BAKE_MAPS = OrderedDict([
         default_contrast=1.0, default_gamma=1.0,
         pass_direct=True, pass_indirect=False, pass_color=False)),
     ('BEVEL', BakeMapDef(
-        id='BEVEL', label_key='Bevel (Edge wear)', bake_type='EMIT',
+        id='BEVEL', label_key='Bevel', bake_type='EMIT',
         needs_light=False, rig_kind='NONE',
         node_group_builder=_prepare_bevel,
         samples=4, default_blend='OVERLAY', default_opacity=1.0,

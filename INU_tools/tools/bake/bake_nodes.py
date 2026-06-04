@@ -44,6 +44,9 @@ def build_composite_material(specs, base_name, uv_name):
     enabled = [L for L in specs
                if L.get('enabled')
                and bpy.data.images.get(f"{base_name}_{L['map_id']}") is not None]
+    # Список идёт СВЕРХУ ВНИЗ (как в фотошопе): верхний слой накладывается
+    # последним. База = НИЖНИЙ слой списка → разворачиваем.
+    enabled.reverse()
     if not enabled:
         emit.inputs['Color'].default_value = (0.0, 0.0, 0.0, 1.0)
         return mat

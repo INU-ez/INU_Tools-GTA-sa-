@@ -474,12 +474,14 @@ from .ui.panels import (  # noqa: E501
 from .ui.panels import _draw_sort_materials_menu
 from .ops.bake_ops import (
     GTATOOLS_OT_bake_run,
+    GTATOOLS_OT_bake_select_layer,
     GTATOOLS_OT_bake_layer_add,
     GTATOOLS_OT_bake_layer_remove,
     GTATOOLS_OT_bake_layer_move,
     GTATOOLS_OT_bake_add_uv,
     GTATOOLS_OT_bake_preview,
     GTATOOLS_OT_bake_flatten,
+    GTATOOLS_OT_bake_save_map,
 )
 from .scene_settings import (
     INUSceneSettings,
@@ -3204,23 +3206,18 @@ classes = (
     GTATOOLS_PT_id_manager_panel,
     # Phase 2: light_master must register before its 5 child light panels
     # so Blender can resolve their bl_parent_id at register time.
-    # ── Texture Bake — ВРЕМЕННО СКРЫТА из UI до доработки ──────────
-    # Код фичи (ops/bake_ops.py, tools/bake/) остаётся в дереве; здесь
-    # лишь не регистрируем операторы/панели, чтобы они не появлялись в
-    # интерфейсе и F3-поиске. Чтобы вернуть — раскомментировать блок.
-    # INUBakeLayer регистрируется ниже отдельно (нужен для
-    # CollectionProperty gtatools_bake_layers, иначе падает регистрация
-    # настроек сцены).
-    # GTATOOLS_OT_bake_run,
-    # GTATOOLS_OT_bake_layer_add,
-    # GTATOOLS_OT_bake_layer_remove,
-    # GTATOOLS_OT_bake_layer_move,
-    # GTATOOLS_OT_bake_add_uv,
-    # GTATOOLS_OT_bake_preview,
-    # GTATOOLS_OT_bake_flatten,
-    # GTATOOLS_UL_bake_layers,
-    # GTATOOLS_PT_bake_panel,
-    # GTATOOLS_PT_bake_advanced,
+    GTATOOLS_OT_bake_run,
+    GTATOOLS_OT_bake_select_layer,
+    GTATOOLS_OT_bake_layer_add,
+    GTATOOLS_OT_bake_layer_remove,
+    GTATOOLS_OT_bake_layer_move,
+    GTATOOLS_OT_bake_add_uv,
+    GTATOOLS_OT_bake_preview,
+    GTATOOLS_OT_bake_flatten,
+    GTATOOLS_OT_bake_save_map,
+    GTATOOLS_UL_bake_layers,
+    GTATOOLS_PT_bake_panel,
+    GTATOOLS_PT_bake_advanced,
     GTATOOLS_PT_light_master,
     GTATOOLS_PT_itera_panel,
     GTATOOLS_PT_prelight_panel,
@@ -3822,6 +3819,24 @@ def _register_blender_translations():
                 entries[(ctx, k)] = v
         for blender_locale in blender_locales:
             blender_dict[blender_locale] = entries
+
+    # Метки карт запекания (AO/Diffuse/Shadow/Bevel/Diffuse Lit) должны
+    # оставаться английскими: встроенный i18n Blender иначе переводит их в
+    # выпадашках (AO→ОО, Shadow→Тень, Bevel→Фаска). Регистрируем identity-
+    # перевод (метка → она же) для текущей и распространённых локалей, чтобы
+    # перебить встроенный перевод.
+    try:
+        from .tools.bake import bake_map_enum_items
+        force_en = [lbl for (_i, lbl, _d) in bake_map_enum_items()]
+        for loc in {get_locale(), 'ru_RU', 'ru', 'es_ES', 'es', 'de_DE',
+                    'fr_FR', 'ja_JP', 'zh_CN', 'zh_HANS', 'pt_BR', 'it_IT',
+                    'ko_KR', 'uk_UA', 'pl_PL'}:
+            d = blender_dict.setdefault(loc, {})
+            for lbl in force_en:
+                for ctx in contexts:
+                    d[(ctx, lbl)] = lbl
+    except Exception:
+        pass
 
     if not blender_dict:
         return

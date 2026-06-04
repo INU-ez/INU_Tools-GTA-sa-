@@ -4229,14 +4229,39 @@ class GTATOOLS_UL_bake_layers(bpy.types.UIList):
     def draw_item(self, context, layout, data, item, icon, active_data,
                   active_property, index):
         from ..tools.bake import get_map
+        md = get_map(item.map_id)
+        name = md.label_key if md else item.map_id
+
+        # ОДНА строка: глазик (слева, переключатель) + имя + режим + размер.
+        # UIList делает кликабельной только одну строку элемента, поэтому
+        # держим всё в одной — тогда вся строка выделяет слой по клику.
+        obj = context.active_object
+        base = obj.get("inu_bake_base", "") if obj else ""
+        img = bpy.data.images.get(f"{base}_{item.map_id}") if base else None
+        res = f"{img.size[0]}×{img.size[1]}" if img else "—"
+
         row = layout.row(align=True)
         row.prop(item, "enabled", text="",
                  **inu_icon(safe_icon('HIDE_OFF' if item.enabled else 'HIDE_ON')))
-        md = get_map(item.map_id)
-        row.label(text=(T(md.label_key) if md else item.map_id))
-        sub = row.row(align=True)
-        sub.active = item.enabled and context.scene.inu_settings.gtatools_bake_composite_mode
-        sub.label(text=item.blend_mode.title())
+        # ОДИН «резиновый» блок (имя слева + режим·размер справа) — заполняет
+        # всё место, прижимая bake/save к правому краю.
+        mid = row.row(align=True)
+        mid.active = item.enabled
+        mid.label(text=name, translate=False)          # английское имя
+        rmeta = mid.row(align=True)
+        rmeta.alignment = 'RIGHT'
+        rmeta.label(text=f"{item.blend_mode.title()}  ·  {res}", translate=False)
+        # bake / Save — ПРЯМЫЕ дети строки с фикс. ui_units_x.
+        bcell = row.row(align=True)
+        bcell.ui_units_x = 3.0
+        bk = bcell.operator("gtatools.bake_run", text="bake")
+        bk.only_map_id = item.map_id
+        scell = row.row(align=True)
+        scell.ui_units_x = 1.1
+        scell.enabled = img is not None
+        sop = scell.operator("gtatools.bake_save_map", text="",
+                             **inu_icon(safe_icon('FILE_TICK')))
+        sop.map_id = item.map_id
 
 
 class GTATOOLS_PT_bake_panel(bpy.types.Panel):
@@ -4293,9 +4318,6 @@ class GTATOOLS_PT_bake_panel(bpy.types.Panel):
                            **inu_icon(safe_icon('RESTRICT_RENDER_OFF')))
                 info.label(text=T("Запекать в UV: ") + tgt,
                            **inu_icon(safe_icon('RENDER_STILL')))
-                box.operator("gtatools.bake_add_uv",
-                             text=T("Создать UV для запекания"),
-                             **inu_icon(safe_icon('ADD')))
             else:
                 box.label(text=T("У объекта нет UV-развёртки"),
                           **inu_icon(safe_icon('ERROR')))
@@ -4316,38 +4338,65 @@ class GTATOOLS_PT_bake_panel(bpy.types.Panel):
                               **inu_icon(safe_icon('ERROR')))
                 box.prop(s, "gtatools_bake_cage_extrusion")
 
-        box.prop(
-            s, "gtatools_bake_composite_mode", toggle=True,
-            **inu_icon(safe_icon('IMAGE_RGB' if s.gtatools_bake_composite_mode
-                                 else 'IMAGE_DATA')))
-
-        row = box.row()
-        row.template_list("GTATOOLS_UL_bake_layers", "",
-                          s, "gtatools_bake_layers",
-                          s, "gtatools_bake_layers_index", rows=4)
-        side = row.column(align=True)
-        side.operator("gtatools.bake_layer_add", text="",
-                      **inu_icon(safe_icon('ADD')))
-        side.operator("gtatools.bake_layer_remove", text="",
-                      **inu_icon(safe_icon('REMOVE')))
-        side.separator()
-        side.operator("gtatools.bake_layer_move", text="",
-                      **inu_icon(safe_icon('TRIA_UP'))).direction = 'UP'
-        side.operator("gtatools.bake_layer_move", text="",
-                      **inu_icon(safe_icon('TRIA_DOWN'))).direction = 'DOWN'
-
+        # Стек слоёв — НЕ UIList (у него свои отступы и нет контроля ширины),
+        # а обычные строки панели: глаз | имя-выбор | режим·размер | bake | save.
+        # В обычной строке нет встроенных полей списка → глаз прижат влево,
+        # bake/save вправо, ui_units_x фиксируется надёжно.
+        from ..tools.bake import get_map
         layers = s.gtatools_bake_layers
         idx = s.gtatools_bake_layers_index
+        base = obj.get("inu_bake_base", "") if obj else ""
+
+        lcol = box.column(align=True)
+        for i, L in enumerate(layers):
+            md = get_map(L.map_id)
+            nm = md.label_key if md else L.map_id
+            img = bpy.data.images.get(f"{base}_{L.map_id}") if base else None
+            res = f"{img.size[0]}×{img.size[1]}" if img else "—"
+            r = lcol.row(align=True)
+            r.prop(L, "enabled", text="",
+                   **inu_icon(safe_icon('HIDE_OFF' if L.enabled else 'HIDE_ON')))
+            sel = r.operator("gtatools.bake_select_layer", text=nm,
+                             translate=False, depress=(i == idx))
+            sel.index = i
+            mcell = r.row(align=True)
+            mcell.active = L.enabled
+            mcell.alignment = 'RIGHT'
+            mcell.label(text=f"{L.blend_mode.title()}  ·  {res}", translate=False)
+            bcell = r.row(align=True)
+            bcell.ui_units_x = 3.0
+            bk = bcell.operator("gtatools.bake_run", text="bake")
+            bk.only_map_id = L.map_id
+            scell = r.row(align=True)
+            scell.ui_units_x = 1.1
+            scell.enabled = img is not None
+            sv = scell.operator("gtatools.bake_save_map", text="",
+                                **inu_icon(safe_icon('FILE_TICK')))
+            sv.map_id = L.map_id
+        if not layers:
+            lcol.label(text=T("Нет слоёв — добавьте ниже"),
+                       **inu_icon(safe_icon('INFO')))
+
+        ctl = box.row(align=True)
+        ctl.operator("gtatools.bake_layer_add", text=T("Добавить слой"),
+                     **inu_icon(safe_icon('ADD')))
+        ctl.operator("gtatools.bake_layer_remove", text="",
+                     **inu_icon(safe_icon('REMOVE')))
+        ctl.operator("gtatools.bake_layer_move", text="",
+                     **inu_icon(safe_icon('TRIA_UP'))).direction = 'UP'
+        ctl.operator("gtatools.bake_layer_move", text="",
+                     **inu_icon(safe_icon('TRIA_DOWN'))).direction = 'DOWN'
+
+        # Параметры выбранного слоя (карта / режим / прозрачность).
         if 0 <= idx < len(layers):
             L = layers[idx]
             d = box.box()
             d.prop(L, "map_id")
             det = d.column(align=True)
-            det.active = s.gtatools_bake_composite_mode
             det.prop(L, "blend_mode")
             det.prop(L, "opacity", slider=True)
 
-        box.operator("gtatools.bake_run", text=T("Запечь"),
+        box.operator("gtatools.bake_run", text=T("Запечь все"),
                      **inu_icon(safe_icon('RENDER_STILL')))
 
         # После запекания: показать/скрыть результат на модели + свести в
