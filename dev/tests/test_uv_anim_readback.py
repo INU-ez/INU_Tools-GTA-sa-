@@ -18,13 +18,29 @@ from core.dff import (  # noqa: E402
     UVAnim,
     UVAnimKeyframe,
     UVAnimDict,
+    CHUNK_UV_ANIM_PLG,
     _read_uv_anim_dict,
     _read_uv_anim_plg,
     _uv_anim_plg_bytes,
 )
 
+import struct as _struct  # noqa: E402
+
 
 LIB_ID = 0x1803FFFF  # GTA SA RW version id
+
+
+def _find_chunk_body(data, chunk_id):
+    """(offset, size) of the first ``chunk_id`` body in a run of top-level
+    RW chunks. Mirrors how read_dff locates 0x135 after the 0x120 prefix
+    that ``_uv_anim_plg_bytes`` writes (Kam's UVanim layout)."""
+    pos = 0
+    while pos + 12 <= len(data):
+        ct, cs, _ = _struct.unpack_from('<III', data, pos)
+        if ct == chunk_id:
+            return pos + 12, cs
+        pos += 12 + cs
+    return None, 0
 
 
 def test_uv_anim_dict_single_anim_roundtrip():
@@ -81,7 +97,8 @@ def test_uv_anim_plg_filters_empty_slots_via_mask():
     # Only first two slots populated — mask should encode that and the
     # reader should drop the 6 padding empties.
     wrapped = _uv_anim_plg_bytes(["scroll_main", "scroll_alt"], LIB_ID)
-    names = _read_uv_anim_plg(wrapped, 12, len(wrapped) - 12)
+    off, sz = _find_chunk_body(wrapped, CHUNK_UV_ANIM_PLG)
+    names = _read_uv_anim_plg(wrapped, off, sz)
 
     assert names == ["scroll_main", "scroll_alt"]
 
@@ -96,6 +113,7 @@ def test_uv_anim_plg_clamps_to_eight_slots():
     # must be silently dropped — both writer and reader.
     names_in = [f"a{i}" for i in range(12)]
     wrapped = _uv_anim_plg_bytes(names_in, LIB_ID)
-    names_out = _read_uv_anim_plg(wrapped, 12, len(wrapped) - 12)
+    off, sz = _find_chunk_body(wrapped, CHUNK_UV_ANIM_PLG)
+    names_out = _read_uv_anim_plg(wrapped, off, sz)
 
     assert names_out == names_in[:8]

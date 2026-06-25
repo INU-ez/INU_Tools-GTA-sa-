@@ -2512,6 +2512,16 @@ def read_dff(data: bytes) -> DffClump:
         if cs > len(data) - r.pos:
             r.seek(snap)
             raise ValueError(f"Expected Clump chunk (0x10), got 0x{ct:X}")
+        # Vanilla layout: the UV-anim dictionary (0x2B) sits at root, BEFORE
+        # the clump. Parse it into the clump so re-import exposes the
+        # animations as objects (driving the UV-anim preview, not just raw
+        # bytes). write_dff strips this raw copy from pre_clump_data and
+        # re-emits it from clump.uv_anim_dict — so there's no duplication.
+        if ct == CHUNK_UV_ANIM_DICT:
+            try:
+                clump.uv_anim_dict = _read_uv_anim_dict(data, r.pos, cs)
+            except Exception:
+                pass
         r.skip(cs)
         if r.pos >= len(data):
             r.seek(snap)
