@@ -8,6 +8,12 @@ from bpy.props import StringProperty
 
 from ..core.txd import read_txd_file, read_txd
 
+# Подробные [TXD IMPORT]/[TXD ASSIGN] дампы (список ВСЕХ материалов сцены,
+# дамп объектов, по строке на каждый материал) — диагностика. На карте это
+# тысячи строк И тормозит из-за самих print(). По умолчанию выключено;
+# True — для отладки сопоставления текстур.
+_TXD_VERBOSE = False
+
 
 def _textures_to_blender_images(textures):
     """Convert a list of TxdTexture objects into bpy.data.images.
@@ -99,7 +105,7 @@ def import_txd_bytes(data: bytes, assign_to_materials: bool = False,
 
 
 def import_txd(filepath: str, assign_to_materials: bool = True,
-               name_filter=None):
+               name_filter=None, material_scope=None):
     """
     Import a TXD file into Blender.
 
@@ -136,12 +142,13 @@ def import_txd(filepath: str, assign_to_materials: bool = True,
         print(f"[TXD IMPORT] name_filter applied: {before} → {len(textures)} textures")
     t_decode = time.perf_counter() - t0
 
-    print(f"[TXD IMPORT] decoded textures (name | size | fourcc):")
-    for t in textures:
-        nm = t.name.rstrip('\x00')
-        fc = getattr(t, 'fourcc', 0)
-        fc_str = ''.join(chr((fc >> (i*8)) & 0xFF) for i in range(4)).strip('\x00') or f'0x{fc:08X}'
-        print(f"  • {nm!r:<32} {t.width:>4}x{t.height:<4} {fc_str}")
+    if _TXD_VERBOSE:
+        print(f"[TXD IMPORT] decoded textures (name | size | fourcc):")
+        for t in textures:
+            nm = t.name.rstrip('\x00')
+            fc = getattr(t, 'fourcc', 0)
+            fc_str = ''.join(chr((fc >> (i*8)) & 0xFF) for i in range(4)).strip('\x00') or f'0x{fc:08X}'
+            print(f"  • {nm!r:<32} {t.width:>4}x{t.height:<4} {fc_str}")
 
     t0 = time.perf_counter()
     images = _textures_to_blender_images(textures)
@@ -150,7 +157,7 @@ def import_txd(filepath: str, assign_to_materials: bool = True,
     print(f"[TXD IMPORT] uploaded {len(images)} images to bpy.data.images. "
           f"Materials in scene: {len(bpy.data.materials)}, "
           f"Objects: {len(bpy.data.objects)}")
-    if bpy.data.materials:
+    if _TXD_VERBOSE and bpy.data.materials:
         print(f"[TXD IMPORT] material list (name | dff_texture_name | use_nodes | library):")
         for m in bpy.data.materials:
             idprop = m.get('dff_texture_name', '<none>')
@@ -158,30 +165,30 @@ def import_txd(filepath: str, assign_to_materials: bool = True,
             print(f"  • {m.name!r:<32} dff_texture_name={idprop!r:<20} "
                   f"use_nodes={m.use_nodes} library={lib}")
 
-    # Object dump — shows which objects have material slots and what's
-    # in them. If `bpy.data.materials` is short of expectations, this
-    # reveals whether the scene uses empty slots, shared materials, or
-    # linked references that are stored elsewhere.
-    mesh_objs = [o for o in bpy.data.objects if o.type == 'MESH']
-    print(f"[TXD IMPORT] mesh objects: {len(mesh_objs)} (showing first 30)")
-    for o in mesh_objs[:30]:
-        slot_info = []
-        for i, s in enumerate(o.material_slots):
-            if s.material:
-                idp = s.material.get('dff_texture_name', '')
-                slot_info.append(f"#{i}={s.material.name!r}"
-                                 + (f"[idprop={idp!r}]" if idp else ''))
-            else:
-                slot_info.append(f"#{i}=<empty>")
-        slots_str = ', '.join(slot_info) if slot_info else '<no slots>'
-        print(f"  • obj={o.name!r:<28} slots: {slots_str}")
-    if len(mesh_objs) > 30:
-        print(f"  … and {len(mesh_objs) - 30} more")
+        # Object dump — shows which objects have material slots and what's
+        # in them. If `bpy.data.materials` is short of expectations, this
+        # reveals whether the scene uses empty slots, shared materials, or
+        # linked references that are stored elsewhere.
+        mesh_objs = [o for o in bpy.data.objects if o.type == 'MESH']
+        print(f"[TXD IMPORT] mesh objects: {len(mesh_objs)} (showing first 30)")
+        for o in mesh_objs[:30]:
+            slot_info = []
+            for i, s in enumerate(o.material_slots):
+                if s.material:
+                    idp = s.material.get('dff_texture_name', '')
+                    slot_info.append(f"#{i}={s.material.name!r}"
+                                     + (f"[idprop={idp!r}]" if idp else ''))
+                else:
+                    slot_info.append(f"#{i}=<empty>")
+            slots_str = ', '.join(slot_info) if slot_info else '<no slots>'
+            print(f"  • obj={o.name!r:<28} slots: {slots_str}")
+        if len(mesh_objs) > 30:
+            print(f"  … and {len(mesh_objs) - 30} more")
 
     t_assign = 0.0
     if assign_to_materials:
         t0 = time.perf_counter()
-        _assign_textures_to_materials(images)
+        _assign_textures_to_materials(images, material_scope=material_scope)
         t_assign = time.perf_counter() - t0
 
     print(f"[TXD IMPORT] === DONE {fname}: {len(images)} textures, "
@@ -198,7 +205,7 @@ def import_txd(filepath: str, assign_to_materials: bool = True,
 from .texture_ops import image_has_significant_alpha, link_material_alpha_if_textured
 
 
-def _assign_textures_to_materials(images):
+def _assign_textures_to_materials(images, material_scope=None):
     """Assign imported images to materials and re-evaluate alpha links.
 
     Two-phase pipeline, both with verbose console diagnostics:
@@ -224,7 +231,14 @@ def _assign_textures_to_materials(images):
     """
     image_map = {img.name.lower(): img for img in images}
 
-    n_total = len(bpy.data.materials)
+    # Область применения: при импорте TXD для одного DFF сюда передаётся
+    # список ТОЛЬКО его материалов — иначе на загруженной карте обе фазы
+    # перебирали бы все тысячи материалов сцены (именно это давало
+    # assign=12.5с). None → весь bpy.data.materials (одиночный импорт TXD).
+    scoped = material_scope is not None
+    phase1_mats = list(material_scope) if scoped else list(bpy.data.materials)
+
+    n_total = len(phase1_mats)
     n_matched_idprop = 0
     n_matched_name = 0
     n_no_match = 0
@@ -234,7 +248,7 @@ def _assign_textures_to_materials(images):
 
     print(f"[TXD ASSIGN] Phase 1 — name matching: {n_total} materials, {len(images)} images available")
 
-    for mat in bpy.data.materials:
+    for mat in phase1_mats:
         dff_tex = mat.get('dff_texture_name')
         match_kind = None
         if dff_tex:
@@ -252,7 +266,8 @@ def _assign_textures_to_materials(images):
             n_no_match += 1
             continue
 
-        print(f"[TXD ASSIGN] mat={mat.name!r} matched via {match_kind} → image={img.name!r}")
+        if _TXD_VERBOSE:
+            print(f"[TXD ASSIGN] mat={mat.name!r} matched via {match_kind} → image={img.name!r}")
 
         if not mat.use_nodes:
             mat.use_nodes = True
@@ -268,7 +283,8 @@ def _assign_textures_to_materials(images):
                 break
         if bsdf is None:
             n_no_bsdf += 1
-            print(f"[TXD ASSIGN] mat={mat.name!r}: no Principled BSDF → skipping alpha wire")
+            if _TXD_VERBOSE:
+                print(f"[TXD ASSIGN] mat={mat.name!r}: no Principled BSDF → skipping alpha wire")
             continue
 
         bc_input = bsdf.inputs.get('Base Color')
@@ -278,14 +294,16 @@ def _assign_textures_to_materials(images):
             if from_node.type == 'TEX_IMAGE':
                 tex_node = from_node
                 tex_node.image = img
-                print(f"[TXD ASSIGN] mat={mat.name!r}: reusing existing TEX_IMAGE node, image set to {img.name!r}")
+                if _TXD_VERBOSE:
+                    print(f"[TXD ASSIGN] mat={mat.name!r}: reusing existing TEX_IMAGE node, image set to {img.name!r}")
 
         if tex_node is None:
             tex_node = nodes.new('ShaderNodeTexImage')
             tex_node.image = img
             tex_node.location = (bsdf.location.x - 300, bsdf.location.y)
             links.new(tex_node.outputs['Color'], bsdf.inputs['Base Color'])
-            print(f"[TXD ASSIGN] mat={mat.name!r}: created new TEX_IMAGE node + Base Color link")
+            if _TXD_VERBOSE:
+                print(f"[TXD ASSIGN] mat={mat.name!r}: created new TEX_IMAGE node + Base Color link")
 
         # Single unified call — checks pixels, links/unlinks Alpha,
         # AND sets material.blend_method correctly. No duplicated logic
@@ -311,19 +329,24 @@ def _assign_textures_to_materials(images):
     # level above. A second `from .texture_ops import …` here would make
     # the name a function-local — and Phase 1's earlier reference would
     # then raise UnboundLocalError before this import statement runs.
-    seen = set()
-    all_mats = []
-    for mat in bpy.data.materials:
-        if mat.name not in seen:
-            seen.add(mat.name)
-            all_mats.append(mat)
-    for obj in bpy.data.objects:
-        if obj.type != 'MESH':
-            continue
-        for slot in obj.material_slots:
-            if slot.material and slot.material.name not in seen:
-                seen.add(slot.material.name)
-                all_mats.append(slot.material)
+    if scoped:
+        # Ограниченный режим (импорт TXD для одного DFF): альфа только для
+        # материалов этого DFF — не трогаем тысячи чужих по всей сцене.
+        all_mats = phase1_mats
+    else:
+        seen = set()
+        all_mats = []
+        for mat in bpy.data.materials:
+            if mat.name not in seen:
+                seen.add(mat.name)
+                all_mats.append(mat)
+        for obj in bpy.data.objects:
+            if obj.type != 'MESH':
+                continue
+            for slot in obj.material_slots:
+                if slot.material and slot.material.name not in seen:
+                    seen.add(slot.material.name)
+                    all_mats.append(slot.material)
 
     n_phase2_changed = 0
     for mat in all_mats:
@@ -383,6 +406,3 @@ class GTATOOLS_OT_import_txd(bpy.types.Operator):
             return {'CANCELLED'}
 
 
-classes = (
-    GTATOOLS_OT_import_txd,
-)

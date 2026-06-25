@@ -317,7 +317,8 @@ def _compute_bounds(model: ColModel) -> Bounds:
     return Bounds(center=center, radius=radius, bb_min=bb_min, bb_max=bb_max)
 
 
-def export_col(filepath: str, objects, version: int = 3, model_name: str = ""):
+def export_col(filepath: str, objects, version: int = 3, model_name: str = "",
+               empty: bool = False):
     """
     Export selected Blender objects as a COL file.
 
@@ -326,6 +327,11 @@ def export_col(filepath: str, objects, version: int = 3, model_name: str = ""):
         objects: Iterable of Blender objects to export.
         version: COL version (1, 2, 3, or 4). Default 3 for GTA SA.
         model_name: Model name in COL header. If empty, derived from filename.
+        empty: When True, write a geometry-less COL record (no faces/verts/
+            spheres/boxes, zero bounds) that still carries ``model_name``.
+            For models that must have a COL entry bound to them but no
+            actual collision — the game expects a matching COL or it
+            falls back to default bounds.
     """
     import os
 
@@ -334,39 +340,45 @@ def export_col(filepath: str, objects, version: int = 3, model_name: str = ""):
 
     model = ColModel(version=version, model_name=model_name)
 
-    for obj in objects:
-        if obj.type == 'MESH':
-            if _is_shadow_mesh(obj):
-                _collect_shadow_mesh(obj, model)
-            else:
-                _collect_mesh(obj, model)
+    if not empty:
+        for obj in objects:
+            if obj.type == 'MESH':
+                if _is_shadow_mesh(obj):
+                    _collect_shadow_mesh(obj, model)
+                else:
+                    _collect_mesh(obj, model)
 
-        elif obj.type == 'EMPTY':
-            _collect_empty(obj, model)
+            elif obj.type == 'EMPTY':
+                _collect_empty(obj, model)
 
     model.bounds = _compute_bounds(model)
     write_col_file(filepath, [model])
     return model
 
 
-def build_col_model(objects, version: int = 3, model_name: str = "") -> ColModel:
+def build_col_model(objects, version: int = 3, model_name: str = "",
+                    empty: bool = False) -> ColModel:
     """Build a ``ColModel`` from Blender objects (main thread).
 
     Split out so batch exporters can build models on the main thread
     (bpy reads) and then hand them off to a worker pool for the CPU-
     bound ``write_col`` serialisation.
+
+    ``empty=True`` skips geometry collection — the model carries only
+    ``model_name`` and a zero bounds (see ``export_col``).
     """
     model = ColModel(version=version, model_name=model_name)
 
-    for obj in objects:
-        if obj.type == 'MESH':
-            if _is_shadow_mesh(obj):
-                _collect_shadow_mesh(obj, model)
-            else:
-                _collect_mesh(obj, model)
+    if not empty:
+        for obj in objects:
+            if obj.type == 'MESH':
+                if _is_shadow_mesh(obj):
+                    _collect_shadow_mesh(obj, model)
+                else:
+                    _collect_mesh(obj, model)
 
-        elif obj.type == 'EMPTY':
-            _collect_empty(obj, model)
+            elif obj.type == 'EMPTY':
+                _collect_empty(obj, model)
 
     model.bounds = _compute_bounds(model)
     return model
@@ -430,7 +442,8 @@ def _group_objects_by_base(objects) -> dict:
     return groups
 
 
-def export_col_library(filepath: str, objects, version: int = 3) -> int:
+def export_col_library(filepath: str, objects, version: int = 3,
+                       empty: bool = False) -> int:
     """Export a multi-entry COL "library" file.
 
     Selected objects are grouped by base name (via :func:`_group_objects_by_base`)
@@ -444,14 +457,15 @@ def export_col_library(filepath: str, objects, version: int = 3) -> int:
     models = []
     for base_name, objs in groups.items():
         model = ColModel(version=version, model_name=base_name)
-        for obj in objs:
-            if obj.type == 'MESH':
-                if _is_shadow_mesh(obj):
-                    _collect_shadow_mesh(obj, model)
-                else:
-                    _collect_mesh(obj, model)
-            elif obj.type == 'EMPTY':
-                _collect_empty(obj, model)
+        if not empty:
+            for obj in objs:
+                if obj.type == 'MESH':
+                    if _is_shadow_mesh(obj):
+                        _collect_shadow_mesh(obj, model)
+                    else:
+                        _collect_mesh(obj, model)
+                elif obj.type == 'EMPTY':
+                    _collect_empty(obj, model)
         model.bounds = _compute_bounds(model)
         models.append(model)
 
@@ -477,10 +491,19 @@ class GTATOOLS_OT_export_col(bpy.types.Operator, ExportHelper):
         default=False,
     )
 
+    empty_col: BoolProperty(
+        name=T("Пустая коллизия"),
+        description=T("Записать COL без геометрии (ноль faces/вершин/сфер/боксов, нулевой bounds), но с именем модели. Для моделей, у которых не должно быть коллизии, но запись COL обязана существовать и быть привязана к модели. Геометрия выделенных объектов игнорируется — берётся только имя"),
+        default=False,
+    )
+
     def draw(self, context):
         layout = self.layout
         layout.prop(self, 'library_mode')
-        _draw_col_auto_light(layout, context)
+        layout.prop(self, 'empty_col')
+        col = layout.column()
+        col.enabled = not self.empty_col
+        _draw_col_auto_light(col, context)
 
     def execute(self, context):
         from ..tools.prelight import setup_prelight_preview
@@ -545,6 +568,7 @@ class GTATOOLS_OT_export_col(bpy.types.Operator, ExportHelper):
                             objects=[obj],
                             version=col_ver,
                             model_name=base,
+                            empty=self.empty_col,
                         )
                         written.append(f"{base}.col")
                     except Exception as e:
@@ -574,6 +598,7 @@ class GTATOOLS_OT_export_col(bpy.types.Operator, ExportHelper):
                     filepath=self.filepath,
                     objects=col_objects,
                     version=col_ver,
+                    empty=self.empty_col,
                 )
                 msg = f"Exported COL{col_ver} library: {self.filepath} ({count} records)"
             else:
@@ -581,6 +606,7 @@ class GTATOOLS_OT_export_col(bpy.types.Operator, ExportHelper):
                     filepath=self.filepath,
                     objects=col_objects,
                     version=col_ver,
+                    empty=self.empty_col,
                 )
                 msg = f"Exported COL{col_ver}: {self.filepath}"
 
@@ -604,6 +630,3 @@ class GTATOOLS_OT_export_col(bpy.types.Operator, ExportHelper):
             return {'CANCELLED'}
 
 
-classes = (
-    GTATOOLS_OT_export_col,
-)

@@ -560,3 +560,45 @@ def read_txd_texture_names(filepath: str) -> list[str]:
         return names
     except Exception:
         return []
+
+
+def split_txd_sections(data: bytes):
+    """Split a TXD container into its Texture-Native chunks WITHOUT decoding
+    pixel data.
+
+    Returns ``(lib_id, [(name, section_bytes), …])`` where ``section_bytes``
+    is the COMPLETE 0x15 chunk (12-byte header + body), copied verbatim — so
+    existing textures round-trip byte-for-byte. This is what lets us MERGE
+    new textures into a TXD while leaving every other model's textures
+    untouched (see ``tools.txd_export.update_txd``).
+
+    Returns ``(None, [])`` if ``data`` is not a Texture Dictionary or on any
+    parse error (caller falls back to a plain full export)."""
+    try:
+        r = BinaryReader(data)
+        ct, cs, lib_id = _read_chunk_header(r)
+        if ct != CHUNK_TEX_DICTIONARY:
+            return None, []
+        # Struct: texture count + device_id (skip rest of struct).
+        sct, scs, scl = _read_chunk_header(r)
+        tex_count = r.read_one('<H')
+        r.read_one('<H')  # device_id
+        r.seek(r.pos + scs - 4)
+
+        out = []
+        for _ in range(tex_count):
+            start = r.pos
+            tct, tcs, tcl = _read_chunk_header(r)
+            section_end = r.pos + tcs
+            if tct == CHUNK_TEX_NATIVE:
+                # Read name: nested Struct header, then platform + filter,
+                # then the 32-byte name. Then rewind and grab the chunk
+                # verbatim (header included) so it re-emits unchanged.
+                _ = _read_chunk_header(r)        # struct header
+                r.read('<II')                    # platform + filter flags
+                name = _read_str32(r)
+                out.append((name, bytes(data[start:section_end])))
+            r.seek(section_end)
+        return lib_id, out
+    except Exception:
+        return None, []

@@ -318,9 +318,3 @@ def on_index_update(self, context):
         pass
 
 
-classes = (
-    GTATOOLS_OT_scan_textures,
-    GTATOOLS_OT_clear_texture_browser,
-    GTATOOLS_OT_texture_browser_add_file,
-    GTATOOLS_OT_texture_browser_remove_file,
-)

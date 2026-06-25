@@ -44,6 +44,3 @@ class GTATOOLS_OT_import_cst(bpy.types.Operator):
             return {'CANCELLED'}
 
 
-classes = (
-    GTATOOLS_OT_import_cst,
-)

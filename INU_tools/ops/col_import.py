@@ -174,16 +174,28 @@ def _create_box(box, collection, model_name: str, index: int):
     return empty
 
 
-def import_col(filepath: str, context=None):
+def import_col(filepath: str, context=None, material_cache=None):
     """
     Import a COL file into Blender.
 
     Args:
         filepath: Path to .col file.
         context: Blender context (optional).
+        material_cache: optional dict shared across calls so duplicate COL
+            surfaces reuse one material datablock. CRITICAL: without it,
+            ``_get_or_make_col_material`` creates a brand-new material for
+            EVERY face — a COL mesh has thousands of faces, so a few models
+            spawn tens of thousands of ``bpy.data.materials.new("COL_N")``
+            calls whose name-disambiguation (``COL_N.001/.002/…``) is
+            O(existing), turning the import into an O(N²) freeze. Vanilla
+            COL only uses ~64 distinct surfaces, so the cache collapses
+            that to a handful of datablocks.
     """
     models = read_col_file(filepath)
-    return import_col_from_models(models, bulk_mode=False)
+    if material_cache is None:
+        material_cache = {}
+    return import_col_from_models(models, bulk_mode=False,
+                                  material_cache=material_cache)
 
 
 def import_col_from_models(models, *, bulk_mode: bool = False,
@@ -250,6 +262,15 @@ def import_col_from_models(models, *, bulk_mode: bool = False,
     # so the user sees them aligned. Map import skips this — it sets
     # position directly from the IPL instance.
     if not bulk_mode and not skip_position_match:
+        # Build a name→object index ONCE (O(N)). The previous code scanned
+        # the ENTIRE scene for every imported COL mesh — O(N²) with RNA
+        # `.name`/`.type` reads per inner step — which froze Blender for
+        # minutes on a COL library holding thousands of models.
+        name_index = {}
+        for candidate in bpy.data.objects:
+            if candidate.type == 'MESH':
+                name_index.setdefault(candidate.name.lower(), candidate)
+
         for obj in imported_objects:
             if obj.type != 'MESH':
                 continue
@@ -258,15 +279,10 @@ def import_col_from_models(models, *, bulk_mode: bool = False,
                 if base.endswith(suffix):
                     base = base[:-len(suffix)]
                     break
-            for candidate in bpy.data.objects:
-                if candidate == obj or candidate.type != 'MESH':
-                    continue
-                cname = candidate.name
-                cname_low = cname.lower()
-                base_low = base.lower()
-                if cname_low == base_low or cname_low == base_low + '_dff':
-                    obj.location = candidate.location.copy()
-                    break
+            base_low = base.lower()
+            match = name_index.get(base_low) or name_index.get(base_low + '_dff')
+            if match is not None and match is not obj:
+                obj.location = match.location.copy()
 
     # Select only on single-file import. Bulk map import needs no
     # selection side-effects.
@@ -356,6 +372,14 @@ def _iter_import_col_files(filepaths, target_collection, stats):
     # import_col_from_models but applied to ALL imported objects from
     # this batch (one match-DFF lookup per COL mesh).
     yield (file_count, max(file_count, 1), "matching DFF positions")
+    # One-pass name→object index instead of a per-object whole-scene scan
+    # (was O(N²) and froze on multi-model COL libraries — same fix as the
+    # synchronous import_col_from_models path).
+    name_index = {}
+    for candidate in bpy.data.objects:
+        if candidate.type == 'MESH':
+            name_index.setdefault(candidate.name.lower(), candidate)
+
     for obj in stats['imported_objects']:
         if obj.type != 'MESH':
             continue
@@ -364,14 +388,10 @@ def _iter_import_col_files(filepaths, target_collection, stats):
             if base.endswith(suffix):
                 base = base[:-len(suffix)]
                 break
-        for candidate in bpy.data.objects:
-            if candidate is obj or candidate.type != 'MESH':
-                continue
-            cname_low = candidate.name.lower()
-            base_low = base.lower()
-            if cname_low == base_low or cname_low == base_low + '_dff':
-                obj.location = candidate.location.copy()
-                break
+        base_low = base.lower()
+        match = name_index.get(base_low) or name_index.get(base_low + '_dff')
+        if match is not None and match is not obj:
+            obj.location = match.location.copy()
 
     # Selection: deselect all, select all imported, set first as active.
     yield (file_count, max(file_count, 1), "selecting imported")
@@ -584,9 +604,3 @@ if hasattr(bpy.types, 'FileHandler'):
             return context.area and context.area.type == 'VIEW_3D'
 
 
-classes = (
-    GTATOOLS_OT_import_col,
-    GTATOOLS_OT_drop_col,
-)
-if hasattr(bpy.types, 'FileHandler'):
-    classes = classes + (GTATOOLS_FH_col_drop,)

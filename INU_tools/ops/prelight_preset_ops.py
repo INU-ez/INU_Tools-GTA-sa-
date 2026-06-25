@@ -10,6 +10,23 @@ from bpy.props import (
 from .. import T
 
 
+def _pub(op, type_set, msg):
+    """``op.report(type_set, msg)`` (banner / Info log as usual) AND mirror
+    the same text into the active floater's bottom strip — so a button
+    pressed in a floater shows the SAME notification the N-panel shows.
+    Floaters dispatch ops via ``bpy.ops`` where Blender hides the banner,
+    hence this explicit mirror. ``set_floater_status`` is a no-op when no
+    floater is the active target."""
+    op.report(type_set, msg)
+    try:
+        from .floater.base import set_floater_status
+        lvl = ('ERROR' if 'ERROR' in type_set
+               else 'WARNING' if 'WARNING' in type_set else 'INFO')
+        set_floater_status(str(msg), lvl)
+    except Exception:
+        pass
+
+
 # ── Lights snapshot ────────────────────────────────────────────
 # 8-light prelight rig is part of the preset payload. Position is
 # stored RELATIVE to the lights' bounding-box center (so loading the
@@ -247,9 +264,9 @@ class GTATOOLS_OT_prelight_preset_load(bpy.types.Operator):
                     msg += f" | {touched} {T('объектов')}, +{created} attr"
                 if lights_count:
                     msg += f" | {lights_count} {T('ламп')}"
-                self.report({'INFO'}, msg)
+                _pub(self,{'INFO'}, msg)
                 return {'FINISHED'}
-        self.report({'ERROR'}, T("Пресет не найден"))
+        _pub(self,{'ERROR'}, T("Пресет не найден"))
         return {'CANCELLED'}
 
 
@@ -268,7 +285,7 @@ class GTATOOLS_OT_prelight_preset_save(bpy.types.Operator):
         s = context.scene.inu_settings
 
         if _is_default_preset(self.preset_name):
-            self.report({'ERROR'}, T("'Default' зарезервирован — выбери другое имя"))
+            _pub(self,{'ERROR'}, T("'Default' зарезервирован — выбери другое имя"))
             return {'CANCELLED'}
 
         new_preset = {
@@ -303,7 +320,7 @@ class GTATOOLS_OT_prelight_preset_save(bpy.types.Operator):
 
         from .. import _save_preset_file
         _save_preset_file(new_preset)
-        self.report({'INFO'}, f"{T('Пресет сохранён:')} {self.preset_name}")
+        _pub(self,{'INFO'}, f"{T('Пресет сохранён:')} {self.preset_name}")
         return {'FINISHED'}
 
 
@@ -316,11 +333,11 @@ class GTATOOLS_OT_prelight_preset_delete(bpy.types.Operator):
     def execute(self, context):
         name = context.scene.inu_settings.gtatools_prelight_preset
         if _is_default_preset(name):
-            self.report({'ERROR'}, T("'Default' нельзя удалить — это встроенный пресет"))
+            _pub(self,{'ERROR'}, T("'Default' нельзя удалить — это встроенный пресет"))
             return {'CANCELLED'}
         from .. import _delete_preset_file
         _delete_preset_file(name)
-        self.report({'INFO'}, f"{T('Пресет удалён:')} {name}")
+        _pub(self,{'INFO'}, f"{T('Пресет удалён:')} {name}")
         return {'FINISHED'}
 
 
@@ -334,10 +351,10 @@ class GTATOOLS_OT_prelight_preset_apply(bpy.types.Operator):
         s = context.scene.inu_settings
         name = s.gtatools_prelight_preset
         if not name or name == 'NONE':
-            self.report({'ERROR'}, T("Сначала выберите пресет в списке"))
+            _pub(self,{'ERROR'}, T("Сначала выберите пресет в списке"))
             return {'CANCELLED'}
         if _is_default_preset(name):
-            self.report({'ERROR'},
+            _pub(self,{'ERROR'},
                 T("'Default' read-only — сохрани под другим именем (Save)"))
             return {'CANCELLED'}
 
@@ -405,7 +422,7 @@ class GTATOOLS_OT_prelight_preset_apply(bpy.types.Operator):
             parts.append(f"{T('добавлено')}: {', '.join(added)}")
         if not changed and not added:
             parts.append(T("без изменений"))
-        self.report({'INFO'}, " | ".join(parts))
+        _pub(self,{'INFO'}, " | ".join(parts))
         return {'FINISHED'}
 
 
@@ -424,10 +441,10 @@ class GTATOOLS_OT_prelight_preset_rename(bpy.types.Operator):
         s = context.scene.inu_settings
         current = s.gtatools_prelight_preset
         if not current or current == 'NONE':
-            self.report({'ERROR'}, T("Сначала выберите пресет в списке"))
+            _pub(self,{'ERROR'}, T("Сначала выберите пресет в списке"))
             return {'CANCELLED'}
         if _is_default_preset(current):
-            self.report({'ERROR'},
+            _pub(self,{'ERROR'},
                 T("'Default' нельзя переименовать — это встроенный пресет"))
             return {'CANCELLED'}
         self.new_name = current
@@ -441,12 +458,12 @@ class GTATOOLS_OT_prelight_preset_rename(bpy.types.Operator):
         current = s.gtatools_prelight_preset
         new = (self.new_name or '').strip()
         if not new:
-            self.report({'ERROR'}, T("Введите новое название"))
+            _pub(self,{'ERROR'}, T("Введите новое название"))
             return {'CANCELLED'}
         if new == current:
             return {'CANCELLED'}
         if _is_default_preset(new):
-            self.report({'ERROR'}, T("'Default' зарезервирован — выбери другое имя"))
+            _pub(self,{'ERROR'}, T("'Default' зарезервирован — выбери другое имя"))
             return {'CANCELLED'}
 
         from .. import _load_prelight_presets, _save_preset_file, _delete_preset_file
@@ -455,12 +472,12 @@ class GTATOOLS_OT_prelight_preset_rename(bpy.types.Operator):
         # Refuse if the target name already exists — avoid silently
         # overwriting another preset.
         if any(p.get('name') == new for p in presets):
-            self.report({'ERROR'}, T("Имя уже занято"))
+            _pub(self,{'ERROR'}, T("Имя уже занято"))
             return {'CANCELLED'}
 
         src = next((p for p in presets if p.get('name') == current), None)
         if src is None:
-            self.report({'ERROR'}, T("Пресет не найден"))
+            _pub(self,{'ERROR'}, T("Пресет не найден"))
             return {'CANCELLED'}
 
         renamed = dict(src)
@@ -474,14 +491,7 @@ class GTATOOLS_OT_prelight_preset_rename(bpy.types.Operator):
             s.gtatools_prelight_preset = new
         except Exception:
             pass
-        self.report({'INFO'}, f"{T('Переименован:')} {current} → {new}")
+        _pub(self,{'INFO'}, f"{T('Переименован:')} {current} → {new}")
         return {'FINISHED'}
 
 
-classes = (
-    GTATOOLS_OT_prelight_preset_load,
-    GTATOOLS_OT_prelight_preset_save,
-    GTATOOLS_OT_prelight_preset_delete,
-    GTATOOLS_OT_prelight_preset_apply,
-    GTATOOLS_OT_prelight_preset_rename,
-)

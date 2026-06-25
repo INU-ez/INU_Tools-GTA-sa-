@@ -1,0 +1,25 @@
+Provenance / licensing of the PNG files in this folder
+=======================================================
+
+The PNG files in `data/icons/native/` are Blender's own built-in user-
+interface icons, baked offline to small PNG atlases. Their UPPERCASE file
+names match Blender's `icon` enum identifiers (e.g. CHECKMARK.png,
+OUTLINER_OB_MESH.png, MOD_MIRROR.png, TRIA_DOWN.png).
+
+Why they are shipped as PNG instead of referenced by name
+---------------------------------------------------------
+INU Tools draws a custom, GPU-rendered floating UI (see
+`ops/floater/`). That custom GPU draw path cannot reference Blender's
+internal icon enum the way `UILayout.label(icon=...)` can — it needs real
+raster image data to upload as a GPU texture. The icons are therefore
+pre-baked to PNG so the floater can display the same visuals the user
+already sees in Blender's native UI.
+
+License
+-------
+Blender (including its UI icon artwork) is released under the
+GNU General Public License v3.0 or later. INU Tools is likewise licensed
+GPL-3.0-or-later (see ../../LICENSE). These icons are redistributed under
+that same GPL license. No icon here is third-party / proprietary artwork.
+
+Source: Blender (https://www.blender.org/), GPL-3.0-or-later.

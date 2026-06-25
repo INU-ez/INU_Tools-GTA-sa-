@@ -257,13 +257,51 @@ def fix_col_model_name(col_path, model_name):
 # GEOMETRY CHECK FUNCTIONS
 # =============================================================================
 
+def bmesh_from_object_safe(obj):
+    """Вернуть (bmesh, None) или (None, error_str).
+
+    Чинит случай, когда ``obj.data`` — не обычный ``bpy.types.Mesh`` (напр.
+    'FastMesh' от стороннего аддона / спец-состояние Blender 5.x), из-за
+    чего ``bmesh.from_mesh`` бросает TypeError. Тогда читаем вычисленную
+    копию меша через ``to_mesh()``. Вызывающий обязан сделать ``bm.free()``."""
+    bm = bmesh.new()
+    try:
+        bm.from_mesh(obj.data)
+        return bm, None
+    except (TypeError, RuntimeError):
+        try:
+            bm.free()
+        except Exception:
+            pass
+    bm = bmesh.new()
+    ev = None
+    try:
+        dg = bpy.context.evaluated_depsgraph_get()
+        ev = obj.evaluated_get(dg)
+        bm.from_mesh(ev.to_mesh())
+        return bm, None
+    except Exception:
+        try:
+            bm.free()
+        except Exception:
+            pass
+        return None, "Неподдерживаемый тип меша (%s)" % type(obj.data).__name__
+    finally:
+        if ev is not None:
+            try:
+                ev.to_mesh_clear()
+            except Exception:
+                pass
+
+
 def check_loose_geometry(obj):
     """Проверить объект на висящие вершины и рёбра (не присоединённые к полигонам)"""
     if obj is None or obj.type != 'MESH':
         return None, None, "Не меш объект"
 
-    bm = bmesh.new()
-    bm.from_mesh(obj.data)
+    bm, err = bmesh_from_object_safe(obj)
+    if err:
+        return None, None, err
 
     # Находим висящие вершины (не принадлежат ни одному face)
     loose_verts = [v.index for v in bm.verts if not v.link_faces]

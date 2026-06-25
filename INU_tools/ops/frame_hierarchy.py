@@ -322,11 +322,3 @@ class GTATOOLS_OT_frame_mirror_lr(bpy.types.Operator):
         return {'FINISHED'}
 
 
-classes = (
-    GTATOOLS_OT_frame_select,
-    GTATOOLS_OT_frame_rename,
-    GTATOOLS_OT_frame_set_parent,
-    GTATOOLS_OT_frame_unparent,
-    GTATOOLS_OT_frame_validate,
-    GTATOOLS_OT_frame_mirror_lr,
-)

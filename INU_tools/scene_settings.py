@@ -15,6 +15,10 @@ from bpy.props import (
     EnumProperty, FloatVectorProperty, CollectionProperty,
     PointerProperty,
 )
+# T() = locale lookup (Russian source → active language). Safe to import
+# here: __init__.py defines T before it imports this module (line ~351 vs
+# ~486), so the name is already bound in the package when we load.
+from . import T
 
 
 # ── Update callbacks ────────────────────────────────────────────────
@@ -28,6 +32,36 @@ from bpy.props import (
 def _save_paths_proxy(self, context):
     from . import _save_paths
     _save_paths(self, context)
+
+
+def _map_region_changed_proxy(self, context):
+    """Смена района карты → сбрасываем отсканированные списки IPL.
+
+    Списки `gtatools_text_ipls` / `gtatools_binary_ipls` собираются Scan'ом
+    под КОНКРЕТНЫЙ район и работают как allowlist. Если оставить их при
+    переключении на другой район, ни один их пункт не совпадёт с новым
+    набором → импорт молча отбросит ВСЁ («not in Scan selection», 0
+    instances). Поэтому чистим: пустой список = грузить всё, что проходит
+    фильтр района; при желании пользователь сканирует заново под новый."""
+    try:
+        self.gtatools_text_ipls.clear()
+        self.gtatools_binary_ipls.clear()
+        if hasattr(self, 'gtatools_text_ipls_index'):
+            self.gtatools_text_ipls_index = 0
+        if hasattr(self, 'gtatools_binary_ipls_index'):
+            self.gtatools_binary_ipls_index = 0
+    except Exception:
+        pass
+
+
+def _lightcut_rebuild_proxy(self, context):
+    """Живое обновление вайр-резака света при смене типа/радиуса/сегментов/
+    радиуса кольца — перестраивает INU_LightCutter, если он существует."""
+    try:
+        from .ops import light_ops
+        light_ops.rebuild_lightcutter(context)
+    except Exception:
+        pass
 
 
 def _col_light_invalidate_preview_proxy(self, context):
@@ -101,6 +135,14 @@ def _profile_enum_items_proxy(self, context):
 # — тот же приём, что у _profile_enum_items_proxy.
 _bake_map_enum_cache = []
 
+# Контекст перевода для enum карт. Blender переводит пункты enum в контексте
+# проперти; метки карт (AO/Diffuse/Shadow/Bevel) совпадают со встроенным
+# словарём Blender и иначе становятся ОО/Диффузный/Тень/Фаска. Регистрация
+# своего перевода НЕ перебивает встроенный словарь — поэтому уводим пункты в
+# СВОЙ контекст, где переводов нет → Blender показывает исходный английский.
+# (Любая непустая строка-контекст без записей в словаре подходит.)
+_MAP_TR_CTX = 'INU_BAKE_MAP'
+
 
 def _bake_map_enum_items_proxy(self, context):
     from .tools.bake import bake_map_enum_items
@@ -111,14 +153,31 @@ def _bake_map_enum_items_proxy(self, context):
     return _bake_map_enum_cache
 
 
-# Режимы смешивания композита — статичны (зеркало tools.bake.BLEND_MODES).
-# Статичные items GC-безопасны, proxy/кэш не нужны.
+# Полный набор режимов наложения Blender (как в Mix-узле). Метки —
+# английские (технические), описания — русские. id/порядок/набор зеркалят
+# единый источник правды tools.bake.bake_composite.BLEND_DEFS; здесь только
+# UI-метаданные. Статичный список GC-безопасен — proxy/кэш не нужны (в
+# отличие от карт). Метки НЕ форсятся в английский (в отличие от карт):
+# Blender сам переводит «Multiply→Умножение» и т.п. — как в своём Mix-узле.
 _BAKE_BLEND_ITEMS = [
-    ('NORMAL',   "Normal",   "Заменяет нижний слой"),
-    ('MULTIPLY', "Multiply", "Умножение (затемнение) — AO / Shadow"),
-    ('ADD',      "Add",      "Сложение (осветление)"),
-    ('SCREEN',   "Screen",   "Экран (осветление)"),
-    ('OVERLAY',  "Overlay",  "Перекрытие — контраст / износ кромок"),
+    ('NORMAL',       "Normal",       T("Заменяет нижний слой")),
+    ('DARKEN',       "Darken",       T("Минимум из двух — затемнение")),
+    ('MULTIPLY',     "Multiply",     T("Умножение (затемнение) — AO / Shadow")),
+    ('BURN',         "Color Burn",   T("Затемнение основы — резкий контраст теней")),
+    ('LIGHTEN',      "Lighten",      T("Максимум из двух — осветление")),
+    ('SCREEN',       "Screen",       T("Экран (осветление)")),
+    ('DODGE',        "Color Dodge",  T("Осветление основы — резкие блики")),
+    ('ADD',          "Add",          T("Сложение (осветление)")),
+    ('OVERLAY',      "Overlay",      T("Перекрытие — контраст / износ кромок")),
+    ('SOFT_LIGHT',   "Soft Light",   T("Мягкий свет — деликатный контраст")),
+    ('LINEAR_LIGHT', "Linear Light", T("Линейный свет — жёсткий контраст")),
+    ('DIFFERENCE',   "Difference",   T("Модуль разности — инверсия пересечений")),
+    ('SUBTRACT',     "Subtract",     T("Вычитание (затемнение)")),
+    ('DIVIDE',       "Divide",       T("Деление (осветление)")),
+    ('HUE',          "Hue",          T("Тон верхнего, насыщенность и яркость нижнего")),
+    ('SATURATION',   "Saturation",   T("Насыщенность верхнего, тон и яркость нижнего")),
+    ('COLOR',        "Color",        T("Тон и насыщенность верхнего, яркость нижнего")),
+    ('VALUE',        "Value",        T("Яркость верхнего, тон и насыщенность нижнего")),
 ]
 
 # Разрешения — степени двойки. X/Y привязаны к этому списку (enum), а
@@ -161,6 +220,38 @@ def _bake_live_update(self, context):
         rebuild_live_composite(obj)
     except Exception:
         pass
+
+
+def _desaturate_image_inplace(img):
+    """Свести изображение в серое по яркости (Rec.709) прямо в пикселях."""
+    try:
+        w, h = img.size
+        if w == 0 or h == 0 or not len(img.pixels):
+            return
+        import numpy as np
+        px = np.empty(w * h * 4, dtype=np.float32)
+        img.pixels.foreach_get(px)
+        px = px.reshape(-1, 4)
+        lum = 0.2126 * px[:, 0] + 0.7152 * px[:, 1] + 0.0722 * px[:, 2]
+        px[:, 0] = px[:, 1] = px[:, 2] = lum
+        img.pixels.foreach_set(px.ravel())
+        img.update()
+    except Exception:
+        pass
+
+
+def _bake_desaturate_update(self, context):
+    # При включении «Обесцветить» для Normal — сразу свести уже запечённую
+    # карту в серое (визуально «перепечь обесцвеченной»), без полного
+    # повторного запекания. Выключение вернёт цвет только после повторного
+    # «Запечь» (обесцвечивание пикселей необратимо).
+    if self.desaturate and self.map_id == 'NORMAL':
+        obj = getattr(context, 'active_object', None)
+        base = obj.get("inu_bake_base", "") if obj else ""
+        img = bpy.data.images.get(f"{base}_{self.map_id}") if base else None
+        if img is not None:
+            _desaturate_image_inplace(img)
+    _bake_live_update(self, context)
 
 
 def _bake_layer_index_update(self, context):
@@ -476,21 +567,37 @@ class INUBakeLayer(bpy.types.PropertyGroup):
     композитор их УЖЕ читает, включение = только UI, без смены схемы.
     См. docs/BAKE_FEATURE_PLAN.md."""
     map_id: EnumProperty(
-        name="Карта", description="Какую карту печь в этом слое",
-        items=_bake_map_enum_items_proxy, update=_bake_live_update)
+        name=T("Карта"), description=T("Какую карту печь в этом слое"),
+        items=_bake_map_enum_items_proxy, update=_bake_live_update,
+        translation_context=_MAP_TR_CTX)        # пункты — английскими, без авто-перевода
     enabled: BoolProperty(name="", default=True, update=_bake_live_update)
     blend_mode: EnumProperty(
-        name="Режим", description="Как смешивать с нижними слоями",
+        name=T("Режим"), description=T("Как смешивать с нижними слоями"),
         items=_BAKE_BLEND_ITEMS, default='MULTIPLY', update=_bake_live_update)
     opacity: FloatProperty(
-        name="Прозрачность", default=1.0, min=0.0, max=1.0, subtype='FACTOR',
+        name=T("Прозрачность"), default=1.0, min=0.0, max=1.0, subtype='FACTOR',
         update=_bake_live_update)
+    # Обесцветить слой перед композитом (в оттенки серого по яркости).
+    # Нужно для Normal Map: при объединении её синий tangent-space оттенок
+    # проступает на итоговой текстуре; обесцвечивание оставляет только
+    # деталь рельефа (как при сведении нормал-мапы в Фотошопе). Кнопка в
+    # UI показывается только для слоёв с картой Normal.
+    desaturate: BoolProperty(
+        name=T("Обесцветить"), default=False,
+        description=T("Обесцветить слой (в серое по яркости) — убирает синий "
+                    "оттенок Normal Map. Для Normal сразу сводит уже "
+                    "запечённую карту в серое"),
+        update=_bake_desaturate_update)
+    # Контраст/гамма слоя — real-time: применяются и в numpy-сведении, и в
+    # живом нодовом превью (update пересобирает материал → видно сразу).
+    contrast: FloatProperty(name=T("Контраст"), default=1.0, min=0.0, max=4.0,
+                            update=_bake_live_update)
+    gamma: FloatProperty(name=T("Гамма"), default=1.0, min=0.05, max=4.0,
+                         update=_bake_live_update)
     # ── FUTURE (identity сейчас; композитор уже читает) ──
-    contrast: FloatProperty(name="Контраст", default=1.0, min=0.0, max=4.0)
-    gamma: FloatProperty(name="Гамма", default=1.0, min=0.05, max=4.0)
-    influence_target: StringProperty(name="Влияние на", default='')
+    influence_target: StringProperty(name=T("Влияние на"), default='')
     influence_amount: FloatProperty(
-        name="Сила влияния", default=1.0, min=0.0, max=1.0, subtype='FACTOR')
+        name=T("Сила влияния"), default=1.0, min=0.0, max=1.0, subtype='FACTOR')
 
 
 def _on_scene_animobj_pick(self, context):
@@ -525,6 +632,13 @@ def _on_scene_animobj_pick(self, context):
         pass
 
 
+class INULightCutRing(bpy.types.PropertyGroup):
+    """Одно кольцо резака света — радиус 0..1 (доля от общего радиуса,
+    от центра к краю)."""
+    radius: FloatProperty(name=T("Радиус"), default=0.5, min=0.0, max=1.0,
+                          subtype='FACTOR', update=_lightcut_rebuild_proxy)
+
+
 # ── PropertyGroup ─────────────────────────────────────────────────
 
 
@@ -556,7 +670,7 @@ class INUSceneSettings(bpy.types.PropertyGroup):
 
     gtatools_particle_sim: BoolProperty(
         name="Particle Simulation",
-        description="Анимировать 2DFX частицы в viewport",
+        description=T("Анимировать 2DFX частицы в viewport"),
         default=False,
         update=_update_particle_sim,
     )
@@ -566,19 +680,19 @@ class INUSceneSettings(bpy.types.PropertyGroup):
     # ── UV Grid Randomizer ──────────────────────────────────────
     gtatools_uv_grid_cols: IntProperty(
         name="Columns",
-        description="Количество колонок в сетке текстуры",
+        description=T("Количество колонок в сетке текстуры"),
         default=3, min=1, max=16,
         update=_update_uv_grid,
     )
     gtatools_uv_grid_rows: IntProperty(
         name="Rows",
-        description="Количество рядов в сетке текстуры",
+        description=T("Количество рядов в сетке текстуры"),
         default=2, min=1, max=16,
         update=_update_uv_grid,
     )
     gtatools_uv_grid_align: EnumProperty(
         name="Alignment",
-        description="Позиция UV в ячейке",
+        description=T("Позиция UV в ячейке"),
         items=[
             ('CENTER', "Center", "Center of cell"),
             ('TOP_LEFT', "Top Left", "Top left corner"),
@@ -594,103 +708,119 @@ class INUSceneSettings(bpy.types.PropertyGroup):
     )
     gtatools_uv_link_islands: BoolProperty(
         name="Link Polygons",
-        description="Полигоны с пересекающимися UV перемещаются вместе",
+        description=T("Полигоны с пересекающимися UV перемещаются вместе"),
         default=False,
     )
 
     # ── COL Light ───────────────────────────────────────────────
     gtatools_col_day_min: IntProperty(
-        name="Day Min", description="Минимальное значение дневного света (тень)",
+        name="Day Min", description=T("Минимальное значение дневного света (тень)"),
         default=10, min=0, max=15)
     gtatools_col_day_max: IntProperty(
-        name="Day Max", description="Максимальное значение дневного света (свет)",
+        name="Day Max", description=T("Максимальное значение дневного света (свет)"),
         default=15, min=0, max=15)
     gtatools_col_night_min: IntProperty(
-        name="Night Min", description="Минимальное значение ночного света (тень)",
+        name="Night Min", description=T("Минимальное значение ночного света (тень)"),
         default=0, min=0, max=15,
         update=_col_light_invalidate_preview_proxy)
     gtatools_col_night_max: IntProperty(
-        name="Night Max", description="Максимальное значение ночного света (свет)",
+        name="Night Max", description=T("Максимальное значение ночного света (свет)"),
         default=5, min=0, max=15,
         update=_col_light_invalidate_preview_proxy)
     gtatools_col_light_edge: FloatProperty(
         name="Edge",
-        description="Сдвиг границы COL освещения",
+        description=T("Сдвиг границы COL освещения"),
         default=0.0, min=-5.0, max=5.0, soft_min=-1.0, soft_max=1.0, step=1,
         update=_col_light_invalidate_preview_proxy)
     gtatools_col_light_threshold: IntProperty(
         name="Threshold",
-        description="Порог яркости",
+        description=T("Порог яркости"),
         default=0, min=0, max=100,
         update=_col_light_invalidate_preview_proxy)
     gtatools_col_light_contrast: FloatProperty(
         name="Contrast",
-        description="Контраст",
+        description=T("Контраст"),
         default=0.0, min=0.0, max=5.0, soft_min=0.0, soft_max=1.0, step=1,
         update=_col_light_invalidate_preview_proxy)
     gtatools_col_light_font_size: IntProperty(
         name="Font Size",
-        description="Размер цифр на полигонах",
+        description=T("Размер цифр на полигонах"),
         default=13, min=6, max=36,
         update=_col_light_invalidate_preview_proxy)
     gtatools_col_light_show_numbers: BoolProperty(
         name="Show Numbers",
-        description="Показать цифры на полигонах",
+        description=T("Показать цифры на полигонах"),
         default=True)
 
     # ── Map / IMG / Paths ───────────────────────────────────────
     gtatools_img_path: StringProperty(
         name="IMG Archive",
-        description="Путь к .img архиву GTA SA для экспорта моделей",
+        description=T("Путь к .img архиву GTA SA для экспорта моделей"),
+        default="", subtype='FILE_PATH',
+        update=_save_paths_proxy)
+    gtatools_fx_txd_path: StringProperty(
+        name=T("TXD эффектов"),
+        description=T(
+            "Путь к .txd с текстурами эффектов GTA SA (короны, тени, вода — "
+            "например particle.txd). Эти текстуры НЕ входят в аддон (это "
+            "ассеты игры) и грузятся отсюда для превью 2DFX. Если пусто — "
+            "ищутся автоматически в папке игры (Game Root)."),
         default="", subtype='FILE_PATH',
         update=_save_paths_proxy)
     gtatools_map_region: EnumProperty(
         name="Region",
-        description="Район карты для импорта",
-        items=_get_map_region_items_proxy)
+        description=T("Район карты для импорта"),
+        items=_get_map_region_items_proxy,
+        update=_map_region_changed_proxy)
     gtatools_profile_enabled: BoolProperty(
-        name="Профайлер",
-        description="Замерять время операций",
+        name=T("Профайлер"),
+        description=T("Замерять время операций импорта и выводить тайминги "
+                    "по стадиям в системную консоль (Window → Toggle System "
+                    "Console). Полезно для диагностики тормозов"),
         default=False)
     gtatools_show_binary_ipls: BoolProperty(
         name="Show binary IPLs",
-        description="Развернуть список бинарных IPL для галочек",
+        description=T("Развернуть список бинарных IPL для галочек"),
         default=False)
     gtatools_show_text_ipls: BoolProperty(
         name="Show text IPLs",
-        description="Развернуть список текстовых IPL для галочек",
+        description=T("Развернуть список текстовых IPL для галочек"),
         default=False)
     gtatools_map_skip_2dfx: BoolProperty(
         name="Skip 2DFX",
-        description="Не импортировать 2DFX-эффекты при импорте",
+        description=T("Не импортировать 2DFX-эффекты при импорте"),
         default=True)
     gtatools_img_use_gta_dat: BoolProperty(
         name="Use gta.dat",
-        description="Искать все IDE/IPL через gta.dat",
+        description=T("Искать все IDE/IPL через gta.dat"),
         default=False)
+    gtatools_scene_alpha_on: BoolProperty(
+        name=T("Альфа сцены"),
+        description=T("Текущее состояние альфы на материалах сцены (для кнопки-переключателя)"),
+        default=True)
     gtatools_img_skip_lod: BoolProperty(
         name="Skip LOD",
-        description="Пропустить LOD модели при импорте",
+        description=T("Пропустить LOD модели при импорте"),
         default=True)
     gtatools_img_load_txd: BoolProperty(
         name="Load TXD",
-        description="Загружать TXD текстуры вместе с DFF",
+        description=T("Загружать TXD текстуры вместе с DFF"),
         default=False)
     gtatools_map_load_col: BoolProperty(
         name="Load COL",
-        description="Загружать коллизии из кеша при импорте карты",
+        description=T("Загружать коллизии из кеша при импорте карты"),
         default=False)
     gtatools_map_group_by_ipl: BoolProperty(
         name="Group by IPL",
-        description="Создавать отдельную коллекцию на каждый IPL-файл",
+        description=T("Создавать отдельную коллекцию на каждый IPL-файл"),
         default=True)
     # Active game — drives version dispatch in DFF/COL/TXD/IDE/IPL/IMG
     # writers and lint thresholds. Default SA (the addon's historical
     # focus). III/VC are work-in-progress — readers/writers gradually
     # gaining version-aware code paths.
     gtatools_game: EnumProperty(
-        name="Игра",
-        description="Целевая игра для экспорта / валидации. Импорт авто-детектит игру по RW-версии",
+        name=T("Игра"),
+        description=T("Целевая игра для экспорта / валидации. Импорт авто-детектит игру по RW-версии"),
         items=[
             ('SA',  "SA",  "GTA: San Andreas (RW 3.6, COL3, IMG VER2)"),
             ('VC',  "VC",  "GTA: Vice City (RW 3.5, COL2, IMG VER1)"),
@@ -702,8 +832,8 @@ class INUSceneSettings(bpy.types.PropertyGroup):
     # Affects DFF reader/writer dispatch and export options. Импорт
     # авто-детектит платформу по наличию Native Data PLG чанков.
     gtatools_platform: EnumProperty(
-        name="Платформа",
-        description="Целевая платформа: PC (vanilla) или Mobile (iOS/Android, Native Data PLG)",
+        name=T("Платформа"),
+        description=T("Целевая платформа: PC (vanilla) или Mobile (iOS/Android, Native Data PLG)"),
         items=[
             ('PC',     "PC",     "PC / Xbox / PS2 (vanilla RW geometry)"),
             ('MOBILE', "Mobile", "iOS / Android (Native Data PLG, War Drum OpenGL)"),
@@ -711,32 +841,47 @@ class INUSceneSettings(bpy.types.PropertyGroup):
         default='PC')
     gtatools_game_root: StringProperty(
         name="Game Root",
-        description="Корневая папка GTA SA",
+        description=T("Корневая папка GTA SA"),
         default="", subtype='DIR_PATH',
         update=_save_paths_proxy)
     gtatools_ide_path: StringProperty(
         name="IDE File",
-        description="Путь к IDE файлу GTA SA",
+        description=T("Путь к IDE файлу GTA SA"),
         default="", subtype='FILE_PATH',
         update=_save_paths_proxy)
     gtatools_ipl_path: StringProperty(
         name="IPL File",
-        description="Путь к IPL файлу GTA SA",
+        description=T("Путь к IPL файлу GTA SA"),
         default="", subtype='FILE_PATH',
         update=_save_paths_proxy)
+    # Optional multi-IPL sync list. When populated, the IPL Sync
+    # operator iterates every entry here instead of the single
+    # ``gtatools_ipl_path`` above — lets one click reconcile a map
+    # split across several .ipl files. Empty → falls back to the
+    # single path (unchanged legacy behaviour). GTATOOLS_PathItem is
+    # already registered (shared with the map analyzer lists).
+    gtatools_ipl_sync_list: CollectionProperty(type=GTATOOLS_PathItem)
+    # Active row for the scrollable template_list, and the collapse
+    # toggle for its panel section (the list can grow long, so it's
+    # collapsed by default and lives behind a disclosure triangle).
+    gtatools_ipl_sync_list_index: IntProperty(default=0)
+    gtatools_show_ipl_sync_list: BoolProperty(
+        name=T("Sync несколько IPL"),
+        description=T("Показать список IPL для пакетной синхронизации"),
+        default=False)
 
     # ── TXD settings ────────────────────────────────────────────
     gtatools_txd_auto_import: BoolProperty(
         name="Import TXD",
-        description="Автоимпорт TXD текстур при импорте DFF",
+        description=T("Автоимпорт TXD текстур при импорте DFF"),
         default=True)
     gtatools_shared_txd_name: StringProperty(
         name="Shared TXD Name",
-        description="Имя общего TXD файла",
+        description=T("Имя общего TXD файла"),
         default="")
     gtatools_txd_import_path: StringProperty(
         name="TXD Import Folder",
-        description="Папка для поиска TXD при импорте DFF",
+        description=T("Папка для поиска TXD при импорте DFF"),
         default="", subtype='DIR_PATH')
 
     # ── Asset Library Builder ───────────────────────────────────
@@ -745,34 +890,43 @@ class INUSceneSettings(bpy.types.PropertyGroup):
     # thumbnails + IDE metadata embedded on every asset).
     gtatools_library_output_path: StringProperty(
         name="Library Output",
-        description="Папка куда писать собранную Asset Library "
-                    "(13 .blend файлов + blender_assets.cats.txt + textures/)",
+        description=T("Папка куда писать собранную Asset Library "
+                    "(13 .blend файлов + blender_assets.cats.txt + textures/)"),
         default="", subtype='DIR_PATH')
+    gtatools_enable_asset_builder: BoolProperty(
+        name=T("Разрешить сборку Asset Library"),
+        description=T(
+            "Сборка Asset Library запускает ФОНОВЫЙ процесс Blender "
+            "(blender --background) на встроенном скрипте. Это безопасно "
+            "(запускается сам Blender, не сторонняя программа), но по "
+            "умолчанию выключено. Включи, если осознанно пользуешься этой "
+            "функцией."),
+        default=False)
     gtatools_library_no_preview: BoolProperty(
-        name="Без превью",
-        description="Не рендерить превьюшки. В ~3× быстрее, но Asset Browser "
-                    "показывает заглушки вместо миниатюр",
+        name=T("Без превью"),
+        description=T("Не рендерить превьюшки. В ~3× быстрее, но Asset Browser "
+                    "показывает заглушки вместо миниатюр"),
         default=False)
     gtatools_library_preview_size: IntProperty(
-        name="Размер превью",
-        description="Размер превьюшек в пикселях. 128 — стандарт Blender, "
-                    "256 крупнее но в 4× медленнее на рендере",
+        name=T("Размер превью"),
+        description=T("Размер превьюшек в пикселях. 128 — стандарт Blender, "
+                    "256 крупнее но в 4× медленнее на рендере"),
         default=128, min=64, max=512)
     gtatools_library_skip_existing: BoolProperty(
-        name="Пропускать готовые",
-        description="Пропускать категории чьи .blend уже существуют в Output. "
+        name=T("Пропускать готовые"),
+        description=T("Пропускать категории чьи .blend уже существуют в Output. "
                     "Удобно при инкрементальном добавлении новых моделей "
-                    "после установки модов",
+                    "после установки модов"),
         default=True)
     gtatools_library_delete_cache: BoolProperty(
-        name="Удалить кеш после сборки",
-        description="После успешной сборки библиотеки удалить папку "
+        name=T("Удалить кеш после сборки"),
+        description=T("После успешной сборки библиотеки удалить папку "
                     ".inu_cache/ (DFF, COL, исходные PNG). Освобождает "
                     "много места на диске. Текстуры в самой библиотеке "
                     "остаются — при включённой галочке они принудительно "
                     "копируются в библиотеку (не симлинком). Будь готов "
                     "что Import Map после этого потребует повторно "
-                    "«Извлечь ресурсы»",
+                    "«Извлечь ресурсы»"),
         default=False)
     # Дополнительные категории при региональной сборке. Когда Map Region
     # ≠ ALL, по умолчанию строится только regional + GENERIC + LOD.
@@ -780,24 +934,24 @@ class INUSceneSettings(bpy.types.PropertyGroup):
     # При region == ALL — игнорируются (всё равно строится всё).
     gtatools_library_include_vehicles: BoolProperty(
         name="Vehicles",
-        description="Включить в сборку машины/мотоциклы/лодки/самолёты. "
+        description=T("Включить в сборку машины/мотоциклы/лодки/самолёты. "
                     "Имеет смысл только при выбранном регионе — при ALL "
-                    "категория всё равно строится",
+                    "категория всё равно строится"),
         default=False)
     gtatools_library_include_peds: BoolProperty(
         name="Peds",
-        description="Включить в сборку модели NPC / игрока. "
-                    "Имеет смысл только при выбранном регионе",
+        description=T("Включить в сборку модели NPC / игрока. "
+                    "Имеет смысл только при выбранном регионе"),
         default=False)
     gtatools_library_include_weapons: BoolProperty(
         name="Weapons",
-        description="Включить в сборку модели оружия. "
-                    "Имеет смысл только при выбранном регионе",
+        description=T("Включить в сборку модели оружия. "
+                    "Имеет смысл только при выбранном регионе"),
         default=False)
     gtatools_library_include_interiors: BoolProperty(
         name="Interiors",
-        description="Включить в сборку Interior-объекты (data/maps/interior). "
-                    "Имеет смысл только при выбранном регионе",
+        description=T("Включить в сборку Interior-объекты (data/maps/interior). "
+                    "Имеет смысл только при выбранном регионе"),
         default=False)
 
     # ── «Проверка» panel toggle state ─────────────────────────────────
@@ -806,19 +960,19 @@ class INUSceneSettings(bpy.types.PropertyGroup):
     # module-level globals which reset on every addon (re)load.
     gtatools_hide_dff: BoolProperty(
         name="Hide DFF",
-        description="Currently hiding DFF meshes via the «Проверка» toggle",
+        description=T("Currently hiding DFF meshes via the «Проверка» toggle"),
         default=False)
     gtatools_hide_lod: BoolProperty(
         name="Hide LOD",
-        description="Currently hiding LOD meshes via the «Проверка» toggle",
+        description=T("Currently hiding LOD meshes via the «Проверка» toggle"),
         default=False)
     gtatools_hide_col: BoolProperty(
         name="Hide COL",
-        description="Currently hiding COL meshes via the «Проверка» toggle",
+        description=T("Currently hiding COL meshes via the «Проверка» toggle"),
         default=False)
     gtatools_hide_sha: BoolProperty(
         name="Hide SHA",
-        description="Currently hiding shadow meshes via the «Проверка» toggle",
+        description=T("Currently hiding shadow meshes via the «Проверка» toggle"),
         default=False)
     gtatools_links_active: BoolProperty(
         name="Model links overlay",
@@ -828,34 +982,34 @@ class INUSceneSettings(bpy.types.PropertyGroup):
     gtatools_dxt_backend: EnumProperty(
         name="",
         description=(
-            "Бэкенд сжатия DXT-текстур.\n"
+            T("Бэкенд сжатия DXT-текстур.\n"
             "Pure numpy, без NVTT и внешних бинарей — соответствует требованиям\n"
             "extensions.blender.org. Поверх любого бэкенда работает кэш по\n"
-            "session_uid: повторный экспорт без правок текстур почти мгновенный."
+            "session_uid: повторный экспорт без правок текстур почти мгновенный.")
         ),
         items=[
             ('numpy', "Numpy",
-             "Рекомендуемый режим для финального экспорта в IMG.\n"
+             T("Рекомендуемый режим для финального экспорта в IMG.\n"
              "Range-fit на mip 0 (главный уровень детализации) + bbox-int\n"
              "на меньших мипах. Лучшее качество — на уровне NVTT2 «fast».\n"
              "Скорость: ~0.5с на 54 текстурах (1024²). В ~7× быстрее старого\n"
-             "NVTT-пути. Бери его, если не уверен какой выбрать"),
+             "NVTT-пути. Бери его, если не уверен какой выбрать")),
             ('numpy_fast', "Numpy fast",
-             "Для массовых тестовых прогонов и итеративной работы над\n"
+             T("Для массовых тестовых прогонов и итеративной работы над\n"
              "геометрией, когда пиксельное качество не критично.\n"
              "Bbox-int на всех мипах, ~1.7× быстрее режима Numpy\n"
              "(~0.27с на тех же 54 текстурах).\n"
              "Качество: на типовых текстурах (бетон, кирпич, дороги) на глаз\n"
              "не отличается. На текстурах с резкими альфа-границами — заборы\n"
              "(a_fence_*), листва, проволока — могут быть видимые артефакты\n"
-             "до −5 dB PSNR. Перед релизом переключи обратно на Numpy"),
+             "до −5 dB PSNR. Перед релизом переключи обратно на Numpy")),
             ('gpu', "GPU",
-             "Work-in-progress. bpy.gpu compute shader через RGBA32F image-\n"
+             T("Work-in-progress. bpy.gpu compute shader через RGBA32F image-\n"
              "слот (в Blender 5.1 ещё нет публичного SSBO API). На практике\n"
              "не даёт выигрыша: readback Buffer'а упирается в Python GIL и\n"
              "выходит медленнее обоих CPU-режимов. Оставлено как задел —\n"
              "оживёт когда в Blender добавят GPUStorageBuf. Сейчас используй\n"
-             "Numpy или Numpy fast"),
+             "Numpy или Numpy fast")),
         ],
         default='numpy')
 
@@ -879,10 +1033,10 @@ class INUSceneSettings(bpy.types.PropertyGroup):
 
     gtatools_anim_tab: EnumProperty(
         name="Animation Tab",
-        description="Раздел панели Анимации",
+        description=T("Раздел панели Анимации"),
         items=[
-            ('CHAR', "Персонажи", "IFP импорт/экспорт, IK Rig"),
-            ('OBJ',  "Объекты",   "Animated Map Object"),
+            ('CHAR', T("Персонажи"), T("IFP импорт/экспорт, IK Rig")),
+            ('OBJ',  T("Объекты"),   "Animated Map Object"),
         ],
         default='CHAR')
 
@@ -892,35 +1046,35 @@ class INUSceneSettings(bpy.types.PropertyGroup):
     # update= lives in ops/animobj_ops.py (lazy-imported to dodge
     # the circular import that would happen at module load time).
     gtatools_animobj_picker_target: EnumProperty(
-        name="Куда добавить",
+        name=T("Куда добавить"),
         description=(
-            "Куда привесить выбранный пипеткой меш:\n"
+            T("Куда привесить выбранный пипеткой меш:\n"
             "  Новый pivot — анимированная часть (своя ось/скорость)\n"
             "  К существующему pivot — на тот же pivot что и предыдущая\n"
-            "  К root — статичная часть без анимации"),
+            "  К root — статичная часть без анимации")),
         items=[
-            ('NEW_PIVOT', "Новый pivot",
-             "Создать новый pivot и привесить меш к нему — он будет крутиться отдельно"),
-            ('PIVOT', "К существующему pivot",
-             "На первый pivot — общая анимация с другими мешами под ним"),
-            ('ROOT', "К root (статика)",
-             "Статичная часть, не крутится"),
+            ('NEW_PIVOT', T("Новый pivot"),
+             T("Создать новый pivot и привесить меш к нему — он будет крутиться отдельно")),
+            ('PIVOT', T("К существующему pivot"),
+             T("На первый pivot — общая анимация с другими мешами под ним")),
+            ('ROOT', T("К root (статика)"),
+             T("Статичная часть, не крутится")),
         ],
         default='NEW_PIVOT')
     gtatools_animobj_picker: PointerProperty(
         type=bpy.types.Object,
-        name="Меш",
+        name=T("Меш"),
         description=(
-            "Кликни на пипетку и выбери меш в сцене или 3D-окне. "
+            T("Кликни на пипетку и выбери меш в сцене или 3D-окне. "
             "Если rig'а ещё нет — он создастся автоматически. "
-            "После пика поле очищается — можно сразу подбирать следующий"),
+            "После пика поле очищается — можно сразу подбирать следующий")),
         poll=lambda self, obj: obj is not None and obj.type == 'MESH',
         update=lambda self, context: _on_scene_animobj_pick(self, context))
 
     # ── Profile ─────────────────────────────────────────────────
     gtatools_profile: EnumProperty(
-        name="Профиль",
-        description="Какие панели показывать в N-sidebar",
+        name=T("Профиль"),
+        description=T("Какие панели показывать в N-sidebar"),
         items=_profile_enum_items_proxy,
         update=_on_profile_changed_proxy)
     gtatools_profile_picked: StringProperty(
@@ -930,51 +1084,49 @@ class INUSceneSettings(bpy.types.PropertyGroup):
     # ── IDE flags / suffixes / prefixes ─────────────────────────
     gtatools_show_ide_flags: BoolProperty(
         name="Show IDE Flags",
-        description="Показать флаги IDE",
+        description=T("Показать флаги IDE"),
         default=False)
     gtatools_suffix_dff: StringProperty(
         name="DFF Suffix", default="_DFF",
-        description="Суффикс для DFF моделей",
+        description=T("Суффикс для DFF моделей"),
         update=_upd_suffix_dff_proxy)
     gtatools_suffix_lod: StringProperty(
         name="LOD Suffix", default="_LOD",
-        description="Суффикс для LOD моделей",
+        description=T("Суффикс для LOD моделей"),
         update=_upd_suffix_lod_proxy)
     gtatools_suffix_col: StringProperty(
         name="COL Suffix", default="_COL",
-        description="Суффикс для COL моделей",
+        description=T("Суффикс для COL моделей"),
         update=_upd_suffix_col_proxy)
     gtatools_prefix_dff: StringProperty(
         name="DFF Prefix", default="",
-        description="Префикс для DFF моделей",
+        description=T("Префикс для DFF моделей"),
         update=_upd_prefix_dff_proxy)
     gtatools_prefix_lod: StringProperty(
         name="LOD Prefix", default="",
-        description="Префикс для LOD моделей",
+        description=T("Префикс для LOD моделей"),
         update=_upd_prefix_lod_proxy)
     gtatools_prefix_col: StringProperty(
         name="COL Prefix", default="",
-        description="Префикс для COL моделей",
+        description=T("Префикс для COL моделей"),
         update=_upd_prefix_col_proxy)
 
     # ── X Radar Maker ───────────────────────────────────────────
     gtatools_radar_output: StringProperty(
         name="Radar Output", subtype='DIR_PATH', default="",
-        description="Папка для сохранения тайлов радара")
+        description=T("Папка для сохранения тайлов радара"))
     gtatools_radar_grid: IntProperty(
         name="Radar Grid", default=8, min=1, max=16,
-        description="Размер сетки (8 = 64 тайла)")
+        description=T("Размер сетки (8 = 64 тайла)"))
     gtatools_radar_size: IntProperty(
         name="Radar Tile Size", default=256, min=64, max=4096,
-        description="Размер тайла в пикселях")
+        description=T("Размер тайла в пикселях"))
     gtatools_radar_height: FloatProperty(
         name="Radar Height", default=3000.0, min=100.0,
-        description="Высота камеры")
-    gtatools_radar_gamma: FloatProperty(
-        name="Radar Gamma", default=1.0, min=0.1, max=5.0)
+        description=T("Высота камеры"))
     gtatools_radar_specific: StringProperty(
         name="Radar Specific", default="",
-        description="Индексы тайлов через запятую (0,1,5,63)")
+        description=T("Индексы тайлов через запятую (0,1,5,63)"))
 
     # ── IMG / ID Manager ───────────────────────────────────────
     gtatools_show_img_list: BoolProperty(
@@ -983,96 +1135,88 @@ class INUSceneSettings(bpy.types.PropertyGroup):
         name="Show Preset Folder", default=False)
     gtatools_col_auto_light: BoolProperty(
         name="Auto COL Light",
-        description=("Заполнять байт освещения коллизии у фейсов, где он "
+        description=(T("Заполнять байт освещения коллизии у фейсов, где он "
                      "равен 0 (нет COL-материала / day+night не заданы). "
                      "Повторяет поведение Kam's CST-экспорта (light=78), "
                      "иначе коллизия в игре остаётся неосвещённой. "
                      "Заданные вручную и импортированные значения не "
-                     "трогаются"),
+                     "трогаются")),
         default=True)
     gtatools_col_auto_light_value: IntProperty(
         name="COL Light",
-        description=("Значение байта освещения для незаполненных фейсов. "
+        description=(T("Значение байта освещения для незаполненных фейсов. "
                      "78 = день≈15 / ночь 4 (дефолт Kam). Упаковка: "
-                     "день = младший ниббл, ночь = старший ниббл"),
+                     "день = младший ниббл, ночь = старший ниббл")),
         default=78, min=0, max=255)
     gtatools_img_entries_index: IntProperty(default=0)
-    gtatools_show_id_manager: BoolProperty(
-        name="Show ID Manager",
-        description="Показать менеджер ID",
-        default=False)
     gtatools_id_search: StringProperty(
         name="ID Search",
-        description="Поиск по ID или имени модели",
+        description=T("Поиск по ID или имени модели"),
         default="")
     gtatools_id_page: IntProperty(
         name="ID Page", default=0, min=0, soft_max=1000)
     gtatools_id_preset: EnumProperty(
-        name="Пресет ID",
-        description="Активный файл со списком ID",
+        name=T("Пресет ID"),
+        description=T("Активный файл со списком ID"),
         items=_get_id_preset_items_proxy,
         update=_id_preset_update_proxy)
-    gtatools_id_show_service: BoolProperty(
-        name="Показать сервисные кнопки",
-        description="Развернуть редкие операции",
-        default=False)
 
     # ── Texture loader ──────────────────────────────────────────
     gtatools_texture_path1: StringProperty(
         name="System Textures Path",
-        description="Путь к папке с системными текстурами GTA",
+        description=T("Путь к папке с системными текстурами GTA"),
         default="", subtype='DIR_PATH',
         update=_save_paths_proxy)
     gtatools_texture_path2: StringProperty(
         name="Blend Folder Path",
-        description="Путь к папке где находится .blend файл",
+        description=T("Путь к папке где находится .blend файл"),
         default="", subtype='DIR_PATH',
         update=_save_paths_proxy)
 
     # ── IK Rig ──────────────────────────────────────────────────
     gtatools_ik_display: EnumProperty(
-        name="Форма IK-эмпти",
-        description="Какой примитив рисовать на IK-target и pole",
+        name=T("Форма IK-эмпти"),
+        description=T("Какой примитив рисовать на IK-target и pole"),
         items=_ik_empty_types_proxy,
         default=0)
     gtatools_ik_color: FloatVectorProperty(
-        name="Цвет IK-контроллов",
-        description="Цвет всех IK-контрольных костей",
+        name=T("Цвет IK-контроллов"),
+        description=T("Цвет всех IK-контрольных костей"),
         subtype='COLOR', size=4, min=0.0, max=1.0,
         default=(0.2, 1.0, 0.2, 1.0),
         update=_on_ik_color_change)
     gtatools_floor_offset: FloatProperty(
-        name="Коллизия",
-        description="Высота виртуальной коллизии над плоскостью-полом",
+        name=T("Коллизия"),
+        description=T("Высота виртуальной коллизии над плоскостью-полом"),
         default=0.05, min=0.0, max=1.0, step=1, precision=3,
         subtype='DISTANCE',
         update=_on_floor_offset_change)
     gtatools_ik_extras_show: BoolProperty(
-        name="Дополнительно",
-        description="Настройки пола, коллизии, цвета IK",
+        name=T("Дополнительно"),
+        description=T("Настройки пола, коллизии, цвета IK"),
         default=False)
     gtatools_ik_root_motion: BoolProperty(
         name="Root motion",
-        description="Включить для анимаций которые двигают персонажа",
+        description=T("Включить для анимаций которые двигают персонажа"),
         default=False)
     gtatools_anim_tools_show: BoolProperty(
-        name="Настройка анимации",
-        description="Утилиты для исправления sign-discontinuities",
+        name=T("Настройка анимации"),
+        description=T("Утилиты для исправления sign-discontinuities"),
         default=False)
     gtatools_anim_fix_start: IntProperty(
-        name="Старт",
-        description="Первый кадр диапазона",
+        name=T("Старт"),
+        description=T("Первый кадр диапазона"),
         default=0, min=0)
     gtatools_anim_fix_end: IntProperty(
-        name="Конец",
-        description="Последний кадр диапазона",
+        name=T("Конец"),
+        description=T("Последний кадр диапазона"),
         default=10000, min=0)
     gtatools_smooth_axis_mode: EnumProperty(
         name="Smooth axis",
-        description=("Ось вдоль которой сглаживать ключи между опорными. "
+        description=(T("Ось вдоль которой сглаживать ключи между опорными. "
                      "ALL — все каналы в локальных координатах кости; "
                      "WORLD_X/Y/Z — только translation, в мировых "
-                     "координатах (медленнее, but учитывает поворот родителей)"),
+                     "координатах (медленнее, but учитывает поворот родителей)")),
         items=[
             ('ALL', "All", "All channels (local)"),
             ('WORLD_X', "X", "World X (translation only)"),
@@ -1081,37 +1225,37 @@ class INUSceneSettings(bpy.types.PropertyGroup):
         ],
         default='ALL')
     gtatools_ik_chain_offset: FloatVectorProperty(
-        name="Смещение куба руки/ноги",
-        description="Визуальный сдвиг кубов IK для рук и ног",
+        name=T("Смещение куба руки/ноги"),
+        description=T("Визуальный сдвиг кубов IK для рук и ног"),
         size=3, subtype='TRANSLATION',
         default=(0.0, 0.0, 0.0), precision=3,
         update=_on_chain_offset_change)
     gtatools_ik_size: FloatProperty(
-        name="Размер",
-        description="Множитель размера всех IK-контролов",
+        name=T("Размер"),
+        description=T("Множитель размера всех IK-контролов"),
         default=1.0, min=0.1, max=5.0, step=10, precision=2,
         update=_on_ik_size_change)
     gtatools_ik_show_chain: BoolProperty(
-        name="Руки/ноги",
-        description="Показывать кубы запястий и ступней",
+        name=T("Руки/ноги"),
+        description=T("Показывать кубы запястий и ступней"),
         default=True,
         update=_make_ik_visibility_setter(
             (frozenset({'chain'}), 'gtatools_ik_show_chain')))
     gtatools_ik_show_pole: BoolProperty(
-        name="Локти/колени",
-        description="Показывать кубы-маркеры на локтях и коленях",
+        name=T("Локти/колени"),
+        description=T("Показывать кубы-маркеры на локтях и коленях"),
         default=True,
         update=_make_ik_visibility_setter(
             (frozenset({'pole'}), 'gtatools_ik_show_pole')))
     gtatools_ik_show_rot: BoolProperty(
-        name="Голова/торс/плечи",
-        description="Показывать кубы головы, верхнего торса и ключиц",
+        name=T("Голова/торс/плечи"),
+        description=T("Показывать кубы головы, верхнего торса и ключиц"),
         default=True,
         update=_make_ik_visibility_setter(
             (frozenset({'rot', 'head'}), 'gtatools_ik_show_rot')))
     gtatools_ik_show_root: BoolProperty(
-        name="Корень",
-        description="Показывать корневой куб",
+        name=T("Корень"),
+        description=T("Показывать корневой куб"),
         default=True,
         update=_make_ik_visibility_setter(
             (frozenset({'root'}), 'gtatools_ik_show_root')))
@@ -1126,10 +1270,10 @@ class INUSceneSettings(bpy.types.PropertyGroup):
         name="Water Type",
         description="Water polygon visibility and depth type",
         items=[
-            ('0', "Обычная / Невидимая", "Глубокая вода, не отображается"),
-            ('1', "Обычная / Видимая",   "Глубокая вода с волнами"),
-            ('2', "Мелкая / Невидимая",  "Мелкая вода, не отображается"),
-            ('3', "Мелкая / Видимая",    "Мелкая вода, отображается"),
+            ('0', T("Обычная / Невидимая"), T("Глубокая вода, не отображается")),
+            ('1', T("Обычная / Видимая"),   T("Глубокая вода с волнами")),
+            ('2', T("Мелкая / Невидимая"),  T("Мелкая вода, не отображается")),
+            ('3', T("Мелкая / Видимая"),    T("Мелкая вода, отображается")),
         ],
         default='1')
     gtatools_water_speed_x: FloatProperty(
@@ -1144,19 +1288,19 @@ class INUSceneSettings(bpy.types.PropertyGroup):
     # ── Bake ────────────────────────────────────────────────────
     gtatools_bake_ambient: FloatProperty(
         name="Ambient",
-        description="Базовый рассеянный свет",
+        description=T("Базовый рассеянный свет"),
         default=0.10, min=0.0, max=0.5)
     gtatools_bake_intensity: FloatProperty(
         name="Intensity",
-        description="Множитель интенсивности света",
+        description=T("Множитель интенсивности света"),
         default=0.05, min=0.0001, max=0.5)
     gtatools_bake_gamma: FloatProperty(
         name="Gamma",
-        description="Гамма-коррекция",
+        description=T("Гамма-коррекция"),
         default=0.50, min=0.1, max=3.0)
     gtatools_bake_shadows: BoolProperty(
         name="Shadows",
-        description="Включить тени при запекании",
+        description=T("Включить тени при запекании"),
         default=True)
 
     # ── Texture Bake (карты → текстура; tools/bake/) ────────────
@@ -1164,20 +1308,34 @@ class INUSceneSettings(bpy.types.PropertyGroup):
     # Shadow/Bevel через Cycles и опц. складывает в одну diffuse-текстуру.
     # Композит строится ВСЕГДА (живой нодовый стек) — тумблера нет.
     gtatools_bake_resolution: EnumProperty(
-        name="Размер", description="Квадратный пресет размера (синхронит X/Y)",
+        name=T("Размер"), description=T("Квадратный пресет размера (синхронит X/Y)"),
         items=_BAKE_POT_ITEMS, default='1024', update=_bake_res_update)
     gtatools_bake_res_x: IntProperty(
-        name="X", description="Ширина текстуры (привязка к степеням двойки)",
+        name="X", description=T("Ширина текстуры (привязка к степеням двойки)"),
         default=1024, min=32, max=8192, update=_bake_res_x_update)
     gtatools_bake_res_y: IntProperty(
-        name="Y", description="Высота текстуры (привязка к степеням двойки)",
+        name="Y", description=T("Высота текстуры (привязка к степеням двойки)"),
         default=1024, min=32, max=8192, update=_bake_res_y_update)
     gtatools_bake_samples: IntProperty(
         name="Samples",
-        description="Сэмплы Cycles для шумных карт (AO / свет)",
+        description=T("Сэмплы Cycles для шумных карт (AO / свет)"),
         default=16, min=1, max=512)
+    gtatools_bake_show_mode: BoolProperty(
+        name=T("Запекание"),
+        description=T("Свернуть/развернуть выбор режима запекания"),
+        default=True)
+    gtatools_bake_aa: EnumProperty(
+        name=T("АА"),
+        description=T("Суперсэмплинг: печь во внутреннем бóльшем разрешении и "
+                    "ужимать до целевого — убирает лесенки/полосы на текстуре "
+                    "(как в TexTools). Работает и на Diffuse, в отличие от "
+                    "сэмплов. Дороже по времени/памяти"),
+        items=[('1', T("Выкл"),  T("Без сглаживания (быстро)")),
+               ('2', "2×",    T("Печь в 2× и ужать")),
+               ('4', "4×",    T("Печь в 4× и ужать (чисто, медленнее)"))],
+        default='2')
     gtatools_bake_margin: IntProperty(
-        name="Margin", description="Залив за края UV-островов, px",
+        name="Margin", description=T("Залив за края UV-островов, px"),
         default=8, min=0, max=64)
     # Имя выходной текстуры НЕ задаётся вручную — берётся из имени модели
     # (без префиксов/суффиксов _DFF/_LOD/_COL/hi/low) в ops/bake_ops.py.
@@ -1185,69 +1343,94 @@ class INUSceneSettings(bpy.types.PropertyGroup):
     # рендер-UV (active_render, иконка 📷). Читаются прямо с меша — поэтому
     # отдельного поля для целевой UV нет (TexTools-подход).
     gtatools_bake_mode: EnumProperty(
-        name="Режим",
-        description="Что запекаем",
+        name=T("Режим"),
+        description=T("Что запекаем"),
         items=[
             ('UV', "UV → UV",
-             "Запечь сам объект: текстуры берутся с рендер-UV (источник), "
-             "результат пишется в выделенную UV (цель). Для trim-развёрток"),
+             T("Запечь сам объект: текстуры берутся с рендер-UV (источник), "
+             "результат пишется в выделенную UV (цель). Для trim-развёрток")),
             ('HILOW', "Hi → Low",
-             "Перенести деталь с хайполи на выделенный лоуполи (в разработке)"),
+             T("Перенести деталь с хайполи на выделенный лоуполи (в разработке)")),
+            ('CAMERA', T("Камера"),
+             T("Отрендерить объект ортокамерой в текстуру с прозрачностью. "
+             "Для billboard-деревьев/импостеров: ничего не обрезается, "
+             "альфа берётся из силуэта")),
         ],
         default='UV')
+    gtatools_bake_cam_axis: EnumProperty(
+        name=T("Ракурс"),
+        description=T("С какой стороны смотрит ортокамера"),
+        items=[
+            ('FRONT', T("Спереди −Y"), T("Камера на −Y, смотрит вдоль +Y")),
+            ('BACK', T("Сзади +Y"), T("Камера на +Y, смотрит вдоль −Y")),
+            ('RIGHT', T("Справа +X"), T("Камера на +X, смотрит вдоль −X")),
+            ('LEFT', T("Слева −X"), T("Камера на −X, смотрит вдоль +X")),
+            ('TOP', T("Сверху +Z"), T("Камера сверху, смотрит вниз")),
+        ],
+        default='FRONT')
+    gtatools_bake_cam_padding: FloatProperty(
+        name=T("Отступ"),
+        description=T("Запас вокруг силуэта (доля размера) — чтобы крона не "
+                    "упиралась в края текстуры"),
+        default=0.05, min=0.0, max=0.5, subtype='FACTOR')
     gtatools_bake_bevel_size: FloatProperty(
-        name="Bevel радиус",
-        description="Радиус скругления для Bevel-карты (в единицах сцены)",
+        name=T("Bevel радиус"),
+        description=T("Радиус скругления для Bevel-карты (в единицах сцены)"),
         default=0.05, min=0.0, soft_max=1.0, precision=3)
     gtatools_bake_bevel_samples: IntProperty(
         name="Bevel samples", default=8, min=2, max=64)
     gtatools_bake_light_energy_scale: FloatProperty(
-        name="Свет (экспозиция)",
-        description="Множитель энергии внутреннего свет-рига для карт "
-                    "Shadow / Diffuse-Lit. Больше — ярче",
+        name=T("Свет (экспозиция)"),
+        description=T("Множитель энергии внутреннего свет-рига для карт "
+                    "Shadow / Diffuse-Lit. Больше — ярче"),
         default=1.0, min=0.0, soft_max=4.0)
     # Hi→Low: суффиксы пар ФИКСИРОВАНЫ (_hi / _low, см. tools.bake.HI_SUFFIX)
     # — поля выбора убраны намеренно. Настраивается только cage.
     gtatools_bake_cage_extrusion: FloatProperty(
         name="Cage",
-        description="Выдавливание cage (на сколько отодвинуть лучи от "
-                    "лоуполи к хайполи)",
+        description=T("Выдавливание cage (на сколько отодвинуть лучи от "
+                    "лоуполи к хайполи)"),
         default=0.1, min=0.0, soft_max=1.0, precision=3)
     gtatools_bake_max_ray: FloatProperty(
         name="Max Ray",
-        description="Макс. дистанция луча (0 = авто)",
+        description=T("Макс. дистанция луча (0 = авто)"),
         default=0.0, min=0.0, soft_max=1.0, precision=3)
-    gtatools_bake_show_advanced: BoolProperty(
-        name="Дополнительно", default=False)
     gtatools_bake_layers_index: IntProperty(
         default=0, update=_bake_layer_index_update)
+    # Карта для формы «Добавить слой» (создание отделено от списка слоёв):
+    # выбираешь карту здесь → кнопка добавляет слой с ней. Сама карта слоя
+    # после создания не меняется (другой слой = другая карта).
+    gtatools_bake_new_map: EnumProperty(
+        name=T("Карта"), description=T("Какую карту добавить новым слоем"),
+        items=_bake_map_enum_items_proxy,
+        translation_context=_MAP_TR_CTX)        # пункты — английскими, без авто-перевода
 
     # ── Modulate Color preview ──────────────────────────────────
     gtatools_modulate_mode: EnumProperty(
         name="Modulate Color",
-        description="Preview-режим",
+        description=T("Preview-режим"),
         items=[
-            ('OFF',   "Off",   "Без ambient — только prelight"),
+            ('OFF',   "Off",   T("Без ambient — только prelight")),
             ('DAY',   "Day",   "EXTRASUNNY_LA Midday"),
             ('NIGHT', "Night", "EXTRASUNNY_LA Midnight"),
         ],
         default='OFF',
         update=_on_modulate_preview_update)
     gtatools_modulate_mix: FloatProperty(
-        name="Прозрачность",
-        description="Сколько ambient добавлять к prelight",
+        name=T("Прозрачность"),
+        description=T("Сколько ambient добавлять к prelight"),
         default=0.002, min=0.0, max=1.0, precision=3,
         subtype='FACTOR',
         update=_on_modulate_preview_update)
     gtatools_modulate_contrast: FloatProperty(
-        name="Контраст",
-        description="Контраст финального изображения",
+        name=T("Контраст"),
+        description=T("Контраст финального изображения"),
         default=0.0, min=-1.0, max=1.0,
         subtype='FACTOR',
         update=_on_modulate_preview_update)
     gtatools_modulate_gamma: FloatProperty(
-        name="Гамма",
-        description="Гамма финального изображения",
+        name=T("Гамма"),
+        description=T("Гамма финального изображения"),
         default=0.8, min=0.1, max=4.0,
         update=_on_modulate_preview_update)
 
@@ -1255,56 +1438,56 @@ class INUSceneSettings(bpy.types.PropertyGroup):
     gtatools_prelight_preset: EnumProperty(
         name="Prelight Preset",
         items=_get_preset_items_proxy,
-        description="Выбрать пресет настроек прелайта")
+        description=T("Выбрать пресет настроек прелайта"))
     gtatools_v_offset: FloatProperty(
         name="V Offset",
-        description="Смещение яркости",
+        description=T("Смещение яркости"),
         default=0.0, min=-100.0, max=100.0)
     gtatools_vc_smooth_iterations: IntProperty(
         name="Iterations",
         description=(
-            "Сглаживание vertex colors между соседними вершинами.\n"
+            T("Сглаживание vertex colors между соседними вершинами.\n"
             "Iterations — количество проходов.\n"
-            "Больше проходов = плавнее переходы"),
+            "Больше проходов = плавнее переходы")),
         default=1, min=1, max=50)
     gtatools_vc_smooth_factor: FloatProperty(
         name="Factor",
         description=(
-            "Сила сглаживания за один проход (0-1).\n"
-            "0 — без эффекта, 1 — vertex берёт полное среднее соседей"),
+            T("Сила сглаживания за один проход (0-1).\n"
+            "0 — без эффекта, 1 — vertex берёт полное среднее соседей")),
         default=0.5, min=0.0, max=1.0)
     gtatools_vc_contrast: FloatProperty(
         name="Contrast",
         description=(
-            "Контраст vertex colors.\n"
+            T("Контраст vertex colors.\n"
             "1.0 — без изменений\n"
             "< 1.0 — меньше контраст\n"
-            "> 1.0 — больше контраст"),
+            "> 1.0 — больше контраст")),
         default=1.0, min=0.0, max=3.0)
     gtatools_vc_brightness: FloatProperty(
         name="Brightness",
         description=(
-            "Яркость vertex colors (additive offset).\n"
+            T("Яркость vertex colors (additive offset).\n"
             "0.0 — без изменений\n"
             "> 0 — светлее\n"
-            "< 0 — темнее"),
+            "< 0 — темнее")),
         default=0.0, min=-1.0, max=1.0)
     gtatools_lift_shadows_strength: FloatProperty(
-        name="Подтянуть тени",
+        name=T("Подтянуть тени"),
         description=(
-            "Подтягивает тёмные участки к самой яркой точке, "
+            T("Подтягивает тёмные участки к самой яркой точке, "
             "сохраняя шаг между гранями.\n"
             "0 — без изменений\n"
             "0.3-0.5 — рекомендуемый диапазон\n"
-            "1 — все цвета доходят до max (теряется визуальный шаг)"),
+            "1 — все цвета доходят до max (теряется визуальный шаг)")),
         default=0.5, min=0.0, max=1.0, subtype='FACTOR')
     gtatools_vc_gamma: FloatProperty(
         name="Gamma",
         description=(
-            "Гамма-коррекция vertex colors.\n"
+            T("Гамма-коррекция vertex colors.\n"
             "1.0 — без изменений\n"
             "< 1.0 — светлее (lift тени)\n"
-            "> 1.0 — темнее (deepen тени)"),
+            "> 1.0 — темнее (deepen тени)")),
         default=1.0, min=0.1, max=3.0)
     gtatools_fill_color: FloatVectorProperty(
         name="Fill Color",
@@ -1313,54 +1496,194 @@ class INUSceneSettings(bpy.types.PropertyGroup):
         min=0.0, max=1.0)
     gtatools_scatter_intensity: FloatProperty(
         name="Intensity",
-        description="Интенсивность рассеивания света",
+        description=T("Интенсивность рассеивания света"),
         default=1.0, min=0.1, max=5.0)
     gtatools_scatter_falloff: FloatProperty(
         name="Falloff",
-        description="Скорость затухания света",
+        description=T("Скорость затухания света"),
         default=1.5, min=0.5, max=5.0)
     gtatools_scatter_iterations: IntProperty(
         name="Iterations",
-        description="Количество слоёв соседних граней",
+        description=T("Количество слоёв соседних граней"),
         default=3, min=1, max=10)
     gtatools_scatter_radius: FloatProperty(
         name="Radius",
-        description="Радиус поиска соседних граней",
+        description=T("Радиус поиска соседних граней"),
         default=0.0)
 
     # Scatter Color — paints chosen color around selected polys with
     # linear distance falloff. Independent from Scatter Light (which
     # spreads existing prelight).
     gtatools_scatter_color_color: FloatVectorProperty(
-        name="Цвет",
-        description="Цвет, которым заливаются вершины вокруг выделенных полигонов",
+        name=T("Цвет"),
+        description=T("Цвет, которым заливаются вершины вокруг выделенных полигонов"),
         subtype='COLOR_GAMMA', size=3,
         default=(1.0, 1.0, 1.0), min=0.0, max=1.0)
     gtatools_scatter_color_strength: FloatProperty(
-        name="Сила",
-        description="Сила вклада цвета в центре. 0 — ничего не делать, 1 — полностью заменить vcols в центре на выбранный цвет",
+        name=T("Сила"),
+        description=T("Сила вклада цвета в центре. 0 — ничего не делать, 1 — полностью заменить vcols в центре на выбранный цвет"),
         default=1.0, min=0.0, max=1.0, subtype='FACTOR')
     gtatools_scatter_color_distance: FloatProperty(
-        name="Дальность",
-        description="Радиус как доля половины bbox-диагонали меша. 0 — только выделенные вершины, 1 — расходится на половину диагонали",
+        name=T("Дальность"),
+        description=T("Радиус как доля половины bbox-диагонали меша. 0 — только выделенные вершины, 1 — расходится на половину диагонали"),
         default=0.3, min=0.0, max=1.0, subtype='FACTOR')
+
+    # ── Fill prelight (плоская заливка Day/Night одним цветом) ──
+    # Дефолты — доминирующие тона из test.dff: день 124/124/124, ночь
+    # 83/83/83 (в 0-1: 124/255≈0.486, 83/255≈0.325). subtype COLOR_GAMMA
+    # хранит значение прямо в sRGB-пространстве, поэтому оно пишется
+    # один-в-один в `color_srgb` → байт ровно 124 / 83.
+    gtatools_fill_prelight_day: FloatVectorProperty(
+        name=T("День"),
+        description=T("Цвет дневного прилайта (Day). По умолчанию 124,124,124 — доминирующий тон"),
+        subtype='COLOR_GAMMA', size=3,
+        default=(124 / 255, 124 / 255, 124 / 255), min=0.0, max=1.0)
+    gtatools_fill_prelight_night: FloatVectorProperty(
+        name=T("Ночь"),
+        description=T("Цвет ночного прилайта (Night). По умолчанию 83,83,83 — доминирующий тон"),
+        subtype='COLOR_GAMMA', size=3,
+        default=(83 / 255, 83 / 255, 83 / 255), min=0.0, max=1.0)
+    gtatools_fill_prelight_selected_only: BoolProperty(
+        name=T("Только выделенные"),
+        description=T("Залить только выделенные меши (иначе — все меши сцены)"),
+        default=False)
+
+    # ── Foliage prelight — радиальный градиент кроны + tint листвы ──
+    # Темнее в центре кроны, светлее на периферии (геометрический, без
+    # света сцены). Материал листвы выбирается через prop_search по
+    # material_slots активного объекта — ствол не трогается.
+    gtatools_foliage_material_name: StringProperty(
+        name=T("Материал листвы"),
+        description=T("Красить только грани с этим материалом (пусто = весь меш). Ствол с другим материалом не затрагивается"),
+        default="")
+    gtatools_foliage_color_material_name: StringProperty(
+        name=T("Материал (цвет)"),
+        description=T("Материал для операции «Цвет листвы» (своя независимая "
+                    "цель; пусто = весь меш)"),
+        default="")
+    gtatools_foliage_select_only: BoolProperty(
+        name=T("Только выделенное"),
+        description=T("Красить только выделенные в Edit Mode грани"),
+        default=False)
+    gtatools_foliage_metric: EnumProperty(
+        name=T("Форма"),
+        description=T("Как считать «внутри/снаружи»"),
+        items=[
+            ('SPHERE', T("Сфера"), T("3D-расстояние от центра кроны — для округлых крон")),
+            ('CYLINDER', T("Цилиндр"), T("Горизонтальное расстояние от оси ствола — для вытянутых/колонновидных")),
+        ],
+        default='SPHERE')
+    gtatools_foliage_inside: FloatProperty(
+        name=T("Внутри"),
+        description=T("Яркость в центре кроны (темнее)"),
+        default=0.25, min=0.0, max=1.0, subtype='FACTOR')
+    gtatools_foliage_outside: FloatProperty(
+        name=T("Снаружи"),
+        description=T("Яркость на периферии кроны (светлее)"),
+        default=1.0, min=0.0, max=1.0, subtype='FACTOR')
+    gtatools_foliage_gamma: FloatProperty(
+        name=T("Кривая"),
+        description=T("Кривизна градиента: >1 расширяет светлую зону, <1 — тёмную"),
+        default=1.0, min=0.1, max=4.0)
+    gtatools_foliage_height_dark: FloatProperty(
+        name=T("Затемнить низ"),
+        description=T("Доп. затемнение нижней части кроны (самозатенение сверху). 0 — выкл"),
+        default=0.0, min=0.0, max=1.0, subtype='FACTOR')
+    gtatools_foliage_color_height_dark: FloatProperty(
+        name=T("Затемнить низ"),
+        description=T("Доп. затемнение нижней части кроны для операции «Цвет» "
+                    "(отдельно от настройки кроны). 0 — выкл"),
+        default=0.0, min=0.0, max=1.0, subtype='FACTOR')
+    # ── Нарезка топологии под светом (для плавного прилайта ламп) ──
+    gtatools_lightcut_segments: IntProperty(
+        name=T("Сегменты"),
+        description=T("Количество полигонов по окружности кольца (стороны "
+                    "круга). Больше — круглее, но больше геометрии"),
+        default=16, min=3, max=64, update=_lightcut_rebuild_proxy)
+    gtatools_lightcut_target: PointerProperty(
+        type=bpy.types.Object,
+        name=T("Геометрия"),
+        description=T("Меш, в который резать (земля под лампой). Пусто — найти "
+                    "автоматически лучом вниз от лампы"),
+        poll=lambda self, obj: obj is not None and obj.type == 'MESH')
+    # ── Резак света v2 ──
+    gtatools_lightcut_type: EnumProperty(
+        name=T("Тип резака"),
+        items=[('CYLINDER', T("Цилиндр"), T("Концентрические кольца (для пола)")),
+               ('SPHERE', T("Сфера"), T("Сфера (радиус + сегменты)"))],
+        default='CYLINDER', update=_lightcut_rebuild_proxy)
+    gtatools_lightcut_ringlist: CollectionProperty(type=INULightCutRing)
+    gtatools_lightcut_ring_index: IntProperty(default=0)
+    gtatools_lightcut_separate: BoolProperty(
+        name=T("Отдельным объектом"),
+        description=T("ВКЛ — создать чистый отдельный диск (пол не трогать). "
+                      "ВЫКЛ — врезать кольца прямо в пол"),
+        default=True)
+    gtatools_lightcut_radius: FloatProperty(
+        name=T("Радиус"),
+        description=T("Радиус зоны света (метры) — задаёт размер круга. "
+                    "0 — взять Custom Distance лампы, если включён"),
+        default=3.0, min=0.0, soft_max=50.0, subtype='DISTANCE',
+        update=_lightcut_rebuild_proxy)
+    gtatools_foliage_top_bright: FloatProperty(
+        name=T("Подсветить верх"),
+        description=T("Доп. подсветка макушки кроны (имитация солнца сверху). 0 — выкл"),
+        default=0.0, min=0.0, max=1.0, subtype='FACTOR')
+    gtatools_foliage_top_height: FloatProperty(
+        name=T("Высота подсветки"),
+        description=T("Как высоко по Z достаёт подсветка верха: 1 — вся крона, "
+                    "0.3 — только верхние 30%. Ниже — подсветки нет"),
+        default=1.0, min=0.0, max=1.0, subtype='FACTOR')
+    gtatools_foliage_both_sides: BoolProperty(
+        name=T("Обе стороны (дубли)"),
+        description=T("GTA-листья часто продублированы (две грани в одной точке). "
+                    "Красить обе стороны одинаково — иначе лист закрашен только "
+                    "с одной стороны"),
+        default=True)
+    gtatools_foliage_variation: FloatProperty(
+        name=T("Разброс"),
+        description=T("Случайная вариация яркости по вершинам — листва неоднородна. "
+                    "0 — выкл; чем больше, тем сильнее темнеют отдельные листья"),
+        default=0.0, min=0.0, max=1.0, subtype='FACTOR')
+    gtatools_foliage_light_tint: FloatVectorProperty(
+        name=T("Цвет света"),
+        description=T("Оттенок освещённых листьев (периферия/снаружи кроны)"),
+        subtype='COLOR_GAMMA', size=3,
+        default=(0.55, 0.8, 0.3), min=0.0, max=1.0)
+    gtatools_foliage_shadow_tint: FloatVectorProperty(
+        name=T("Цвет тени"),
+        description=T("Оттенок затенённых листьев (центр кроны) — обычно темнее и холоднее"),
+        subtype='COLOR_GAMMA', size=3,
+        default=(0.2, 0.35, 0.12), min=0.0, max=1.0)
+    gtatools_foliage_tint_strength: FloatProperty(
+        name=T("Сила цвета"),
+        description=T("Сила оттенка. 0 — цвет не меняется (только затенение), 1 — полный tint"),
+        default=1.0, min=0.0, max=1.0, subtype='FACTOR')
+    gtatools_foliage_blend: EnumProperty(
+        name=T("Режим"),
+        description=T("Как наложить результат на текущие vertex colors"),
+        items=[
+            ('MULTIPLY', T("Поверх (×)"), T("Умножить на существующий прилайт — затенение и оттенок накладываются, запечённый свет сохраняется")),
+            ('REPLACE', T("Заменить"), T("Полностью заменить vertex colors результатом")),
+        ],
+        default='MULTIPLY')
 
     # ── Pipeline / Material preset ──────────────────────────────
     gtatools_export_pipeline: EnumProperty(
         items=[
-            ('NONE', 'None', "Без pipeline"),
-            ('0x53F2009A', 'Vehicle', "Pipeline кузова машины"),
-            ('0x53F20098', 'Day/Night', "Pipeline здания с day/night vertex colors"),
-            ('0x53F2009C', 'Building', "Простой pipeline здания"),
+            ('NONE', 'None', T("Без pipeline")),
+            ('0x53F2009A', 'Vehicle', T("Pipeline кузова машины")),
+            ('0x53F20098', 'Day/Night', T("Pipeline здания с day/night vertex colors")),
+            ('0x53F2009C', 'Building', T("Простой pipeline здания")),
             ('PED', 'Ped',
-             "Preset для персонажа: pipeline ID = 0, SkinPLG обязателен, "
+             T("Preset для персонажа: pipeline ID = 0, SkinPLG обязателен, "
              "MatFX/day-night vcols отключены. Используется для экспорта "
              "скиннутых ped-моделей. На самом экспорте автоматически "
              "выставляет ped-friendly defaults: has_skin=True, "
-             "day_cols=False, night_cols=False, matfx=False"),
+             "day_cols=False, night_cols=False, matfx=False")),
         ],
         name="Pipeline",
-        description="Рендер-пайплайн для экспорта DFF",
+        description=T("Рендер-пайплайн для экспорта DFF"),
         default='NONE',
         update=_inu_pipeline_changed_proxy)
     # Last seen pipeline value — без этого update-коллбэк не знает
@@ -1369,26 +1692,26 @@ class INUSceneSettings(bpy.types.PropertyGroup):
 
     # ── Graph editor: keyframe thinning ──
     gtatools_thin_keys_mode: EnumProperty(
-        name="Режим прореживания",
+        name=T("Режим прореживания"),
         items=[
-            ('NTH',  "Каждый N-ный", "Оставить каждый N-ный ключ"),
-            ('AUTO', "Авто",          "Удалить избыточные (колинеарные) ключи"),
+            ('NTH',  T("Каждый N-ный"), T("Оставить каждый N-ный ключ")),
+            ('AUTO', T("Авто"),          T("Удалить избыточные (колинеарные) ключи")),
         ],
         default='NTH')
     gtatools_thin_keys_stride: IntProperty(
         name="N",
-        description="Оставить каждый N-ный из выделенных (2 = удалить каждый второй)",
+        description=T("Оставить каждый N-ный из выделенных (2 = удалить каждый второй)"),
         default=2, min=2, max=20)
     gtatools_thin_keys_error: FloatProperty(
-        name="Порог ошибки",
-        description="Чем выше — тем агрессивнее срез избыточных ключей",
+        name=T("Порог ошибки"),
+        description=T("Чем выше — тем агрессивнее срез избыточных ключей"),
         default=0.01, min=0.0001, max=1.0, precision=4)
     gtatools_thin_keys_interp: EnumProperty(
-        name="Интерполяция",
+        name=T("Интерполяция"),
         items=[
-            ('BEZIER',   "Безье",     "Плавная кривая между ключами"),
-            ('LINEAR',   "Линейная",  "Прямые линии между ключами"),
-            ('CONSTANT', "Постоянная", "Ступенька — без интерполяции"),
+            ('BEZIER',   T("Безье"),     T("Плавная кривая между ключами")),
+            ('LINEAR',   T("Линейная"),  T("Прямые линии между ключами")),
+            ('CONSTANT', T("Постоянная"), T("Ступенька — без интерполяции")),
         ],
         default='BEZIER')
     gtatools_material_preset: EnumProperty(
@@ -1398,36 +1721,51 @@ class INUSceneSettings(bpy.types.PropertyGroup):
     # ── Export All ──────────────────────────────────────────────
     gtatools_export_all_dff: BoolProperty(
         name="Export DFF",
-        description="Экспортировать DFF при Export All",
+        description=T("Экспортировать DFF при Export All"),
         default=True)
     gtatools_export_all_col: BoolProperty(
         name="Export COL",
-        description="Экспортировать COL при Export All",
+        description=T("Экспортировать COL при Export All"),
         default=True)
     gtatools_export_all_lod: BoolProperty(
         name="Export LOD",
-        description="Экспортировать LOD при Export All",
+        description=T("Экспортировать LOD при Export All"),
         default=True)
     gtatools_export_all_txd: BoolProperty(
         name="Export TXD",
-        description="Экспортировать TXD при Export All",
+        description=T("Экспортировать TXD при Export All"),
         default=True)
+    gtatools_export_all_cst: BoolProperty(
+        name="Export CST",
+        description=T("Экспортировать коллизию в текстовый .cst (Collision File Editor II) при Export All"),
+        default=False)
+    gtatools_export_all_col_empty: BoolProperty(
+        name="Empty COL",
+        description=T("Писать COL/CST без геометрии (ноль faces/вершин/сфер/боксов, нулевой bounds), но с именем модели. Для моделей, которым коллизия не нужна, но запись COL должна существовать и быть привязана к модели"),
+        default=False)
     gtatools_export_all_col_library: BoolProperty(
         name="COL Library",
-        description="Писать все коллизии в один .col файл",
+        description=T("Писать все коллизии в один .col файл"),
         default=False)
     gtatools_export_all_col_library_name: StringProperty(
-        name="Имя library .col",
-        description="Имя общего .col файла без расширения",
+        name=T("Имя library .col"),
+        description=T("Имя общего .col файла без расширения"),
         default="collision")
     gtatools_export_all_txd_shared: BoolProperty(
         name="Shared TXD",
-        description="Писать все текстуры в один общий .txd файл",
+        description=T("Писать все текстуры в один общий .txd файл"),
         default=False)
     gtatools_export_all_txd_shared_name: StringProperty(
-        name="Имя общего .txd",
-        description="Имя общего .txd файла без расширения",
+        name=T("Имя общего .txd"),
+        description=T("Имя общего .txd файла без расширения"),
         default="textures")
+    gtatools_export_all_txd_merge: BoolProperty(
+        name=T("Дописать в существующий TXD"),
+        description=T(
+            "Если .txd уже существует — добавить/обновить в нём текстуры "
+            "модели, сохранив остальные текстуры файла (от других моделей). "
+            "Иначе .txd перезаписывается целиком."),
+        default=False)
 
     # ── Misc ────────────────────────────────────────────────────
     gtatools_vc_layers_expanded: BoolProperty(
@@ -1437,71 +1775,71 @@ class INUSceneSettings(bpy.types.PropertyGroup):
 
     # ── Binary file scanner (DFF / COL / TXD lint) ─────────────
     gtatools_scan_dir: StringProperty(
-        name="Папка",
-        description="Папка с DFF/COL/TXD для сканирования",
+        name=T("Папка"),
+        description=T("Папка с DFF/COL/TXD для сканирования"),
         subtype='DIR_PATH', default="")
     gtatools_scan_recursive: BoolProperty(
-        name="Включая подпапки",
-        description="Рекурсивный обход подпапок. По умолчанию выключено, чтобы случайно не просканировать всю систему",
+        name=T("Включая подпапки"),
+        description=T("Рекурсивный обход подпапок. По умолчанию выключено, чтобы случайно не просканировать всю систему"),
         default=False)
     gtatools_scan_dff: BoolProperty(name="DFF", default=True)
     gtatools_scan_col: BoolProperty(name="COL", default=True)
     gtatools_scan_txd: BoolProperty(name="TXD", default=True)
     gtatools_scan_only_errors: BoolProperty(
-        name="Только ERROR",
-        description="Скрыть WARN/INFO в списке (фильтр draw, коллекция не пересоздаётся)",
+        name=T("Только ERROR"),
+        description=T("Скрыть WARN/INFO в списке (фильтр draw, коллекция не пересоздаётся)"),
         default=True)
     gtatools_scan_report_target: EnumProperty(
-        name="Куда сохранять отчёт",
+        name=T("Куда сохранять отчёт"),
         items=[
-            ('BLEND', "Рядом с .blend", "В папке текущей сцены (.blend должен быть сохранён)"),
-            ('SCAN',  "В папке скана",   "Туда же, откуда брались файлы"),
-            ('CUSTOM',"Своя папка",      "Указать вручную"),
+            ('BLEND', T("Рядом с .blend"), T("В папке текущей сцены (.blend должен быть сохранён)")),
+            ('SCAN',  T("В папке скана"),   T("Туда же, откуда брались файлы")),
+            ('CUSTOM',T("Своя папка"),      T("Указать вручную")),
         ],
         default='BLEND')
     gtatools_scan_report_custom_path: StringProperty(
-        name="Папка для отчёта",
+        name=T("Папка для отчёта"),
         subtype='DIR_PATH', default="")
 
     # ── Analysis combined panel (file scanner + map analyzer) ──
     # Внутренний toggle между двумя режимами в одной sub-panel
     # «Анализ карты/файлов» внутри Check.
     gtatools_analysis_mode: EnumProperty(
-        name="Режим",
+        name=T("Режим"),
         items=[
-            ('FILES', "Файлы",  "Скан DFF/COL/TXD на диске"),
-            ('MAP',   "Карта",  "Cross-reference IDE/IPL"),
+            ('FILES', T("Файлы"),  T("Скан DFF/COL/TXD на диске")),
+            ('MAP',   T("Карта"),  "Cross-reference IDE/IPL"),
         ],
         default='FILES')
 
     # ── Map Analyzer (cross-reference IDE/IPL) ──────────────────
     gtatools_map_analyzer_mode: EnumProperty(
-        name="Источник",
+        name=T("Источник"),
         items=[
-            ('DAT',    "DAT файл",   "gta.dat / default.dat / кастомный — следует за IDE/IPL/IMG строками"),
-            ('FOLDER', "Папка",      "Сканировать все *.ide / *.ipl в указанной папке"),
-            ('CUSTOM', "Свои пути",  "Ручной список IDE и IPL файлов"),
+            ('DAT',    T("DAT файл"),   T("gta.dat / default.dat / кастомный — следует за IDE/IPL/IMG строками")),
+            ('FOLDER', T("Папка"),      T("Сканировать все *.ide / *.ipl в указанной папке")),
+            ('CUSTOM', T("Свои пути"),  T("Ручной список IDE и IPL файлов")),
         ],
         default='FOLDER')
     gtatools_map_analyzer_dat_path: StringProperty(
-        name=".dat файл",
+        name=T(".dat файл"),
         subtype='FILE_PATH', default="")
     gtatools_map_analyzer_folder: StringProperty(
-        name="Папка с IDE/IPL",
+        name=T("Папка с IDE/IPL"),
         subtype='DIR_PATH', default="")
     gtatools_map_analyzer_recursive: BoolProperty(
-        name="Включая подпапки",
-        description="Рекурсивный обход подпапок при FOLDER-режиме",
+        name=T("Включая подпапки"),
+        description=T("Рекурсивный обход подпапок при FOLDER-режиме"),
         default=True)
     gtatools_map_analyzer_check_img: BoolProperty(
-        name="Проверять модели в IMG",
-        description="Авто-поиск всех *.img в области скана (DAT-строки / FOLDER walk / CUSTOM parent dirs) и cross-check IDE entries — flag missing DFF/TXD",
+        name=T("Проверять модели в IMG"),
+        description=T("Авто-поиск всех *.img в области скана (DAT-строки / FOLDER walk / CUSTOM parent dirs) и cross-check IDE entries — flag missing DFF/TXD"),
         default=False)
     gtatools_map_analyzer_custom_ides: CollectionProperty(type=GTATOOLS_PathItem)
     gtatools_map_analyzer_custom_ipls: CollectionProperty(type=GTATOOLS_PathItem)
     gtatools_map_analyzer_only_errors: BoolProperty(
-        name="Только ERROR",
-        description="Скрыть WARN/INFO в списке (фильтр draw)",
+        name=T("Только ERROR"),
+        description=T("Скрыть WARN/INFO в списке (фильтр draw)"),
         default=True)
     # Shared profile for File Scanner + Map Analyzer. Single EnumProperty
     # rather than per-tool — modders typically have one stance on
@@ -1511,36 +1849,36 @@ class INUSceneSettings(bpy.types.PropertyGroup):
     # Map Analyzer (DAT / FOLDER / CUSTOM) but with its own paths so
     # the user can index a different scope.
     gtatools_texture_browser_source: EnumProperty(
-        name="Источник",
-        description="Откуда брать TXD-файлы для индекса",
+        name=T("Источник"),
+        description=T("Откуда брать TXD-файлы для индекса"),
         items=[
-            ('DAT',    "DAT",    "Из gta.dat по путям сцены — все *.img и *.txd"),
-            ('FOLDER', "Папка", "Просканировать одну папку рекурсивно"),
-            ('CUSTOM', "Файлы", "Вручную выбранные .img / .txd"),
+            ('DAT',    "DAT",    T("Из gta.dat по путям сцены — все *.img и *.txd")),
+            ('FOLDER', T("Папка"), T("Просканировать одну папку рекурсивно")),
+            ('CUSTOM', T("Файлы"), T("Вручную выбранные .img / .txd")),
         ],
         default='DAT')
     gtatools_texture_browser_folder: StringProperty(
-        name="Папка",
-        description="Папка со стандалон-TXD для сканирования",
+        name=T("Папка"),
+        description=T("Папка со стандалон-TXD для сканирования"),
         subtype='DIR_PATH', default='')
     gtatools_texture_browser_custom: CollectionProperty(type=GTATOOLS_PathItem)
     gtatools_texture_browser_check_ide: BoolProperty(
         name="Cross-ref c IDE",
-        description="Подсчитать сколько IDE-моделей используют каждый TXD (используется тот же набор IDE что и у Map Analyzer)",
+        description=T("Подсчитать сколько IDE-моделей используют каждый TXD (используется тот же набор IDE что и у Map Analyzer)"),
         default=True)
     gtatools_texture_browser_search: StringProperty(
-        name="Поиск",
-        description="Фильтр по имени текстуры или TXD",
+        name=T("Поиск"),
+        description=T("Фильтр по имени текстуры или TXD"),
         default='')
 
     gtatools_lint_profile: EnumProperty(
-        name="Профиль",
-        description="Стандарт (vanilla SA) / FLA / Строгий / Мягкий",
+        name=T("Профиль"),
+        description=T("Стандарт (vanilla SA) / FLA / Строгий / Мягкий"),
         items=[
-            ('STANDARD', "Стандарт", "Калибровано под vanilla SA — поведение из коробки"),
-            ('FLA',      "FLA",      "Считаем что Fastman92 Limit Adjuster установлен: глушим warnings про ID > 19999, interior > 18, COL surface > 178"),
-            ('STRICT',   "Строгий", "Жёстче пороги: draw_distance > 800m, mat > 50, vert > 16k, 2DFX > 100, texture > 512px. Для QA сборки"),
-            ('LENIENT',  "Мягкий",  "Прячем все INFO-уровни. Для легаси-проектов где informational шум перевешивает сигнал"),
+            ('STANDARD', T("Стандарт"), T("Калибровано под vanilla SA — поведение из коробки")),
+            ('FLA',      "FLA",      T("Считаем что Fastman92 Limit Adjuster установлен: глушим warnings про ID > 19999, interior > 18, COL surface > 178")),
+            ('STRICT',   T("Строгий"), T("Жёстче пороги: draw_distance > 800m, mat > 50, vert > 16k, 2DFX > 100, texture > 512px. Для QA сборки")),
+            ('LENIENT',  T("Мягкий"),  T("Прячем все INFO-уровни. Для легаси-проектов где informational шум перевешивает сигнал")),
         ],
         default='STANDARD')
 

@@ -119,6 +119,23 @@ def _chunk(chunk_type: int, data: bytes, lib_id: int) -> bytes:
     return pack('<III', chunk_type, len(data), lib_id) + data
 
 
+def _strip_root_chunk(blob: bytes, chunk_type: int) -> bytes:
+    """Удалить из последовательности корневых чанков (raw bytes) все чанки
+    данного типа. Для предотвращения дублей при повторной записи."""
+    if not blob:
+        return blob
+    out = bytearray()
+    off = 0
+    n = len(blob)
+    while off + 12 <= n:
+        t, sz, _lib = unpack_from('<III', blob, off)
+        seg = blob[off:off + 12 + sz]
+        if t != chunk_type:
+            out += seg
+        off += 12 + sz
+    return bytes(out)
+
+
 def _pad_string(s: str) -> bytes:
     """Encode string with null terminator, padded to 4-byte boundary."""
     raw = s.encode('ascii', errors='replace') + b'\x00'
@@ -225,41 +242,44 @@ class UVAnimKeyframe:
 
 @dataclass
 class UVAnim:
-    """One named UV animation with up to 8-channel node mapping."""
+    """One named UV animation. Формат 1-в-1 как Kam's UVanim_tool (рабочий
+    в GTA SA)."""
     name: str = ""
-    type_id: int = 0x1C0
-    # nodeToUv[0]=1 ties the animation to the first material texture slot;
-    # all zeros would leave the anim inert in the game engine.
-    node_to_uv: tuple = (1, 0, 0, 0, 0, 0, 0, 0)
+    type_id: int = 0x1C1            # Kam: 449 = 0x1C1 (НЕ 0x1C0!)
+    node_to_uv: tuple = (0, 0, 0, 0, 0, 0, 0, 0)
     duration: float = 1.0
     keyframes: list = field(default_factory=list)   # list[UVAnimKeyframe]
 
     def to_bytes(self, lib_id: int) -> bytes:
         n = len(self.keyframes)
-        # STRUCT payload
-        data = pack('<IIIIf',
-                    0x100,           # version
-                    self.type_id,
-                    n,
-                    0,               # flags
-                    self.duration)
-        # name[32]
+        # STRUCT payload — точная раскладка Kam's UVanim_tool (88-байтный
+        # заголовок + кадры по 32 байта):
+        #   u32 version=0x100, u32 typeID=0x1C1, u32 numFrames,
+        #   f32 0.0, f32 duration, u32 0, char name[32], i32 nodeToUV[8].
+        data = pack('<III', 0x100, self.type_id, n)
+        data += pack('<f', 0.0)
+        data += pack('<f', self.duration)
+        data += pack('<I', 0)
         raw = self.name.encode('ascii', errors='replace')[:31]
         data += raw + b'\x00' * (32 - len(raw))
-        # node_to_uv[8]
         mapping = list(self.node_to_uv) + [0] * (8 - len(self.node_to_uv))
         data += pack('<8i', *mapping[:8])
-        # keyframes
-        for i, kf in enumerate(self.keyframes):
-            prev = (i - 1) * UV_ANIM_KEYFRAME_SIZE if i > 0 else 0
-            data += pack('<if6f',
-                         prev, kf.time,
-                         kf.scale_u, kf.scale_v,
-                         kf.shear_u, kf.shear_v,
+        # Кадр (32 байта): f32 time, затем матрица 6×f32 в порядке Kam
+        #   [0.0, scaleU, scaleV, 0.0, -transU, transV],
+        # затем i32 prev (индекс пред. кадра, i-2 в 1-based ⇒ k-1 в 0-based).
+        # Порядок именно такой — иначе матрица вырождается и альфа-листва
+        # становится невидимой в игре.
+        # Матрица uv[6] = [0, scaleU, scaleV, 0, transU, transV] (как DragonFF
+        # get_uv_at: Location X→uv[4], Location Y→uv[5]). identity=[0,1,1,0,0,0].
+        for k, kf in enumerate(self.keyframes):
+            data += pack('<f', kf.time)
+            data += pack('<6f', 0.0, kf.scale_u, kf.scale_v, 0.0,
                          kf.trans_u, kf.trans_v)
-        struct_chunk = _chunk(CHUNK_STRUCT, data, lib_id)
-        # The UV anim chunk has its own 12-byte wrapper inside the dict
-        return _chunk(CHUNK_ANIM_ANIMATION, struct_chunk, lib_id)
+            data += pack('<i', k - 1)
+        # ВАЖНО: данные кладутся ПРЯМО в чанк ANIM (0x1B), БЕЗ обёртки STRUCT.
+        # DragonFF/Kam так и пишут. Лишний STRUCT внутри ANIM ломал чтение
+        # анимации движком (version читался как заголовок STRUCT) → не играла.
+        return _chunk(CHUNK_ANIM_ANIMATION, data, lib_id)
 
 
 @dataclass
@@ -275,19 +295,31 @@ class UVAnimDict:
 
 
 def _uv_anim_plg_bytes(anim_names: list, lib_id: int) -> bytes:
-    """Build UVAnim PLG chunk (0x135) referencing up to 8 anim names."""
+    """Material UV-anim плагины в расширении материала — формат 1-в-1 как
+    Kam's UVanim_tool (проверенно рабочий в GTA SA):
+
+        chunk 0x120 (12 байт данных: 5, 5, 0)
+        chunk 0x135 → STRUCT(0x01) { u32 mask; char name[32] на каждый бит }
+
+    Раньше мы писали 0x135 без STRUCT-обёртки и с 8×32-байтными именами —
+    движок читал мусор, позиция в потоке съезжала и весь клумп переставал
+    грузиться (модель невидима)."""
     if not anim_names:
         return b''
     names = list(anim_names)[:8]
     mask = 0
     for i in range(len(names)):
-        mask |= 1 << i
-    data = pack('<4I', 0x100, mask, 0, 0)   # version, mask, unknown, unknown
-    for i in range(8):
-        name = names[i] if i < len(names) else ''
+        mask |= (1 << i)
+    # 0x120 — материал-плагин UV-анимации (Kam пишет 5, 5, 0).
+    out = _chunk(0x120, pack('<3I', 5, 5, 0), lib_id)
+    # 0x135 — STRUCT { mask, name[32] на каждый установленный бит mask }.
+    struct_data = pack('<I', mask)
+    for name in names:
         raw = name.encode('ascii', errors='replace')[:31]
-        data += raw + b'\x00' * (32 - len(raw))
-    return _chunk(CHUNK_UV_ANIM_PLG, data, lib_id)
+        struct_data += raw + b'\x00' * (32 - len(raw))
+    out += _chunk(CHUNK_UV_ANIM_PLG,
+                  _chunk(CHUNK_STRUCT, struct_data, lib_id), lib_id)
+    return out
 
 
 def _read_uv_anim(data: bytes, offset: int, size: int) -> 'UVAnim':
@@ -308,22 +340,16 @@ def _read_uv_anim(data: bytes, offset: int, size: int) -> 'UVAnim':
     end = offset + size
     anim = UVAnim()
 
-    # Inner STRUCT header
-    if offset + 12 > end:
+    # Данные лежат ПРЯМО в чанке ANIM (0x1B), без STRUCT-обёртки.
+    # 88-байтный заголовок: u32 version, u32 typeID, u32 numFrames,
+    #   f32 0.0, f32 duration, u32 0, char name[32], i32 nodeToUV[8].
+    if offset + 24 > end:
         return anim
-    struct_ident, struct_size = _s.unpack_from('<II', data, offset)[:2]
-    if struct_ident != CHUNK_STRUCT:
-        return anim
-    offset += 12  # ident + size + libid
-
-    # STRUCT body
-    if offset + 20 > end:
-        return anim
-    _version, type_id, num_kf, _flags, duration = _s.unpack_from(
-        '<IIIIf', data, offset)
+    _version, type_id, num_kf = _s.unpack_from('<III', data, offset)
+    duration = _s.unpack_from('<f', data, offset + 16)[0]
     anim.type_id = type_id
     anim.duration = duration
-    offset += 20
+    offset += 24
 
     # Name (32 bytes, null-padded)
     if offset + 32 > end:
@@ -338,17 +364,18 @@ def _read_uv_anim(data: bytes, offset: int, size: int) -> 'UVAnim':
     anim.node_to_uv = tuple(_s.unpack_from('<8i', data, offset))
     offset += 32
 
-    # Keyframes — 32 bytes each
+    # Кадры — 32 байта: f32 time, матрица 6×f32, i32 prev.
+    # Матрица uv = [0, scaleU, scaleV, 0, transU, transV].
     for _i in range(num_kf):
         if offset + UV_ANIM_KEYFRAME_SIZE > end:
             break
-        _prev, t, su, sv, hu, hv, tu, tv = _s.unpack_from(
-            '<if6f', data, offset)
+        t = _s.unpack_from('<f', data, offset)[0]
+        m = _s.unpack_from('<6f', data, offset + 4)
         anim.keyframes.append(UVAnimKeyframe(
             time=t,
-            scale_u=su, scale_v=sv,
-            shear_u=hu, shear_v=hv,
-            trans_u=tu, trans_v=tv,
+            scale_u=m[1], scale_v=m[2],
+            shear_u=0.0, shear_v=0.0,
+            trans_u=m[4], trans_v=m[5],
         ))
         offset += UV_ANIM_KEYFRAME_SIZE
 
@@ -392,29 +419,35 @@ def _read_uv_anim_dict(data: bytes, offset: int, size: int) -> 'UVAnimDict':
 
 def _read_uv_anim_plg(data: bytes, offset: int, size: int) -> list:
     """Parse a CHUNK_UV_ANIM_PLG (0x135) body → list[str] of referenced
-    animation names (length ≤ 8, with empty strings filtered out).
+    animation names.
 
-    Layout (matches ``_uv_anim_plg_bytes``): u32 version, u32 mask,
-    u32 unknown, u32 unknown, then 8 × name[32].
+    Layout (как в SA / UVanim_tool): STRUCT(0x01) { u32 mask; char name[32]
+    на каждый установленный бит mask }.
     """
     import struct as _s
     end = offset + size
-    if offset + 16 > end:
+    # inner STRUCT
+    if offset + 12 > end:
         return []
-    _version, mask = _s.unpack_from('<II', data, offset)[:2]
-    offset += 16  # version + mask + 2×unknown
+    struct_ident, struct_size = _s.unpack_from('<II', data, offset)[:2]
+    if struct_ident != CHUNK_STRUCT:
+        return []
+    offset += 12
+    if offset + 4 > end:
+        return []
+    mask = _s.unpack_from('<I', data, offset)[0]
+    offset += 4
 
     names = []
     for i in range(8):
+        if not (mask & (1 << i)):
+            continue
         if offset + 32 > end:
             break
         raw = data[offset:offset + 32]
         name = raw.split(b'\x00', 1)[0].decode('ascii', errors='replace')
         offset += 32
-        # Only include slots explicitly flagged by the mask AND with
-        # a non-empty name — anims.txd uses the mask to signal which
-        # slots are active; padded null slots are skipped on read.
-        if (mask & (1 << i)) and name:
+        if name:
             names.append(name)
     return names
 
@@ -967,7 +1000,9 @@ class DffGeometry:
 
         total_indices = len(self.triangles) * 3
 
-        data = pack('<III', 0, len(mat_groups), total_indices)
+        # bytearray — see DffGeometry.to_bytes: per-triangle `bytes +=` is
+        # O(N²); in-place bytearray extend is O(N).
+        data = bytearray(pack('<III', 0, len(mat_groups), total_indices))
 
         for mat_idx in sorted(mat_groups.keys()):
             tris = mat_groups[mat_idx]
@@ -976,7 +1011,7 @@ class DffGeometry:
             for tri in tris:
                 data += pack('<III', tri.a, tri.b, tri.c)
 
-        return _chunk(CHUNK_BIN_MESH_PLG, data, lib_id)
+        return _chunk(CHUNK_BIN_MESH_PLG, bytes(data), lib_id)
 
     def _build_wdgl_native_buffer(self, rw_version: int = GTA_SA_VERSION) -> tuple:
         """Pack our geom into War Drum OpenGL interleaved buffer.
@@ -1101,8 +1136,13 @@ class DffGeometry:
         num_verts = len(self.vertices)
         num_tris = len(self.triangles)
 
-        # Struct: header
-        struct_data = pack('<IIII', flags, num_tris, num_verts, 1)
+        # Struct: header.
+        # bytearray, NOT bytes: every section below appends per-vertex /
+        # per-tri. `bytes += pack(...)` reallocates and copies the WHOLE
+        # accumulated buffer each time → O(N²) for an N-vertex mesh and the
+        # dominant cost of a large export. bytearray extends in place →
+        # amortized O(N).
+        struct_data = bytearray(pack('<IIII', flags, num_tris, num_verts, 1))
 
         # Surface properties (for older versions)
         if rw_version < 0x34000:
@@ -1193,10 +1233,10 @@ class DffGeometry:
         # versions just bloats the file. Gate on rw_version ≥ SA (0x36003).
         if (self.extra_colors and self.extra_colors.colors
                 and rw_version >= 0x36000):
-            ec_data = pack('<I', 1)  # magic
+            ec_data = bytearray(pack('<I', 1))  # magic; bytearray → O(N)
             for c in self.extra_colors.colors:
                 ec_data += pack('<4B', c.r, c.g, c.b, c.a)
-            ext_data += _chunk(CHUNK_EXTRA_COLORS, ec_data, lib_id)
+            ext_data += _chunk(CHUNK_EXTRA_COLORS, bytes(ec_data), lib_id)
 
         # Pipeline chunk пишем на уровне atomic extension (см. DffClump.to_bytes).
         # Раньше писался здесь, в geometry extension, но librwgta/Seggaeman/Kam
@@ -1439,7 +1479,16 @@ class DffClump:
                 if geom.skin:
                     atomic_ext += _chunk(0x001F, pack('<II', 0x0116, 1), lib_id)  # Right to Render
                     atomic_ext += _chunk(0x0120, pack('<I', 0), lib_id)  # Node Name PLG (required for SA skinned)
-                if any(m.bump_map or m.env_map or m.dual_texture for m in geom.materials):
+                # MatFX-флаг атомика (Material Effects PLG 0x120 = 1) — движок
+                # использует MatFX-пайплайн. Нужен для bump/env/dual И для
+                # UV-анимации (UV transform — это MatFX effectType 5). Ровно
+                # как DragonFF (if geometry._hasMatFX). Никакого 0x1F для
+                # UV-анима НЕ нужно (это и ломало проигрывание).
+                _matfx = any(
+                    m.bump_map or m.env_map or m.dual_texture
+                    or getattr(m, 'uv_anim_names', None)
+                    for m in geom.materials)
+                if _matfx:
                     atomic_ext += _chunk(CHUNK_MATFX_PLG, pack('<I', 1), lib_id)
                 # Pipeline chunk (0x253F2F3) — SA-specific RW pipeline ID
                 # used for the vehicle env-map pipeline (0x53F2009A).
@@ -1474,19 +1523,28 @@ class DffClump:
         clump_ext = b''
         if self.collision_data:
             clump_ext += _chunk(CHUNK_COLLISION_MODEL, self.collision_data, lib_id)
-        # UV Animation Dictionary (CHUNK_UV_ANIM_DICT = 0x2B) was added
-        # in RW 3.5 (VC) — III's RW 3.3 doesn't read it. Skip when
-        # writing III-targeted DFF, otherwise emit normally.
+        body += _chunk(CHUNK_EXTENSION, clump_ext, lib_id)
+
+        # UV Animation Dictionary (CHUNK_UV_ANIM_DICT = 0x2B) ДОЛЖЕН быть
+        # КОРНЕВЫМ чанком ПЕРЕД Clump: движок RW сначала читает словарь в
+        # глобальный реестр, затем кламп резолвит ссылки материалов (UVAnim
+        # PLG 0x135) по имени. Если положить его в расширение клампа — игра
+        # словарь не находит, и загрузка модели падает (модель невидима).
+        # Добавлено в RW 3.5 (VC); для III (RW 3.3) пропускаем.
+        pre = self.pre_clump_data
+        uv_dict_bytes = b''
         if (self.uv_anim_dict and self.uv_anim_dict.anims
                 and rw_version >= 0x35000):
-            clump_ext += self.uv_anim_dict.to_bytes(lib_id)
-        body += _chunk(CHUNK_EXTENSION, clump_ext, lib_id)
+            uv_dict_bytes = self.uv_anim_dict.to_bytes(lib_id)
+            # На случай round-trip: убрать уже имеющийся 0x2B из pre-clump,
+            # чтобы не задвоить словарь.
+            pre = _strip_root_chunk(pre, CHUNK_UV_ANIM_DICT)
 
         # Pre-Clump chunks (UV Animation Dictionary, etc.) preserved
         # from the original file. Re-emitted verbatim before the Clump
         # so round-trip stays byte-identical for files like
         # chinafurn1.dff that the engine reads via linear chunk walk.
-        return self.pre_clump_data + _chunk(CHUNK_CLUMP, body, lib_id)
+        return pre + uv_dict_bytes + _chunk(CHUNK_CLUMP, body, lib_id)
 
 
 def write_dff(clump: DffClump) -> bytes:
@@ -1612,6 +1670,48 @@ def _read_material_chunk(r: BinaryReader, size: int, rw_version: int) -> DffMate
 
     r.seek(end)
     return mat
+
+
+def _read_material_list(r: BinaryReader, matlist_size: int,
+                        rw_version: int) -> list:
+    """Read a Material List chunk body (its 12-byte header already consumed).
+
+    The RW material-list index array has ONE entry PER SLOT:
+      * ``< 0``  → a new MATERIAL chunk follows inline;
+      * ``>= 0`` → REUSE the material at that earlier slot index (RW exporters
+        deduplicate when one material is shared across slots).
+
+    So the number of inline MATERIAL chunks equals the count of negative
+    entries — NOT ``numMaterials``. The old reader read ``numMaterials``
+    chunks unconditionally and ignored the index array, which over-read and
+    mis-mapped materials for any DFF that reused a material (wrong textures
+    on parts of the model). This mirrors ``RpMaterialListStreamRead``
+    (RenderWare ``world/bamatlst.c``). Returns the per-slot material list."""
+    matlist_end = r.pos + matlist_size
+    materials = []
+
+    _mct, _mcs, _mcl = _read_chunk_header(r)          # inner STRUCT
+    mat_count = r.read_one('<I')
+    indices = [r.read_one('<i') for _ in range(mat_count)]
+
+    for idx in indices:
+        if idx < 0:
+            ct, cs, cl = _read_chunk_header(r)
+            if ct == CHUNK_MATERIAL:
+                materials.append(_read_material_chunk(r, cs, rw_version))
+            else:
+                # Malformed (a non-material chunk where one was promised) —
+                # keep slot alignment so triangle material indices stay valid.
+                r.skip(cs)
+                materials.append(DffMaterial())
+        else:
+            # Reuse an earlier slot's material (same object, as RW shares the
+            # pointer). Guard the index in case of a corrupt file.
+            materials.append(materials[idx]
+                             if 0 <= idx < len(materials) else DffMaterial())
+
+    r.seek(matlist_end)
+    return materials
 
 
 def _read_matfx_plugin(r: BinaryReader, size: int, mat: DffMaterial):
@@ -1761,22 +1861,10 @@ def _read_geometry_chunk(r: BinaryReader, size: int, rw_version: int) -> DffGeom
 
     r.seek(struct_end)
 
-    # ── Material list ──
+    # ── Material list (honors RW reuse-index array; see _read_material_list) ──
     ct, cs, cl = _read_chunk_header(r)
     if ct == CHUNK_MATERIAL_LIST:
-        matlist_end = r.pos + cs
-        mct, mcs, mcl = _read_chunk_header(r)
-        mat_count = r.read_one('<I')
-        r.skip(mat_count * 4)  # parent indices (-1 each)
-
-        for _ in range(mat_count):
-            mct2, mcs2, mcl2 = _read_chunk_header(r)
-            if mct2 == CHUNK_MATERIAL:
-                geom.materials.append(_read_material_chunk(r, mcs2, rw_version))
-            else:
-                r.skip(mcs2)
-
-        r.seek(matlist_end)
+        geom.materials = _read_material_list(r, cs, rw_version)
 
     # ── Extension ──
     if r.pos < end:

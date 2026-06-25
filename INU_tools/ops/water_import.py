@@ -79,11 +79,10 @@ def _get_water_material():
                 bsdf = n
                 break
 
-        tex_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                                'data', 'fx_textures', 'waterclear256.png')
-        img = bpy.data.images.get("waterclear256.png")
-        if not img and os.path.isfile(tex_path):
-            img = bpy.data.images.load(tex_path)
+        # waterclear256 is a GTA SA asset — load from the user's game (FX TXD /
+        # Game Root), not bundled. Falls back to a flat material if absent.
+        from .fx_preview import _load_fx_image
+        img = bpy.data.images.get("waterclear256") or _load_fx_image("waterclear256")
 
         if img and bsdf:
             tex_node = nodes.new('ShaderNodeTexImage')

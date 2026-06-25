@@ -605,68 +605,138 @@ class GTATOOLS_PT_uv_tools_panel(bpy.types.Panel):
 
 
 # =============================================================================
-# ADD MENU > GTA SA (Shift+A)
+# UV ANIMATION (keyframe authoring) — N-панель UV-редактора
 # =============================================================================
 
-# Bundled DFF models available in Add > GTA SA menu
-_GTASA_MODELS = {
-    'ADMIRAL': ("Admiral", "admiral.dff"),
-    'ARMY': ("Army", "army.dff"),
-}
+def _uv_anim_mapping(context):
+    """Активный материал + его нода предпросмотра UV-анимации (или None)."""
+    obj = context.active_object
+    mat = obj.active_material if obj else None
+    if mat is None or not mat.use_nodes or mat.node_tree is None:
+        return mat, None
+    from .uv_anim_preview import _MAPPING
+    return mat, mat.node_tree.nodes.get(_MAPPING)
 
 
-class GTATOOLS_OT_add_gtasa_model(bpy.types.Operator):
-    """Add a GTA SA model to the scene"""
-    bl_idname = "gtatools.add_gtasa_model"
-    bl_label = "INU: Add GTA SA Model"
+class GTATOOLS_OT_uv_anim_insert_key(bpy.types.Operator):
+    """Вставить ключ UV-анимации (Сдвиг/Масштаб) на текущем кадре"""
+    bl_idname = "gtatools.uv_anim_insert_key"
+    bl_label = "INU: UV Anim Insert Keyframe"
     bl_options = {'REGISTER', 'UNDO'}
 
-    model: EnumProperty(
-        name="Model",
-        items=[(k, v[0], f"Add {v[0]}") for k, v in _GTASA_MODELS.items()],
-    )
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj is not None and obj.type == 'MESH'
+                and obj.active_material is not None)
 
     def execute(self, context):
-        from ..ops.dff_import import import_dff as inu_import_dff
-
-        info = _GTASA_MODELS.get(self.model)
-        if not info:
-            self.report({'ERROR'}, f"Unknown model: {self.model}")
+        from . import uv_anim_preview
+        mat, node = _uv_anim_mapping(context)
+        if node is None and mat is not None:
+            uv_anim_preview.setup(mat, mode='KEYFRAME')
+            mat, node = _uv_anim_mapping(context)
+        if node is None:
+            self.report({'WARNING'},
+                        T("Нет ноды UV-анимации (нет текстуры на материале?)"))
             return {'CANCELLED'}
-
-        models_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "models")
-        filepath = os.path.join(models_dir, info[1])
-
-        if not os.path.isfile(filepath):
-            self.report({'ERROR'}, f"Model file not found: {filepath}")
-            return {'CANCELLED'}
-
-        try:
-            inu_import_dff(filepath=filepath, context=context)
-            # Move imported objects to 3D cursor position
-            cursor_loc = context.scene.cursor.location.copy()
-            for obj in context.selected_objects:
-                if not obj.parent:
-                    obj.location += cursor_loc
-            self.report({'INFO'}, f"Added {info[0]}")
-        except Exception as e:
-            self.report({'ERROR'}, f"Import error: {str(e)}")
-            return {'CANCELLED'}
-
+        node.inputs[1].keyframe_insert('default_value')   # Location → сдвиг UV
+        node.inputs[3].keyframe_insert('default_value')   # Scale → масштаб
+        for area in context.screen.areas:
+            area.tag_redraw()
+        self.report({'INFO'}, T("Ключ UV вставлен на кадре ")
+                    + str(context.scene.frame_current))
         return {'FINISHED'}
 
 
-class VIEW3D_MT_gtasa_add_menu(bpy.types.Menu):
-    """GTA SA models submenu in Add menu"""
-    bl_idname = "VIEW3D_MT_gtasa_add_menu"
-    bl_label = "GTA SA"
+class GTATOOLS_OT_uv_anim_clear_keys(bpy.types.Operator):
+    """Удалить все ключи UV-анимации этого материала"""
+    bl_idname = "gtatools.uv_anim_clear_keys"
+    bl_label = "INU: UV Anim Clear Keyframes"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj is not None and obj.type == 'MESH'
+                and obj.active_material is not None)
+
+    def execute(self, context):
+        from . import uv_anim_preview
+        mat, node = _uv_anim_mapping(context)
+        removed = uv_anim_preview.clear_keyframes(mat)
+        for area in context.screen.areas:
+            area.tag_redraw()
+        if removed:
+            self.report({'INFO'}, T("Ключи UV очищены: ") + str(removed))
+        else:
+            self.report({'INFO'}, T("Ключей нет"))
+        return {'FINISHED'}
+
+
+class GTATOOLS_PT_uv_anim_panel(bpy.types.Panel):
+    """UV-анимация GTA: прокрутка или покадровые ключи (нода Mapping)."""
+    bl_label = "UV Анимация"
+    bl_idname = "GTATOOLS_PT_uv_anim_panel"
+    bl_space_type = 'IMAGE_EDITOR'
+    bl_region_type = 'UI'
+    bl_category = 'GTA Tools'
+    bl_order = 50                      # после Bake и Рандомизатора
+
+    def draw_header(self, context):
+        self.layout.label(text="", **inu_icon(safe_icon('UV')))
 
     def draw(self, context):
         layout = self.layout
-        for key, (label, _filename) in _GTASA_MODELS.items():
-            op = layout.operator("gtatools.add_gtasa_model", text=label, **inu_icon(safe_icon('MESH_MONKEY')))
-            op.model = key
+        obj = context.active_object
+        mat = obj.active_material if obj else None
+        if mat is None:
+            layout.label(text=T("Нет активного материала"),
+                         **inu_icon(safe_icon('INFO')))
+            return
+        inu = getattr(mat, 'inu', None)
+        if inu is None:
+            layout.label(text=T("Материал без свойств INU"),
+                         **inu_icon(safe_icon('ERROR')))
+            return
+
+        layout.label(text=mat.name, **inu_icon(safe_icon('MATERIAL')))
+        layout.prop(inu, "uv_anim_write", text=T("UV Анимация"))
+        if not inu.uv_anim_write:
+            return
+
+        layout.prop(inu, "uv_anim_mode", expand=True)
+
+        if inu.uv_anim_mode == 'SCROLL':
+            row = layout.row(align=True)
+            row.prop(inu, "uv_anim_speed_u", text="Speed U")
+            row.prop(inu, "uv_anim_speed_v", text="Speed V")
+            layout.prop(inu, "uv_anim_duration", text=T("Длительность"))
+        else:  # KEYFRAME
+            mat2, node = _uv_anim_mapping(context)
+            if node is None:
+                layout.label(text=T("Нода не создана (нет текстуры?)"),
+                             **inu_icon(safe_icon('INFO')))
+            else:
+                box = layout.box()
+                box.label(text=T("Кадр: ") + str(context.scene.frame_current),
+                          **inu_icon(safe_icon('TIME')))
+                box.prop(node.inputs[1], "default_value", text=T("Сдвиг UV"))
+                box.prop(node.inputs[3], "default_value", text=T("Масштаб"))
+                row = layout.row(align=True)
+                row.operator("gtatools.uv_anim_insert_key",
+                             text=T("Вставить ключ"),
+                             **inu_icon(safe_icon('KEYFRAME_HLT')))
+                row.operator("gtatools.uv_anim_clear_keys",
+                             text=T("Очистить"), **inu_icon(safe_icon('X')))
+                layout.label(text=T("Меняй Сдвиг/Кадр → «Вставить ключ»"),
+                             **inu_icon(safe_icon('INFO')))
+
+        layout.label(text=T("▶ Пробел — предпросмотр"),
+                     **inu_icon(safe_icon('PLAY')))
 
 
-def _gtasa_add_menu_draw(self, context):
-    self.layout.menu("VIEW3D_MT_gtasa_add_menu", **inu_icon(safe_icon('AUTO')))
+# NOTE: the old «Add ▸ GTA SA» (Shift+A) submenu that spawned bundled
+# admiral.dff / army.dff sample models was removed for the extensions.blender.org
+# release — those are Rockstar/Take-Two game assets and may not be redistributed.
+# Import your own models via File ▸ Import ▸ INU Import instead.

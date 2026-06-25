@@ -17,43 +17,18 @@ from . import base as B
 
 # ── ImportExportFloater: action buttons + native-panel popup ─────────
 
-# Single row of dropdown menus mirroring panels.py:GTATOOLS_PT_export_panel
-# which calls `row.menu(GTATOOLS_MT_import_menu/export_menu)`. Each tuple
-# is (label, prefix-glyph, menu-idname). The menu itself owns the per-
-# format entries (DFF / COL / CST / TXD / All).
-_IE_MENUS = [
-    ("Импорт",  "import", "GTATOOLS_MT_import_menu"),
-    ("Экспорт", "export", "GTATOOLS_MT_export_menu"),
+# Import / Export — две ПРЯМЫЕ кнопки (как в N-панели: одна открывает
+# диалог импорта inu_import, другая — диалог экспорта в папку export_all).
+# Раньше это были выпадающие меню; теперь без дропдаунов. Каждый кортеж —
+# (label, prefix-glyph, op_idname).
+_IE_BUTTONS = [
+    ("Импорт",  "import", "gtatools.inu_import"),
+    ("Экспорт", "export", "gtatools.export_all"),
 ]
 
-# Dropdown item lists — hardcoded to mirror GTATOOLS_MT_import_menu /
-# export_menu's draw method. Each entry is (label, op_idname) where
-# op_idname=None means "separator" (renders a thin divider, not
-# selectable). We draw these ourselves instead of going through
-# wm.call_menu / popup_menu so the dropdown is anchored directly below
-# the button (Blender's Python API can't position native popups at a
-# specific UI rect).
-# Items are 3-tuples: (label, op_or_value, icon_name). Icon names
-# match our PNG bake keys (lowercased Blender names) — see
-# panels.py:521-549 for the N-panel originals.
+# Dropdown item lists. Осталось только value-меню выбора DXT-бэкенда —
+# Import/Export больше не дропдауны. Каждая запись — (label, value, icon).
 _IE_DROPDOWN_ITEMS = {
-    "GTATOOLS_MT_import_menu": [
-        ("DFF",          "gtatools.import_dff", "mesh_data"),
-        ("COL",          "gtatools.import_col", "mesh_icosphere"),
-        ("CST",          "gtatools.import_cst", "text"),
-        ("TXD",          "gtatools.import_txd", "image_data"),
-        (None,           None,                  None),     # separator
-        ("All",          "gtatools.inu_import", "file"),
-    ],
-    "GTATOOLS_MT_export_menu": [
-        ("DFF",          "gtatools.export_dff", "mesh_data"),
-        ("COL",          "gtatools.export_col", "mesh_icosphere"),
-        ("CST",          "gtatools.export_cst", "text"),
-        ("TXD",          "gtatools.export_txd", "image_data"),
-        (None,           None,                  None),     # separator
-        ("All → Папка",  "gtatools.export_all",     "file_folder"),
-        ("All → IMG",    "gtatools.export_to_img",  "package"),
-    ],
     # Prop-set dropdown: items are (label, enum-value, icon) and a click
     # writes the matching value to context.scene.inu_settings.<prop>.
     "__dxt_backend__": [
@@ -102,7 +77,9 @@ _DFF_FLAGS = [
     ('modulate_color',     "Modulate Color",            None),
     ('set_material_alpha', "Set Material Alpha",        None),
     ('light_beam_asi',     "Light Beam (SA_Light.asi)", 'sa_only'),
-    ('export_binsplit',    "Bin Mesh PLG",              None),
+    # 'export_binsplit' (Bin Mesh PLG) намеренно скрыт из UI — см. коммент
+    # у его BoolProperty в __init__.py. Дефолт True; отключение делало
+    # модель невидимой в игре.
     ('uv_map1',            "UV1",                       None),
     ('uv_map2',            "UV2",                       None),
     ('day_cols',           "Day",                       None),
@@ -363,49 +340,10 @@ class ImportExportFloater(B.Floater):
             TA._text(int(text_x), int(text_y), label, color)
 
     def _layout_sections(self, context):
-        """Compute vertical layout for collapsible sections only.
-
-        Returns a list [(section_id, header_h, body_h_when_expanded,
-        expanded, body_extras)] where body_extras carries per-section
-        data (flag rows for DFF Flags). Called from both compute_body_height
-        and extend_body_layout to keep the height + the rects in sync.
-        """
-        ss = context.scene.inu_settings
-        sections = []
-
-        inu = _ie_mesh_inu(context)
-        if inu is not None:
-            flag_rows = _dff_flags_visible(context)
-            flags_expanded = bool(ss.gtatools_show_dff_flags)
-            # Flag-row geometry. Each row is a 14-px checkbox with a
-            # 6-px gap to the next, padded 7 px top/bottom and 4 px
-            # left-inset from the body's left edge.
-            _FLAG_ROW_H   = 14
-            _FLAG_ROW_GAP = 6
-            _FLAG_TOP_PAD = 7
-            _FLAG_BOT_PAD = 7
-            _FLAG_LEFT_PAD = 5
-            _flag_body_h = (
-                _FLAG_TOP_PAD
-                + len(flag_rows) * _FLAG_ROW_H
-                + max(0, len(flag_rows) - 1) * _FLAG_ROW_GAP
-                + _FLAG_BOT_PAD
-            ) if flag_rows else 0
-            sections.append((
-                'dff_flags',
-                TH._BUTTON_H,
-                _flag_body_h if flags_expanded else 0,
-                flags_expanded,
-                {
-                    'rows': flag_rows,
-                    'inu': inu,
-                    'row_h':   _FLAG_ROW_H,
-                    'row_gap': _FLAG_ROW_GAP,
-                    'top_pad': _FLAG_TOP_PAD,
-                    'left_pad': _FLAG_LEFT_PAD,
-                },
-            ))
-        return sections
+        """Сворачиваемых секций в окне больше нет (DFF Flags убраны —
+        редактируются в N-панели). Оставлено как заглушка, чтобы
+        compute_body_height / extend_body_layout не падали."""
+        return []
 
     def compute_body_height(self, context):
         # Mirrors `extend_body_layout` — must use the same inter-row
@@ -449,9 +387,9 @@ class ImportExportFloater(B.Floater):
         menu_top_y = diag_y - gap_after_box
         menu_row_rect = (x + TH._PAD, menu_top_y - TH._BUTTON_H,
                          w - 2 * TH._PAD, TH._BUTTON_H)
-        menu_rects = WG._enum_row_rects(menu_row_rect, len(_IE_MENUS))
-        for i, (label, prefix, menu_id) in enumerate(_IE_MENUS):
-            menus.append((menu_rects[i], label, prefix, menu_id))
+        menu_rects = WG._enum_row_rects(menu_row_rect, len(_IE_BUTTONS))
+        for i, (label, prefix, op_id) in enumerate(_IE_BUTTONS):
+            menus.append((menu_rects[i], label, prefix, op_id))
 
         # Auto-TXD toggle + DXT backend dropdown — same 50/50 split as
         # Import/Export above so the divider lines stack vertically.
@@ -560,14 +498,16 @@ class ImportExportFloater(B.Floater):
         # above, Auto TXD below). Import is the first item and keeps
         # its BL corner rounded; everything else flat so the inner
         # edges merge cleanly.
-        n_menus = len(L['menus'])
         open_mid = (st.open_dropdown or {}).get('menu_id')
-        for i, (rect, label, prefix, mid) in enumerate(L['menus']):
+        # Import / Export — прямые кнопки (без ▼ и без дропдауна): клик
+        # сразу вызывает оператор. Рисуем как ОБЫЧНЫЕ кнопки (_draw_button,
+        # цвет _C_BUTTON) — тот же стиль/цвет, что у кнопок пайплайна, а не
+        # тёмный фон дропдауна. Иконка-префикс слева от подписи.
+        for i, (rect, label, prefix, _op_id) in enumerate(L['menus']):
             cm = GS.CORNER_BL if i == 0 else GS.CORNER_NONE
-            WG._draw_menu_button(rect, label, prefix,
-                              hovered=(st.hover_menu == i),
-                              corner_mask=cm,
-                              active=(open_mid == mid))
+            WG._draw_button(rect, label,
+                            hovered=(st.hover_menu == i),
+                            corner_mask=cm, icon=prefix)
         for i, (rect, label, op_id, _) in enumerate(L['buttons']):
             WG._draw_button(rect, label,
                          hovered=(st.hover_button == i))
@@ -739,14 +679,13 @@ class ImportExportFloater(B.Floater):
             st.hover_dropdown_item = None
             return True
 
-        # Open our in-floater dropdown directly below the clicked menu
-        # button. No native popup — items rendered by _draw_open_dropdown,
-        # clicks routed back through this same handler on the next press.
-        for rect, label, _prefix, menu_id in L['menus']:
+        # Import / Export — прямые кнопки: клик сразу вызывает оператор
+        # (диалог импорта inu_import / экспорта в папку export_all), без
+        # выпадающего меню — как в N-панели.
+        for rect, label, _prefix, op_id in L['menus']:
             if not B._hit(mx, my, *rect):
                 continue
-            st.open_dropdown = {'menu_id': menu_id, 'anchor_rect': rect}
-            st.hover_dropdown_item = None
+            B._invoke_operator(op_id, {})
             return True
 
         # DXT backend dropdown — same anchor-rect machinery, but the

@@ -261,7 +261,3 @@ class GTATOOLS_OT_radar_pack_txd(bpy.types.Operator):
         return {'FINISHED'}
 
 
-classes = (
-    GTATOOLS_OT_radar_generate,
-    GTATOOLS_OT_radar_pack_txd,
-)

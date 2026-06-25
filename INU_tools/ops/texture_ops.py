@@ -35,6 +35,32 @@ from ..tools import compat
 ALPHA_OPAQUE_THRESHOLD = 250          # alpha < 250/255 → "transparent"
 ALPHA_MIN_TRANSPARENT_PIXELS = 10     # min count to count as alpha texture
 
+# Подробные [ALPHA]/[ALPHA-LINK] логи — диагностические, по строке на КАЖДЫЙ
+# материал/изображение. На карте это сотни строк И тормозит из-за самих
+# print(). По умолчанию выключено; True — для отладки «почему забор не
+# прозрачный».
+_ALPHA_VERBOSE = False
+
+# Кэш вердикта «есть значимая альфа» по ИЗОБРАЖЕНИЮ. Десятки материалов-
+# дубликатов (mat.001 … mat.014) ссылаются на одну текстуру — без кэша
+# полный буфер image.pixels[:] (для 512×512 это ~1 млн float) читался бы и
+# сканировался по разу на каждый материал. Ключ — имя+размер+каналы
+# (метаданные, без чтения пикселей); значение — bool. Сбрасывается через
+# clear_alpha_cache() при переимпорте, чтобы не залипал старый вердикт.
+_ALPHA_SIG_CACHE = {}
+
+
+def clear_alpha_cache():
+    """Сбросить кэш альфа-вердиктов (вызывать при (пере)импорте текстур)."""
+    _ALPHA_SIG_CACHE.clear()
+
+
+def _alpha_cache_key(image):
+    try:
+        return (image.name, int(image.size[0]), int(image.size[1]), int(image.channels))
+    except Exception:
+        return (getattr(image, 'name', '?'),)
+
 
 def image_has_significant_alpha(image) -> bool:
     """True iff ``image`` has at least ``ALPHA_MIN_TRANSPARENT_PIXELS``
@@ -42,13 +68,19 @@ def image_has_significant_alpha(image) -> bool:
     auto-link path to decide whether to wire the texture's Alpha output
     into the BSDF Alpha input.
 
-    Prints a one-line diagnostic per checked image so you can see in the
-    console why a texture was (or wasn't) classified as alpha — useful
-    when fences/foliage don't get their transparency wired automatically."""
+    Результат кэшируется по изображению (см. ``_ALPHA_SIG_CACHE``), так что
+    дорогое чтение пикселей выполняется ОДИН раз на текстуру, а не на каждый
+    материал, который её использует."""
     if image is None:
         return False
+    key = _alpha_cache_key(image)
+    cached = _ALPHA_SIG_CACHE.get(key)
+    if cached is not None:
+        return cached
     if image.channels < 4:
-        print(f"[ALPHA] {image.name}: channels={image.channels}, no alpha")
+        if _ALPHA_VERBOSE:
+            print(f"[ALPHA] {image.name}: channels={image.channels}, no alpha")
+        _ALPHA_SIG_CACHE[key] = False
         return False
     try:
         # Don't trust ``image.has_data`` — it returns False on
@@ -57,21 +89,32 @@ def image_has_significant_alpha(image) -> bool:
         # any real failure raise.
         pixels_seq = image.pixels[:]
         if len(pixels_seq) == 0:
-            print(f"[ALPHA] {image.name}: pixels not loaded yet")
+            # Пиксели ещё не загружены — НЕ кэшируем, чтобы пересчитать позже.
+            if _ALPHA_VERBOSE:
+                print(f"[ALPHA] {image.name}: pixels not loaded yet")
             return False
         pixels = np.asarray(pixels_seq, dtype=np.float32)
         alpha = pixels[3::4]
         threshold_f = ALPHA_OPAQUE_THRESHOLD / 255.0
         transparent_count = int(np.count_nonzero(alpha < threshold_f))
         is_alpha = transparent_count >= ALPHA_MIN_TRANSPARENT_PIXELS
-        print(f"[ALPHA] {image.name}: "
-              f"{transparent_count}/{alpha.size} pixels < {ALPHA_OPAQUE_THRESHOLD}/255 "
-              f"(min_a={alpha.min():.3f}), threshold={ALPHA_MIN_TRANSPARENT_PIXELS}, "
-              f"is_alpha={is_alpha}")
+        if _ALPHA_VERBOSE:
+            print(f"[ALPHA] {image.name}: "
+                  f"{transparent_count}/{alpha.size} pixels < {ALPHA_OPAQUE_THRESHOLD}/255 "
+                  f"(min_a={alpha.min():.3f}), threshold={ALPHA_MIN_TRANSPARENT_PIXELS}, "
+                  f"is_alpha={is_alpha}")
+        _ALPHA_SIG_CACHE[key] = is_alpha
         return is_alpha
     except Exception as e:
-        print(f"[ALPHA] {getattr(image, 'name', '?')}: error {type(e).__name__}: {e}")
+        if _ALPHA_VERBOSE:
+            print(f"[ALPHA] {getattr(image, 'name', '?')}: error {type(e).__name__}: {e}")
         return False
+
+
+def _alog(msg):
+    """Печать диагностики alpha-link только при включённом _ALPHA_VERBOSE."""
+    if _ALPHA_VERBOSE:
+        print(msg)
 
 
 def link_material_alpha_if_textured(material) -> bool:
@@ -94,18 +137,18 @@ def link_material_alpha_if_textured(material) -> bool:
         return False
     name = material.name
     if not material.use_nodes or not material.node_tree:
-        print(f"[ALPHA-LINK] mat={name!r}: no node tree, skip")
+        _alog(f"[ALPHA-LINK] mat={name!r}: no node tree, skip")
         return False
     nodes = material.node_tree.nodes
     links = material.node_tree.links
 
     bsdf = next((n for n in nodes if n.type == 'BSDF_PRINCIPLED'), None)
     if bsdf is None:
-        print(f"[ALPHA-LINK] mat={name!r}: no Principled BSDF, skip")
+        _alog(f"[ALPHA-LINK] mat={name!r}: no Principled BSDF, skip")
         return False
     alpha_input = bsdf.inputs.get('Alpha')
     if alpha_input is None:
-        print(f"[ALPHA-LINK] mat={name!r}: BSDF has no Alpha input, skip")
+        _alog(f"[ALPHA-LINK] mat={name!r}: BSDF has no Alpha input, skip")
         return False
 
     tex_node = next(
@@ -114,7 +157,7 @@ def link_material_alpha_if_textured(material) -> bool:
         None,
     )
     if tex_node is None:
-        print(f"[ALPHA-LINK] mat={name!r}: no TEX_IMAGE with image, skip")
+        _alog(f"[ALPHA-LINK] mat={name!r}: no TEX_IMAGE with image, skip")
         return False
 
     img = tex_node.image
@@ -154,10 +197,10 @@ def link_material_alpha_if_textured(material) -> bool:
             changed = True
 
         if changed:
-            print(f"[ALPHA-LINK] mat={name!r} img={img.name!r}: "
+            _alog(f"[ALPHA-LINK] mat={name!r} img={img.name!r}: "
                   f"Alpha {'WIRED' if not already_linked else 'kept'} + blend=HASHED")
         else:
-            print(f"[ALPHA-LINK] mat={name!r} img={img.name!r}: already correct (link + blend)")
+            _alog(f"[ALPHA-LINK] mat={name!r} img={img.name!r}: already correct (link + blend)")
         return changed
 
     # Image is opaque — drop any tex_node→Alpha link, restore OPAQUE blend.
@@ -173,10 +216,84 @@ def link_material_alpha_if_textured(material) -> bool:
             material.shadow_method = 'OPAQUE'
 
     if changed:
-        print(f"[ALPHA-LINK] mat={name!r} img={img.name!r}: opaque → REMOVED Alpha link + blend=OPAQUE")
+        _alog(f"[ALPHA-LINK] mat={name!r} img={img.name!r}: opaque → REMOVED Alpha link + blend=OPAQUE")
     else:
-        print(f"[ALPHA-LINK] mat={name!r} img={img.name!r}: opaque, no change")
+        _alog(f"[ALPHA-LINK] mat={name!r} img={img.name!r}: opaque, no change")
     return changed
+
+
+def _force_material_opaque(material) -> bool:
+    """Hard-disable alpha on *material*: drop any tex→BSDF Alpha link, reset
+    Alpha to 1.0, force OPAQUE blend/shadow. Counterpart to
+    :func:`link_material_alpha_if_textured` for the scene-wide OFF toggle."""
+    if not material or not material.use_nodes or not material.node_tree:
+        return False
+    nodes = material.node_tree.nodes
+    links = material.node_tree.links
+    changed = False
+    bsdf = next((n for n in nodes if n.type == 'BSDF_PRINCIPLED'), None)
+    if bsdf is not None:
+        ai = bsdf.inputs.get('Alpha')
+        if ai is not None:
+            for lk in list(ai.links):
+                links.remove(lk)
+                changed = True
+            if ai.default_value != 1.0:
+                ai.default_value = 1.0
+                changed = True
+    if hasattr(material, 'blend_method') and material.blend_method != 'OPAQUE':
+        material.blend_method = 'OPAQUE'
+        changed = True
+    if hasattr(material, 'shadow_method') and material.shadow_method != 'OPAQUE':
+        material.shadow_method = 'OPAQUE'
+        changed = True
+    return changed
+
+
+def _scene_materials(context):
+    """Unique materials used by MESH objects in the current scene."""
+    seen = {}
+    for obj in context.scene.objects:
+        if obj.type != 'MESH':
+            continue
+        for slot in obj.material_slots:
+            m = slot.material
+            if m is not None and m.name not in seen:
+                seen[m.name] = m
+    return list(seen.values())
+
+
+class GTATOOLS_OT_toggle_scene_alpha(bpy.types.Operator):
+    """Включить / выключить альфу (прозрачность) на всех материалах сцены.
+
+    ВКЛ — подключает альфу текстуры к шейдеру там, где у текстуры есть
+    прозрачные пиксели (листва, заборы, окна), и ставит HASHED.
+    ВЫКЛ — снимает связь и делает материалы OPAQUE."""
+    bl_idname = "gtatools.toggle_scene_alpha"
+    bl_label = "INU: Toggle Scene Alpha"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        s = context.scene.inu_settings
+        enable = not bool(getattr(s, 'gtatools_scene_alpha_on', True))
+        n = 0
+        for m in _scene_materials(context):
+            try:
+                if enable:
+                    if link_material_alpha_if_textured(m):
+                        n += 1
+                else:
+                    if _force_material_opaque(m):
+                        n += 1
+            except Exception as ex:
+                print(f"[ALPHA-TOGGLE] {m.name!r} failed: {ex}")
+        s.gtatools_scene_alpha_on = enable
+        state = T("включена") if enable else T("выключена")
+        self.report({'INFO'}, f"{T('Альфа')} {state}: {n} {T('материалов')}")
+        for area in context.screen.areas:
+            if area.type == 'VIEW_3D':
+                area.tag_redraw()
+        return {'FINISHED'}
 
 
 class GTATOOLS_OT_load_textures(bpy.types.Operator):
@@ -1056,18 +1173,3 @@ class GTATOOLS_OT_toggle_lightmap_uv2(bpy.types.Operator):
         return {'FINISHED'}
 
 
-classes = (
-    GTATOOLS_OT_load_textures,
-    GTATOOLS_OT_set_blend_folder,
-    GTATOOLS_OT_drop_texture_as_material,
-    GTATOOLS_OT_drop_txd,
-    GTATOOLS_OT_check_materials,
-    GTATOOLS_OT_cleanup_materials,
-    GTATOOLS_OT_sort_materials,
-    GTATOOLS_OT_reset_transform,
-    GTATOOLS_OT_apply_lightmap_uv2,
-    GTATOOLS_OT_remove_lightmap_uv2,
-    GTATOOLS_OT_toggle_lightmap_uv2,
-)
-if hasattr(bpy.types, 'FileHandler'):
-    classes = classes + (GTATOOLS_FH_texture_drop, GTATOOLS_FH_txd_drop)

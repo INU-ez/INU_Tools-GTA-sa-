@@ -337,12 +337,3 @@ class GTATOOLS_OT_map_analyzer_save_report(bpy.types.Operator):
         return {'FINISHED'}
 
 
-classes = (
-    GTATOOLS_OT_analyze_map,
-    GTATOOLS_OT_map_analyzer_add_ide,
-    GTATOOLS_OT_map_analyzer_add_ipl,
-    GTATOOLS_OT_map_analyzer_remove_ide,
-    GTATOOLS_OT_map_analyzer_remove_ipl,
-    GTATOOLS_OT_map_analyzer_clear,
-    GTATOOLS_OT_map_analyzer_save_report,
-)

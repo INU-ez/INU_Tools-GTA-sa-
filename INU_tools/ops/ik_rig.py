@@ -1383,11 +1383,10 @@ class GTATOOLS_OT_bake_ik_rig(bpy.types.Operator):
 _GROUND_OBJ_NAME = "INU_Ground"
 _GROUND_MAT_NAME = "INU_Ground_Mat"
 _GROUND_FLAG = "inu_ik_ground"
-_GROUND_TEXTURE = "dev_anim.png"
 
 
 class GTATOOLS_OT_add_ground_plane(bpy.types.Operator):
-    """Создать "пол" — плоскость 10×10м с dev_anim текстурой,
+    """Создать "пол" — плоскость 10×10м с процедурной сеткой,
     которая работает как ограничитель для ног IK-рига. После
     Add IK Rig стопы автоматически получают Floor constraint
     с этой плоскостью как target — двигаешь плоскость по Z,
@@ -1398,18 +1397,6 @@ class GTATOOLS_OT_add_ground_plane(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        # Texture lives inside the addon (data/dev_anim.png) so the
-        # ground plane works on any machine without depending on
-        # the user's Downloads folder. ``__file__`` points at
-        # ops/ik_rig.py — two dirnames back is the addon root.
-        addon_dir = os.path.dirname(os.path.dirname(
-            os.path.abspath(__file__)))
-        png_path = os.path.join(addon_dir, 'data', _GROUND_TEXTURE)
-        if not os.path.isfile(png_path):
-            self.report({'ERROR'},
-                T("Не найден файл: ") + png_path)
-            return {'CANCELLED'}
-
         # Reuse existing ground if present, otherwise build a fresh
         # 10x10 m quad at world origin. UV mapped 0..3 so the
         # texture repeats 3 times across each axis — visually
@@ -1445,11 +1432,10 @@ class GTATOOLS_OT_add_ground_plane(bpy.types.Operator):
             context.collection.objects.link(obj)
 
         # Material: reuse if already created, otherwise build a
-        # minimal Image-Texture-direct-to-Output graph (no
-        # Principled BSDF — that would add specular highlights
-        # which look ugly on a flat dev-grid texture). Texture
-        # color goes straight to surface, scene lighting can't
-        # produce a hot spot on it.
+        # minimal PROCEDURAL grid graph (Checker → Emission → Output;
+        # no bundled image, no Principled BSDF — that would add specular
+        # highlights which look ugly on a flat dev grid). Color goes
+        # straight to surface, scene lighting can't produce a hot spot.
         mat = bpy.data.materials.get(_GROUND_MAT_NAME)
         if mat is None:
             mat = bpy.data.materials.new(_GROUND_MAT_NAME)
@@ -1460,15 +1446,16 @@ class GTATOOLS_OT_add_ground_plane(bpy.types.Operator):
                 nodes.remove(n)
             output = nodes.new('ShaderNodeOutputMaterial')
             emission = nodes.new('ShaderNodeEmission')
-            tex = nodes.new('ShaderNodeTexImage')
-            tex.image = bpy.data.images.load(
-                png_path, check_existing=True)
-            tex.interpolation = 'Closest'  # crisp pixel art look
+            checker = nodes.new('ShaderNodeTexChecker')
+            # Subtle grey checkerboard as a floor reference grid.
+            checker.inputs['Scale'].default_value = 12.0
+            checker.inputs['Color1'].default_value = (0.16, 0.16, 0.16, 1.0)
+            checker.inputs['Color2'].default_value = (0.26, 0.26, 0.26, 1.0)
             output.location = (400, 0)
             emission.location = (200, 0)
-            tex.location = (-200, 0)
+            checker.location = (-200, 0)
             emission.inputs['Strength'].default_value = 1.0
-            links.new(tex.outputs['Color'],
+            links.new(checker.outputs['Color'],
                       emission.inputs['Color'])
             links.new(emission.outputs['Emission'],
                       output.inputs['Surface'])
@@ -1502,11 +1489,6 @@ class GTATOOLS_OT_add_ground_plane(bpy.types.Operator):
         return {'FINISHED'}
 
 
-classes = (
-    GTATOOLS_OT_add_ik_rig,
-    GTATOOLS_OT_bake_ik_rig,
-    GTATOOLS_OT_add_ground_plane,
-)
 
 
 # Stale handler cleanup: previous addon versions installed an

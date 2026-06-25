@@ -201,9 +201,3 @@ class GTATOOLS_OT_batch_set_distance(bpy.types.Operator):
         self.report({'INFO'}, f"{T('Изменено:')} {count}")
         return {'FINISHED'}
 
-
-classes = (
-    GTATOOLS_OT_set_col_surface,
-    GTATOOLS_OT_col_surface_menu,
-    GTATOOLS_OT_batch_set_distance,
-)

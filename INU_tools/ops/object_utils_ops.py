@@ -139,7 +139,3 @@ class GTATOOLS_OT_snap_to_dff(bpy.types.Operator):
         return {'FINISHED'}
 
 
-classes = (
-    GTATOOLS_OT_toggle_visibility,
-    GTATOOLS_OT_snap_to_dff,
-)

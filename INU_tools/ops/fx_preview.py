@@ -9,30 +9,92 @@ import random
 import time
 
 
-def _get_fx_textures_dir() -> str:
-    """Return path to data/fx_textures/ inside the addon."""
-    addon_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(addon_dir, "data", "fx_textures")
+# FX preview textures (coronas, shadows, water, clouds, skids…) are GTA San
+# Andreas assets and are NOT bundled with the addon — shipping them would be
+# Rockstar IP. They are loaded at RUNTIME from the user's own game: either a
+# TXD pointed to by `gtatools_fx_txd_path` (e.g. particle.txd) or auto-found
+# under the Game Root (particle.txd / gta3.img). If neither is available the
+# 2DFX preview falls back to a flat/placeholder material.
+
+_fx_txd_loaded_for: str = ""   # gtatools_fx_txd_path we've already loaded
+
+# Standalone FX/particle TXDs we look for under <game_root>/models/, in
+# priority order. Shared by the auto-loader (_ensure_particle_txd_loaded)
+# and the panel status line (resolve_fx_txd_display).
+_FX_TXD_CANDIDATES = ('particle.txd', 'particle2.txd', 'effectsPC.txd', 'misc.txd')
+
+
+def _short_txd_path(p: str) -> str:
+    """'<parent folder>/<filename>' — compact path for the panel status."""
+    parent = os.path.basename(os.path.dirname(p))
+    return (parent + "/" + os.path.basename(p)) if parent else os.path.basename(p)
+
+
+def resolve_fx_txd_display() -> str:
+    """Short path of the .txd FX textures actually come from — for the 2DFX
+    panel status line. Mirrors the loader's resolution order:
+      explicit gtatools_fx_txd_path → <game>/models/<candidate> →
+      <game>/models/gta3.img (SA ships particle.txd inside it).
+    Returns '' only when there is NOTHING to load from — no explicit .txd
+    AND no usable Game Root — so the panel shows «Не выбран» just in that case.
+    """
+    try:
+        s = bpy.context.scene.inu_settings
+    except AttributeError:
+        return ""
+    # 1) Explicit user .txd takes priority.
+    p = bpy.path.abspath(getattr(s, 'gtatools_fx_txd_path', '') or '')
+    if p and os.path.isfile(p):
+        return _short_txd_path(p)
+    # 2) Game Root — standalone particle TXD under models/.
+    game_root = bpy.path.abspath(getattr(s, 'gtatools_game_root', '') or '')
+    if game_root and os.path.isdir(game_root):
+        models = os.path.join(game_root, 'models')
+        for name in _FX_TXD_CANDIDATES:
+            cand = os.path.join(models, name)
+            if os.path.isfile(cand):
+                return _short_txd_path(cand)
+        # 3) Embedded inside gta3.img (vanilla SA keeps particle.txd here).
+        if os.path.isfile(os.path.join(models, 'gta3.img')):
+            return "gta3.img/particle.txd"
+    return ""
+
+
+def _ensure_fx_txd_loaded() -> int:
+    """Load FX textures from the user's explicit TXD (gtatools_fx_txd_path).
+    One-shot per path. Returns the number of images added."""
+    global _fx_txd_loaded_for
+    try:
+        p = bpy.path.abspath(getattr(
+            bpy.context.scene.inu_settings, 'gtatools_fx_txd_path', '') or '')
+        if not p or not os.path.isfile(p):
+            return 0
+        if _fx_txd_loaded_for == p:
+            return 0
+        from .txd_import import import_txd
+        imgs = import_txd(p, assign_to_materials=False)
+        _fx_txd_loaded_for = p
+        print(f"[FX] loaded {len(imgs)} textures from {os.path.basename(p)}")
+        return len(imgs)
+    except Exception as e:
+        print(f"[FX] fx_txd load error: {e}")
+        return 0
 
 
 def _load_fx_image(tex_name: str):
-    """Load a corona/shadow texture from fx_textures folder."""
+    """Return a corona/shadow/water texture by name, sourced from the user's
+    GAME (never bundled). Resolution order: already-loaded image → explicit FX
+    TXD (`gtatools_fx_txd_path`) → Game-Root particle TXDs. Returns None if
+    unavailable (caller falls back to a flat/placeholder material)."""
     if not tex_name:
         return None
-
-    if tex_name in bpy.data.images:
-        return bpy.data.images[tex_name]
-
-    tex_dir = _get_fx_textures_dir()
-    filepath = os.path.join(tex_dir, tex_name + ".png")
-    if not os.path.isfile(filepath):
-        filepath = os.path.join(tex_dir, tex_name)
-        if not os.path.isfile(filepath):
-            return None
-
-    img = bpy.data.images.load(filepath)
-    img.name = tex_name
-    return img
+    img = bpy.data.images.get(tex_name)           # fast exact hit
+    if img is not None:
+        return img
+    _ensure_fx_txd_loaded()
+    if tex_name not in bpy.data.images:
+        _ensure_particle_txd_loaded()
+    return _find_particle_image(tex_name)
 
 
 def _create_plane_mesh(name: str, size: float = 1.0) -> bpy.types.Mesh:
@@ -75,17 +137,22 @@ def _lock_child(obj, lock_rotation=True):
     obj.lock_scale = (True, True, True)
 
 
-def _create_corona_material(tex_name: str, color_rgb, edge_power=2.0, emission_strength=0.7) -> bpy.types.Material:
+def _create_corona_material(tex_name: str, color_rgb, edge_power=2.0, emission_strength=0.7, unique_key: str = "") -> bpy.types.Material:
     """Create corona material: Transparent + Emission mixed by texture brightness.
 
     Black pixels = fully transparent, white pixels = glowing with effect color.
     color_rgb: tuple of (r, g, b) floats in 0.0-1.0 range.
+    unique_key: per-object suffix so each 2DFX light gets its OWN material.
+        Without it, two lamps sharing a corona texture (the normal case —
+        every street lamp uses «coronastar») would map to the same material
+        name; recreating it would unlink the material from the first lamp's
+        billboard, so only one corona would ever render.
     """
     r, g, b = color_rgb[0], color_rgb[1], color_rgb[2]
 
-    mat_name = f"2dfx_corona_{tex_name}"
+    mat_name = f"2dfx_corona_{tex_name}_{unique_key}" if unique_key else f"2dfx_corona_{tex_name}"
 
-    # Always recreate material to apply debug tuning params
+    # Recreate this object's own material to apply current params.
     if mat_name in bpy.data.materials:
         bpy.data.materials.remove(bpy.data.materials[mat_name])
 
@@ -268,8 +335,9 @@ def create_light_preview(parent_obj):
 
     collection.objects.link(billboard)
 
-    # Assign corona material
-    mat = _create_corona_material(corona_tex, (r, g, b))
+    # Assign corona material — keyed per-parent so multiple lamps sharing
+    # the same corona texture each keep their own material.
+    mat = _create_corona_material(corona_tex, (r, g, b), unique_key=parent_obj.name)
     billboard.data.materials.append(mat)
 
     _lock_child(billboard, lock_rotation=False)
@@ -306,10 +374,7 @@ def _ensure_particle_txd_loaded() -> int:
 
         from .txd_import import import_txd, import_txd_bytes
 
-        candidate_txds = (
-            'particle.txd', 'particle2.txd',
-            'effectsPC.txd', 'misc.txd',
-        )
+        candidate_txds = _FX_TXD_CANDIDATES
 
         total = 0
 
@@ -405,13 +470,16 @@ def _find_particle_image(tex_name: str):
     return None
 
 
-def _create_particle_material(effect_name: str, color_rgb, tex_name) -> bpy.types.Material:
+def _create_particle_material(effect_name: str, color_rgb, tex_name, unique_key: str = "") -> bpy.types.Material:
     """Emission material for a particle billboard, optionally textured.
 
     color_rgb — (r,g,b) floats 0..1 (sampled from the COLOUR curve at t=0).
     tex_name  — name of an already-loaded bpy.data.image, or None for flat plane.
+    unique_key — per-object suffix so two particle 2DFX with the same effect
+        name keep separate materials (otherwise recreating one unlinks it
+        from the other's billboard).
     """
-    mat_name = f"2dfx_particle_{effect_name}"
+    mat_name = f"2dfx_particle_{effect_name}_{unique_key}" if unique_key else f"2dfx_particle_{effect_name}"
     if mat_name in bpy.data.materials:
         bpy.data.materials.remove(bpy.data.materials[mat_name], do_unlink=True)
 
@@ -536,7 +604,8 @@ def create_particle_preview(parent_obj):
     billboard.scale = (scale, scale, scale)
     collection.objects.link(billboard)
 
-    mat = _create_particle_material(effect_name or "empty", tint, tex_name)
+    mat = _create_particle_material(effect_name or "empty", tint, tex_name,
+                                    unique_key=parent_obj.name)
     billboard.data.materials.append(mat)
 
     _lock_child(billboard, lock_rotation=False)

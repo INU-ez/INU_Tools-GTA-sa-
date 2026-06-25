@@ -9,15 +9,10 @@
 import bpy
 
 from .. import compat
+from .bake_composite import BLEND_NODE_TYPE
 
 
 COMPOSITE_MAT = 'INU_BakeComposite'
-
-# Наши режимы → blend_type ноды ShaderNodeMix (один-в-один).
-_BLEND_TO_NODE = {
-    'NORMAL': 'MIX', 'MULTIPLY': 'MULTIPLY', 'ADD': 'ADD',
-    'SCREEN': 'SCREEN', 'OVERLAY': 'OVERLAY',
-}
 
 
 def build_composite_material(specs, base_name, uv_name):
@@ -54,29 +49,54 @@ def build_composite_material(specs, base_name, uv_name):
     def _img_node(map_id, y):
         n = nt.nodes.new('ShaderNodeTexImage')
         n.image = bpy.data.images.get(f"{base_name}_{map_id}")
-        n.location = (-800, y)
+        n.location = (-900, y)
         n.label = map_id
         if uv_name:
             uvm = nt.nodes.new('ShaderNodeUVMap')
             uvm.uv_map = uv_name
-            uvm.location = (-1000, y)
+            uvm.location = (-1100, y)
             nt.links.new(uvm.outputs['UV'], n.inputs['Vector'])
         return n
 
+    def _cg(color_out, contrast, gamma, y):
+        """Контраст/гамма слоя нодами (если не identity). Формулы 1:1 с
+        bake_composite.apply_contrast_gamma → живой превью = numpy-сведение:
+          contrast (c−0.5)·k+0.5  → BrightContrast, Contrast = k−1;
+          gamma c**(1/g)          → Gamma, Gamma = 1/g.
+        Возвращает итоговый Color-сокет."""
+        out = color_out
+        if contrast != 1.0:
+            bc = nt.nodes.new('ShaderNodeBrightContrast')
+            bc.location = (-680, y)
+            bc.inputs['Bright'].default_value = 0.0
+            bc.inputs['Contrast'].default_value = float(contrast) - 1.0
+            nt.links.new(out, bc.inputs['Color'])
+            out = bc.outputs['Color']
+        if gamma != 1.0 and gamma > 0.0:
+            g = nt.nodes.new('ShaderNodeGamma')
+            g.location = (-680, y - 160)
+            g.inputs['Gamma'].default_value = 1.0 / float(gamma)
+            nt.links.new(out, g.inputs['Color'])
+            out = g.outputs['Color']
+        return out
+
     y = 0
-    acc = _img_node(enabled[0]['map_id'], y).outputs['Color']
-    x = -500
+    base = enabled[0]
+    acc = _cg(_img_node(base['map_id'], y).outputs['Color'],
+              base.get('contrast', 1.0), base.get('gamma', 1.0), y)
+    x = -460
     for L in enabled[1:]:
         y -= 320
-        top = _img_node(L['map_id'], y)
+        top_col = _cg(_img_node(L['map_id'], y).outputs['Color'],
+                      L.get('contrast', 1.0), L.get('gamma', 1.0), y)
         wrap = compat.make_mix_rgba(
             nt.nodes,
-            blend=_BLEND_TO_NODE.get(L['blend_mode'], 'MIX'),
+            blend=BLEND_NODE_TYPE.get(L['blend_mode'], 'MIX'),
             label=L['map_id'])
         wrap.node.location = (x, y // 2)
         wrap.factor.default_value = float(L['opacity'])
         nt.links.new(acc, wrap.a)
-        nt.links.new(top.outputs['Color'], wrap.b)
+        nt.links.new(top_col, wrap.b)
         acc = wrap.result
         x += 220
     nt.links.new(acc, emit.inputs['Color'])

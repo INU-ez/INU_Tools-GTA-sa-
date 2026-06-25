@@ -1004,63 +1004,6 @@ class GTATOOLS_OT_vcl_promote(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class GTATOOLS_OT_vcl_demote(bpy.types.Operator):
-    """Превратить произвольный color attribute в VCL-слой (добавить префикс).
-
-    Scope (Day или Night) определяется параметром оператора — на UI
-    кнопки «→ Day» / «→ Night» рядом с не-VCL атрибутами в секции «База»"""
-    bl_idname = "gtatools.vcl_demote"
-    bl_label = "INU: Demote to Layer"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    attr_name: StringProperty()
-    scope: EnumProperty(items=_SCOPE_ITEMS, default='DAY')
-
-    def execute(self, context):
-        mesh = _mesh_or_none(context)
-        if mesh is None:
-            return {'CANCELLED'}
-
-        attr = mesh.color_attributes.get(self.attr_name)
-        if attr is None:
-            self.report({'WARNING'}, T("Атрибут не найден"))
-            return {'CANCELLED'}
-        if parse_vcl_attr_name(self.attr_name) is not None:
-            self.report({'WARNING'}, T("Это уже VCL-слой"))
-            return {'CANCELLED'}
-
-        # Cap check — refuse if target stack is already full.
-        day_count, night_count = count_layers_per_scope(
-            a.name for a in mesh.color_attributes)
-        current_count = day_count if self.scope == 'DAY' else night_count
-        if current_count >= MAX_LAYERS_PER_STACK:
-            self.report({'WARNING'},
-                T("Лимит {n} слоёв для стека {scope} достигнут").format(
-                    n=MAX_LAYERS_PER_STACK,
-                    scope=T("Day") if self.scope == 'DAY' else T("Night")))
-            return {'CANCELLED'}
-
-        new_name = make_vcl_attr_name(self.scope, self.attr_name)
-        if mesh.color_attributes.get(new_name) is not None:
-            self.report({'WARNING'},
-                T("Атрибут «{}» уже есть").format(new_name))
-            return {'CANCELLED'}
-
-        attr.name = new_name
-
-        item = mesh.gtatools_vc_layers.add()
-        with _suppressed_label_sync():
-            item.scope = self.scope
-            item.label = self.attr_name  # original name → label
-            item.attr_name = new_name
-        # New layer joined the stack — refresh composite if Live
-        # Preview is on so the demoted attribute starts contributing
-        # to Day/Night immediately.
-        if _is_live_preview_on(mesh):
-            schedule_recompose(mesh, self.scope)
-        return {'FINISHED'}
-
-
 class GTATOOLS_OT_vcl_show_composite(bpy.types.Operator):
     """Сделать атрибут Day или Night активным в Color Attributes.
 
@@ -1541,20 +1484,6 @@ def draw_vc_layers_section(layout, context, mesh):
                      text=T("Перекрасить выделенные…"), **inu_icon(safe_icon('COLOR')))
 
 
-classes = (
-    GTATOOLS_VCLayerItem,
-    GTATOOLS_OT_vcl_add,
-    GTATOOLS_OT_vcl_remove,
-    GTATOOLS_OT_vcl_move,
-    GTATOOLS_OT_vcl_promote,
-    GTATOOLS_OT_vcl_demote,
-    GTATOOLS_OT_vcl_set_active_attr,
-    GTATOOLS_OT_vcl_show_composite,
-    GTATOOLS_OT_vcl_refresh_composite,
-    GTATOOLS_OT_vcl_apply_multi,
-    GTATOOLS_OT_vcl_recolor_selected,
-    GTATOOLS_UL_vc_layers,
-)
 
 
 # ─────────────────────── module-level register hooks ────────────────

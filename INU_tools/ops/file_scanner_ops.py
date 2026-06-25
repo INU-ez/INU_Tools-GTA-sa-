@@ -201,9 +201,3 @@ class GTATOOLS_OT_scan_clear(bpy.types.Operator):
         return {'FINISHED'}
 
 
-classes = (
-    GTATOOLS_OT_scan_files,
-    GTATOOLS_OT_scan_save_report,
-    GTATOOLS_OT_scan_reveal_file,
-    GTATOOLS_OT_scan_clear,
-)

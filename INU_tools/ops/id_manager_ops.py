@@ -532,20 +532,3 @@ class GTATOOLS_OT_id_preset_rename(bpy.types.Operator):
         return {'FINISHED'}
 
 
-classes = (
-    GTATOOLS_OT_id_manager_open_file,
-    GTATOOLS_OT_id_manager_release,
-    GTATOOLS_OT_id_manager_auto_assign,
-    GTATOOLS_OT_id_manager_assign_from,
-    GTATOOLS_OT_batch_set_type,
-    GTATOOLS_OT_id_manager_clear_selected,
-    GTATOOLS_OT_id_manager_clear,
-    GTATOOLS_OT_id_manager_create,
-    GTATOOLS_OT_id_manager_extend,
-    GTATOOLS_OT_id_manager_from_game,
-    GTATOOLS_OT_id_manager_gc,
-    GTATOOLS_OT_id_manager_sync_scene,
-    GTATOOLS_OT_id_preset_new,
-    GTATOOLS_OT_id_preset_delete,
-    GTATOOLS_OT_id_preset_rename,
-)

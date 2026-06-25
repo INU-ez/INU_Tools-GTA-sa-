@@ -646,48 +646,26 @@ def _format_zone_line(z: IplZone) -> str:
 def is_lod_name(model_name: str) -> bool:
     """Heuristic LOD detection from a model name.
 
-    Vanilla GTA SA uses ``LOD<name>`` almost everywhere, but Rockstar's
-    own tools and community mods ship assets with the ``LOD`` marker in
-    less obvious places:
+    A GTA-SA LOD model carries ``lod`` somewhere in its name, and the
+    marker shows up in many shapes:
 
-    - ``LOD<name>`` / ``lod<name>`` — prefix (most common)
-    - ``<name>_LOD`` / ``<name>_lod`` — suffix with separator
-    - ``<name>LOD`` — suffix without separator next to a digit/separator,
-      e.g. ``tatar_str_2817_1LOD``
-    - ``<prefix>LOD<suffix>`` — uppercase ``LOD`` spliced into the middle
-      of an otherwise lowercase name (legacy Rockstar pattern, e.g.
-      ``modeLODlaett`` paired with base ``modelaett``)
+    - prefix:  ``LODfoo`` / ``lodfoo``
+    - suffix:  ``foo_LOD`` / ``foo1LOD``
+    - infix with a separator:  ``nw_lodbit_26``
+    - infix WITHOUT a separator, mid-word:  ``des_damlodbit04``,
+      ``oilderricklod01``  ← what earlier, stricter checks missed
 
-    For unreliable content prefer :func:`lod_instance_indices`, which
-    reads the IPL ``lod_index`` cross-reference — that is authoritative
-    no matter how the DFF happens to be named.
+    For map/model names ``lod`` reliably means a LOD, so we simply match
+    it anywhere (case-insensitive). The few English words that contain
+    ``lod`` (``lodge``, ``explode``) don't occur as GTA map model names.
+
+    For maximum reliability prefer :func:`lod_instance_indices`, which
+    reads the IPL ``lod_index`` cross-reference — authoritative no matter
+    how the DFF happens to be named.
     """
     if not model_name:
         return False
-    n = model_name.lower()
-    if n.startswith('lod'):
-        return True
-    if n.endswith('_lod'):
-        return True
-    # Bare 'LOD' suffix — require a digit or separator just before it so
-    # we don't classify words like 'clod', 'explod*', 'aerodrom' as LODs.
-    if len(n) > 3 and n.endswith('lod'):
-        prev = n[-4]
-        if prev.isdigit() or prev in '_-':
-            return True
-    # Embedded uppercase ``LOD`` in an otherwise lowercase name. Matches
-    # Rockstar's legacy pattern ``modeLODlaett`` but avoids all-caps
-    # tokens like ``CLOD`` / ``FLOODGATE`` — we only flag if at least one
-    # lowercase letter is directly adjacent to the uppercase marker.
-    if 'LOD' in model_name:
-        pos = model_name.find('LOD')
-        before = model_name[:pos]
-        after = model_name[pos + 3:]
-        has_lower_before = bool(before) and before[-1].islower()
-        has_lower_after = bool(after) and after[0].islower()
-        if has_lower_before or has_lower_after:
-            return True
-    return False
+    return 'lod' in model_name.lower()
 
 
 def strip_lod_marker(name: str) -> str:
@@ -728,6 +706,12 @@ def strip_lod_marker(name: str) -> str:
         after = name[pos + 3:]
         if (before and before[-1].islower()) or (after and after[0].islower()):
             return before + after
+    # Fallback: embedded lower-case 'lod' mid-word (des_damlodbit04 →
+    # des_dambit04). Best-effort for LOD↔base linking; if the guessed base
+    # doesn't exist the link simply isn't made (no harm).
+    pos = name.lower().find('lod')
+    if pos >= 0:
+        return name[:pos] + name[pos + 3:]
     return name
 
 

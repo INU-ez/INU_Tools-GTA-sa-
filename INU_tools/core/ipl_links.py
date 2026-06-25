@@ -234,25 +234,34 @@ def new_uuid() -> str:
 
 def find_inst_by_content(ipl, model_id: int,
                          pos: Tuple[float, float, float],
-                         tolerance: float = POS_MATCH_TOLERANCE) -> int:
+                         tolerance: float = POS_MATCH_TOLERANCE,
+                         occupied=None) -> int:
     """Find inst index in ``ipl.instances`` matching model_id and pos.
 
     Returns -1 if no match within ``tolerance`` metres.  Used when the
     sidecar hash doesn't match (external edit) — we can still relocate
     most placements by their last known position.
+
+    ``occupied`` — множество уже занятых в этом прогоне индексов строк; они
+    ПРОПУСКАЮТСЯ. Критично для «леса»: много размещений одного model_id в
+    почти одинаковых точках (наложенные деревья). Без этого жадный поиск мог
+    назначить два объекта на одну строку, оставив один без места («пропущено»),
+    который потом улетал в чужой IPL.
     """
     if model_id <= 0:
         return -1
     best_idx = -1
     best_d2 = tolerance * tolerance
     for i, inst in enumerate(ipl.instances):
+        if occupied is not None and i in occupied:
+            continue
         if int(getattr(inst, 'model_id', -1)) != int(model_id):
             continue
         dx = float(inst.pos_x) - float(pos[0])
         dy = float(inst.pos_y) - float(pos[1])
         dz = float(inst.pos_z) - float(pos[2])
         d2 = dx * dx + dy * dy + dz * dz
-        if d2 <= best_d2:
+        if d2 < best_d2:
             best_d2 = d2
             best_idx = i
     return best_idx

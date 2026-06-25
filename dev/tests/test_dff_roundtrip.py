@@ -115,6 +115,40 @@ def test_geometry_with_prelit_colors():
     assert g.prelit_colors[0].b == 64
 
 
+def test_prelit_vertex_alpha_round_trip():
+    """Per-vertex ALPHA in prelit (Day) colours must survive write→read.
+    Guards the vertex-alpha export pipeline at the binary layer — the
+    Blender side (dff_export `_mesh_alpha`) feeds these bytes."""
+    geom = _basic_geom(num_verts=3, with_prelit=True)
+    # Distinct alpha per vertex incl. the extremes (fully transparent /
+    # opaque) and a mid value — exactly the KRC_mounta018-style gradient.
+    geom.prelit_colors = [
+        RGBA(r=10, g=20, b=30, a=0),
+        RGBA(r=40, g=50, b=60, a=128),
+        RGBA(r=70, g=80, b=90, a=245),
+    ]
+    g = read_dff(write_dff(_wrap(geom))).geometries[0]
+    assert [c.a for c in g.prelit_colors] == [0, 128, 245]
+    # RGB must not be disturbed by carrying alpha.
+    assert (g.prelit_colors[1].r, g.prelit_colors[1].g,
+            g.prelit_colors[1].b) == (40, 50, 60)
+
+
+def test_extra_night_vertex_alpha_round_trip():
+    """Night (ExtraVertColors, chunk 0x253F2F9) alpha must round-trip too —
+    SA reads these for day/night buildings."""
+    from core.dff import ExtraVertColors  # noqa: E402
+    geom = _basic_geom(num_verts=3, with_prelit=True)
+    geom.extra_colors = ExtraVertColors(colors=[
+        RGBA(r=0, g=0, b=0, a=5),
+        RGBA(r=255, g=255, b=255, a=200),
+        RGBA(r=128, g=128, b=128, a=255),
+    ])
+    g = read_dff(write_dff(_wrap(geom))).geometries[0]
+    assert g.extra_colors is not None
+    assert [c.a for c in g.extra_colors.colors] == [5, 200, 255]
+
+
 def test_geometry_without_normals():
     geom = _basic_geom(with_normals=False)
     geom.export_normals = False

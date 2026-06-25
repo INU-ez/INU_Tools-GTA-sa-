@@ -26,6 +26,27 @@ def _create_action_fcurves(action, armature):
     return channelbag.fcurves
 
 
+def _reset_pose_bones(armature):
+    """Снять позу со всех костей (вернуть в rest).
+
+    При назначении новой анимации Blender НЕ трогает кости, у которых в
+    новом экшене нет ключей — они остаются в позе от предыдущей анимации.
+    Поэтому, например, применив crouchfire (ключи на нижней части тела), а
+    потом standingfire (нижней части тела ключей нет), нижняя часть тела
+    остаётся «присевшей». Сбрасываем локальный трансформ каждой pose-кости
+    в rest перед применением — тогда не-заключённые кости встают в rest, а
+    заключённые перезаписываются ключами нового экшена.
+    """
+    if not armature or armature.type != 'ARMATURE':
+        return
+    for pb in armature.pose.bones:
+        pb.location = (0.0, 0.0, 0.0)
+        pb.rotation_quaternion = (1.0, 0.0, 0.0, 0.0)
+        pb.rotation_axis_angle = (0.0, 0.0, 1.0, 0.0)
+        pb.rotation_euler = (0.0, 0.0, 0.0)
+        pb.scale = (1.0, 1.0, 1.0)
+
+
 def _action_has_fcurves(action):
     """True if ``action`` has any fcurves — works for both legacy and
     layered (4.4+/5.x) actions. Legacy: action.fcurves directly.
@@ -87,6 +108,10 @@ def apply_ifp_action(action_name: str, armature, context=None):
     """
     if not armature or armature.type != 'ARMATURE':
         return False, "Select an armature"
+
+    # Снять остаточную позу от ранее применённой анимации, иначе кости без
+    # ключей в новом экшене «залипают» в предыдущей позе (см. _reset_pose_bones).
+    _reset_pose_bones(armature)
 
     # Find the action
     action = bpy.data.actions.get(action_name)
@@ -662,9 +687,6 @@ class GTATOOLS_OT_ifp_batch_import(bpy.types.Operator):
         return {'FINISHED'}
 
 
-classes = (
-    GTATOOLS_OT_ifp_batch_import,
-)
 
 
 # ──────────────────────────── train station markers ───────────────────
@@ -739,7 +761,6 @@ class GTATOOLS_OT_refresh_station_markers(bpy.types.Operator):
         return {'FINISHED'}
 
 
-classes = classes + (GTATOOLS_OT_refresh_station_markers,)
 
 
 # ──────────────────────────── path-node flags ─────────────────────────
@@ -815,4 +836,3 @@ class GTATOOLS_OT_path_node_flag(bpy.types.Operator):
         return {'FINISHED'}
 
 
-classes = classes + (GTATOOLS_OT_path_node_flag,)

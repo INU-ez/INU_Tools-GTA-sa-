@@ -20,6 +20,7 @@ import time
 from collections import OrderedDict
 
 import bpy
+import gpu
 
 from ... import T
 from ...tools import compat
@@ -30,15 +31,64 @@ from . import text_atlas as TA
 from . import widgets as WG
 
 
+# Offscreen window cache. Each floater renders its full content into a GPU
+# offscreen once, then every frame just blits that texture (1 draw call)
+# until something invalidates it (hover / content / size / scene change).
+# Turns the per-frame ~140-draw-call storm per window into one textured
+# quad while a window is static (the viewport-navigation case). Flip to
+# False to fall back to direct per-frame drawing if anything looks off.
+_OFFSCREEN_CACHE = True
+# Shadow + AA fringe extend a few px beyond the panel rect — pad the
+# offscreen so they aren't clipped.
+_OS_PAD = 8
+# ── Gamma / blend knobs for the offscreen blit — TUNE THESE BY EYE ──
+# The windows render LINEAR into the offscreen (the floater shaders
+# pre-linearise for Blender's linear viewport framebuffer). The blit back
+# adds an extra sRGB step → too dark at 1.0. Lower brightens.
+#   too DARK  → lower  (try 0.4545, then 0.4, 0.35 …)
+#   too LIGHT → raise toward 1.0 (or 2.2 to darken)
+_OS_BLIT_GAMMA = 1
+# Blend mode for the blit. Content is premultiplied (rendered onto a
+# transparent clear) → ALPHA_PREMULT is correct. If edges/shadow look
+# wrong, try premult=False (straight ALPHA).
+_OS_BLIT_PREMULT = True
+
+
+def _ortho2d(left, right, bottom, top):
+    """Pixel-space → clip-space ortho, so the existing absolute-coordinate
+    draw code renders correctly into an offscreen whose viewport is
+    [0..W]×[0..H] mapping the panel's screen rect."""
+    from mathutils import Matrix
+    m = Matrix.Identity(4)
+    rl = (right - left) or 1.0
+    tb = (top - bottom) or 1.0
+    m[0][0] = 2.0 / rl
+    m[0][3] = -(right + left) / rl
+    m[1][1] = 2.0 / tb
+    m[1][3] = -(top + bottom) / tb
+    m[2][2] = -1.0
+    return m
+
+
+def _mark_all_floaters_dirty():
+    for f in _floaters.values():
+        f._dirty = True
+
+
 # ── Module-level singletons (shared across all floater instances) ────
 
 _floaters = OrderedDict()  # name -> Floater instance
 _draw_handler = None       # single SpaceView3D POST_PIXEL handler
+_kick_active = False       # guard: one _kick_redraw burst at a time
 _modal_running = False     # single modal operator alive flag
 _modal_last_tick = 0.0     # time.monotonic() of last modal() callback;
                            # used by the watchdog to detect when
                            # Blender silently kills the modal on
                            # screen swaps (workspace tab clicks).
+_theme_fp = None           # last seen theme/UI-scale fingerprint; the
+                           # palette + text metrics are recomputed ONLY
+                           # when this changes (a real theme switch),
+                           # never speculatively per redraw.
 
 # Per-floater UI-state cache, keyed by (floater_name, prop_key) where
 # prop_key is one of 'visible' / 'collapsed' / 'x' / 'y' / ...
@@ -70,6 +120,37 @@ _VIEWPORT_MARGIN_BOTTOM = 0
 _LABEL_COL_W = 90
 _BTN_W = 16  # width of one chrome icon (close / collapse)
 
+def _first_view3d_ctx():
+    """Return a ``(window, area, region)`` triple for a VIEW_3D WINDOW
+    region (preferring the active window), or ``(None, None, None)``.
+
+    Operators dispatched from ``bpy.app.timers`` carry no UI window in
+    ``bpy.context``. Their ``self.report()`` still reaches the Info log /
+    system console, but the bottom **status-bar banner never fires** —
+    that banner is drawn into ``CTX_wm_window(C)`` and there's no window
+    in a timer context. Running the op under a ``temp_override`` with
+    this triple gives the report a window to render its banner in,
+    matching what a native panel-button click already provides."""
+    wm = bpy.context.window_manager
+    if wm is None:
+        return None, None, None
+    active = getattr(bpy.context, 'window', None)
+    windows = list(wm.windows)
+    if active in windows:
+        windows = [active] + [w for w in windows if w != active]
+    for window in windows:
+        screen = getattr(window, 'screen', None)
+        if screen is None:
+            continue
+        for area in screen.areas:
+            if area.type != 'VIEW_3D':
+                continue
+            for region in area.regions:
+                if region.type == 'WINDOW':
+                    return window, area, region
+    return None, None, None
+
+
 def _invoke_operator(op_idname, op_kwargs=None):
     """Invoke a Blender operator via `bpy.app.timers`, on the next
     idle tick, with INVOKE_DEFAULT.
@@ -85,6 +166,22 @@ def _invoke_operator(op_idname, op_kwargs=None):
       Blender first — by the time the operator actually invokes,
       our modal is idle again and mode_set works normally.
 
+    Why override context:
+      A timer-invoked op has no UI window in `bpy.context` — so
+      `context.window` / `context.workspace` are unreliable and
+      window-dependent calls (mode_set, `status_text_set`) can
+      no-op. We run it under a `temp_override` with a real VIEW_3D
+      window/area/region so the operator sees a proper UI context.
+      (Note: this does NOT restore the colored report *banner* —
+      when an op is called through `bpy.ops` from Python, Python
+      owns its ReportList and Blender suppresses the banner by
+      design; reports reach only the Info log / console. We do NOT
+      auto-publish a generic label per button. Instead, operators
+      that produce a meaningful notification — Sync/Add/Del/Check —
+      call `set_floater_status` themselves with their real report
+      text, so the floater strip mirrors the N-panel notifications
+      and stays empty for buttons that have nothing to say.)
+
     Inline-dispatch operators (preset picker, V-offset edit) do
     NOT use this helper any more: they bypass `_invoke_operator`
     and manipulate state directly, so they don't need event
@@ -97,11 +194,24 @@ def _invoke_operator(op_idname, op_kwargs=None):
     kwargs = op_kwargs or {}
 
     def _run():
+        global _floater_dispatch_active
         try:
             op = bpy.ops
             for p in parts:
                 op = getattr(op, p)
-            op('INVOKE_DEFAULT', **kwargs)
+            win, area, region = _first_view3d_ctx()
+            # Mark this op as floater-originated so its report mirrors into
+            # the active floater's strip (reset in finally so N-panel ops
+            # that run later don't inherit the flag).
+            _floater_dispatch_active = True
+            try:
+                if win is not None and hasattr(bpy.context, 'temp_override'):
+                    with bpy.context.temp_override(window=win, area=area, region=region):
+                        op('INVOKE_DEFAULT', **kwargs)
+                else:
+                    op('INVOKE_DEFAULT', **kwargs)
+            finally:
+                _floater_dispatch_active = False
         except Exception as e:
             print(f"[INU Floater] operator '{op_idname}' failed: {e}")
         return None  # one-shot
@@ -110,6 +220,138 @@ def _invoke_operator(op_idname, op_kwargs=None):
         bpy.app.timers.register(_run, first_interval=0.0)
     except Exception as e:
         print(f"[INU Floater] could not schedule '{op_idname}': {e}")
+
+
+# ── Floater status strip ─────────────────────────────────────────────
+# Every floater draws a one-line result strip at its bottom (added by the
+# Floater base class). It mirrors what the just-run action reported —
+# necessary because floaters dispatch ops via bpy.ops, where Blender
+# suppresses the native report banner. The status is PER-WINDOW: a result
+# routes to whichever floater the user is interacting with, so each window
+# shows its own info (not a shared global message).
+
+_status_gen = 0
+
+# The floater the user is currently interacting with. `_handle_lmb_press`
+# sets it on every press, so an action dispatched from that window (and
+# its deferred operator, which runs a frame later) routes its result back
+# to that same window's strip.
+_active_floater = None
+
+# True only while an operator dispatched FROM a floater button is running.
+# `set_floater_status` (called by operators' report-mirror helpers) writes
+# to a window's strip only when this is set — so the SAME operators
+# triggered from the N-panel keep their native banner and DON'T leak into
+# whatever floater happens to be active.
+_floater_dispatch_active = False
+
+# Green for an OK/INFO result (theme has _C_WARN / _C_ERROR but no «ok»).
+_C_OK_STATUS = (0.45, 0.82, 0.45, 1.0)
+
+
+def set_floater_status(msg, level='INFO', secs=6.0, context=None):
+    """Publish a one-line *msg* to the status strip of the floater being
+    interacted with (per-window) AND Blender's bottom status bar. *level*
+    ∈ {INFO, WARNING, ERROR} colours the strip.
+
+    No-op unless an operator launched from a floater button is currently
+    running (`_floater_dispatch_active`) — that keeps N-panel-triggered
+    reports out of the floaters.
+
+    The in-window strip persists until that window's next action; the
+    status-bar text auto-clears after *secs*, Blender-style."""
+    # Mirror only reports that originate from a floater button. The same
+    # operators fired from the N-panel keep their native banner and must
+    # not bleed into whatever floater happens to be the active target.
+    if not _floater_dispatch_active:
+        return
+    global _status_gen
+    _status_gen += 1
+    gen = _status_gen
+
+    target = _active_floater
+    if target is not None:
+        try:
+            target.state.status = (str(msg), level)
+            target._dirty = True   # content changed → re-render offscreen
+        except Exception:
+            pass
+
+    ctx = context if context is not None else bpy.context
+    ws = getattr(ctx, 'workspace', None) or getattr(bpy.context, 'workspace', None)
+    if ws is not None:
+        try:
+            ws.status_text_set(str(msg))
+        except Exception:
+            pass
+    try:
+        _tag_redraw_view3d(bpy.context)
+    except Exception:
+        pass
+
+    def _clear():
+        # Only the bottom status-bar text auto-clears; each floater's strip
+        # keeps its own last result until that window's next action.
+        if gen != _status_gen:
+            return None
+        try:
+            w = getattr(bpy.context, 'workspace', None)
+            if w is not None:
+                w.status_text_set(None)
+        except Exception:
+            pass
+        return None
+
+    try:
+        bpy.app.timers.register(_clear, first_interval=secs)
+    except Exception:
+        pass
+
+
+# Number of text lines reserved in every floater's bottom status strip.
+_STATUS_LINES = 2
+
+
+def _fit_text(text, max_w):
+    """Trim *text* with a trailing ellipsis so it fits within *max_w* px."""
+    if TA._text_dims(text)[0] <= max_w:
+        return text
+    ell = "…"
+    while text and TA._text_dims(text + ell)[0] > max_w:
+        text = text[:-1]
+    return text + ell
+
+
+def _wrap_text(text, max_w, max_lines):
+    """Greedy word-wrap *text* into at most *max_lines* lines that each fit
+    *max_w* px. The last line is ellipsised if content still overflows.
+    Splits on spaces — our messages put spaces around their « | »
+    separators, so segments break cleanly."""
+    words = text.split(' ')
+    lines = []
+    cur = ''
+    for wd in words:
+        trial = wd if not cur else cur + ' ' + wd
+        if not cur or TA._text_dims(trial)[0] <= max_w:
+            cur = trial
+        else:
+            lines.append(cur)
+            cur = wd
+            if len(lines) == max_lines:
+                break
+    if len(lines) < max_lines and cur:
+        lines.append(cur)
+    if not lines:
+        return ['']
+    # Anything that didn't fit → fold the remainder into the last line and
+    # ellipsise it so nothing is silently dropped without a hint.
+    used = ' '.join(lines)
+    if used != text:
+        rest = text[len(used):].strip()
+        lines[-1] = _fit_text((lines[-1] + ' ' + rest).strip(), max_w)
+    else:
+        lines[-1] = _fit_text(lines[-1], max_w)
+    return lines
 
 
 def _push_undo(message):
@@ -147,6 +389,42 @@ def _tag_redraw_view3d(context):
             for region in area.regions:
                 if region.type == 'WINDOW':
                     region.tag_redraw()
+
+
+def _kick_redraw():
+    """Принудительно сбросить перерисовку вьюпорта через одноразовый
+    таймер (0 с).
+
+    Только `tag_redraw` НЕ перерисовывает, пока Blender не обработает
+    какое-нибудь событие — отсюда баг «окно появляется только после
+    движения мышью» при ПЕРВОМ открытии после запуска (cursor_warp в ту
+    же точку не всегда генерит MOUSEMOVE). Таймер с интервалом 0 надёжно
+    будит цикл событий и сбрасывает помеченные перерисовки."""
+    global _kick_active
+    if _kick_active:
+        # Серия уже идёт — не плодим параллельные таймеры (меньше лишних
+        # перерисовок главного потока, безопаснее на dev-сборке).
+        return
+    _kick_active = True
+    state = {'n': 0}
+    def _cb():
+        global _kick_active
+        try:
+            _tag_redraw_view3d(bpy.context)
+        except Exception:
+            pass
+        state['n'] += 1
+        # Серия из ~6 перерисовок за ~0.18 с: один tag_redraw на первом
+        # старте мог не «проявить» окно, а при открытии 2-го/3-го окна
+        # серия гарантирует, что все окна перерисуются и устаканятся.
+        if state['n'] >= 6:
+            _kick_active = False
+            return None
+        return 0.03
+    try:
+        bpy.app.timers.register(_cb, first_interval=0.0)
+    except Exception:
+        _kick_active = False
 
 # ── Per-instance runtime state ───────────────────────────────────────
 
@@ -191,6 +469,11 @@ class FloaterState:
         # object so a second jump can restore what was hidden. Lives on
         # the base for convenience; only InfoFloater touches it.
         self.auto_changes = None
+        # Last action result shown in THIS floater's bottom strip, as
+        # (msg, level) or None. Per-instance so each window shows its own
+        # result, not a shared global one. Persists until the next action
+        # in this same floater replaces it (not cleared by reset()).
+        self.status = None
 
     def reset(self):
         self.drag_active = False
@@ -353,6 +636,10 @@ class Floater:
         # empty so старые сохранённые .blend файлы тоже автоматически
         # «расpinиваются» при следующем toggle.
         self._set_prop(context.scene, 'workspace', "")
+        # Принудительная перерисовка вьюпорта — без неё включённое окно не
+        # появлялось, пока пользователь не дёрнет вьюпорт (поворот и т.п.),
+        # т.к. сам тоггл не помечает VIEW_3D «грязным».
+        _tag_redraw_view3d(context)
 
     _COLLISION_PAD = 0  # extra px around a locked floater's bbox
 
@@ -424,18 +711,78 @@ class Floater:
 
     # Layout
 
+    def _status_line_h(self):
+        """Height of one wrapped text line in the status strip."""
+        try:
+            return int(TA._text_dims("Mg")[1]) + 7
+        except Exception:
+            return 16
+
+    def _status_strip_h(self):
+        """Total height the status strip adds to the body: a gap + N text
+        lines (so multi-line reports like «Sync IDE: … | Sync IPL: …» fit
+        instead of truncating to one line)."""
+        return TH._PAD + _STATUS_LINES * self._status_line_h()
+
+    def _panel_bbox(self, context):
+        """Cheap outer rect ``(x, y, w, h)`` of the panel — props +
+        ``compute_body_height`` only, WITHOUT the per-widget body layout.
+        Used to reject idle mouse-moves before paying for the full
+        ``compute_layout`` + hit-tests (the hot cost with many floaters)."""
+        s = context.scene
+        x = int(self._prop(s, 'x', self.default_pos[0]))
+        y = int(self._prop(s, 'y', self.default_pos[1]))
+        w = self.width
+        if bool(self._prop(s, 'collapsed', False)):
+            h = TH._HEADER_H
+        else:
+            h = TH._HEADER_H + TH._PAD * 2 + self.compute_body_height(context)
+            if getattr(self, 'SHOW_STATUS_STRIP', True):
+                h += self._status_strip_h()
+        return x, y, w, h
+
+    def _clear_hover(self):
+        """Reset all hover slots; return True if anything was set (→ caller
+        should tag a redraw so the de-hovered widget repaints)."""
+        st = self.state
+        had = (st.hover_header or st.hover_collapse or st.hover_close
+               or st.hover_lock or st.hover_triplet is not None
+               or st.hover_button is not None or st.hover_toggle is not None
+               or st.hover_slider is not None or st.hover_enum is not None
+               or st.hover_collapsible is not None or st.hover_menu is not None
+               or st.hover_dropdown_item is not None)
+        if had:
+            st.hover_header = st.hover_collapse = False
+            st.hover_close = st.hover_lock = False
+            st.hover_triplet = st.hover_button = st.hover_toggle = None
+            st.hover_slider = st.hover_enum = st.hover_collapsible = None
+            st.hover_menu = st.hover_dropdown_item = None
+        return had
+
     def compute_layout(self, context):
+        # One layout pass = one compute_layout call. compute_body_height
+        # and extend_body_layout both run inside it; subclasses memoise any
+        # expensive tree-build against this token so it's done once, not
+        # twice, per frame.
+        self._layout_pass = getattr(self, '_layout_pass', 0) + 1
         s = context.scene
         x = int(self._prop(s, 'x', self.default_pos[0]))
         y = int(self._prop(s, 'y', self.default_pos[1]))
         w = self.width
         collapsed = bool(self._prop(s, 'collapsed', False))
 
+        show_strip = getattr(self, 'SHOW_STATUS_STRIP', True)
         if collapsed:
             h = TH._HEADER_H
             body_h = 0
         else:
             body_h = TH._PAD * 2 + self.compute_body_height(context)
+            if show_strip:
+                # Permanently reserve a result strip (gap + N text lines) at
+                # the bottom — fixed height so the panel never grows/jumps
+                # when a message appears (it would shove a bottom-docked
+                # floater upward otherwise).
+                body_h += self._status_strip_h()
             h = TH._HEADER_H + body_h
 
         # Keep the panel's TOP edge anchored when content height changes
@@ -495,6 +842,13 @@ class Floater:
         }
         if not collapsed:
             self.extend_body_layout(context, L)
+            if show_strip:
+                # Pinned to the panel bottom with a _PAD margin — sits below
+                # whatever the subclass body laid out (the reserved extra
+                # height above guarantees no overlap).
+                L['_status_rect'] = (x + TH._PAD, y + TH._PAD,
+                                     w - 2 * TH._PAD,
+                                     _STATUS_LINES * self._status_line_h())
         return L
 
     def compute_body_height(self, context):
@@ -511,14 +865,148 @@ class Floater:
 
     # Drawing
 
+    def _draw_content(self, context, L):
+        """Paint the whole window (chrome + body + status strip) at the
+        layout's absolute coords. Used for direct drawing AND for rendering
+        into the offscreen cache."""
+        self._draw_chrome(context, L)
+        if not L['collapsed']:
+            self.draw_body(context, L)
+            self._draw_status_strip(L)
+
     def draw(self, context):
+        """Прямая (без offscreen) однопроходная отрисовка — используется,
+        когда _OFFSCREEN_CACHE выключен. При включённом offscreen
+        draw_callback гоняет render_pass()+blit_pass() ДВУМЯ отдельными
+        проходами по всем окнам (создание буфера нового окна больше не
+        сбивает блит уже нарисованных → нет мигания при открытии)."""
         try:
             L = self.compute_layout(context)
-            self._draw_chrome(context, L)
-            if not L['collapsed']:
-                self.draw_body(context, L)
+        except Exception as e:
+            print(f"[INU Floater] layout error in {self.name}: {e}")
+            return
+        try:
+            self._draw_content(context, L)
         except Exception as e:
             print(f"[INU Floater] draw error in {self.name}: {e}")
+
+    def render_pass(self, context):
+        """Проход 1: посчитать раскладку и отрендерить в offscreen-буфер
+        (БЕЗ блита). L сохраняется для blit_pass."""
+        try:
+            L = self.compute_layout(context)
+        except Exception as e:
+            print(f"[INU Floater] layout error in {self.name}: {e}")
+            self._last_L = None
+            return
+        self._last_L = L
+        try:
+            self._render_offscreen(context, L)
+        except Exception as e:
+            print(f"[INU Floater] offscreen render ({self.name}): {e}")
+            self._os = None        # blit_pass упадёт на прямую отрисовку
+
+    def blit_pass(self, context):
+        """Проход 2: блитнуть готовый offscreen-буфер. Все рендеры уже
+        сделаны в проходе 1, поэтому блиты идут подряд по дефолтному
+        фреймбуферу вьюпорта — без взаимного влияния окон."""
+        L = getattr(self, '_last_L', None)
+        if L is None:
+            return
+        if getattr(self, '_os', None) is not None and getattr(self, '_os_blit', None):
+            try:
+                px, py, W, H = self._os_blit
+                GS._draw_offscreen_texture(self._os.texture_color, px, py, W, H,
+                                           _OS_BLIT_GAMMA, _OS_BLIT_PREMULT)
+                return
+            except Exception as e:
+                print(f"[INU Floater] blit ({self.name}): {e}")
+        # Фолбэк — прямая отрисовка этого кадра.
+        try:
+            self._draw_content(context, L)
+        except Exception as e:
+            print(f"[INU Floater] draw error in {self.name}: {e}")
+
+    def _render_offscreen(self, context, L):
+        """Создать/переиспользовать GPU-offscreen и отрендерить в него
+        содержимое окна (если «грязно» / устарело). Блит — отдельно, в
+        blit_pass. Координаты блита сохраняются в self._os_blit."""
+        x, y, w, h = int(L['x']), int(L['y']), int(L['w']), int(L['h'])
+        M = _OS_PAD
+        px, py = x - M, y - M
+        W, H = w + 2 * M, h + 2 * M
+        self._os_blit = None
+        if W <= 0 or H <= 0:
+            self._os = None
+            return
+
+        os = getattr(self, '_os', None)
+        if os is None or getattr(self, '_os_size', None) != (W, H):
+            if os is not None:
+                try:
+                    os.free()
+                except Exception:
+                    pass
+            os = gpu.types.GPUOffScreen(W, H)
+            self._os = os
+            self._os_size = (W, H)
+            self._dirty = True
+
+        now = time.monotonic()
+        last = getattr(self, '_os_last_render', 0.0)
+        # Re-render on explicit invalidation (hover/content/theme/undo) or
+        # as a ≤0.5 s catch-all for external changes not routed through a
+        # floater event. Viewport navigation fires neither → pure blits.
+        if getattr(self, '_dirty', True) or (now - last) > 0.5:
+            with os.bind():
+                fb = gpu.state.active_framebuffer_get()
+                fb.clear(color=(0.0, 0.0, 0.0, 0.0))
+                gpu.matrix.push_projection()
+                gpu.matrix.push()
+                try:
+                    gpu.matrix.load_projection_matrix(
+                        _ortho2d(px, px + W, py, py + H))
+                    gpu.matrix.load_identity()
+                    self._draw_content(context, L)
+                finally:
+                    gpu.matrix.pop()
+                    gpu.matrix.pop_projection()
+            self._dirty = False
+            self._os_last_render = now
+            _PROF['renders'] = _PROF.get('renders', 0) + 1
+        else:
+            _PROF['blits'] = _PROF.get('blits', 0) + 1
+        self._os_blit = (px, py, W, H)
+
+    def _draw_status_strip(self, L):
+        """Bottom result strip shared by every floater — echoes the last
+        action's report (status banner is suppressed for bpy.ops-dispatched
+        ops, so we mirror it here). Recessed field: body fill + border,
+        text colour by level; dim «—» placeholder until the first message."""
+        rect = L.get('_status_rect')
+        if not rect:
+            return
+        mx, my, mw, mh = rect
+        GS._draw_widget(mx, my, mw, mh, TH._C_BG, TH._C_BG, TH._C_BORDER,
+                     TH._R_BUTTON, outline_width=1.0, corner_mask=GS.CORNER_ALL)
+        st = self.state.status
+        line_h = self._status_line_h()
+        if st is not None:
+            msg, level = st
+            col = {'WARNING': TH._C_WARN,
+                   'ERROR': TH._C_ERROR}.get(level, _C_OK_STATUS)
+            # Word-wrap across the reserved lines, top-to-bottom (GPU y is
+            # up, so line 0 sits at the top of the box).
+            top = my + mh
+            for i, ln in enumerate(_wrap_text(msg, mw - 12, _STATUS_LINES)):
+                tw, th_ = TA._text_dims(ln)
+                ly = int(top - (i + 1) * line_h + (line_h - th_) / 2)
+                TA._text(int(mx + 6), ly, ln, col)
+        else:
+            txt = "—"
+            tw0, th0 = TA._text_dims(txt)
+            TA._text(int(mx + (mw - tw0) / 2),
+                     int(my + (mh - th0) / 2), txt, TH._C_DIM)
 
     def _draw_chrome(self, context, L):
         x, y, w, h = L['x'], L['y'], L['w'], L['h']
@@ -815,6 +1303,33 @@ class Floater:
             mx = event.mouse_x - region.x
             my = event.mouse_y - region.y
 
+        # Fast reject for idle mouse-move: if the cursor isn't over this
+        # floater and nothing is being dragged / edited / hovered-in-a-
+        # dropdown, skip the full compute_layout + per-widget hit-tests.
+        # Every mouse move over the viewport otherwise pays
+        # N×(temp_override + compute_layout + hover) — the dominant cost
+        # when several floaters are open. Cheap bbox test instead.
+        if (event.type == 'MOUSEMOVE'
+                and not st.drag_active and st.drag_slider is None
+                and st.open_dropdown is None and st.edit_field is None):
+            try:
+                bx, by, bw, bh = self._panel_bbox(context)
+                m = 6
+                outside = not (bx - m <= mx <= bx + bw + m
+                               and by - m <= my <= by + bh + m)
+            except Exception:
+                outside = False   # fall through to the normal path
+            if outside:
+                if self._clear_hover():
+                    self._dirty = True
+                    _tag_redraw_view3d(context)
+                return 'PASS_THROUGH'
+
+        # Past the cheap reject → this event touches the window; its
+        # appearance may change (hover highlight, click, drag), so
+        # invalidate the offscreen cache to re-render this frame.
+        self._dirty = True
+
         # Wrap downstream dispatch in a `temp_override` so anything
         # the handlers read off the context (`context.region.width`
         # for drag-clamping, `context.area.tag_redraw`, etc.) sees
@@ -990,6 +1505,11 @@ class Floater:
         return 'PASS_THROUGH'
 
     def _handle_lmb_press(self, context, L, mx, my):
+        # Mark this window as the status target: any action dispatched from
+        # it (and its deferred operator) routes its result to THIS window's
+        # strip, not a shared global one.
+        global _active_floater
+        _active_floater = self
         st = self.state
 
         # An open subclass-managed dropdown captures ALL clicks while
@@ -1018,7 +1538,13 @@ class Floater:
         if _hit(mx, my, *L['collapse_rect']):
             self._set_prop(context.scene, 'collapsed',
                            not self._prop(context.scene, 'collapsed', False))
+            # Высота тела резко меняется → инвалидируем offscreen-кэш и
+            # дёргаем немедленную перерисовку, иначе окно «пропадает» до
+            # срабатывания watchdog (~2с).
+            self._dirty = True
+            _mark_all_floaters_dirty()
             _tag_redraw_view3d(context)
+            _kick_redraw()
             return 'RUNNING_MODAL'
 
         if not L['collapsed']:
@@ -1078,6 +1604,78 @@ class Floater:
 
 # ── Draw callback + modal + toggle operator (shared) ─────────────────
 
+def _theme_fingerprint(context):
+    """Cheap signature of Blender's theme + UI scale. Compared each frame
+    so the (costly) palette/text recompute runs ONLY on a real theme
+    switch. A handful of representative colours change together whenever
+    the user picks another theme, so this catches switches without
+    reading every wcol_* slot every frame."""
+    try:
+        prefs = context.preferences
+        ui = prefs.themes[0].user_interface
+        return (
+            tuple(ui.wcol_regular.inner),
+            tuple(ui.wcol_regular.text),
+            tuple(ui.wcol_tool.inner),
+            tuple(ui.wcol_box.inner),
+            tuple(ui.wcol_menu_back.inner),
+            round(prefs.view.ui_scale, 4),
+        )
+    except Exception:
+        return None
+
+
+_PROF = {'frames': 0, 'draw': 0.0, 'max': 0.0, 'per': {}, 'last': 0.0,
+         'renders': 0, 'blits': 0}
+
+
+def _prof_flush():
+    """Print a floater-cost summary once per second, then reset counters."""
+    P = _PROF
+    now = time.monotonic()
+    if now - P['last'] < 1.0:
+        return
+    n = P['frames']
+    if n <= 0:
+        P['last'] = now
+        return
+    from . import gpu_shaders as _GS
+    from . import text_atlas as _TA
+    bs, gs = _GS._BATCH_STATS, _TA._GLYPH_STATS
+    avg_ms = P['draw'] / n * 1000.0
+    # Per-window average draw time, slowest first.
+    per = sorted(P['per'].items(), key=lambda kv: -kv[1])
+    per_str = ", ".join(f"{nm} {t / n * 1000.0:.2f}ms" for nm, t in per)
+
+    def _bk(hit, miss):
+        tot = hit + miss
+        return f"{tot / n:.0f}/frame (miss {miss / n:.1f})"
+
+    renders = P.get('renders', 0)
+    blits = P.get('blits', 0)
+    print(f"[FLOATER PROF] {n} fps-frames | draw avg {avg_ms:.2f}ms "
+          f"max {P['max'] * 1000.0:.2f}ms | windows: {per_str or '—'}")
+    print(f"[FLOATER PROF]   offscreen: {renders / n:.1f} re-renders/frame, "
+          f"{blits / n:.1f} blits/frame "
+          f"(blits = cached, cheap; re-renders = full draw)")
+    print(f"[FLOATER PROF]   batches — widget {_bk(bs['w_hit'], bs['w_miss'])}, "
+          f"glyph {_bk(gs['hit'], gs['miss'])}, "
+          f"icon {_bk(bs['i_hit'], bs['i_miss'])}, "
+          f"fan {_bk(bs['f_hit'], bs['f_miss'])}")
+
+    P['frames'] = 0
+    P['draw'] = 0.0
+    P['max'] = 0.0
+    P['per'] = {}
+    P['last'] = now
+    P['renders'] = 0
+    P['blits'] = 0
+    for k in bs:
+        bs[k] = 0
+    gs['hit'] = 0
+    gs['miss'] = 0
+
+
 def _draw_callback():
     """POST_PIXEL draw hook — runs on EVERY viewport redraw.
 
@@ -1095,18 +1693,26 @@ def _draw_callback():
     if scene is None or not _any_visible(scene):
         return
 
-    # From here on at least one floater wants to draw. Sync theme +
-    # text style with Blender's current theme. Cheap (attribute reads
-    # + small composite math) but only worth doing when we'll actually
-    # paint something.
-    try:
-        TH._apply_theme()
-    except Exception:
-        pass
-    try:
-        TA._refresh_ui_text_style()
-    except Exception:
-        pass
+    # Re-sync palette + text metrics with Blender's theme ONLY when the
+    # theme actually changed. Recomputing dozens of colours every redraw
+    # (60+ fps) was pure waste — the theme almost never changes. We read a
+    # cheap fingerprint (a handful of theme colours + ui_scale) each frame
+    # and only pay for the full recompute when it differs. Instant on a
+    # real theme switch, ~free otherwise.
+    global _theme_fp
+    _fp = _theme_fingerprint(ctx)
+    if _fp is not None and _fp != _theme_fp:
+        _theme_fp = _fp
+        try:
+            TH._apply_theme()
+        except Exception:
+            pass
+        try:
+            TA._refresh_ui_text_style()
+        except Exception:
+            pass
+        # Palette / metrics changed → every window must re-render its cache.
+        _mark_all_floaters_dirty()
     # Defensive icon load — prewarm timer is supposed to populate this,
     # but in some Blender contexts (background, headless, GPU not ready
     # at +1s after register) it can no-op. GS._load_icons() short-circuits
@@ -1126,7 +1732,12 @@ def _draw_callback():
     # a draw handler directly, hence the 0-interval timer.
     global _modal_running
     try:
-        if _modal_running and (time.monotonic() - _modal_last_tick) > 0.5:
+        # Порог 2.0 с (было 0.5). Реже ложно считаем простаивавшую модалку
+        # «мёртвой» → реже дёргаем перезапуск модал-оператора. Перезапуск
+        # bpy.ops во время взаимодействия пользователя с UISlider'ом на
+        # dev-сборке Blender может расшатывать UI — поэтому осторожнее.
+        # Реальную смерть модалки (смена воркспейса) ловит msgbus сразу.
+        if _modal_running and (time.monotonic() - _modal_last_tick) > 2.0:
             _modal_running = False
         if not _modal_running:
             if not bpy.app.timers.is_registered(_relaunch_modal_timer):
@@ -1135,16 +1746,79 @@ def _draw_callback():
     except Exception as e:
         print(f"[INU Floater] watchdog crashed: {e}")
 
-    for name, f in _floaters.items():
-        try:
-            if f.is_active_here(ctx):
-                f.draw(ctx)
-        except Exception:
-            # Isolate per-floater failures so one broken instance
-            # doesn't take down everyone else's draw.
-            import traceback as _tb
-            print(f"[INU Floater] draw('{name}') crashed:")
-            _tb.print_exc()
+    # Profiler — gated by the «Профайлер» checkbox. Times each window's
+    # draw and, once per second, prints avg/max frame cost, per-window
+    # breakdown, and batch hits/misses (a MISS = a freshly built GPU
+    # buffer — the expensive case; lots of misses on a still viewport
+    # means something is invalidating the geometry caches).
+    _prof_on = False
+    try:
+        _prof_on = bool(getattr(scene.inu_settings, 'gtatools_profile_enabled', False))
+    except Exception:
+        pass
+
+    # Активные окна в этой области.
+    active = [(name, f) for name, f in _floaters.items() if f.is_active_here(ctx)]
+
+    def _draw_active(timed):
+        # Два прохода при offscreen: сначала рендер ВСЕХ буферов, затем блит
+        # всех. Так создание буфера только что открытого окна не сбивает
+        # блит уже нарисованных (это и давало мигание). Без offscreen —
+        # обычная однопроходная прямая отрисовка.
+        total = 0.0
+        if _OFFSCREEN_CACHE:
+            for name, f in active:
+                try:
+                    if timed:
+                        _t0 = time.perf_counter()
+                    f.render_pass(ctx)
+                    if timed:
+                        _dt = time.perf_counter() - _t0
+                        _PROF['per'][name] = _PROF['per'].get(name, 0.0) + _dt
+                        total += _dt
+                except Exception:
+                    import traceback as _tb
+                    print(f"[INU Floater] render('{name}') crashed:")
+                    _tb.print_exc()
+            for name, f in active:
+                try:
+                    if timed:
+                        _t0 = time.perf_counter()
+                    f.blit_pass(ctx)
+                    if timed:
+                        _dt = time.perf_counter() - _t0
+                        _PROF['per'][name] = _PROF['per'].get(name, 0.0) + _dt
+                        total += _dt
+                except Exception:
+                    import traceback as _tb
+                    print(f"[INU Floater] blit('{name}') crashed:")
+                    _tb.print_exc()
+        else:
+            for name, f in active:
+                try:
+                    if timed:
+                        _t0 = time.perf_counter()
+                    f.draw(ctx)
+                    if timed:
+                        _dt = time.perf_counter() - _t0
+                        _PROF['per'][name] = _PROF['per'].get(name, 0.0) + _dt
+                        total += _dt
+                except Exception:
+                    import traceback as _tb
+                    print(f"[INU Floater] draw('{name}') crashed:")
+                    _tb.print_exc()
+        return total
+
+    if not _prof_on:
+        _draw_active(timed=False)
+        return
+
+    _frame_total = _draw_active(timed=True)
+    _PROF['draw'] += _frame_total
+    if _frame_total > _PROF['max']:
+        _PROF['max'] = _frame_total
+    _PROF['frames'] += 1
+    _prof_flush()
 
 
 def _relaunch_modal_timer():
@@ -1212,6 +1886,22 @@ class GTATOOLS_OT_floater_modal(bpy.types.Operator):
         if not _any_visible(context.scene):
             return self._end(context)
 
+        # Kick-burst: пока активен стартовый wm-таймер, на каждый TIMER
+        # принудительно перерисовываем вьюпорт. Это надёжно «проявляет»
+        # окно сразу при первом открытии после запуска (tag_redraw/таймер
+        # приложения/cursor_warp по отдельности VIEW_3D не будили). После
+        # нескольких тиков таймер снимаем — постоянной нагрузки нет.
+        if event.type == 'TIMER' and getattr(self, '_kick_timer', None) is not None:
+            self._kick_ticks += 1
+            _tag_redraw_view3d(context)
+            if self._kick_ticks >= 8:
+                try:
+                    context.window_manager.event_timer_remove(self._kick_timer)
+                except Exception:
+                    pass
+                self._kick_timer = None
+            return {'PASS_THROUGH'}
+
         # First-match-wins event dispatch. _floaters insertion order is
         # also the draw order — later entries draw on top of earlier
         # ones — so we iterate REVERSED here, letting the topmost
@@ -1244,12 +1934,30 @@ class GTATOOLS_OT_floater_modal(bpy.types.Operator):
         _modal_running = True
         _modal_last_tick = time.monotonic()
         context.window_manager.modal_handler_add(self)
+        # Короткий wm-таймер: даёт модалке несколько TIMER-тиков сразу
+        # после старта → гарантированная перерисовка вьюпорта на первом
+        # открытии окна. Снимается после нескольких тиков (см. modal()).
+        self._kick_ticks = 0
+        self._kick_timer = None
+        try:
+            self._kick_timer = context.window_manager.event_timer_add(
+                0.02, window=context.window)
+        except Exception:
+            pass
         _tag_redraw_view3d(context)
+        _kick_redraw()
         return {'RUNNING_MODAL'}
 
     def _end(self, context):
         global _modal_running
         _modal_running = False
+        kt = getattr(self, '_kick_timer', None)
+        if kt is not None:
+            try:
+                context.window_manager.event_timer_remove(kt)
+            except Exception:
+                pass
+            self._kick_timer = None
         for f in _floaters.values():
             f.state.reset()
         _tag_redraw_view3d(context)
@@ -1276,6 +1984,7 @@ class GTATOOLS_OT_floater_toggle(bpy.types.Operator):
         return compat.poll_version(cls, (3, 2, 0), "INU Floater")
 
     def execute(self, context):
+        global _modal_last_tick
         if not compat.supports((3, 2, 0)):
             return compat.warn_unsupported(self, "INU Floater", (3, 2, 0))
         # Split on commas so a single button can flip multiple floaters
@@ -1292,6 +2001,16 @@ class GTATOOLS_OT_floater_toggle(bpy.types.Operator):
             self.report({'WARNING'},
                         f"Unknown floater '{self.floater_name}'")
             return {'CANCELLED'}
+        # Модалка ЖИВА (пользователь только что кликнул) — освежаем метку,
+        # иначе перерисовка от этого toggle разбудит watchdog в
+        # _draw_callback, тот сочтёт простаивавшую модалку «мёртвой» и
+        # перезапустит её → ВСЕ окна ре-рендерятся.
+        _modal_last_tick = time.monotonic()
+        # Обходной путь от «мигания»: при открытии/закрытии окна метим ВСЕ
+        # окна «грязными» → в той же перерисовке все рендерят свои буферы
+        # заново и блитятся вместе (свежими). Так ни одно окно не пропадает
+        # на кадр из-за устаревшей/невалидной offscreen-текстуры.
+        _mark_all_floaters_dirty()
         # Start the shared modal lazily on first visible floater
         if _any_visible(context.scene) and not _modal_running:
             try:
@@ -1299,6 +2018,9 @@ class GTATOOLS_OT_floater_toggle(bpy.types.Operator):
             except Exception as e:
                 print(f"[INU Floater] modal invoke failed: {e}")
         _tag_redraw_view3d(context)
+        # Таймер-пинок: гарантированно перерисовать на первом открытии
+        # после запуска (когда cursor_warp не будит цикл событий).
+        _kick_redraw()
         return {'FINISHED'}
 
     def invoke(self, context, event):
@@ -1401,6 +2123,8 @@ def _floater_undo_post(scene, depsgraph=None):
       3. Restart the modal if undo killed it.
     """
     global _modal_running
+    # Undo/redo may have changed anything the windows display → re-render.
+    _mark_all_floaters_dirty()
     try:
         wants_visible = False
         for (name, key), val in list(_ui_state.items()):

@@ -217,7 +217,3 @@ class GTATOOLS_PT_graph_thin_keys(bpy.types.Panel):
         op.interp = s.gtatools_thin_keys_interp
 
 
-classes = (
-    GTATOOLS_OT_thin_keyframes,
-    GTATOOLS_PT_graph_thin_keys,
-)

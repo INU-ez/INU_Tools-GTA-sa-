@@ -565,14 +565,3 @@ class GTATOOLS_PT_bitmaps_panel(bpy.types.Panel):
                     text=T("Материалы"), **inu_icon(safe_icon('MATERIAL')))
 
 
-classes = (
-    GTATOOLS_MT_textures_menu,
-    GTATOOLS_MT_materials_menu,
-    GTATOOLS_OT_bitmaps_scan,
-    GTATOOLS_OT_bitmaps_resolve,
-    GTATOOLS_OT_bitmaps_copy,
-    GTATOOLS_OT_bitmaps_find_unused,
-    GTATOOLS_OT_bitmaps_remove_unused,
-    GTATOOLS_OT_bitmaps_find_dupes,
-    GTATOOLS_PT_bitmaps_panel,
-)

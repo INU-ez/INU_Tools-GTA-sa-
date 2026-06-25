@@ -1148,6 +1148,3 @@ class GTATOOLS_OT_map_export(bpy.types.Operator):
         self._gen = None
 
 
-classes = (
-    GTATOOLS_OT_map_export,
-)

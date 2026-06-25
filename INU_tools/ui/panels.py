@@ -19,6 +19,47 @@ from ..tools.compat import safe_icon, inu_icon
 from ..ui.registry import apply_order
 
 
+# ── 2DFX custom-property tooltips ──
+# These five Light-2DFX fields are stored as raw custom IDProperties on the
+# Empty (not PropertyGroup fields), so their hover-tooltip comes from
+# `id_properties_ui(...).description`, which is set per-object. We apply it
+# lazily on first panel draw so EXISTING scenes also get the tooltips
+# (a marker set keyed by object pointer keeps it one-shot per object).
+_2DFX_PROP_TIPS = {
+    '2dfx_corona_far_clip':
+        "Дальность отрисовки короны (метры). Дальше этой дистанции от "
+        "камеры корона перестаёт рисоваться. Больше — видна издалека",
+    '2dfx_pointlight_range':
+        "Радиус заливающего света лампы (метры) — на каком расстоянии "
+        "лампа подсвечивает окружение в игре. 0 — не освещает геометрию",
+    '2dfx_corona_enable_reflection':
+        "1 — корона отражается на мокром асфальте/воде; 0 — без отражения",
+    '2dfx_shadow_z_distance':
+        "На сколько метров вниз проецируется световое пятно (тень) от "
+        "лампы. 0 — пятно прямо на уровне лампы",
+    '2dfx_shadow_color_multiplier':
+        "Яркость/насыщенность светового пятна на земле (0–255). "
+        "Больше — ярче и контрастнее пятно",
+}
+_2dfx_tips_done = set()
+
+
+def _ensure_2dfx_tips(obj):
+    """Set hover descriptions on the Light-2DFX custom properties (once)."""
+    if obj is None or not hasattr(obj, 'id_properties_ui'):
+        return
+    key = obj.as_pointer()
+    if key in _2dfx_tips_done:
+        return
+    for prop, tip in _2DFX_PROP_TIPS.items():
+        if prop in obj:
+            try:
+                obj.id_properties_ui(prop).update(description=T(tip))
+            except Exception:
+                pass
+    _2dfx_tips_done.add(key)
+
+
 def _draw_material_surface(layout, mat):
     """SURFACE tab — COL physical surface type + Day/Night light."""
     from .. import get_surface_name
@@ -120,20 +161,28 @@ def _draw_material_effects(layout, mat):
         box.prop(inu, "dual_tex_dst_blend", text="Dst")
         box.prop(inu, "dual_tex_texture", text=T("Текстура"))
 
-    box = layout.box()
-    row = box.row()
-    row.prop(inu, "export_animation", text=T("UV Анимация"))
-    if inu.export_animation:
-        box.prop(inu, "animation_name", text=T("Имя анимации"))
-
+    # UV-анимация — единый блок. Тумблер пишет `uv_anim_write` (именно его
+    # проверяет экспортёр), а «Имя анимации» (animation_name) идёт сюда же, т.к.
+    # экспорт UVAnim берёт имя из него. Старый отдельный флаг `export_animation`
+    # был вестигиальным (в DFF ничего не писал) и из UI убран.
     box = layout.box()
     row = box.row(align=True)
-    row.prop(inu, "uv_anim_write", text=T("Писать UV Anim в DFF"))
+    row.prop(inu, "uv_anim_write", text=T("UV Анимация"))
     if inu.uv_anim_write:
-        row = box.row(align=True)
-        row.prop(inu, "uv_anim_speed_u", text="Speed U")
-        row.prop(inu, "uv_anim_speed_v", text="Speed V")
-        box.prop(inu, "uv_anim_duration", text=T("Длительность"))
+        box.prop(inu, "animation_name", text=T("Имя анимации"))
+        box.prop(inu, "uv_anim_mode", expand=True)
+        if inu.uv_anim_mode == 'SCROLL':
+            row = box.row(align=True)
+            row.prop(inu, "uv_anim_speed_u", text="Speed U")
+            row.prop(inu, "uv_anim_speed_v", text="Speed V")
+            box.prop(inu, "uv_anim_duration", text=T("Длительность"))
+        else:  # KEYFRAME
+            box.label(text=T("Ключи — в UV-редакторе:"),
+                      **inu_icon(safe_icon('UV')))
+            box.label(text=T("N-панель → GTA Tools → UV Анимация"),
+                      **inu_icon(safe_icon('BLANK1')))
+        box.label(text=T("▶ Пробел — предпросмотр (Material Preview / Rendered)"),
+                  **inu_icon(safe_icon('PLAY')))
 
 
 
@@ -152,15 +201,19 @@ def _draw_sort_materials_menu(self, context):
 # blinking / advanced) instead of by raw byte (flags1/flags2). Users
 # don't think in terms of "byte 1 vs byte 2" — they think "I want
 # this thing to blink at night". Each tuple is (prop_name, bit, label).
+# GTA SA flags1 (raw byte): bit5=AT_DAY(0x20), bit6=AT_NIGHT(0x40),
+# bit7=Blinking1(0x80). Default 96=0x60=AT_DAY+AT_NIGHT подтверждает это.
+# Раньше биты дня/ночи были сдвинуты на +1 (AT_DAY=6, AT_NIGHT=7) — из-за
+# этого «ночной» свет на деле светился днём. «Corona Flare» был ошибочно
+# на бите 5 (= AT_DAY); линзовый блик в SA задаётся полем «Тип бликов».
 _2DFX_GROUP_VISIBILITY = (
-    ("2dfx_flags1", 6, "AT_DAY"),
-    ("2dfx_flags1", 7, "AT_NIGHT"),
+    ("2dfx_flags1", 5, "AT_DAY"),
+    ("2dfx_flags1", 6, "AT_NIGHT"),
     ("2dfx_flags1", 3, "Without Corona"),
     ("2dfx_flags1", 0, "Check Obstacles"),
 )
 _2DFX_GROUP_CORONA = (
     ("2dfx_flags1", 4, "Corona Reflects"),
-    ("2dfx_flags1", 5, "Corona Flare"),
 )
 _2DFX_GROUP_BLINK = (
     ("2dfx_flags2", 0, "Blink 1"),
@@ -242,11 +295,8 @@ class GTATOOLS_PT_material_panel(bpy.types.Panel):
         tab = mat.inu.material_tab
         if tab == 'SURFACE':
             _draw_material_surface(layout, mat)
-        elif tab == 'EFFECTS':
+        else:  # EFFECTS (вкладка Pipeline и пресеты материала удалены)
             _draw_material_effects(layout, mat)
-        else:  # PIPELINE
-            from ..tools.gta_material_panel import draw_pipeline_tab
-            draw_pipeline_tab(layout, context)
 
 
 
@@ -290,6 +340,106 @@ class GTATOOLS_UL_img_files(bpy.types.UIList):
         return flt_flags, flt_neworder
 
 
+def _short_path(p, last=0):
+    """Короткий путь для отображения. last>0 → только последние N компонент
+    (папка+файл): 'D:\\…\\data\\maps\\Props_obj\\ali.ipl' → 'Props_obj\\ali.ipl'.
+    last=0 → от папки 'data' (или последние 3). Полный путь в проперти как есть.
+    """
+    import os
+    if not p:
+        return ""
+    parts = [x for x in p.replace('\\', '/').split('/') if x]
+    if last and len(parts) > last:
+        return os.sep.join(parts[-last:])
+    low = [x.lower() for x in parts]
+    if 'data' in low:
+        parts = parts[low.index('data'):]
+    elif len(parts) > 3:
+        parts = parts[-3:]
+    return os.sep.join(parts)
+
+
+# Кэш счётчиков IDE/IPL по (path, mtime). Панель перерисовывается часто (в т.ч.
+# при сворачивании списков), а парсить файл на 900+ записей в каждой
+# перерисовке = лаг. Кэш сбрасывается при изменении файла (mtime), поэтому
+# счётчики актуальны после Add/Export.
+_IDE_COUNTS_CACHE = {}
+_IPL_COUNTS_CACHE = {}
+
+
+def _ide_counts_cached(path):
+    import os
+    try:
+        mt = os.path.getmtime(path)
+    except OSError:
+        return []
+    hit = _IDE_COUNTS_CACHE.get(path)
+    if hit is not None and hit[0] == mt:
+        return hit[1]
+    counts = []
+    try:
+        from ..core.ide import read_ide
+        ide = read_ide(path)
+        for attr, lbl in (('objects', 'objs'), ('anims', 'anim'),
+                          ('cars', 'cars'), ('peds', 'peds'), ('txdps', 'txdp')):
+            seq = getattr(ide, attr, None)
+            if seq:
+                counts.append(f"{lbl}: {len(seq)}")
+    except Exception:
+        counts = []
+    _IDE_COUNTS_CACHE[path] = (mt, counts)
+    return counts
+
+
+def _ipl_counts_cached(path):
+    import os
+    try:
+        mt = os.path.getmtime(path)
+    except OSError:
+        return []
+    hit = _IPL_COUNTS_CACHE.get(path)
+    if hit is not None and hit[0] == mt:
+        return hit[1]
+    counts = []
+    try:
+        from ..core.ipl import read_ipl
+        ipl = read_ipl(path)
+        for attr, lbl in (('instances', 'inst'), ('culls', 'cull'),
+                          ('garages', 'grge'), ('enexs', 'enex'),
+                          ('pickups', 'pick'), ('cars', 'cars'),
+                          ('jumps', 'jump'), ('auzos', 'auzo'),
+                          ('occls', 'occl'), ('zones', 'zone')):
+            seq = getattr(ipl, attr, None)
+            if seq:
+                counts.append(f"{lbl}: {len(seq)}")
+    except Exception:
+        counts = []
+    _IPL_COUNTS_CACHE[path] = (mt, counts)
+    return counts
+
+
+class GTATOOLS_UL_ipl_sync_list(bpy.types.UIList):
+    """Scrollable list of IPL files for batch Sync. Каждая строка —
+    КЛИКАБЕЛЬНАЯ метка короткого пути (клик = выделение элемента списка) +
+    кнопка удаления. Полный путь не редактируется инлайн; чтобы заменить —
+    удали (X) и добавь заново через «Добавить»."""
+    bl_idname = "GTATOOLS_UL_ipl_sync_list"
+
+    def draw_item(self, context, layout, data, item, icon,
+                  active_data, active_property, index):
+        if self.layout_type in {'DEFAULT', 'COMPACT'}:
+            row = layout.row(align=True)
+            # Иконка-«ручка» слева + короткий путь МЕТКОЙ: клик по строке
+            # (по иконке/тексту) выделяет элемент — поле больше не перехватывает
+            # клик. Полный путь хранится в item.path как есть.
+            row.label(text=_short_path(item.path) or item.path,
+                      **inu_icon(safe_icon('EMPTY_AXIS')))
+            op = row.operator("gtatools.ipl_sync_remove", text="",
+                              **inu_icon(safe_icon('X')))
+            op.index = index
+        elif self.layout_type == 'GRID':
+            layout.alignment = 'CENTER'
+            layout.label(text="", **inu_icon(safe_icon('EMPTY_AXIS')))
 
 
 class GTATOOLS_PT_main_panel(bpy.types.Panel):
@@ -343,9 +493,14 @@ class GTATOOLS_PT_main_panel(bpy.types.Panel):
         edit_btn = row.row(align=True)
         edit_btn.enabled = (scene.inu_settings.gtatools_profile != 'ALL')
         edit_btn.operator("gtatools.profile_edit", text="", **inu_icon(safe_icon('PREFERENCES')))
+        # Справа — компактная кнопка-иконка «Info object» (окно инфо о модели).
+        info_on = scene.inu_settings.inu_floater_visible
+        op_info = row.operator(
+            "gtatools.floater_toggle", text="",
+            depress=info_on, **inu_icon(safe_icon('WINDOW')))
+        op_info.floater_name = 'info'
 
-        # Info / Docs / Issues / What's New теперь все живут в
-        # GTATOOLS_PT_footer_panel в самом низу панели.
+        # Docs / Issues / What's New живут в GTATOOLS_PT_footer_panel внизу.
 
 
 @apply_order
@@ -395,6 +550,19 @@ class GTATOOLS_PT_ide_ipl_panel(bpy.types.Panel):
         bc = box.column(align=True)
         row = bc.row(align=True)
         row.label(text="IDE", **inu_icon(safe_icon('TEXT')))
+        # Выбор IDE-файла — кнопкой 📁 в шапке. Имя целевого файла модели
+        # показывается в строке статуса «В IDE (…)» ниже — отдельной строкой
+        # не дублируем.
+        _hb_ide = row.row(align=True)
+        _hb_ide.alignment = 'RIGHT'
+        _hb_ide.operator("gtatools.pick_setting_path", text="",
+                         **inu_icon(safe_icon('FILEBROWSER'))).setting = "gtatools_ide_path"
+        # Путь выбранного IDE-файла (короткий, от папки data).
+        _ide_pv = scn.inu_settings.gtatools_ide_path
+        _pr_ide = bc.row(align=True)
+        _pr_ide.scale_y = 0.85
+        _pr_ide.label(text=_short_path(_ide_pv, last=2) if _ide_pv else T("Файл не выбран"),
+                      **inu_icon(safe_icon('FILE_FOLDER')))
         # Short un-translated labels — icons already carry the
         # meaning, and "Add/Del/Import/Export" are universally
         # readable across both Russian and English UIs. translate=
@@ -413,22 +581,12 @@ class GTATOOLS_PT_ide_ipl_panel(bpy.types.Panel):
         # ── IDE file info + active object status (inside the box) ──
         ide_path = bpy.path.abspath(scn.inu_settings.gtatools_ide_path)
         if ide_path and os.path.isfile(ide_path):
-            try:
-                from ..core.ide import read_ide
-                _ide = read_ide(ide_path)
-                ide_counts = []
-                if _ide.objects: ide_counts.append(f"objs: {len(_ide.objects)}")
-                if _ide.anims: ide_counts.append(f"anim: {len(_ide.anims)}")
-                if _ide.cars: ide_counts.append(f"cars: {len(_ide.cars)}")
-                if _ide.peds: ide_counts.append(f"peds: {len(_ide.peds)}")
-                if _ide.txdps: ide_counts.append(f"txdp: {len(_ide.txdps)}")
-                if ide_counts:
-                    info_row = bc.row(align=True)
-                    info_row.scale_y = 0.85
-                    info_row.label(text=", ".join(ide_counts),
-                                   **inu_icon(safe_icon('INFO')))
-            except Exception:
-                pass
+            ide_counts = _ide_counts_cached(ide_path)   # кэш по mtime — без лага
+            if ide_counts:
+                info_row = bc.row(align=True)
+                info_row.scale_y = 0.85
+                info_row.label(text=", ".join(ide_counts),
+                               **inu_icon(safe_icon('INFO')))
         ao_ide = context.active_object
         if ao_ide is not None and ao_ide.type == 'MESH' and hasattr(ao_ide, 'inu'):
             inu_ao = ao_ide.inu
@@ -458,6 +616,18 @@ class GTATOOLS_PT_ide_ipl_panel(bpy.types.Panel):
         bc = box.column(align=True)
         row = bc.row(align=True)
         row.label(text="IPL", **inu_icon(safe_icon('EMPTY_AXIS')))
+        # Выбор IPL-файла — кнопкой 📁 в шапке. Имя целевого файла модели
+        # показывается в строке статуса «В IPL (…)» ниже — не дублируем.
+        _hb_ipl = row.row(align=True)
+        _hb_ipl.alignment = 'RIGHT'
+        _hb_ipl.operator("gtatools.pick_setting_path", text="",
+                         **inu_icon(safe_icon('FILEBROWSER'))).setting = "gtatools_ipl_path"
+        # Путь выбранного IPL-файла (короткий, от папки data).
+        _ipl_pv = scn.inu_settings.gtatools_ipl_path
+        _pr_ipl = bc.row(align=True)
+        _pr_ipl.scale_y = 0.85
+        _pr_ipl.label(text=_short_path(_ipl_pv, last=2) if _ipl_pv else T("Файл не выбран"),
+                      **inu_icon(safe_icon('EMPTY_AXIS')))
         row = bc.row(align=True)
         row.operator("gtatools.upsert_ipl", text="Add",
                      **inu_icon(safe_icon('ADD')), translate=False)
@@ -472,27 +642,12 @@ class GTATOOLS_PT_ide_ipl_panel(bpy.types.Panel):
         # ── IPL file info + active object status (inside the box) ──
         ipl_path = bpy.path.abspath(scn.inu_settings.gtatools_ipl_path)
         if ipl_path and os.path.isfile(ipl_path):
-            try:
-                from ..core.ipl import read_ipl
-                _ipl = read_ipl(ipl_path)
-                ipl_counts = []
-                if _ipl.instances: ipl_counts.append(f"inst: {len(_ipl.instances)}")
-                if _ipl.culls: ipl_counts.append(f"cull: {len(_ipl.culls)}")
-                if _ipl.garages: ipl_counts.append(f"grge: {len(_ipl.garages)}")
-                if _ipl.enexs: ipl_counts.append(f"enex: {len(_ipl.enexs)}")
-                if _ipl.pickups: ipl_counts.append(f"pick: {len(_ipl.pickups)}")
-                if _ipl.cars: ipl_counts.append(f"cars: {len(_ipl.cars)}")
-                if _ipl.jumps: ipl_counts.append(f"jump: {len(_ipl.jumps)}")
-                if _ipl.auzos: ipl_counts.append(f"auzo: {len(_ipl.auzos)}")
-                if _ipl.occls: ipl_counts.append(f"occl: {len(_ipl.occls)}")
-                if _ipl.zones: ipl_counts.append(f"zone: {len(_ipl.zones)}")
-                if ipl_counts:
-                    info_row = bc.row(align=True)
-                    info_row.scale_y = 0.85
-                    info_row.label(text=", ".join(ipl_counts),
-                                   **inu_icon(safe_icon('INFO')))
-            except Exception:
-                pass
+            ipl_counts = _ipl_counts_cached(ipl_path)   # кэш по mtime — без лага
+            if ipl_counts:
+                info_row = bc.row(align=True)
+                info_row.scale_y = 0.85
+                info_row.label(text=", ".join(ipl_counts),
+                               **inu_icon(safe_icon('INFO')))
         ao_ipl = context.active_object
         if ao_ipl is not None and ao_ipl.type == 'MESH' and hasattr(ao_ipl, 'inu'):
             inu_ao_ipl = ao_ipl.inu
@@ -522,6 +677,45 @@ class GTATOOLS_PT_ide_ipl_panel(bpy.types.Panel):
         # Below the two columns — niche IPL utilities + IMG section,
         # все fused в общий outer.
         bottom_col = outer.column(align=True)
+
+        # ── Multi-IPL sync list (collapsible, scrollable) ──
+        # Optional. When it has entries, the Sync button below iterates
+        # every listed IPL (one click reconciles a map split across
+        # several .ipl files); empty → Sync uses the single IPL path in
+        # the column above, unchanged. The list can grow long, so it
+        # sits behind a disclosure triangle (collapsed by default) and
+        # the rows live in a fixed-height scrollable template_list.
+        ipl_sync_list = scn.inu_settings.gtatools_ipl_sync_list
+        ipl_list_expanded = scn.inu_settings.gtatools_show_ipl_sync_list
+        sync_box = bottom_col.box().column(align=True)
+        head = sync_box.row(align=True)
+        count_suffix = f" ({len(ipl_sync_list)})" if ipl_sync_list else ""
+        head.prop(scn.inu_settings, "gtatools_show_ipl_sync_list",
+                  **inu_icon(safe_icon('TRIA_DOWN' if ipl_list_expanded
+                                       else 'TRIA_RIGHT')),
+                  text=T("Sync несколько IPL") + count_suffix,
+                  emboss=False)
+        if ipl_list_expanded:
+            if ipl_sync_list:
+                # Обычные строки вместо template_list: тот резервирует высоту и
+                # держит скролл-состояние → при сворачивании регион
+                # пересчитывался с задержкой (лаг). Простые строки сворачиваются
+                # мгновенно. Список collapsible, так что высота не мешает.
+                _lcol = sync_box.column(align=True)
+                for _si, _sit in enumerate(ipl_sync_list):
+                    _sr = _lcol.row(align=True)
+                    _sr.label(text=_short_path(_sit.path) or _sit.path,
+                              **inu_icon(safe_icon('EMPTY_AXIS')))
+                    _sr.operator("gtatools.ipl_sync_remove", text="",
+                                 **inu_icon(safe_icon('X'))).index = _si
+            btns = sync_box.row(align=True)
+            btns.operator("gtatools.ipl_sync_add", text=T("Добавить"),
+                          **inu_icon(safe_icon('ADD')))
+            if ipl_sync_list:
+                clr = btns.operator("gtatools.ipl_sync_remove",
+                                    text=T("Очистить"),
+                                    **inu_icon(safe_icon('TRASH')))
+                clr.index = -1   # clear all
 
         # ── Unified link tracking row (works on both IDE + IPL) ──
         # Sync pulls file→Blender for both formats (positions from IPL,
@@ -554,6 +748,13 @@ class GTATOOLS_PT_ide_ipl_panel(bpy.types.Panel):
         img_box = outer.box().column(align=True)
         row = img_box.row(align=True)
         row.label(text="IMG", **inu_icon(safe_icon('PACKAGE')))
+        # Путь IMG в боксе — короткой меткой + кнопка выбора файла (как IDE/IPL).
+        _img_p = scn.inu_settings.gtatools_img_path
+        _gpr = img_box.row(align=True)
+        _gpr.label(text=_short_path(_img_p, last=2) if _img_p else T("Файл не выбран"),
+                   **inu_icon(safe_icon('PACKAGE')))
+        _gpr.operator("gtatools.pick_setting_path", text="",
+                      **inu_icon(safe_icon('FILEBROWSER'))).setting = "gtatools_img_path"
         row = img_box.row(align=True)
         row.prop(scn.inu_settings, "gtatools_img_skip_lod", text="Skip LOD", toggle=True)
         row.prop(scn.inu_settings, "gtatools_img_load_txd", text="TXD", toggle=True)
@@ -568,39 +769,6 @@ class GTATOOLS_PT_ide_ipl_panel(bpy.types.Panel):
 
 
 
-
-
-# ── Popover-меню для точечного импорта/экспорта одного формата.
-# Заменяют 8 отдельных кнопок (4 import + 4 export) на 2 menu-dropdown'а.
-class GTATOOLS_MT_import_menu(bpy.types.Menu):
-    bl_label = "INU: Импорт"
-    bl_idname = "GTATOOLS_MT_import_menu"
-
-    def draw(self, context):
-        layout = self.layout
-        layout.operator("gtatools.import_dff", text="DFF", **inu_icon(safe_icon('MESH_DATA')))
-        layout.operator("gtatools.import_col", text="COL", **inu_icon(safe_icon('MESH_ICOSPHERE')))
-        layout.operator("gtatools.import_cst", text="CST", **inu_icon(safe_icon('TEXT')))
-        layout.operator("gtatools.import_txd", text="TXD", **inu_icon(safe_icon('IMAGE_DATA')))
-        layout.separator()
-        layout.operator("gtatools.inu_import", text="All", **inu_icon(safe_icon('FILE')), translate=False)
-
-
-class GTATOOLS_MT_export_menu(bpy.types.Menu):
-    bl_label = "INU: Экспорт"
-    bl_idname = "GTATOOLS_MT_export_menu"
-
-    def draw(self, context):
-        layout = self.layout
-        layout.operator("gtatools.export_dff", text="DFF", **inu_icon(safe_icon('MESH_DATA')))
-        layout.operator("gtatools.export_col", text="COL", **inu_icon(safe_icon('MESH_ICOSPHERE')))
-        layout.operator("gtatools.export_cst", text="CST", **inu_icon(safe_icon('TEXT')))
-        layout.operator("gtatools.export_txd", text="TXD", **inu_icon(safe_icon('IMAGE_DATA')))
-        layout.separator()
-        layout.operator("gtatools.export_all",
-                        text=T("All → Папка"), **inu_icon(safe_icon('FILE_FOLDER')))
-        layout.operator("gtatools.export_to_img",
-                        text=T("All → IMG"), **inu_icon(safe_icon('PACKAGE')))
 
 
 # ── Menu: Create 2DFX effect ────────────────────────────────────
@@ -758,10 +926,12 @@ class GTATOOLS_PT_export_panel(bpy.types.Panel):
         # делает в своих native fused property groups.
         io_col = top_col.column(align=True)
 
-        # ── Quick single-format I/O via menus ──
+        # ── Импорт / Экспорт: две кнопки, формат выбирается галочками
+        # в самом окне (Импорт → выбор файлов + фильтр расширений;
+        # Экспорт → выбор папки + галочки DFF/COL/LOD/TXD/CST). ──
         row = io_col.row(align=True)
-        row.menu("GTATOOLS_MT_import_menu", text=T("Импорт"), **inu_icon(safe_icon('IMPORT')))
-        row.menu("GTATOOLS_MT_export_menu", text=T("Экспорт"), **inu_icon(safe_icon('EXPORT')))
+        row.operator("gtatools.inu_import", text=T("Импорт"), **inu_icon(safe_icon('IMPORT')))
+        row.operator("gtatools.export_all", text=T("Экспорт"), **inu_icon(safe_icon('EXPORT')))
 
         # ── Auto TXD + DXT backend selector ──
         row = io_col.row(align=True)
@@ -851,7 +1021,9 @@ class GTATOOLS_PT_export_panel(bpy.types.Panel):
                 _prop_hinted("set_material_alpha", "Set Material Alpha")
                 if _is_sa:
                     _prop_hinted("light_beam_asi", "Light Beam (SA_Light.asi)")
-                _prop_hinted("export_binsplit", "Bin Mesh PLG")
+                # 'export_binsplit' (Bin Mesh PLG) намеренно скрыт из UI —
+                # см. коммент у его BoolProperty в __init__.py. Дефолт True;
+                # отключение делало модель невидимой в игре.
                 _prop_hinted("uv_map1", "UV1")
                 _prop_hinted("uv_map2", "UV2")
                 _prop_hinted("day_cols", "Day")
@@ -1762,9 +1934,22 @@ class GTATOOLS_PT_2dfx_panel(bpy.types.Panel):
 
         # ── Кнопки создания (видны всегда) ──
         box = layout.box()
-        _draw_label_with_info(box, "Create Effect:",
+        # Строка «Create Effect:» — статус .txd идёт ПРЯМО ПОСЛЕ двоеточия, в
+        # той же строке. Это РЕАЛЬНЫЙ источник текстур: явный .txd, либо
+        # particle.txd/gta3.img из Game Root (resolve_fx_txd_display). «Не
+        # выбран» — только если нет ни явного .txd, ни пригодного Game Root.
+        # Справа — ОДНА папка выбора .txd (gtatools.pick_fx_txd). Кнопки
+        # «Загрузить текстуры эффектов» нет: выбор .txd папкой сам грузит
+        # текстуры, а превью и так дотягивает их лениво из .txd / Game Root.
+        from ..ops.fx_preview import resolve_fx_txd_display
+        status = resolve_fx_txd_display() or T("Не выбран")
+        hdr = box.row(align=True)
+        _draw_label_with_info(hdr, "Create Effect:  " + status,
             T("Light — уличные фонари, неон, corona\nParticle — дым, огонь, частицы\nPed Attractor — точки притяжения NPC (банкомат, скамейка)\nSun Glare — блик солнца на поверхности"),
             **inu_icon(safe_icon('ADD')))
+        hdr.operator("gtatools.pick_fx_txd", text="",
+                     **inu_icon(safe_icon('FILE_FOLDER')))
+
         box.menu("GTATOOLS_MT_create_2dfx",
                  text=T("Создать эффект"), **inu_icon(safe_icon('ADD')))
 
@@ -1828,6 +2013,7 @@ class GTATOOLS_PT_2dfx_panel(bpy.types.Panel):
             row.operator("gtatools.remove_2dfx_preview", text=T("Удалить превью"), **inu_icon('X'))
 
         if effect == 'LIGHT':
+            _ensure_2dfx_tips(obj)
             # Presets
             box_p = main_box.box()
             box_p.label(text=T("Пресеты:"), **inu_icon(safe_icon('PRESET')))
@@ -1881,11 +2067,13 @@ class GTATOOLS_PT_2dfx_panel(bpy.types.Panel):
                            T("Тень"))
             if sec is not None:
                 col = sec.column(align=True)
-                col.prop(settings, "shadow_size_2dfx", text=T("Размер"))
+                col.prop(settings, "shadow_size_2dfx", text=T("Размер пятна"))
                 col.prop(obj, '["2dfx_shadow_z_distance"]', text=T("Дистанция"))
                 col.prop(obj, '["2dfx_shadow_color_multiplier"]', text=T("Множитель"))
                 sec.label(text=T("Имя тени:"))
                 sec.prop(settings, "shadow_tex_2dfx", text="")
+                sec.label(text=T("Размер = 0 → только корона, без пятна"),
+                          **inu_icon(safe_icon('INFO')))
 
             # ── Флаги (semantic groups, per-bit tooltip on hover) ──
             sec = _section(main_box, "gtatools_2dfx_show_flags",
@@ -2329,7 +2517,9 @@ class GTATOOLS_PT_object_inu_tools(bpy.types.Panel):
                 _prop_hinted("set_material_alpha", "Set Material Alpha")
                 if _is_sa:
                     _prop_hinted("light_beam_asi", "Light Beam (SA_Light.asi)")
-                _prop_hinted("export_binsplit", "Bin Mesh PLG")
+                # 'export_binsplit' (Bin Mesh PLG) намеренно скрыт из UI —
+                # см. коммент у его BoolProperty в __init__.py. Дефолт True;
+                # отключение делало модель невидимой в игре.
                 _prop_hinted("uv_map1", "UV1")
                 _prop_hinted("uv_map2", "UV2")
                 _prop_hinted("day_cols", "Day")
@@ -2377,33 +2567,44 @@ class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
         layout = self.layout
         scene = context.scene
 
+        # Секции вплотную друг к другу — один align-столбец (зазор 1px).
+        sec_col = layout.column(align=True)
         # IDE / IPL / IMG paths (collapsible)
-        box = layout.box()
+        box = sec_col.box()
         row = box.row()
         row.prop(scene.inu_settings, "gtatools_show_paths_settings",
                  **inu_icon(safe_icon('TRIA_DOWN') if scene.inu_settings.gtatools_show_paths_settings else 'TRIA_RIGHT'),
                  text=T("Import Map"), emboss=False)
         if scene.inu_settings.gtatools_show_paths_settings:
-            box.label(text="Game Root", **inu_icon(safe_icon('FILE_FOLDER')))
-            box.prop(scene.inu_settings, "gtatools_game_root", text="")
-            box.operator("gtatools.discover_game", text=T("Auto-discover"))
+            # Всё содержимое — в один align-столбец: соседние кнопки/поля
+            # слипаются с зазором 1px (как в фьюзед-группах Blender), панель
+            # подтянута вверх без «дыр» между элементами.
+            c = box.column(align=True)
+            c.label(text="Game Root", **inu_icon(safe_icon('FILE_FOLDER')))
+            c.prop(scene.inu_settings, "gtatools_game_root", text="")
+            c.operator("gtatools.discover_game", text=T("Auto-discover"))
             # Все «Без …» тогглы импорта в одном блоке — пара рядов
             # сразу под Auto-discover, чтобы пользователь видел все
             # фильтры импорта в одном месте без скролла.
-            row = box.row(align=True)
+            row = c.row(align=True)
             row.prop(scene.inu_settings, "gtatools_img_skip_lod",
                      text=T("Без LOD"), toggle=True)
             row.prop(scene.inu_settings, "gtatools_map_skip_2dfx",
                      text=T("Без 2DFX"), toggle=True)
-            row = box.row(align=True)
+            row = c.row(align=True)
             row.prop(scene.inu_settings, "gtatools_img_load_txd",
                      text=T("Без TXD"), toggle=True, invert_checkbox=True)
             row.prop(scene.inu_settings, "gtatools_map_load_col",
                      text=T("Без коллизии"), toggle=True, invert_checkbox=True)
-            box.prop(scene.inu_settings, "gtatools_map_region", text="")
+            # «Группировать по IPL» — тоже опция импорта, держим её рядом с
+            # фильтрами «Без …», а не внизу у кнопок Import/Export.
+            c.prop(scene.inu_settings, "gtatools_map_group_by_ipl",
+                   text=T("Группировать по IPL"), toggle=True,
+                   **inu_icon(safe_icon('OUTLINER_COLLECTION')))
+            c.prop(scene.inu_settings, "gtatools_map_region", text="")
 
             # Binary IPL selector (collapsible)
-            bi_box = box.box()
+            bi_box = c.box()
             bi_row = bi_box.row(align=True)
             bi_row.prop(
                 scene.inu_settings, "gtatools_show_binary_ipls",
@@ -2445,7 +2646,7 @@ class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
             # Text IPL selector — parallel to binary above.  Populated
             # by the same Scan operator (which now scans both formats)
             # so the user never has to think about format mid-import.
-            ti_box = box.box()
+            ti_box = c.box()
             ti_row = ti_box.row(align=True)
             ti_row.prop(
                 scene.inu_settings, "gtatools_show_text_ipls",
@@ -2490,11 +2691,11 @@ class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
             # button remains.
             saved = bool(bpy.data.filepath)
             if saved:
-                box.operator("gtatools.extract_textures",
+                c.operator("gtatools.extract_textures",
                              text=T("Извлечь ресурсы"),
                              **inu_icon(safe_icon('PACKAGE')))
             else:
-                warn = box.box()
+                warn = c.box()
                 warn.alert = True
                 warn_row = warn.row()
                 warn_row.alignment = 'CENTER'
@@ -2506,11 +2707,6 @@ class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
                 btn_row.operator("gtatools.extract_textures",
                                  text=T("Извлечь ресурсы"),
                                  **inu_icon(safe_icon('PACKAGE')))
-            # «Без LOD/2DFX/TXD/коллизии» — все 4 фильтра импорта
-            # вынесены наверх под Auto-discover, здесь не дублируем.
-            box.prop(scene.inu_settings, "gtatools_map_group_by_ipl",
-                     text=T("Группировать по IPL"), toggle=True,
-                     **inu_icon(safe_icon('OUTLINER_COLLECTION')))
             # Same red alert pattern as Extract Resources: when the
             # scene is unsaved, wrap the warning + disabled buttons
             # in a single alert-box. Once saved, fall back to the
@@ -2526,7 +2722,7 @@ class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
             _MAP_BTN_SCALE = 1.7
             if saved:
                 if cache_exists:
-                    row = box.row(align=True)
+                    row = c.row(align=True)
                     row.scale_y = _MAP_BTN_SCALE
                     row.operator("gtatools.import_map",
                                  text=T("Import Map"),
@@ -2539,7 +2735,7 @@ class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
                     # Import Map together; Export Map stays active
                     # OUTSIDE the alert box since exporting doesn't
                     # need extracted resources.
-                    warn = box.box()
+                    warn = c.box()
                     warn.alert = True
                     warn_row = warn.row()
                     warn_row.alignment = 'CENTER'
@@ -2552,13 +2748,13 @@ class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
                     btn_row.operator("gtatools.import_map",
                                      text=T("Import Map"),
                                      **inu_icon(safe_icon('IMPORT')))
-                    exp_row = box.row(align=True)
+                    exp_row = c.row(align=True)
                     exp_row.scale_y = _MAP_BTN_SCALE
                     exp_row.operator("gtatools.map_export",
                                      text=T("Export Map"),
                                      **inu_icon(safe_icon('EXPORT')))
             else:
-                warn = box.box()
+                warn = c.box()
                 warn.alert = True
                 warn_row = warn.row()
                 warn_row.alignment = 'CENTER'
@@ -2574,24 +2770,23 @@ class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
                 btn_row.operator("gtatools.map_export",
                                  text=T("Export Map"),
                                  **inu_icon(safe_icon('EXPORT')))
-            box.prop(scene.inu_settings, "gtatools_profile_enabled",
-                     text=T("Профайлер (debug timings)"), toggle=False)
+            c.prop(scene.inu_settings, "gtatools_profile_enabled",
+                     text=T("Профайлер (тайминги в консоль)"), toggle=False)
             # Links toggle moved to the Check panel ("Проверка") —
             # it's a validation overlay, not a map-import setting.
-            box.operator("gtatools.toggle_bbox",
+            c.operator("gtatools.toggle_bbox",
                          text=T("BBox: ON") if _bbox_mode_active else T("BBox: OFF"),
                          **inu_icon(safe_icon('MESH_CUBE')),
                          depress=_bbox_mode_active)
-            box.separator()
-            box.label(text="IDE", **inu_icon(safe_icon('TEXT')))
-            box.prop(scene.inu_settings, "gtatools_ide_path", text="")
-            box.label(text="IPL", **inu_icon(safe_icon('EMPTY_AXIS')))
-            box.prop(scene.inu_settings, "gtatools_ipl_path", text="")
-            box.label(text="IMG", **inu_icon(safe_icon('PACKAGE')))
-            box.prop(scene.inu_settings, "gtatools_img_path", text="")
+            # Пути IDE/IPL/IMG теперь задаются в панели-редакторе IDE/IPL/IMG
+            # (там путь рядом со своими кнопками) — здесь не дублируем.
+            _hint = box.row(align=True)
+            _hint.scale_y = 0.85
+            _hint.label(text=T("Пути IDE / IPL / IMG — в панели «IDE / IPL»"),
+                        **inu_icon(safe_icon('INFO')))
 
         # Textures (collapsible)
-        box = layout.box()
+        box = sec_col.box()
         row = box.row()
         row.prop(scene.inu_settings, "gtatools_show_texture_settings",
                  **inu_icon(safe_icon('TRIA_DOWN') if scene.inu_settings.gtatools_show_texture_settings else 'TRIA_RIGHT'),
@@ -2604,9 +2799,14 @@ class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
             row.operator("gtatools.set_blend_folder", text="", **inu_icon(safe_icon('FILE_REFRESH')))
             box.prop(scene.inu_settings, "gtatools_texture_path2", text="")
             box.operator("gtatools.load_textures", text=T("Загрузить текстуры"), **inu_icon(safe_icon('IMPORT')))
+            _alpha_on = getattr(scene.inu_settings, 'gtatools_scene_alpha_on', True)
+            box.operator("gtatools.toggle_scene_alpha",
+                         text=(T("Альфа сцены: ВКЛ") if _alpha_on else T("Альфа сцены: ВЫКЛ")),
+                         depress=_alpha_on,
+                         **inu_icon(safe_icon('IMAGE_RGB_ALPHA')))
 
         # IMG file list (collapsible)
-        box = layout.box()
+        box = sec_col.box()
         row = box.row()
         row.prop(scene.inu_settings, "gtatools_show_img_list",
                  **inu_icon(safe_icon('TRIA_DOWN') if scene.inu_settings.gtatools_show_img_list else 'TRIA_RIGHT'),
@@ -2624,7 +2824,7 @@ class GTATOOLS_PT_inu_tools_panel(bpy.types.Panel):
             box.operator("gtatools.refresh_img_list", text=T("Обновить список"), **inu_icon(safe_icon('FILE_REFRESH')))
 
         # Preset folder (collapsible) — where all INU Tools presets/data live
-        box = layout.box()
+        box = sec_col.box()
         row = box.row()
         row.prop(scene.inu_settings, "gtatools_show_preset_dir",
                  **inu_icon(safe_icon('TRIA_DOWN') if scene.inu_settings.gtatools_show_preset_dir else 'TRIA_RIGHT'),
@@ -2767,6 +2967,12 @@ class GTATOOLS_PT_prelight_panel(bpy.types.Panel):
                             text=T("Свет (8 ламп)"),
                             **inu_icon(safe_icon('LIGHT')),
                             depress=_lights_on)
+        # Солнце — направленный источник, включается независимо от 8 ламп.
+        _sun_on = bpy.data.objects.get("Prelight_Sun") is not None
+        preset_col.operator("gtatools.toggle_prelight_sun",
+                            text=T("Солнце"),
+                            **inu_icon(safe_icon('LIGHT_SUN')),
+                            depress=_sun_on)
 
         if obj and obj.type == 'MESH':
             mesh = obj.data
@@ -2856,6 +3062,29 @@ class GTATOOLS_PT_prelight_panel(bpy.types.Panel):
                     op = btn_cell.operator("gtatools.create_color_attr", text="", **inu_icon(safe_icon('ADD')))
                     op.attr_name = _attr_name
 
+            # Scene-wide vertex-alpha preview — independent of the RGB
+            # Prelight preview (eye on the left). One toggle scans the
+            # whole scene, finds every model that actually has vertex
+            # alpha (Day/Night layer < 255) and shows its transparency;
+            # solid geometry (alpha 255) is skipped so the map can't go
+            # black. State is the scene flag set by gtatools.alpha_preview.
+            _alpha_on = bool(context.scene.get('inu_alpha_preview_on', False))
+            _alpha_icon = safe_icon('HIDE_OFF') if _alpha_on else 'HIDE_ON'
+            arow = box_col.row(align=True)
+            op_a = arow.operator("gtatools.alpha_preview",
+                                 text=T("Альфа вершины (сцена)"),
+                                 **inu_icon(_alpha_icon),
+                                 depress=_alpha_on)
+            # operator() returns None if the op isn't registered yet
+            # (e.g. mid-reload) — guard so a stale draw never crashes
+            # the whole N-panel.
+            if op_a is not None:
+                op_a.enable = not _alpha_on
+            # «Проверка»: убрать ноды AlphaView из материалов, где альфа
+            # вершин больше не нужна (стёрта/меш стал непрозрачным).
+            arow.operator("gtatools.alpha_cleanup", text="",
+                          **inu_icon(safe_icon('TRASH')))
+
             # Other attributes are NOT shown here — they live in the
             # «Слои Vertex Color» collapsible section below LightMap.
             #
@@ -2870,13 +3099,32 @@ class GTATOOLS_PT_prelight_panel(bpy.types.Panel):
             # Юзер хочет «1px между всеми кнопками без скругления по
             # краям» — это и есть `column(align=True)`.
 
+            # «Запечь поверх» — additive bake: кладёт свет сцены ПОВЕРХ
+            # текущего прилайта (Add), не перезаписывая. Над обычным рядом.
+            row_o = preset_col.row(align=True)
+            _op_o = row_o.operator("gtatools.bake_vertex_colors_simple",
+                                   text=T("Запечь поверх"),
+                                   **inu_icon(safe_icon('ADD')))
+            _op_o.over = True
+            _op_os = row_o.operator("gtatools.bake_vertex_colors",
+                                    text=T("Запечь поверх с тенями"),
+                                    **inu_icon(safe_icon('ADD')))
+            _op_os.over = True
+            _op_os.use_shadows = True
+
             # Bake row сразу под Day/Night атрибутами — это primary action
             # после настройки V-offset'ов, держим близко к атрибутам чтобы
             # workflow читался сверху-вниз: pick attr → tune V → bake.
             row = preset_col.row(align=True)
-            row.operator("gtatools.bake_vertex_colors_simple", text=T("Запечь"), **inu_icon(safe_icon('RENDER_STILL')))
+            row.scale_y = 1.6   # основные кнопки запекания — выше (были узкими)
+            # over=False ставим ЯВНО: свойства оператора в Blender «липкие» —
+            # без этого over=True от соседней «Запечь поверх» утекает сюда и
+            # обычное «Запечь» начинает складывать вместо перезаписи.
+            op_b = row.operator("gtatools.bake_vertex_colors_simple", text=T("Запечь"), **inu_icon(safe_icon('RENDER_STILL')))
+            op_b.over = False
             op_bs = row.operator("gtatools.bake_vertex_colors", text=T("Запечь с тенями"), **inu_icon(safe_icon('RENDER_RESULT')))
             op_bs.use_shadows = True
+            op_bs.over = False
 
             # Copy Day ↔ Night — text-only buttons. Earlier the
             # FORWARD/BACK icons looked like media-player play/back
@@ -2928,11 +3176,9 @@ class GTATOOLS_PT_prelight_panel(bpy.types.Panel):
         # V-offset переехал инлайн в Day/Night-строки выше — каждый
         # атрибут хранит свой V и применяется автоматически.
 
-        # Modulate Color — preview-only пресет: OFF / Day / Night.
-        # Хардкод значений из ванильного timecyc.dat (EXTRASUNNY_LA).
-        # Vcols и DFF-флаги не трогаются. Заголовок секции убран —
-        # кнопки Выкл/Day/Night сами по себе понятны.
-        layout.prop(scene.inu_settings, "gtatools_modulate_mode", expand=True)
+        # Modulate Color убран: превью прилайта теперь минимальный граф
+        # (VertexColor × текстура), без ambient/post-fx нод — переключение
+        # моделей не тормозит компиляцией шейдеров.
 
 
 
@@ -2974,48 +3220,170 @@ class GTATOOLS_PT_scatter_color_subpanel(bpy.types.Panel):
 
     def draw(self, context):
         layout = self.layout
-        scene = context.scene
+        s = context.scene.inu_settings
 
-        # Один внешний box, секции внутри без своих границ —
-        # заголовки + fused params. Тот же стиль что и в Post-Processing.
-        big_col = layout.box().column(align=True)
+        # Each tool sits in its OWN box, so it's obvious where one tool ends
+        # and the next begins. `column(align=True)` fuses the controls
+        # inside each box so it stays compact.
+        def _tool(title, icon_name):
+            col = layout.box().column(align=True)
+            col.label(text=title, **inu_icon(safe_icon(icon_name)))
+            return col
 
-        def _hdr(text, icon_name):
-            big_col.label(text=text, **inu_icon(safe_icon(icon_name)))
+        # ── Залить одним цветом ──
+        c = _tool(T("Залить одним цветом:"), 'COLOR')
+        row = c.row(align=True)
+        row.prop(s, "gtatools_fill_prelight_day", text=T("День"))
+        row.prop(s, "gtatools_fill_prelight_night", text=T("Ночь"))
+        c.prop(s, "gtatools_fill_prelight_selected_only",
+               text=T("Только выделенные"))
+        c.operator("gtatools.fill_prelight", text=T("Применить"),
+                   **inu_icon(safe_icon('CHECKMARK')))
 
-        # ── Scatter Color ────────────────────────────────────────
-        _hdr(T("Рассеять цвет:"), 'BRUSH_DATA')
-        big_col.operator("gtatools.scatter_color",
-                         text=T("Применить"),
-                         **inu_icon(safe_icon('CHECKMARK')))
-        big_col.prop(scene.inu_settings, "gtatools_scatter_color_strength",
-                     text=T("Сила"), slider=True)
-        big_col.prop(scene.inu_settings, "gtatools_scatter_color_distance",
-                     text=T("Дальность"), slider=True)
-        # Цвет: пробуем взять из активной Vertex Paint brush; иначе
-        # используем scene prop. Любая ошибка → fallback на scene prop.
+        # ── Рисовать по нескольким ──
+        c = _tool(T("Рисовать по нескольким:"), 'BRUSH_DATA')
+        row = c.row(align=True)
+        row.operator("gtatools.prelight_merge_paint", text=T("Объединить"),
+                     **inu_icon(safe_icon('OBJECT_DATA')))
+        row.operator("gtatools.prelight_split_paint", text=T("Разъединить"),
+                     **inu_icon(safe_icon('MOD_EXPLODE')))
+
+        # ── Рассеять цвет ──
+        c = _tool(T("Рассеять цвет:"), 'BRUSH_DATA')
+        c.operator("gtatools.scatter_color", text=T("Применить"),
+                   **inu_icon(safe_icon('CHECKMARK')))
+        c.prop(s, "gtatools_scatter_color_strength", text=T("Сила"), slider=True)
+        c.prop(s, "gtatools_scatter_color_distance", text=T("Дальность"),
+               slider=True)
+        # Цвет: из активной Vertex Paint brush, иначе scene prop.
         try:
             ts = context.tool_settings
             vp = getattr(ts, 'vertex_paint', None)
             brush = getattr(vp, 'brush', None) if vp else None
             if brush is not None and hasattr(brush, 'color'):
-                big_col.prop(brush, "color", text=T("Цвет (из кисти)"))
+                c.prop(brush, "color", text=T("Цвет (из кисти)"))
             else:
-                big_col.prop(scene.inu_settings, "gtatools_scatter_color_color",
-                             text=T("Цвет"))
+                c.prop(s, "gtatools_scatter_color_color", text=T("Цвет"))
         except Exception:
-            big_col.prop(scene.inu_settings, "gtatools_scatter_color_color",
-                         text=T("Цвет"))
+            c.prop(s, "gtatools_scatter_color_color", text=T("Цвет"))
 
-        # ── Сгладить между объектами ─────────────────────────────
-        # Межобъектная операция — не подходит в Post-Processing
-        # текущего объекта, поэтому живёт здесь рядом с другими
-        # сцена-широкими инструментами.
-        _hdr(T("Между объектами:"), 'MOD_SMOOTH')
-        big_col.operator("gtatools.vc_smooth_between",
-                         text=T("Сгладить между объектами"),
-                         **inu_icon(safe_icon('MOD_SMOOTH')))
+        # ── Между объектами ──
+        c = _tool(T("Между объектами:"), 'MOD_SMOOTH')
+        c.operator("gtatools.vc_smooth_between",
+                   text=T("Сгладить между объектами"),
+                   **inu_icon(safe_icon('MOD_SMOOTH')))
 
+        # ── Свет → топология (резак света v2) ──
+        c = _tool(T("Свет → топология:"), 'LIGHT')
+        c.prop(s, "gtatools_lightcut_type", expand=True)
+        c.prop(s, "gtatools_lightcut_radius", text=T("Радиус"))
+        c.prop(s, "gtatools_lightcut_segments", text=T("Сегменты"))
+        # Кольца (только для цилиндра) — список с радиусом каждого + удаление
+        if s.gtatools_lightcut_type == 'CYLINDER':
+            c.separator()
+            c.label(text=T("Кольца (от центра к краю):"),
+                    **inu_icon(safe_icon('MESH_CIRCLE')))
+            for i, ring in enumerate(s.gtatools_lightcut_ringlist):
+                row = c.row(align=True)
+                row.prop(ring, "radius", text=f"{i + 1}", slider=True)
+                op_rm = row.operator("gtatools.lightcut_ring_remove",
+                                     text="", **inu_icon(safe_icon('X')))
+                op_rm.index = i
+            c.operator("gtatools.lightcut_ring_add", text=T("+ Кольцо"),
+                       **inu_icon(safe_icon('ADD')))
+        # Создать резак
+        c.separator()
+        c.operator("gtatools.lightcut_create", text=T("Создать резак"),
+                   **inu_icon(safe_icon('MESH_CYLINDER')))
+        # Куда: отдельный диск / в пол
+        c.prop(s, "gtatools_lightcut_separate", text=T("Отдельным объектом"))
+        if not s.gtatools_lightcut_separate:
+            c.prop(s, "gtatools_lightcut_target", text=T("Геометрия (пол)"))
+        cut = c.row()
+        cut.scale_y = 1.4
+        cut.operator("gtatools.light_topo_cut",
+                     text=T("Нарезать по резаку"),
+                     **inu_icon(safe_icon('MOD_MULTIRES')))
+
+
+
+class GTATOOLS_PT_foliage_subpanel(bpy.types.Panel):
+    """Прилайт листвы деревьев: радиальный градиент (темнее в центре
+    кроны, светлее снаружи) + смена цвета листвы. Геометрический, без
+    света сцены — для billboard-листвы."""
+    bl_label = "Листва / Дерево"
+    bl_idname = "GTATOOLS_PT_foliage_subpanel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_parent_id = "GTATOOLS_PT_prelight_panel"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw(self, context):
+        layout = self.layout
+        s = context.scene.inu_settings
+        obj = context.active_object
+
+        if not (obj and obj.type == 'MESH'):
+            layout.label(text=T("Выберите меш-дерево"),
+                         **inu_icon(safe_icon('ERROR')))
+            return
+        has_mats = bool(obj.material_slots)
+
+        # ── Общие настройки (применяются к обеим операциям) ──
+        top = layout.box().column(align=True)
+        top.prop(s, "gtatools_foliage_select_only", text=T("Только выделенные грани"))
+        top.prop(s, "gtatools_foliage_both_sides", text=T("Обе стороны (дубли)"))
+        top.prop(s, "gtatools_foliage_blend", expand=True)
+
+        # ── Блок 1: Крона (затенение) — свой материал + своя кнопка ──
+        cb = layout.box().column(align=True)
+        cb.label(text=T("Крона (затенение):"), **inu_icon(safe_icon('LIGHT_SUN')))
+        if has_mats:
+            cb.prop_search(s, "gtatools_foliage_material_name",
+                           obj, "material_slots", text=T("Материал"),
+                           icon=safe_icon('MATERIAL'))
+        cb.prop(s, "gtatools_foliage_metric", text=T("Форма"))
+        row = cb.row(align=True)
+        row.prop(s, "gtatools_foliage_inside", text=T("Внутри"), slider=True)
+        row.prop(s, "gtatools_foliage_outside", text=T("Снаружи"), slider=True)
+        cb.prop(s, "gtatools_foliage_gamma", text=T("Кривая"), slider=True)
+        cb.prop(s, "gtatools_foliage_height_dark",
+                text=T("Затемнить низ"), slider=True)
+        op_s = cb.operator("gtatools.prelight_foliage",
+                           text=T("Прилайтить крону"),
+                           **inu_icon(safe_icon('BRUSH_DATA')))
+        op_s.mode = 'SHADE'
+
+        # ── Блок 2: Цвет листвы — свой материал + своя кнопка ──
+        cc = layout.box().column(align=True)
+        cc.label(text=T("Цвет листвы (свет / тень):"),
+                 **inu_icon(safe_icon('COLOR')))
+        if has_mats:
+            cc.prop_search(s, "gtatools_foliage_color_material_name",
+                           obj, "material_slots", text=T("Материал"),
+                           icon=safe_icon('MATERIAL'))
+        crow = cc.row(align=True)
+        crow.prop(s, "gtatools_foliage_light_tint", text="")
+        crow.prop(s, "gtatools_foliage_shadow_tint", text="")
+        cc.prop(s, "gtatools_foliage_tint_strength",
+                text=T("Сила цвета"), slider=True)
+        cc.prop(s, "gtatools_foliage_top_bright",
+                text=T("Подсветить верх"), slider=True)
+        sub = cc.row(align=True)
+        sub.enabled = s.gtatools_foliage_top_bright > 0.0
+        sub.prop(s, "gtatools_foliage_top_height",
+                 text=T("Высота подсветки"), slider=True)
+        cc.prop(s, "gtatools_foliage_color_height_dark",
+                text=T("Затемнить низ"), slider=True)
+        cc.prop(s, "gtatools_foliage_variation", text=T("Разброс"), slider=True)
+        brow = cc.row(align=True)
+        op_c = brow.operator("gtatools.prelight_foliage",
+                             text=T("Запечь цвет"),
+                             **inu_icon(safe_icon('BRUSH_DATA')))
+        op_c.mode = 'COLOR'
+        brow.operator("gtatools.foliage_color_reset",
+                      text=T("Сброс"),
+                      **inu_icon(safe_icon('LOOP_BACK')))
 
 
 class GTATOOLS_PT_vc_postprocess_panel(bpy.types.Panel):
@@ -4170,21 +4538,9 @@ class GTATOOLS_PT_footer_panel(bpy.types.Panel):
         scene = context.scene
         layout = self.layout
 
-        # Fused vertical cluster — Info / Docs+Issues / What's New
-        # all primjayut друг к другу.
+        # Docs / Issues / What's New. Кнопка «Info object» переехала наверх,
+        # в строку профилей главной панели.
         col = layout.column(align=True)
-
-        # Info-floater toggle (раньше жил в header main panel)
-        on = scene.inu_settings.inu_floater_visible
-        op = col.operator(
-            "gtatools.floater_toggle",
-            text="Info",
-            depress=on,
-            **inu_icon(safe_icon('INFO')),
-        )
-        op.floater_name = 'info'
-
-        # Docs / Issues / What's New (раньше жили в body main panel)
         row = col.row(align=True)
         row.operator("gtatools.open_docs",
                      text=T("Docs"), **inu_icon(safe_icon('HELP')))
@@ -4292,17 +4648,24 @@ class GTATOOLS_PT_bake_panel(bpy.types.Panel):
         xy.prop(s, "gtatools_bake_res_x", text="X")
         xy.prop(s, "gtatools_bake_res_y", text="Y")
         col.prop(s, "gtatools_bake_margin", text="Padding")
+        col.prop(s, "gtatools_bake_aa", text=T("АА"))
         # Имя текстуры берётся из имени модели — поле убрано намеренно.
 
-        # ── Запекание: переключатель режима + инфо под него ──
+        # ── Запекание: сворачиваемый выбор режима + инфо под него ──
         box = layout.box()
-        box.label(text=T("Запекание"), **inu_icon(safe_icon('RENDER_STILL')))
-        mode_row = box.row(align=True)
-        mode_row.prop(s, "gtatools_bake_mode", expand=True)
+        hdr = box.row()
+        hdr.prop(s, "gtatools_bake_show_mode",
+                 icon=(safe_icon('TRIA_DOWN') if s.gtatools_bake_show_mode
+                       else safe_icon('TRIA_RIGHT')),
+                 text=T("Запекание"), emboss=False)
 
         # Инфо показываем ТОЛЬКО когда меш реально ВЫДЕЛЕН (active_object
         # сохраняется после снятия выделения — иначе подпись «висит»).
         sel = obj if (obj and obj.type == 'MESH' and obj.select_get()) else None
+
+        if s.gtatools_bake_show_mode:
+            mode_row = box.row(align=True)
+            mode_row.prop(s, "gtatools_bake_mode", expand=True)
 
         if s.gtatools_bake_mode == 'UV':
             # UV→UV: источник = рендер-UV (📷), цель = выделенная UV.
@@ -4321,7 +4684,7 @@ class GTATOOLS_PT_bake_panel(bpy.types.Panel):
             else:
                 box.label(text=T("У объекта нет UV-развёртки"),
                           **inu_icon(safe_icon('ERROR')))
-        else:  # HILOW — детект пары по фиксированным _hi / _low
+        elif s.gtatools_bake_mode == 'HILOW':  # детект пары по _hi / _low
             if sel is None:
                 box.label(text=T("Выделите модель"), **inu_icon(safe_icon('INFO')))
             else:
@@ -4333,74 +4696,121 @@ class GTATOOLS_PT_bake_panel(bpy.types.Panel):
                            **inu_icon(safe_icon('MOD_MULTIRES')))
                 info.label(text="Low:  " + (low.name if low else "—"),
                            **inu_icon(safe_icon('MESH_DATA')))
-                if high is None or low is None:
-                    box.label(text=T("Нет пары _hi / _low"),
-                              **inu_icon(safe_icon('ERROR')))
-                box.prop(s, "gtatools_bake_cage_extrusion")
+                # Cage-настройка вынесена в «Дополнительно» (рядом с Max Ray).
+        else:  # CAMERA — ортокамера спереди, для billboard/импостеров
+            if sel is None:
+                box.label(text=T("Выделите модель"), **inu_icon(safe_icon('INFO')))
+            else:
+                from ..tools.bake import find_hilow_pair, HI_SUFFIX, LOW_SUFFIX
+                high, low = find_hilow_pair(sel, HI_SUFFIX, LOW_SUFFIX)
+                info = box.column(align=True)
+                info.scale_y = 0.85
+                if high is not None and low is not None:
+                    info.label(text=T("Рендер: ") + high.name,
+                               **inu_icon(safe_icon('OUTLINER_OB_CAMERA')))
+                    info.label(text=T("На модель: ") + low.name,
+                               **inu_icon(safe_icon('MESH_DATA')))
+                    # Ракурс берётся из нормали плоскости — выбор не нужен.
+                    info.label(text=T("Ракурс: по нормали плоскости"),
+                               **inu_icon(safe_icon('NORMALS_FACE')))
+                else:
+                    info.label(text=T("Рендер: ") + sel.name,
+                               **inu_icon(safe_icon('OUTLINER_OB_CAMERA')))
+                    info.label(text=T("На модель: ") + sel.name,
+                               **inu_icon(safe_icon('MESH_DATA')))
+                    # Пары нет — ракурс по мировой оси, выбираем вручную.
+                    box.prop(s, "gtatools_bake_cam_axis", text=T("Ракурс"))
+                box.prop(s, "gtatools_bake_cam_padding", text=T("Отступ"), slider=True)
 
-        # Стек слоёв — НЕ UIList (у него свои отступы и нет контроля ширины),
-        # а обычные строки панели: глаз | имя-выбор | режим·размер | bake | save.
-        # В обычной строке нет встроенных полей списка → глаз прижат влево,
-        # bake/save вправо, ui_units_x фиксируется надёжно.
         from ..tools.bake import get_map
         layers = s.gtatools_bake_layers
         idx = s.gtatools_bake_layers_index
         base = obj.get("inu_bake_base", "") if obj else ""
 
-        lcol = box.column(align=True)
+        # ── Создание слоя — ОТДЕЛЬНАЯ форма (не путать с редактором ниже) ──
+        # Выбираешь карту → «Добавить». Карта слоя задаётся только тут, при
+        # создании; в редакторе выбранного слоя её нет (другой слой = другая
+        # карта). Это и убирает прежнюю «кашу», где дропдаун «Карта» в
+        # параметрах выглядел как создание, хотя правил выбранный слой.
+        addbox = box.box()
+        addbox.label(text=T("Добавить слой"), **inu_icon(safe_icon('ADD')))
+        arow = addbox.row(align=True)
+        arow.prop(s, "gtatools_bake_new_map", text="")
+        arow.operator("gtatools.bake_layer_add", text=T("Добавить"),
+                      **inu_icon(safe_icon('ADD')))
+
+        # ── Список слоёв ── НЕ UIList (у него свои отступы и нет контроля
+        # ширины), а обычные строки: глаз | имя-выбор | режим·размер | bake |
+        # save. В обычной строке глаз прижат влево, bake/save вправо,
+        # ui_units_x фиксируется надёжно.
+        # Рамка списка слева + колонка управления справа (вне рамки), вплотную
+        # (align=True — без зазора). Кнопки X / ▲ / ▼ действуют на ВЫБРАННЫЙ
+        # слой (index по умолчанию = выбранный).
+        list_row = box.row(align=True)
+        lbox = list_row.box()
+        lcol = lbox.column(align=True)
+        # ВАЖНО: ui_units_x на кнопках этого вложенного списка Blender ИГНОРИРУЕТ
+        # (кнопка всё равно тянется под текст → колонки разъезжались). Поэтому
+        # колонки строим через split() с фиксированными ДОЛЯМИ: доля одинакова в
+        # каждой строке → имя/метка/кнопки выровнены, длинные имена ОБРЕЗАЮТСЯ
+        # (а не растягивают строку). Доли тянутся с шириной панели, но строки
+        # между собой всегда выровнены. Калибровка — factor'ы 0.40 / 0.55 ниже.
         for i, L in enumerate(layers):
             md = get_map(L.map_id)
             nm = md.label_key if md else L.map_id
             img = bpy.data.images.get(f"{base}_{L.map_id}") if base else None
-            res = f"{img.size[0]}×{img.size[1]}" if img else "—"
             r = lcol.row(align=True)
             r.prop(L, "enabled", text="",
                    **inu_icon(safe_icon('HIDE_OFF' if L.enabled else 'HIDE_ON')))
-            sel = r.operator("gtatools.bake_select_layer", text=nm,
-                             translate=False, depress=(i == idx))
-            sel.index = i
-            mcell = r.row(align=True)
-            mcell.active = L.enabled
-            mcell.alignment = 'RIGHT'
-            mcell.label(text=f"{L.blend_mode.title()}  ·  {res}", translate=False)
-            bcell = r.row(align=True)
-            bcell.ui_units_x = 3.0
-            bk = bcell.operator("gtatools.bake_run", text="bake")
-            bk.only_map_id = L.map_id
-            scell = r.row(align=True)
-            scell.ui_units_x = 1.1
-            scell.enabled = img is not None
-            sv = scell.operator("gtatools.bake_save_map", text="",
-                                **inu_icon(safe_icon('FILE_TICK')))
-            sv.map_id = L.map_id
+            # [имя 60%] | [Bake + save]. Метка (режим·размер) убрана из строки —
+            # она показывается для ВЫБРАННОГО слоя в боксе «Выбранный слой» ниже.
+            sp_name = r.split(factor=0.60, align=True)
+            sp_name.operator("gtatools.bake_select_layer", text=nm,
+                             translate=False, depress=(i == idx)).index = i
+            acell = sp_name.row(align=True)
+            acell.operator("gtatools.bake_run", text="Bake").only_map_id = L.map_id
+            svcell = acell.row(align=True)
+            svcell.enabled = img is not None    # сохранить можно только запечённое
+            svcell.operator("gtatools.bake_save_map", text="",
+                            **inu_icon(safe_icon('FILE_TICK'))).map_id = L.map_id
         if not layers:
-            lcol.label(text=T("Нет слоёв — добавьте ниже"),
+            lcol.label(text=T("Нет слоёв — добавьте выше"),
                        **inu_icon(safe_icon('INFO')))
 
-        ctl = box.row(align=True)
-        ctl.operator("gtatools.bake_layer_add", text=T("Добавить слой"),
-                     **inu_icon(safe_icon('ADD')))
-        ctl.operator("gtatools.bake_layer_remove", text="",
-                     **inu_icon(safe_icon('REMOVE')))
-        ctl.operator("gtatools.bake_layer_move", text="",
-                     **inu_icon(safe_icon('TRIA_UP'))).direction = 'UP'
-        ctl.operator("gtatools.bake_layer_move", text="",
-                     **inu_icon(safe_icon('TRIA_DOWN'))).direction = 'DOWN'
+        # Колонка управления справа от рамки — на выбранный слой.
+        side = list_row.column(align=True)
+        side.operator("gtatools.bake_layer_remove", text="",
+                      **inu_icon(safe_icon('X')))
+        side.operator("gtatools.bake_layer_move", text="",
+                      **inu_icon(safe_icon('TRIA_UP'))).direction = 'UP'
+        side.operator("gtatools.bake_layer_move", text="",
+                      **inu_icon(safe_icon('TRIA_DOWN'))).direction = 'DOWN'
 
-        # Параметры выбранного слоя (карта / режим / прозрачность).
+        # ── Выбранный слой: инфо + правка (режим / прозрачность / размер) ──
+        # Здесь живёт то, что убрано из строк списка — режим наложения и размер
+        # запечённой текстуры выбранного слоя.
         if 0 <= idx < len(layers):
             L = layers[idx]
+            simg = bpy.data.images.get(f"{base}_{L.map_id}") if base else None
+            sres = f"{simg.size[0]}×{simg.size[1]}" if simg else "—"
             d = box.box()
-            d.prop(L, "map_id")
+            d.label(text=T("Выбранный слой") + ":")
             det = d.column(align=True)
             det.prop(L, "blend_mode")
             det.prop(L, "opacity", slider=True)
+            det.prop(L, "contrast")             # real-time (живой превью)
+            det.prop(L, "gamma")                # real-time (живой превью)
+            # «Обесцветить» — только для Normal Map: при объединении её
+            # синий tangent-space оттенок проступает на итоге; кнопка
+            # сводит слой в серое (как нормал-мапу в Фотошопе).
+            if L.map_id == 'NORMAL':
+                det.prop(L, "desaturate", toggle=True,
+                         **inu_icon(safe_icon('IMAGE_ALPHA')))
+            det.label(text=T("Размер текстуры") + f":  {sres}",
+                      **inu_icon(safe_icon('IMAGE_DATA')))
 
-        box.operator("gtatools.bake_run", text=T("Запечь все"),
-                     **inu_icon(safe_icon('RENDER_STILL')))
-
-        # После запекания: показать/скрыть результат на модели + свести в
-        # одну текстуру (numpy).
+        # После запекания: показать/скрыть результат на модели + сохранить
+        # сведённую текстуру в файл («Сохранить как»).
         if obj and obj.type == 'MESH' and obj.get("inu_bake_base"):
             on = bool(obj.get("inu_bake_preview_on", 0))
             box.operator(
@@ -4409,8 +4819,8 @@ class GTATOOLS_PT_bake_panel(bpy.types.Panel):
                 depress=on,
                 **inu_icon(safe_icon('HIDE_OFF' if on else 'HIDE_ON')))
             box.operator("gtatools.bake_flatten",
-                         text=T("Свести в одну текстуру"),
-                         **inu_icon(safe_icon('IMAGE_DATA')))
+                         text=T("Сохранить как"),
+                         **inu_icon(safe_icon('FILE_TICK')))
 
 
 class GTATOOLS_PT_bake_advanced(bpy.types.Panel):
@@ -4427,22 +4837,38 @@ class GTATOOLS_PT_bake_advanced(bpy.types.Panel):
         layout = self.layout
         s = context.scene.inu_settings
 
-        col = layout.column(align=True)
-        col.prop(s, "gtatools_bake_samples")
-        col.prop(s, "gtatools_bake_light_energy_scale")
-        col.prop(s, "gtatools_bake_bevel_size")
-        col.prop(s, "gtatools_bake_bevel_samples")
-        col.prop(s, "gtatools_bake_max_ray")
-
+        # Настройки фильтруются по ВЫБРАННОЙ карте: не ко всем картам
+        # применяются одни и те же параметры (сэмплы — только шумным,
+        # свет — светозависимым, Bevel — только Bevel, Cage/Max Ray —
+        # только режиму Hi→Low). AA переехал наверх (к Padding).
+        from ..tools.bake import get_map
         layers = s.gtatools_bake_layers
         idx = s.gtatools_bake_layers_index
-        if 0 <= idx < len(layers):
-            L = layers[idx]
-            box = layout.box()
-            box.label(text=T("Коррекция слоя:"))
-            c = box.column(align=True)
-            c.prop(L, "contrast")
-            c.prop(L, "gamma")
+        md = get_map(layers[idx].map_id) if 0 <= idx < len(layers) else None
+
+        col = layout.column(align=True)
+        shown = False
+        if md is not None:
+            noisy = (md.bake_type == 'AO' or md.needs_light
+                     or getattr(md, 'pass_indirect', False))
+            if noisy:                       # AO / свет / GI
+                col.prop(s, "gtatools_bake_samples")
+                shown = True
+            if md.needs_light:              # карты со светом-ригом
+                col.prop(s, "gtatools_bake_light_energy_scale")
+                shown = True
+            if md.id == 'BEVEL':            # только Bevel
+                col.prop(s, "gtatools_bake_bevel_size")
+                col.prop(s, "gtatools_bake_bevel_samples")
+                shown = True
+        if s.gtatools_bake_mode == 'HILOW':  # перенос Hi→Low
+            col.prop(s, "gtatools_bake_cage_extrusion")
+            col.prop(s, "gtatools_bake_max_ray")
+            shown = True
+        if not shown:
+            col.label(text=T("Для выбранной карты доп. настроек нет"),
+                      **inu_icon(safe_icon('INFO')))
+        # Контраст/гамма слоя живут в боксе «Выбранный слой» (real-time).
 
 
 # NOTE: GTATOOLS_PT_main_panel — top-level container N-sidebar, у него

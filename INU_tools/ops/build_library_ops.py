@@ -106,6 +106,14 @@ class GTATOOLS_OT_build_asset_library(bpy.types.Operator):
         scene = context.scene
         settings = scene.inu_settings
 
+        # Gate: this feature spawns a background Blender process. Off by
+        # default — the user must opt in (see gtatools_enable_asset_builder).
+        if not getattr(settings, 'gtatools_enable_asset_builder', False):
+            self.report({'ERROR'}, T(
+                "Сборка Asset Library запускает фоновый процесс Blender. "
+                "Включи галочку «Разрешить сборку Asset Library» в настройках."))
+            return {'CANCELLED'}
+
         if not bpy.data.filepath:
             self.report({'ERROR'}, T(
                 "Сначала сохраните сцену (.blend) — кеш создаётся "
@@ -408,6 +416,13 @@ class GTATOOLS_OT_regenerate_previews(bpy.types.Operator):
             return compat.warn_unsupported(self, "Asset Library Previews", (3, 2, 0))
         scene = context.scene
         settings = scene.inu_settings
+
+        # Gate: spawns a background Blender process; off by default.
+        if not getattr(settings, 'gtatools_enable_asset_builder', False):
+            self.report({'ERROR'}, T(
+                "Регенерация превью запускает фоновый процесс Blender. "
+                "Включи галочку «Разрешить сборку Asset Library» в настройках."))
+            return {'CANCELLED'}
 
         # Opening other .blend files in this Blender session would
         # silently discard any unsaved work. Refuse rather than risk it.

@@ -89,6 +89,3 @@ class GTATOOLS_OT_validate_paintjobs(bpy.types.Operator):
         return {'FINISHED'}
 
 
-classes = (
-    GTATOOLS_OT_validate_paintjobs,
-)

@@ -26,6 +26,31 @@ from ..core.dff import (
 )
 
 
+def _frame_name_usable(nm: str) -> bool:
+    """True if a DFF frame name is a clean GTA-style name.
+
+    GTA frame/model names are ASCII letters, digits and a few separators
+    (``_`` ``-`` ``.``). A ``?`` (literal byte 0x3F) or the Unicode
+    replacement char means a previous tool/round-trip mangled the name —
+    e.g. ``hedge_3_?_?_?_?_?_?_N__001``. In that case the caller falls back
+    to the DFF *file* name instead of importing the junk into the outliner.
+    """
+    if not nm:
+        return False
+    return all((c.isascii() and c.isalnum()) or c in '_-.' for c in nm)
+
+
+def _is_light_frame_name(nm: str) -> bool:
+    """True for an RW Light (RpLight) frame name — ``Omni###``.
+
+    Kam's 3ds Max exporter (and our own DFF export) write one ``Omni<NNN>``
+    frame per 2DFX light to carry the RW light source. These are light
+    dummies, not real geometry frames, so map import skips them together
+    with the 2DFX extension when «Без 2DFX» is on."""
+    return (bool(nm) and len(nm) > 4
+            and nm[:4].lower() == 'omni' and nm[4:].isdigit())
+
+
 def _store_user_data(target, user_data: UserData):
     """Store UserData PLG into Blender custom properties.
 
@@ -297,9 +322,76 @@ def _build_mesh_bmesh(mesh: bpy.types.Mesh, geom: DffGeometry):
     mesh.update()
 
 
+def _align_winding_to_normals(tri_np, verts_np, norm_np):
+    """Развернуть намотку треугольников по авторским нормалям.
+
+    Некоторые модели карты GTA SA содержат грани с обратной намоткой
+    (winding): их геометрическая нормаль (из порядка вершин) смотрит в
+    противоположную сторону от авторской нормали вершин. В Blender это
+    даёт «вывернутые» грани (красные в Face Orientation) и ломает
+    шейдинг — грань освещается с изнанки. Считаем для каждого
+    треугольника геометрическую нормаль и сравниваем с усреднённой
+    авторской; где они смотрят врозь (dot < 0) — меняем местами 2-ю и
+    3-ю вершины, разворачивая намотку под авторскую нормаль. Custom
+    split normals при этом не трогаются, так что шейдинг остаётся
+    авторским, а намотка перестаёт конфликтовать.
+
+    Возвращает (tri_np, flipped_count). Делается полностью на numpy,
+    так что даже на карте в 1.5 млн полигонов проход дешёвый.
+    """
+    if norm_np is None or len(norm_np) != len(verts_np):
+        return tri_np, 0
+    v0 = verts_np[tri_np[:, 0]]
+    v1 = verts_np[tri_np[:, 1]]
+    v2 = verts_np[tri_np[:, 2]]
+    geo_n = np.cross(v1 - v0, v2 - v0)
+    auth_n = norm_np[tri_np[:, 0]] + norm_np[tri_np[:, 1]] + norm_np[tri_np[:, 2]]
+    dots = np.einsum('ij,ij->i', geo_n, auth_n)
+    flip = dots < 0.0
+    n_flip = int(np.count_nonzero(flip))
+    if n_flip:
+        tri_np[flip, 1], tri_np[flip, 2] = (
+            tri_np[flip, 2].copy(), tri_np[flip, 1].copy())
+    return tri_np, n_flip
+
+
+def _weld_and_sharpen(obj):
+    """Объединить совпадающие вершины и сохранить жёсткое затенение (по
+    мотивам DragonFF ``remove_object_doubles``, но EdgeSplit применяется
+    СРАЗУ в меш, без модификатора).
+
+    GTA-меши хранят раздельные вершины на стыках/швах (по грани), из-за чего
+    модель распадается на несвязные острова и держит наложенные дубли.
+    Помечаем граничные рёбра (с одной гранью) острыми ДО сварки, свариваем
+    все совпадающие вершины (``remove_doubles`` dist=1e-5 — попутно убирает
+    и совпавшие дубли-грани), затем РАЗРЕЗАЕМ острые рёбра прямо в геометрии
+    (``split_edges``). Так получается связная манифолд-топология с жёсткими
+    исходными рёбрами и БЕЗ модификатора — на импорте карты не копятся
+    тысячи модификаторов EdgeSplit (FPS не страдает)."""
+    me = obj.data
+    if me is None or not len(me.vertices):
+        return
+    bm = bmesh.new()
+    try:
+        bm.from_mesh(me)
+        # Граничные рёбра (одна грань) → острые, ДО сварки.
+        for edge in bm.edges:
+            if len(edge.link_loops) == 1:
+                edge.smooth = False
+        bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.00001)
+        # Разрезать острые рёбра в самой геометрии (аналог EdgeSplit без угла).
+        sharp_edges = [e for e in bm.edges if not e.smooth]
+        if sharp_edges:
+            bmesh.ops.split_edges(bm, edges=sharp_edges)
+        bm.to_mesh(me)
+    finally:
+        bm.free()
+    me.update()
+
+
 def _build_mesh(geom: DffGeometry, name: str, materials: list,
                 material_cache: Optional[dict] = None,
-                uv_anim_dict=None) -> bpy.types.Mesh:
+                uv_anim_dict=None, fix_winding: bool = False) -> bpy.types.Mesh:
     """Build a Blender Mesh from DFF geometry via direct foreach_set.
 
     Avoids bmesh entirely — all attributes are pushed in bulk through
@@ -349,6 +441,43 @@ def _build_mesh(geom: DffGeometry, name: str, materials: list,
             tri_np[i, 1] = tri.b
             tri_np[i, 2] = tri.c
             mat_np[i] = tri.material
+
+        # ── Дедуп граней для моделей БЕЗ авторских нормалей (как DragonFF) ──
+        # GTA-дороги/террейн со strip-флагом часто содержат вырожденные
+        # треугольники (повтор индекса, от развёртки стрипа) и ДУБЛИКАТЫ
+        # грани (один набор вершин дважды — 2-сторонняя геометрия с
+        # противоположной намоткой). Наложенные «обратные» грани и дают
+        # красные «через раз» + сломанный шейдинг. Отбрасываем вырожденные,
+        # оставляем по одной грани на набор вершин; те, у кого был дубликат,
+        # запоминаем (double_local) и ниже переориентируем по сваренному
+        # эталону. Модели С нормалями (транспорт/педы) не трогаем.
+        has_authored_normals = bool(geom.normals) and len(geom.normals) == n_verts
+        double_local = None
+        if not has_authored_normals and n_tris > 0:
+            # Дубли 2-сторонних граней в GTA часто сидят на ОТДЕЛЬНЫХ
+            # вершинах с совпадающими координатами (одна точка — разные
+            # индексы). Поэтому группируем по КЛАССАМ совпадающих позиций
+            # (как remove_doubles dist=1e-4), а не по индексам вершин —
+            # иначе такие дубли (тонкие бордюры) пропускаются. Исходные
+            # индексы вершин при этом сохраняются.
+            vkey = np.round(verts_np, 4)
+            _, vclass = np.unique(vkey, axis=0, return_inverse=True)
+            tcls = vclass[tri_np]
+            pa, pb, pc = tcls[:, 0], tcls[:, 1], tcls[:, 2]
+            valid = (pa != pb) & (pb != pc) & (pa != pc)
+            vidx = np.nonzero(valid)[0]
+            keys = np.sort(tcls[vidx], axis=1)
+            ukeys, fi_loc, inv, counts = np.unique(
+                keys, axis=0, return_index=True,
+                return_inverse=True, return_counts=True)
+            if len(ukeys) != n_tris:        # были вырожденные и/или дубликаты
+                keep_loc = np.sort(fi_loc)
+                keep = vidx[keep_loc]
+                tri_np = tri_np[keep]
+                mat_np = mat_np[keep]
+                double_local = np.nonzero(counts[inv[keep_loc]] > 1)[0]
+                n_tris = tri_np.shape[0]
+
         tri_flat = tri_np.ravel()
 
         n_loops = n_tris * 3
@@ -362,10 +491,13 @@ def _build_mesh(geom: DffGeometry, name: str, materials: list,
             'loop_total', np.full(n_tris, 3, dtype=np.int32))
         mesh.polygons.foreach_set('material_index', mat_np)
 
-        # Smooth shading flag (compatible 4.1+, affects normal calc)
-        if bpy.app.version >= (4, 1, 0):
-            mesh.polygons.foreach_set(
-                'use_smooth', np.ones(n_tris, dtype=bool))
+        # Smooth shading flag on EVERY face — required on all versions so
+        # the DFF's per-vertex normals (applied below as custom split
+        # normals) are honoured. A flat (use_smooth=False) face ignores
+        # custom normals and shades hard, which read as "broken smoothing".
+        # Previously this was gated to 4.1+, so on older Blender every mesh
+        # came in flat-shaded.
+        mesh.polygons.foreach_set('use_smooth', np.ones(n_tris, dtype=bool))
 
         # ── UV layers (per-vertex DFF → per-loop Blender) ───────────────
         for i, uv_layer_data in enumerate(geom.uv_layers):
@@ -405,6 +537,54 @@ def _build_mesh(geom: DffGeometry, name: str, materials: list,
 
         mesh.update(calc_edges=True)
         mesh.validate(verbose=False)  # clean duplicate/degenerate faces
+
+        # ── Custom split normals from the DFF ───────────────────────────
+        # GTA stores a per-vertex normal that encodes the authored shading
+        # (hard vs soft edges). Without applying it, Blender recomputes
+        # all-smooth normals and the model's smoothing looks wrong. Feed
+        # the DFF normals back as custom split normals so the mesh shades
+        # EXACTLY as exported. Cross-version: <4.1 also needs
+        # use_auto_smooth=True for custom normals to take effect; 4.1+
+        # dropped that flag and honours them whenever faces are smooth.
+        if geom.normals and len(geom.normals) == n_verts:
+            try:
+                if hasattr(mesh, 'use_auto_smooth'):
+                    mesh.use_auto_smooth = True
+                mesh.normals_split_custom_set_from_vertices(
+                    [(n[0], n[1], n[2]) for n in geom.normals])
+            except Exception as ne:
+                print(f"[INU_tools] custom split normals skipped: {ne}")
+
+        # ── Переориентация ТОЛЬКО граней-дубликатов (как DragonFF) ──────
+        # КЛЮЧЕВОЕ: трогаем лишь те грани, у которых БЫЛ дубликат
+        # (double_local) — а НЕ всю модель. Иначе открытая оболочка
+        # (здание без дна/стены) выворачивается целиком. DragonFF делает
+        # ровно так: recalc нормалей у дублей, затем сверяет с эталоном
+        # сваренной копии и разворачивает лишь несовпавшие дубли.
+        if double_local is not None and len(double_local):
+            try:
+                bm = bmesh.new()
+                bm.from_mesh(mesh)
+                bm.faces.ensure_lookup_table()
+                nfaces = len(bm.faces)
+                dfaces = [bm.faces[int(i)] for i in double_local
+                          if 0 <= int(i) < nfaces]
+                if dfaces:
+                    bmesh.ops.recalc_face_normals(bm, faces=dfaces)
+                    bm_w = bm.copy()
+                    bm_w.faces.ensure_lookup_table()
+                    pairs = [(f, bm_w.faces[f.index]) for f in dfaces]
+                    bmesh.ops.remove_doubles(bm_w, verts=bm_w.verts, dist=0.0001)
+                    bmesh.ops.recalc_face_normals(bm_w, faces=bm_w.faces)
+                    for f, wf in pairs:
+                        if wf.is_valid and f.normal.dot(wf.normal) < 0.0:
+                            f.normal_flip()
+                    bm_w.free()
+                    bm.to_mesh(mesh)
+                    mesh.update()
+                bm.free()
+            except Exception as ne:
+                print(f"[INU_tools] double-face reorient skipped: {ne}")
 
     except Exception as e:
         # Fallback to bmesh path on malformed geometry — rare but a few
@@ -760,16 +940,40 @@ def _apply_skin_weights(obj, geom, arm_obj, bone_names):
     for _ in range(skin.num_bones):
         obj.vertex_groups.new()
 
-    # Assign weights by index (like DragonFF)
-    for vi in range(min(len(obj.data.vertices), len(skin.bone_indices))):
+    # Assign weights via the bmesh deform layer — a direct C-backed write.
+    # The old path called ``obj.vertex_groups[b].add([vi], w)`` once PER
+    # vertex PER bone: on a 30k-vert mesh that's ~120k individual bpy
+    # operator calls, and across a batch of skinned models it froze Blender
+    # for minutes. bmesh writes every weight in one pass, no per-vertex cost.
+    me = obj.data
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    bm.verts.ensure_lookup_table()
+    dvert_lay = bm.verts.layers.deform.verify()
+    n_skin_verts = min(len(bm.verts), len(skin.bone_indices))
+    for vi in range(n_skin_verts):
         indices = skin.bone_indices[vi]
         weights = skin.bone_weights[vi]
-
+        dv = bm.verts[vi][dvert_lay]
         for bi in range(4):
             bone_idx = indices[bi]
             weight = weights[bi]
             if weight > 0.0 and bone_idx < skin.num_bones:
-                obj.vertex_groups[bone_idx].add([vi], weight, 'ADD')
+                # 'ADD' semantics — accumulate if a bone repeats in the 4 slots.
+                dv[bone_idx] = dv.get(bone_idx, 0.0) + weight
+    bm.to_mesh(me)
+    bm.free()
+
+    # bmesh.to_mesh can drop custom split normals — re-apply from the DFF
+    # so skinned meshes keep their authored shading (mirrors _build_mesh).
+    if geom.normals and len(geom.normals) == len(me.vertices):
+        try:
+            if hasattr(me, 'use_auto_smooth'):
+                me.use_auto_smooth = True
+            me.normals_split_custom_set_from_vertices(
+                [(nn[0], nn[1], nn[2]) for nn in geom.normals])
+        except Exception:
+            pass
 
     # Rename vertex groups to bone names
     for i, bname in enumerate(bone_names):
@@ -902,7 +1106,8 @@ def import_dff(filepath: str, context=None, *, skip_2dfx=None,
 
 def import_dff_from_clump(clump, base_name: str, *, skip_2dfx=None,
                           bulk_mode: bool = False, target_collection=None,
-                          material_cache: Optional[dict] = None, profiler=None):
+                          material_cache: Optional[dict] = None, profiler=None,
+                          fix_winding: bool = False):
     """Build Blender objects from an already-parsed DffClump.
 
     Separates the Blender-only work from the binary parse so the
@@ -934,6 +1139,10 @@ def import_dff_from_clump(clump, base_name: str, *, skip_2dfx=None,
 
     collection = target_collection if target_collection is not None else bpy.context.collection
     imported_objects = []
+    # Объекты из геометрии БЕЗ авторских нормалей (карты/дороги/террейн) —
+    # их автоматически сшиваем (сварка + острые рёбра, как DragonFF) в конце.
+    # Модели с нормалями (транспорт/педы) сюда не попадают.
+    weld_targets = []
     frame_to_obj = {}  # frame_index → Blender object (MESH or EMPTY dummy)
 
     is_skinned = _has_skeleton(clump)
@@ -949,15 +1158,29 @@ def import_dff_from_clump(clump, base_name: str, *, skip_2dfx=None,
                               'gtatools_suffix_dff', '_DFF')
     except Exception:
         _dff_suffix = '_DFF'
+    try:
+        _lod_suffix = getattr(bpy.context.scene.inu_settings,
+                              'gtatools_suffix_lod', '_LOD') or '_LOD'
+    except Exception:
+        _lod_suffix = '_LOD'
     _n_geoms = len(clump.geometries)
+
+    # LOD-модели именуем как ``<stem>_LOD`` (сняв маркер "lod" из имени)
+    # вместо ``LOD…_DFF``. Централизовано здесь, поэтому работает для ВСЕХ
+    # импортов, идущих через этот движок: одиночный DFF, drag-drop,
+    # «Import All», импорт карты. Напр. LODham_orz_str_18 → ham_orz_str_18_LOD.
+    from ..core.ipl import is_lod_name, strip_lod_marker
+    _is_lod_base = is_lod_name(base_name)
+    _name_stem = strip_lod_marker(base_name) if _is_lod_base else base_name
+    _name_suffix = _lod_suffix if _is_lod_base else _dff_suffix
 
     def _fallback_name(gi: int) -> str:
         """Object name when the DFF frame has no name. Single-geom DFFs
-        get ``<base><suffix>``; multi-geom DFFs append the index so each
-        part stays unique."""
+        get ``<stem><suffix>``; multi-geom DFFs append the index so each
+        part stays unique. LOD-имена получают суффикс ``_LOD``."""
         if _n_geoms <= 1:
-            return f"{base_name}{_dff_suffix}"
-        return f"{base_name}{_dff_suffix}_{gi}"
+            return f"{_name_stem}{_name_suffix}"
+        return f"{_name_stem}{_name_suffix}_{gi}"
 
     # Создаём объекты из Atomic связей (frame → geometry)
     for atomic in clump.atomics:
@@ -970,12 +1193,26 @@ def import_dff_from_clump(clump, base_name: str, *, skip_2dfx=None,
         geom = clump.geometries[gi]
         frame = clump.frames[fi] if fi < len(clump.frames) else None
 
-        # Имя объекта: из фрейма или из имени файла
-        obj_name = frame.name if (frame and frame.name) else _fallback_name(gi)
+        # Имя объекта.
+        # Одногеометрийный DFF (террейн, проп, LOD — одна модель): имя
+        # берётся ИЗ ИМЕНИ ФАЙЛА. В GTA модель адресуется по имени .dff /
+        # записи в IMG, а внутреннее имя фрейма у таких моделей — обычно
+        # мусор моделлера («Line004», «Box001») или битое прошлым
+        # экспортом («hedge_3_?_?_?_?_?_?_N__001»). Имя файла надёжнее.
+        # Многосоставный DFF (транспорт, оружие): имена деталей важны для
+        # иерархии и round-trip — берём имя фрейма, если оно «чистое»
+        # (иначе fallback на имя файла).
+        if _n_geoms <= 1:
+            obj_name = _fallback_name(gi)
+        elif frame and frame.name and _frame_name_usable(frame.name):
+            obj_name = frame.name
+        else:
+            obj_name = _fallback_name(gi)
 
         with _stage('build_mesh'):
             mesh = _build_mesh(geom, obj_name, geom.materials,
-                               material_cache, clump.uv_anim_dict)
+                               material_cache, clump.uv_anim_dict,
+                               fix_winding=fix_winding)
 
         # Создаём объект
         obj = bpy.data.objects.new(obj_name, mesh)
@@ -1005,6 +1242,8 @@ def import_dff_from_clump(clump, base_name: str, *, skip_2dfx=None,
 
         collection.objects.link(obj)
         imported_objects.append(obj)
+        if not (geom.normals and len(geom.normals) == len(geom.vertices)):
+            weld_targets.append(obj)
         if frame is not None:
             frame_to_obj[fi] = obj
 
@@ -1014,11 +1253,14 @@ def import_dff_from_clump(clump, base_name: str, *, skip_2dfx=None,
             obj_name = _fallback_name(gi)
             with _stage('build_mesh'):
                 mesh = _build_mesh(geom, obj_name, geom.materials,
-                               material_cache, clump.uv_anim_dict)
+                               material_cache, clump.uv_anim_dict,
+                               fix_winding=fix_winding)
             obj = bpy.data.objects.new(obj_name, mesh)
             _set_object_props(obj, geom)
             collection.objects.link(obj)
             imported_objects.append(obj)
+            if not (geom.normals and len(geom.normals) == len(geom.vertices)):
+                weld_targets.append(obj)
 
     # Создаём Empty для каждого фрейма БЕЗ atomic'а (это dummy вроде wheel_lf_dummy)
     # Пропускаем если в DFF есть скелет — там фреймы представлены костями армутуры
@@ -1026,7 +1268,14 @@ def import_dff_from_clump(clump, base_name: str, *, skip_2dfx=None,
         for fi, frame in enumerate(clump.frames):
             if fi in frame_to_obj:
                 continue
-            dummy_name = frame.name if frame.name else f"{base_name}_frame_{fi}"
+            # RW-Light frames (``Omni###``) belong to the 2DFX lighting
+            # system — drop them when 2DFX import is off, otherwise a map
+            # imported «Без 2DFX» is still littered with Omni light dummies.
+            if skip_2dfx and _is_light_frame_name(frame.name):
+                continue
+            dummy_name = (frame.name
+                          if (frame.name and _frame_name_usable(frame.name))
+                          else f"{base_name}_frame_{fi}")
             dummy = bpy.data.objects.new(dummy_name, None)
             dummy.empty_display_type = 'PLAIN_AXES'
             dummy.empty_display_size = 0.2
@@ -1206,6 +1455,17 @@ def import_dff_from_clump(clump, base_name: str, *, skip_2dfx=None,
             print(f"[INU] embedded COL parse failed for "
                   f"{base_name}: {e}")
 
+    # Авто-сварка вершин + острые рёбра (как DragonFF) для моделей без
+    # авторских нормалей (карты/дороги/террейн). Транспорт/педы (с
+    # нормалями) не трогаем — у них корректное жёсткое затенение от
+    # custom split normals, сварка его бы испортила.
+    for obj in weld_targets:
+        if getattr(obj, 'type', None) == 'MESH':
+            try:
+                _weld_and_sharpen(obj)
+            except Exception as we:
+                print(f"[INU] weld/sharpen failed for {obj.name}: {we}")
+
     # Выделяем импортированные объекты. При bulk_mode пропускаем
     # select_all — это O(scene_size) операция, которая для импорта
     # карты (тысячи моделей) в сумме даёт O(N²). Для bulk достаточно
@@ -1252,6 +1512,33 @@ def _collect_recent_dff_texture_names() -> set:
     return out
 
 
+def _collect_dff_scope(objs):
+    """Материалы, реально используемые объектами ``objs`` (по слотам), плюс
+    набор имён текстур, на которые они ссылаются (``dff_texture_name``).
+
+    Надёжнее, чем диф по «новым» материалам: если DFF дропнут в сцену, где
+    уже загружена карта с такими же именами материалов, импортёр
+    ПЕРЕИСПОЛЬЗУЕТ существующие датаблоки — они не «новые», но текстуры им
+    всё равно нужны. Сбор по слотам ловит и такие. Возвращает
+    ``(scope_mats, needed_names)``."""
+    scope_mats = []
+    seen = set()
+    needed = set()
+    for o in (objs or []):
+        if getattr(o, 'type', None) != 'MESH':
+            continue
+        for sl in o.material_slots:
+            m = sl.material
+            if m is None or m.name in seen:
+                continue
+            seen.add(m.name)
+            scope_mats.append(m)
+            n = m.get('dff_texture_name')
+            if n:
+                needed.add(n.lower())
+    return scope_mats, needed
+
+
 def _collect_new_dff_texture_names(mat_names_before: set) -> set:
     """Texture names from materials that did NOT exist before the
     snapshot. Pass the set captured from `{m.name for m in
@@ -1296,6 +1583,27 @@ def _read_txd_names_cached(path: str) -> set:
 
 
 _PICK_BEST_TXD_MIN_COVERAGE = 0.5  # 50% of DFF textures must be in TXD
+
+
+def _txd_affinity(txd_path: str, dff_basename: str) -> int:
+    """Грубая «похожесть» имени TXD на имя DFF — задаёт порядок сканирования,
+    чтобы вероятный «свой» TXD прочитать первым (billbrd.txd для BillBd2.dff).
+    Больше = вероятнее. Дешёвая (только строки, без чтения файла)."""
+    t = os.path.splitext(os.path.basename(txd_path))[0].lower()
+    d = (dff_basename or "").lower()
+    if not t or not d:
+        return 0
+    score = 0
+    if t == d:
+        score += 1000                 # точное совпадение (Pass 1 его уже ловит)
+    if d in t or t in d:
+        score += 100                  # одно имя содержит другое
+    n = 0                             # длина общего префикса
+    for a, b in zip(t, d):
+        if a != b:
+            break
+        n += 1
+    return score + n
 
 
 def _pick_best_txd(search_dirs: list, dff_basename: str,
@@ -1345,23 +1653,49 @@ def _pick_best_txd(search_dirs: list, dff_basename: str,
     # drifts badly across a batch.
     needed = needed_names if needed_names is not None else _collect_recent_dff_texture_names()
     if needed:
-        # Build (coverage, txd_size, path) tuples for every candidate.
-        # coverage = fraction of DFF textures that exist in this TXD.
-        # txd_size used as tie-breaker (smaller = more specific).
-        # `_read_txd_names_cached` reads each .txd once per session.
-        scored = []
-        for c in candidates:
-            names_in_txd = _read_txd_names_cached(c)
-            matched = needed & names_in_txd
-            coverage = len(matched) / len(needed)
-            scored.append((coverage, len(names_in_txd), c, len(matched)))
+        # Умный порядок: TXD с именем, похожим на DFF — первыми (его «свой»
+        # TXD обычно там). coverage = доля текстур DFF, что есть в TXD;
+        # tie-break — меньший TXD (более специфичный).
+        candidates.sort(key=lambda c: -_txd_affinity(c, dff_basename))
 
-        # Sort: highest coverage first, then smallest TXD on ties.
-        scored.sort(key=lambda t: (-t[0], t[1]))
-        best_cov, best_size, best_path, best_matched = scored[0]
+        best = None  # (coverage, txd_size, path)
 
-        if best_cov >= _PICK_BEST_TXD_MIN_COVERAGE:
-            return best_path
+        def _consider(path):
+            nonlocal best
+            names = _read_txd_names_cached(path)
+            cov = len(needed & names) / len(needed)
+            if best is None or (cov, -len(names)) > (best[0], -best[1]):
+                best = (cov, len(names), path)
+            return cov
+
+        # Сначала читаем PROBE самых похожих ПОСЛЕДОВАТЕЛЬНО и выходим на
+        # 100% покрытии — «свой» TXD обычно находится за 1–2 чтения, и вся
+        # папка не сканируется.
+        PROBE = 6
+        full_hit = False
+        for c in candidates[:PROBE]:
+            if _consider(c) >= 0.9999:
+                full_hit = True
+                break
+
+        # Полного покрытия в топе нет — добиваем остаток. Чтение заголовков
+        # I/O-bound → читаем ПАРАЛЛЕЛЬНО (запись в _TXD_NAMES_CACHE идёт по
+        # разным ключам, GIL делает это безопасным), затем доскорим из кэша.
+        if not full_hit and len(candidates) > PROBE:
+            rest = candidates[PROBE:]
+            if len(rest) > 8:
+                try:
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor(
+                            max_workers=min(16, len(rest))) as ex:
+                        list(ex.map(_read_txd_names_cached, rest))
+                except Exception:
+                    pass
+            for c in rest:
+                _consider(c)
+
+        if best is not None and best[0] >= _PICK_BEST_TXD_MIN_COVERAGE:
+            return best[2]
         # Best candidate covered less than the threshold — too risky to
         # guess, especially when shared textures (asphalt, glass…) leak
         # across many TXDs. Better to load nothing and surface a warning.
@@ -1386,29 +1720,54 @@ def _pick_best_txd(search_dirs: list, dff_basename: str,
 # ESC cancel — the same scaffolding the COL importer uses.
 
 
-def _iter_import_dff_files(paths, context, stats, *,
-                           import_game=None, link_alpha=False):
-    """Yield ``(current, total, label)`` while importing each .dff in
-    ``paths`` and auto-pulling its matching .txd.
+def _init_import_stats(stats: dict) -> dict:
+    """Seed the shared import-stats schema used by EVERY entry point
+    (drag-drop, file-picker, «Import All»). One schema → one set of
+    counters → identical reporting everywhere.
 
-    Args:
-        paths: list of .dff file paths.
-        import_game: ``None`` skips game-source detection (drag-drop
-            behaviour); an enum value ('AUTO'/'III'/'VC'/'SA') runs the
-            same detect-or-switch logic the file-picker import did.
-        link_alpha: run ``link_material_alpha_if_textured`` over all
-            materials after a TXD loads (legacy single-import behaviour).
-
-    Fills ``stats`` with: ``imported`` (int), ``txd_loaded`` (int),
-    ``errors`` [(name, err)], ``warnings`` [str], ``infos`` [str].
+    Counters are ints; ``errors`` is ``[(name, err)]``; ``warnings`` /
+    ``infos`` are ``[str]``; the ``*_paths`` sets dedupe a file that gets
+    reached twice (e.g. a .col both selected AND pulled as a DFF sibling).
     """
-    from .txd_import import import_txd as inu_import_txd
-
     stats.setdefault('imported', 0)
     stats.setdefault('txd_loaded', 0)
+    stats.setdefault('col_loaded', 0)
     stats.setdefault('errors', [])
     stats.setdefault('warnings', [])
     stats.setdefault('infos', [])
+    stats.setdefault('txd_paths', set())
+    stats.setdefault('col_paths', set())
+    stats.setdefault('lod_paths', set())
+    return stats
+
+
+def import_one_dff(path, context, stats, *, import_game=None,
+                   link_alpha=False):
+    """THE canonical interactive single-DFF import: a .dff plus its
+    auto-matched TXD. Shared by drag-drop and the file-picker «Import DFF»
+    so both behave identically.
+
+    Steps:
+      1. import the .dff,
+      2. optional source-game resolution (file-picker passes a game),
+      3. auto-pull the best-matching .txd, decoding ONLY the textures the
+         DFF references (``name_filter``),
+      4. optional legacy alpha-link after the TXD.
+
+    NOTE: «Import All» does NOT use this — it is a pure multi-format
+    dispatcher that imports exactly the files the user selected (each via
+    its own raw importer), with no name-based auto-pull of siblings/TXD.
+
+    A generator yielding short status **labels** (strings); the outer
+    driver wraps them with ``(current, total, label)`` for the progress
+    bar. ``stats`` must be pre-seeded via ``_init_import_stats``.
+    """
+    from .txd_import import import_txd as inu_import_txd
+    import time as _time
+
+    name = os.path.basename(path)
+    directory = os.path.dirname(path)
+    dff_name = os.path.splitext(name)[0]
 
     settings = getattr(context.scene, 'inu_settings', None)
     auto_txd = bool(getattr(settings, 'gtatools_txd_auto_import', True))
@@ -1416,63 +1775,81 @@ def _iter_import_dff_files(paths, context, stats, *,
     if custom_dir:
         custom_dir = bpy.path.abspath(custom_dir)
 
-    total = max(len(paths), 1)
+    yield f"DFF: {name}"
 
-    for i, path in enumerate(paths):
-        name = os.path.basename(path)
-        yield (i, total, f"DFF: {name}")
+    # Snapshot existing materials BEFORE the import so we can tell which
+    # materials THIS DFF adds — keeps the auto-TXD picker and name_filter
+    # scoped to the current file during a batch.
+    mats_before = {m.name for m in bpy.data.materials}
+    _t0 = _time.perf_counter()
+    try:
+        new_objs = import_dff(filepath=path, context=context)
+        stats['imported'] += 1
+    except Exception as e:
+        stats['errors'].append((name, str(e)))
+        return
+    print(f"[TXD timing] {name}: import_dff = {(_time.perf_counter()-_t0)*1000:.0f} ms")
 
-        # Snapshot existing materials BEFORE the import so we can tell
-        # which materials THIS DFF adds — keeps the auto-TXD picker and
-        # `name_filter` scoped to the current file during a batch drop.
-        mats_before = {m.name for m in bpy.data.materials}
+    # Source-game resolution (file-picker only — others pass
+    # import_game=None and keep the no-detection behaviour).
+    if import_game is not None:
         try:
-            import_dff(filepath=path, context=context)
-            stats['imported'] += 1
-        except Exception as e:
-            stats['errors'].append((name, str(e)))
-            continue
+            from ..core import game_versions as gv
+            if import_game == 'AUTO':
+                detected = gv.detect_game_from_dff(path)
+            else:
+                detected = import_game
+            switched = gv.maybe_set_game_from_import(context.scene, detected)
+            if switched:
+                stats['infos'].append(f"{name} → game={detected}")
+            else:
+                warn = gv.check_game_mismatch_warning(context.scene, detected)
+                if warn:
+                    stats['warnings'].append(warn)
+        except Exception:
+            pass
 
-        # Source-game resolution (file-picker only — drag-drop passes
-        # import_game=None and keeps its previous no-detection behaviour).
-        if import_game is not None:
-            try:
-                from ..core import game_versions as gv
-                if import_game == 'AUTO':
-                    detected = gv.detect_game_from_dff(path)
-                else:
-                    detected = import_game
-                switched = gv.maybe_set_game_from_import(context.scene, detected)
-                if switched:
-                    stats['infos'].append(f"{name} → game={detected}")
-                else:
-                    warn = gv.check_game_mismatch_warning(context.scene, detected)
-                    if warn:
-                        stats['warnings'].append(warn)
-            except Exception:
-                pass
-
-        if not auto_txd:
-            continue
-
+    if auto_txd:
         # Auto-pull a matching TXD: same-name → content-coverage → solo.
-        yield (i, total, f"TXD: {name}")
-        dff_name = os.path.splitext(name)[0]
+        yield f"TXD: {name}"
         search_dirs = []
         if custom_dir and os.path.isdir(custom_dir):
             search_dirs.append(custom_dir)
-        search_dirs.append(os.path.dirname(path))
+        search_dirs.append(directory)
 
-        needed = _collect_new_dff_texture_names(mats_before)
+        # Область = материалы по слотам объектов этого DFF (и нужные им
+        # имена текстур). Покрывает и переиспользованные материалы, когда
+        # модель дропнута в сцену с уже загруженной картой — иначе они
+        # выпадали из назначения и оставались чёрными.
+        _scope_mats, needed = _collect_dff_scope(new_objs)
+        _t1 = _time.perf_counter()
         txd_file = _pick_best_txd(search_dirs, dff_name, needed_names=needed)
+        print(f"[TXD timing] {name}: _pick_best_txd = "
+              f"{(_time.perf_counter()-_t1)*1000:.0f} ms "
+              f"(found={os.path.basename(txd_file) if txd_file else None})")
+        # NB: НЕ пропускаем уже виденный txd-путь. Раньше дедуп по пути ломал
+        # пару LOD+основная модель, делящих один .txd: LOD обрабатывался
+        # первым, грузил txd с name_filter всего на свою 1 текстуру и «застолбя»
+        # путь — основная модель потом пропускалась целиком и оставалась без
+        # текстур. Теперь каждый DFF грузит из общего txd ИМЕННО свои текстуры
+        # (name_filter) на свои материалы (material_scope); повторный декод
+        # дёшев — image-датаблоки переиспользуются по имени.
         if txd_file:
             try:
                 # Only decode textures the just-imported DFF references —
                 # avoids spawning dozens of orphan images (and a long DXT
                 # decode freeze) from shared archives like vehicle.txd.
+                _t2 = _time.perf_counter()
+                # material_scope ограничивает assign материалами этого DFF —
+                # иначе он перебирал бы все тысячи материалов сцены (12.5с).
                 images = inu_import_txd(
                     filepath=txd_file,
-                    name_filter=needed if needed else None)
+                    name_filter=needed if needed else None,
+                    material_scope=_scope_mats)
+                print(f"[TXD timing] {name}: import_txd decode = "
+                      f"{(_time.perf_counter()-_t2)*1000:.0f} ms "
+                      f"({len(images)} tex)")
+                stats['txd_paths'].add(txd_file)
                 stats['txd_loaded'] += 1
                 stats['infos'].append(
                     f"TXD: {len(images)} ({os.path.basename(txd_file)})")
@@ -1480,18 +1857,45 @@ def _iter_import_dff_files(paths, context, stats, *,
                     # Legacy "Connect Textures": per-pixel alpha test so
                     # foliage/fences/windows pick up alpha-test transparency
                     # automatically. Idempotent.
-                    from .texture_ops import link_material_alpha_if_textured
-                    for material in bpy.data.materials:
+                    #
+                    # ВАЖНО для скорости: проходим ТОЛЬКО по материалам этого
+                    # DFF (_scope_mats — по слотам объектов), а не по всем
+                    # bpy.data.materials. Раньше на загруженной карте это
+                    # перебирало тысячи чужих материалов и читало буфер
+                    # пикселей каждой текстуры заново. Кэш в texture_ops
+                    # сканирует каждую картинку один раз.
+                    from .texture_ops import (
+                        link_material_alpha_if_textured, clear_alpha_cache)
+                    clear_alpha_cache()
+                    _t3 = _time.perf_counter()
+                    for material in _scope_mats:
                         link_material_alpha_if_textured(material)
+                    print(f"[TXD timing] {name}: alpha-link = "
+                          f"{(_time.perf_counter()-_t3)*1000:.0f} ms "
+                          f"({len(_scope_mats)} mats)")
             except Exception as e:
                 stats['warnings'].append(
                     f"{name}: TXD {os.path.basename(txd_file)}: {e}")
-        else:
+        elif not txd_file:
             dirs_str = " | ".join(search_dirs)
             stats['warnings'].append(
                 f"{name}: {T('TXD не найден')} '{dff_name}.txd' "
                 f"({T('и нет .txd с покрытием ≥50% в')} {dirs_str})")
 
+
+def _iter_import_dff_files(paths, context, stats, *,
+                           import_game=None, link_alpha=False):
+    """Drive ``import_one_dff`` over a list of .dff paths, yielding
+    ``(current, total, label)`` for the progress bar. Thin wrapper — the
+    real per-file work lives in the shared ``import_one_dff`` so drag-drop
+    and the file-picker import run byte-for-byte the same path."""
+    _init_import_stats(stats)
+    total = max(len(paths), 1)
+    for i, path in enumerate(paths):
+        for label in import_one_dff(
+                path, context, stats,
+                import_game=import_game, link_alpha=link_alpha):
+            yield (i, total, label)
     yield (total, total, T("готово"))
 
 
@@ -1613,6 +2017,12 @@ class GTATOOLS_OT_import_dff(_DFFImportModalMixin, bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     filepath: StringProperty(subtype='FILE_PATH')
+    # Multi-select support: the file browser fills `files` (+ `directory`)
+    # when the user shift/ctrl-picks several .dff. Without these props the
+    # operator only ever saw `filepath` (the last-clicked file) and
+    # imported a single model no matter how many were selected.
+    files: CollectionProperty(type=bpy.types.OperatorFileListElement)
+    directory: StringProperty(subtype='DIR_PATH')
     filter_glob: StringProperty(default="*.dff", options={'HIDDEN'})
 
     # User-overridable game source for this import. Default 'AUTO'
@@ -1675,7 +2085,19 @@ class GTATOOLS_OT_import_dff(_DFFImportModalMixin, bpy.types.Operator):
     _link_alpha = True  # run legacy alpha-link after TXD loads
 
     def _collect_paths(self):
-        return [self.filepath] if self.filepath else []
+        # Prefer the multi-select list; fall back to the single filepath
+        # (e.g. invoked programmatically with just `filepath`).
+        out = []
+        directory = self.directory or os.path.dirname(self.filepath)
+        for f in self.files:
+            if not f.name:
+                continue
+            path = os.path.join(directory, f.name)
+            if os.path.isfile(path) and path.lower().endswith('.dff'):
+                out.append(path)
+        if not out and self.filepath:
+            out.append(self.filepath)
+        return out
 
     def execute(self, context):
         # Game-source detection runs per-file inside the generator;
@@ -1709,7 +2131,71 @@ class GTATOOLS_OT_drop_dff(_DFFImportModalMixin, bpy.types.Operator):
         return out
 
     def execute(self, context):
-        return self._start_modal(context)
+        # FileHandler-drop оператор получает таймер-тики МОДАЛКИ ненадёжно
+        # (обычно только первый), поэтому _start_modal тут не работает: шаг
+        # загрузки TXD ждал следующего тика, который при drop не приходит →
+        # DFF есть, TXD нет (регрессия v2.0.4). Раньше из-за этого импорт
+        # гнался ПОЛНОСТЬЮ синхронно в execute() → Blender фризился без
+        # прогресса на всё время парса/билда.
+        #
+        # Теперь генератор крутится из bpy.app.timers — это главный цикл
+        # приложения, а не модальные тики оператора: между вызовами идёт
+        # перерисовка (виден прогресс-бар, ESC не нужен — UI отзывчив), и
+        # шаг TXD выполняется надёжно. execute() сразу возвращает FINISHED,
+        # поэтому self.report из таймера уже не покажется — итог/варнинги
+        # пишем в консоль.
+        paths = self._collect_paths()
+        if not paths:
+            self.report({'WARNING'}, T("Не выбран ни один .dff файл"))
+            return {'CANCELLED'}
+
+        stats = {}
+        self._stats = stats
+        gen = _iter_import_dff_files(
+            paths, context, stats,
+            import_game=self._import_game, link_alpha=self._link_alpha)
+
+        wm = context.window_manager
+        workspace = context.workspace
+        wm.progress_begin(0, 100)
+
+        def _drive():
+            import time
+            deadline = time.monotonic() + 0.05  # ~20 fps frame budget
+            while time.monotonic() < deadline:
+                try:
+                    current, total, label = next(gen)
+                except StopIteration:
+                    wm.progress_end()
+                    try:
+                        workspace.status_text_set(None)
+                    except Exception:
+                        pass
+                    for w in stats.get('warnings', []):
+                        print(f"[drop_dff] WARN: {w}")
+                    print(f"[drop_dff] done: DFF {stats.get('imported', 0)}, "
+                          f"TXD {stats.get('txd_loaded', 0)}")
+                    return None  # stop the timer
+                except Exception as e:
+                    wm.progress_end()
+                    try:
+                        workspace.status_text_set(None)
+                    except Exception:
+                        pass
+                    print(f"[drop_dff] aborted: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    return None
+                wm.progress_update(int(100 * current / max(total, 1)))
+                try:
+                    workspace.status_text_set(
+                        f"DFF Import: {current}/{total} — {label}")
+                except Exception:
+                    pass
+            return 0.01  # yield to the UI for a redraw, then continue
+
+        bpy.app.timers.register(_drive, first_interval=0.0)
+        return {'FINISHED'}
 
 
 if hasattr(bpy.types, 'FileHandler'):
@@ -1725,9 +2211,3 @@ if hasattr(bpy.types, 'FileHandler'):
             return context.area and context.area.type == 'VIEW_3D'
 
 
-classes = (
-    GTATOOLS_OT_import_dff,
-    GTATOOLS_OT_drop_dff,
-)
-if hasattr(bpy.types, 'FileHandler'):
-    classes = classes + (GTATOOLS_FH_dff_drop,)

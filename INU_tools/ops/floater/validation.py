@@ -58,7 +58,8 @@ class ValidationFloater(B.Floater):
     _FUSED_OVERLAP = 1
 
     def compute_body_height(self, context):
-        # 6 rows tall minus 5 overlaps (one per adjacent pair).
+        # 6 rows tall minus 5 overlaps (one per adjacent pair). The bottom
+        # result strip is added by the Floater base class for every window.
         return self._ROWS * TH._BUTTON_H - (self._ROWS - 1) * self._FUSED_OVERLAP
 
     def _vis_states(self):

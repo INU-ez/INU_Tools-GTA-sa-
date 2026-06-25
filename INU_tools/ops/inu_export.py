@@ -19,139 +19,257 @@ from bpy_extras.io_utils import ImportHelper, ExportHelper
 
 from .. import T
 from ..tools.compat import safe_icon, inu_icon
+
+
+# Формат-галочки в диалоге импорта: при переключении пересобираем
+# filter_glob, и проводник показывает только выбранные расширения.
+_INU_IMPORT_FILTERS = (
+    ('f_dff', '*.dff'), ('f_col', '*.col'), ('f_cst', '*.cst'),
+    ('f_txd', '*.txd'), ('f_ide', '*.ide'), ('f_ipl', '*.ipl'),
+)
+
+
+def _inu_import_update_filter(self, context):
+    parts = [glob for attr, glob in _INU_IMPORT_FILTERS if getattr(self, attr)]
+    # Пусто (все галочки сняты) → шаблон, который ничего не сопоставляет,
+    # иначе Blender при пустом filter_glob показал бы вообще все файлы.
+    glob = ';'.join(parts) if parts else '*.__none__'
+    self.filter_glob = glob
+    # Blender копирует filter_glob в params файлового браузера ОДИН раз при
+    # открытии — смена свойства оператора потом туда не доходит. Колбэк
+    # переключения галочки приходит НЕ обязательно в контексте файлового
+    # браузера, поэтому ищем его по ВСЕМ окнам и пишем прямо в params +
+    # форсим перерисовку, чтобы список перефильтровался сразу.
+    wm = getattr(context, 'window_manager', None)
+    for win in (wm.windows if wm else ()):
+        scr = getattr(win, 'screen', None)
+        if scr is None:
+            continue
+        for area in scr.areas:
+            if area.type != 'FILE_BROWSER':
+                continue
+            for sp in area.spaces:
+                if getattr(sp, 'type', '') == 'FILE_BROWSER' and sp.params:
+                    try:
+                        sp.params.use_filter = True
+                        if hasattr(sp.params, 'use_filter_glob'):
+                            sp.params.use_filter_glob = True
+                        sp.params.filter_glob = glob
+                    except Exception:
+                        pass
+            area.tag_redraw()
+    # Запись в params не всегда перестраивает уже загруженный список —
+    # форсим file.refresh отложенно (из update-колбэка вызывать оператор
+    # нельзя, поэтому через таймер).
+    _schedule_file_refresh()
+
+
+def _schedule_file_refresh():
+    def _refresh():
+        wm = bpy.context.window_manager
+        for win in (wm.windows if wm else ()):
+            scr = getattr(win, 'screen', None)
+            if scr is None:
+                continue
+            for area in scr.areas:
+                if area.type != 'FILE_BROWSER':
+                    continue
+                region = next((r for r in area.regions
+                               if r.type == 'WINDOW'), None)
+                if region is None:
+                    continue
+                try:
+                    with bpy.context.temp_override(window=win, area=area,
+                                                   region=region):
+                        bpy.ops.file.refresh()
+                except Exception:
+                    pass
+        return None
+    try:
+        if not bpy.app.timers.is_registered(_refresh):
+            bpy.app.timers.register(_refresh, first_interval=0.0)
+    except Exception:
+        pass
+
+
 class GTATOOLS_OT_inu_import(bpy.types.Operator, ImportHelper):
-    """Импорт GTA SA файлов (.dff/.col/.txd/.ide/.ipl) с авто-определением формата"""
+    """Импорт GTA SA файлов (.dff/.col/.cst/.txd/.ide/.ipl) с авто-определением формата"""
     bl_idname = "gtatools.inu_import"
     bl_label = "INU: INU Import"
     bl_options = {'REGISTER', 'UNDO', 'PRESET'}
 
     filename_ext = ".dff"
     filter_glob: StringProperty(
-        default="*.dff;*.col;*.txd;*.ide;*.ipl",
+        default="*.dff;*.col;*.cst;*.txd;*.ide;*.ipl",
         options={'HIDDEN'}
     )
+
+    # Фильтр-галочки форматов (см. _inu_import_update_filter).
+    f_dff: BoolProperty(name="DFF", default=True, update=_inu_import_update_filter)
+    f_col: BoolProperty(name="COL", default=True, update=_inu_import_update_filter)
+    f_cst: BoolProperty(name="CST", default=True, update=_inu_import_update_filter)
+    f_txd: BoolProperty(name="TXD", default=True, update=_inu_import_update_filter)
+    f_ide: BoolProperty(name="IDE", default=True, update=_inu_import_update_filter)
+    f_ipl: BoolProperty(name="IPL", default=True, update=_inu_import_update_filter)
+
     files: CollectionProperty(type=bpy.types.OperatorFileListElement)
     directory: StringProperty(subtype='DIR_PATH')
 
+    # Modal-loop state (mirrors _DFFImportModalMixin): the whole import
+    # used to run inside one blocking execute(), so Blender showed "Not
+    # Responding" for the entire parse+build of a heavy DFF with no
+    # progress bar and no way to cancel — read by the user as a hang,
+    # especially when «All» is fired on a lone .dff. Now the per-file work
+    # is a generator driven from a timer modal: UI stays live, ESC aborts.
+    _timer = None
+    _gen = None
+    _stats: dict = None
+
+    def draw(self, context):
+        """File-browser sidebar for «Import All».
+
+        Import All — чистый диспетчер: импортирует РОВНО выбранные файлы,
+        каждый по своему типу. Авто-подтягивания TXD/LOD/COL по имени тут
+        нет (нужен TXD — отметь .txd в списке), поэтому и тумблера «Авто
+        TXD» здесь нет: он управляет авто-TXD в Import DFF / drag-drop, а
+        не тут."""
+        layout = self.layout
+        layout.label(text=T("Показывать форматы:"))
+        # Галочки в 2 столбика — в один ряд 6 штук не влезают (метки режутся).
+        grid = layout.grid_flow(row_major=True, columns=2, align=True)
+        grid.prop(self, "f_dff")
+        grid.prop(self, "f_col")
+        grid.prop(self, "f_cst")
+        grid.prop(self, "f_txd")
+        grid.prop(self, "f_ide")
+        grid.prop(self, "f_ipl")
+
+        col = layout.column(align=True)
+        col.scale_y = 0.85
+        col.label(text=T("Импортируются только выбранные файлы"),
+                  **inu_icon(safe_icon('INFO')))
+        col.label(text=T(".dff .col .cst .txd .ide .ipl — каждый по своему типу"))
+        col.label(text=T("Нужны текстуры — выдели .txd в списке"))
+
+    def check(self, context):
+        # Signal Blender to redraw/re-filter when a format toggle changes.
+        return True
+
     def execute(self, context):
+        file_list = [f.name for f in self.files if f.name] or [os.path.basename(self.filepath)]
+        directory = self.directory or os.path.dirname(self.filepath)
+
+        # Import order: TXD first (so a selected .txd loads before the
+        # selected .dff and the DFF's materials pick up its images), then
+        # DFF, COL, IDE, IPL.
+        order = {'.txd': 0, '.dff': 1, '.col': 2, '.cst': 3, '.ide': 4, '.ipl': 5}
+        file_list.sort(key=lambda n: order.get(os.path.splitext(n)[1].lower(), 99))
+
+        from .dff_import import _init_import_stats
+        self._stats = _init_import_stats({})
+        self._gen = self._iter_import(file_list, directory, context, self._stats)
+
+        wm = context.window_manager
+        wm.progress_begin(0, 100)
+        self._timer = wm.event_timer_add(0.05, window=context.window)
+        wm.modal_handler_add(self)
+        context.workspace.status_text_set(T("INU Import: подготовка..."))
+        return {'RUNNING_MODAL'}
+
+    def modal(self, context, event):
+        if event.type == 'ESC':
+            self._finish(context)
+            self.report({'WARNING'}, T("INU Import отменён"))
+            return {'CANCELLED'}
+        if event.type != 'TIMER':
+            return {'PASS_THROUGH'}
+
+        import time
+        wm = context.window_manager
+        deadline = time.monotonic() + 0.05  # ~20 fps frame budget
+        while time.monotonic() < deadline:
+            try:
+                current, total, label = next(self._gen)
+            except StopIteration:
+                self._finish(context)
+                return self._report_done()
+            except Exception as e:
+                self._finish(context)
+                self.report({'ERROR'}, f"INU Import: {e}")
+                import traceback
+                traceback.print_exc()
+                return {'CANCELLED'}
+            wm.progress_update(int(100 * current / max(total, 1)))
+            context.workspace.status_text_set(
+                f"INU Import: {current}/{total} — {label}")
+        return {'RUNNING_MODAL'}
+
+    def _iter_import(self, file_list, directory, context, stats):
+        """«Import All» as a generator yielding ``(current, total, label)``.
+
+        PURE DISPATCHER: imports EXACTLY the files the user ticked in the
+        browser, each through its own raw importer by extension. No
+        name-based auto-pull of LOD/COL/TXD siblings — if the user wants a
+        TXD/COL/LOD, they select it in the list. (DFF still goes through
+        the shared ``import_dff`` core; the auto-TXD wrapper is reserved
+        for Import DFF / drag-drop.)"""
         from .dff_import import import_dff as inu_import_dff
         from .col_import import import_col as inu_import_col
         from .txd_import import import_txd as inu_import_txd
         from .ide_import import import_ide as inu_import_ide
         from .ipl_import import import_ipl as inu_import_ipl
+        from .cst_import import import_cst as inu_import_cst
 
-        file_list = [f.name for f in self.files if f.name] or [os.path.basename(self.filepath)]
-        directory = self.directory or os.path.dirname(self.filepath)
+        # One COL material cache shared across every .col in the batch —
+        # vanilla COL uses only ~64 distinct surfaces, so without this each
+        # file's faces would each spawn a fresh COL_N material datablock.
+        col_material_cache = {}
 
-        # Import order: TXD first (so DFF import can auto-link textures), then DFF, COL, IDE, IPL
-        order = {'.txd': 0, '.dff': 1, '.col': 2, '.ide': 3, '.ipl': 4}
-        file_list.sort(key=lambda n: order.get(os.path.splitext(n)[1].lower(), 99))
-
-        imported = []
-        errors = []
-        imported_txd_paths = set()
-        imported_col_paths = set()
-        imported_lod_paths = set()
-
-        for fname in file_list:
+        total = max(len(file_list), 1)
+        for idx, fname in enumerate(file_list):
             fpath = os.path.join(directory, fname)
             ext = os.path.splitext(fname)[1].lower()
+            yield (idx, total, fname)
             try:
                 if ext == '.dff':
-                    # Skip if this is a LOD already imported as a sibling.
-                    if fpath in imported_lod_paths:
-                        continue
                     inu_import_dff(filepath=fpath, context=context)
-                    imported.append(fname)
-                    dff_name = os.path.splitext(fname)[0]
-
-                    # Auto-import sibling COL/LOD/TXD by base name. User
-                    # chose «All» в меню — значит хочет одним кликом
-                    # подтянуть все связанные файлы. Skip если уже импортнуты
-                    # либо если выбраны вручную в файл-листе.
-                    file_set = {f.lower() for f in file_list}
-
-                    # LOD: «LOD{name}.dff» рядом
-                    lod_path = os.path.join(directory, f"LOD{dff_name}.dff")
-                    if (os.path.isfile(lod_path)
-                            and lod_path not in imported_lod_paths
-                            and f"lod{dff_name.lower()}.dff" not in file_set):
-                        try:
-                            inu_import_dff(filepath=lod_path, context=context)
-                            imported_lod_paths.add(lod_path)
-                            imported.append(f"LOD{dff_name}.dff")
-                        except Exception as e:
-                            errors.append(f"LOD{dff_name}.dff: {e}")
-
-                    # COL: «{name}.col» рядом
-                    col_path = os.path.join(directory, f"{dff_name}.col")
-                    if (os.path.isfile(col_path)
-                            and col_path not in imported_col_paths
-                            and f"{dff_name.lower()}.col" not in file_set):
-                        try:
-                            inu_import_col(filepath=col_path, context=context)
-                            imported_col_paths.add(col_path)
-                            imported.append(f"{dff_name}.col")
-                        except Exception as e:
-                            errors.append(f"{dff_name}.col: {e}")
-
-                    # Auto-import TXD if enabled and not already imported
-                    if getattr(context.scene.inu_settings, 'gtatools_txd_auto_import', True):
-                        custom_dir = getattr(context.scene.inu_settings, 'gtatools_txd_import_path', '')
-                        if custom_dir:
-                            custom_dir = bpy.path.abspath(custom_dir)
-                        search_dirs = []
-                        if custom_dir and os.path.isdir(custom_dir):
-                            search_dirs.append(custom_dir)
-                        search_dirs.append(directory)
-                        txd_file = None
-                        for search_dir in search_dirs:
-                            if txd_file:
-                                break
-                            same_name = os.path.join(search_dir, dff_name + ".txd")
-                            if os.path.isfile(same_name) and same_name not in imported_txd_paths:
-                                txd_file = same_name
-                                break
-                        if txd_file:
-                            try:
-                                images = inu_import_txd(filepath=txd_file)
-                                imported_txd_paths.add(txd_file)
-                                imported.append(f"{os.path.basename(txd_file)} ({len(images)} tex)")
-                            except Exception as e:
-                                errors.append(f"{os.path.basename(txd_file)}: {e}")
+                    stats['imported'] += 1
                 elif ext == '.col':
-                    if fpath in imported_col_paths:
-                        continue
-                    inu_import_col(filepath=fpath, context=context)
-                    imported_col_paths.add(fpath)
-                    imported.append(fname)
+                    inu_import_col(filepath=fpath, context=context,
+                                   material_cache=col_material_cache)
+                    stats['col_loaded'] += 1
+                elif ext == '.cst':
+                    created = inu_import_cst(filepath=fpath)
+                    stats['col_loaded'] += 1
+                    stats['infos'].append(f"{fname} ({len(created)} CST)")
                 elif ext == '.txd':
-                    if fpath in imported_txd_paths:
-                        continue
                     images = inu_import_txd(filepath=fpath)
-                    imported_txd_paths.add(fpath)
-                    imported.append(f"{fname} ({len(images)} tex)")
+                    stats['txd_loaded'] += 1
+                    stats['infos'].append(f"{fname} ({len(images)} tex)")
                 elif ext == '.ide':
                     matched = inu_import_ide(filepath=fpath, context=context)
-                    imported.append(f"{fname} ({len(matched)} matched)")
+                    stats['infos'].append(f"{fname} ({len(matched)} matched)")
                 elif ext == '.ipl':
                     placed = inu_import_ipl(filepath=fpath, context=context)
-                    imported.append(f"{fname} ({len(placed)} placed)")
+                    stats['infos'].append(f"{fname} ({len(placed)} placed)")
                 else:
-                    errors.append(f"{fname}: unsupported extension")
+                    stats['errors'].append((fname, "unsupported extension"))
             except Exception as e:
-                errors.append(f"{fname}: {e}")
+                stats['errors'].append((fname, str(e)))
 
         # ── Final pass: alpha-link for all materials ──────────────────
-        # The TXD-first sort above means TXD images load BEFORE DFF
-        # creates its materials, so the TXD-side Phase 1/2 sees an empty
-        # scene and connects nothing. Run the alpha-link pass HERE,
-        # after every file is imported — at this point both images
-        # (from TXD) and materials (from DFF) exist together.
-        if imported_txd_paths:
+        # Standalone .txd selected in the same batch may load BEFORE a DFF
+        # creates its materials; re-run alpha-link once at the end when
+        # both images and materials coexist. (import_one_dff already
+        # alpha-links its own auto-TXD, so this only catches standalone
+        # TXD + DFF combinations — idempotent either way.)
+        if stats['txd_loaded']:
+            yield (total, total, T("связывание альфы..."))
             print(f"[INU Import] post-import alpha-link pass: "
                   f"{len(bpy.data.materials)} materials in scene")
-            from .texture_ops import link_material_alpha_if_textured
+            from .texture_ops import (
+                link_material_alpha_if_textured, clear_alpha_cache)
+            clear_alpha_cache()  # каждую текстуру сканируем один раз за пасс
             n_changed = 0
             seen = set()
             all_mats = list(bpy.data.materials)
@@ -168,17 +286,377 @@ class GTATOOLS_OT_inu_import(bpy.types.Operator, ImportHelper):
                     n_changed += 1
             print(f"[INU Import] alpha-link done: changed={n_changed} of {len(all_mats)} materials")
 
+        yield (total, total, T("готово"))
+
+    def _report_done(self):
+        stats = self._stats or {}
+        imported = stats.get('imported', 0)
+        txd = stats.get('txd_loaded', 0)
+        col = stats.get('col_loaded', 0)
+        errors = stats.get('errors', [])
+        for w in stats.get('warnings', []):
+            self.report({'WARNING'}, w)
+        if errors and not (imported or txd or col):
+            self.report({'ERROR'},
+                        '; '.join(f"{n}: {e}" for n, e in errors[:3]))
+            return {'CANCELLED'}
+        parts = []
         if imported:
-            self.report({'INFO'}, f"INU Import: {len(imported)} — {', '.join(imported)}")
+            parts.append(f"DFF: {imported}")
+        if txd:
+            parts.append(f"TXD: {txd}")
+        if col:
+            parts.append(f"COL: {col}")
         if errors:
-            self.report({'ERROR'}, f"Errors: {'; '.join(errors)}")
-            return {'CANCELLED'} if not imported else {'FINISHED'}
+            parts.append(f"{len(errors)} {T('с ошибкой')}")
+        self.report({'INFO'},
+                    f"INU Import — {', '.join(parts) if parts else T('ничего')}")
         return {'FINISHED'}
+
+    def _finish(self, context):
+        if self._timer:
+            try:
+                context.window_manager.event_timer_remove(self._timer)
+            except Exception:
+                pass
+            self._timer = None
+        try:
+            context.window_manager.progress_end()
+        except Exception:
+            pass
+        try:
+            context.workspace.status_text_set(None)
+        except Exception:
+            pass
+        self._gen = None
 
 
 def menu_func_import(self, context):
     self.layout.operator(GTATOOLS_OT_inu_import.bl_idname,
                          text="INU Import (.dff/.col/.txd/.ide/.ipl)")
+
+
+# ──────────────────── Shared group-export engine ─────────────────────
+#
+# ONE selection→groups→files engine behind Export All AND the single-
+# format ops (Export DFF / Export LOD). Every entry point routes objects
+# to the SAME core writers (`export_dff`/`export_col`/`export_txd`) by the
+# SAME name-based grouping (`get_model_type`). The only difference between
+# "Export DFF", "Export LOD" and "Export All" is which skip_* flags are
+# set — mirroring how the import side funnels everything through one core.
+
+
+def _write_txd_file(txd_path, context, backend, merge):
+    """Write/merge a TXD. When ``merge`` and the file already exists, the
+    scene's textures are ADDED/UPDATED into it while every other texture in
+    the file (from other models) is kept — otherwise the file is fully
+    overwritten. Returns export_txd's ``(result, message, transparent)``."""
+    from ..tools.txd_export import export_txd
+    if merge and os.path.isfile(txd_path):
+        from ..tools.txd_export import update_txd
+        return update_txd(txd_path, context, selected_only=True, backend=backend)
+    return export_txd(txd_path, context, selected_only=True, backend=backend)
+
+
+def _export_model_group(context, directory, base_name, models,
+                        skip_dff, skip_col, skip_lod, skip_txd,
+                        backend, tri_warnings, skip_cst=True,
+                        empty_col=False, txd_merge=False):
+    """Export ONE model group (DFF + LOD + COL + TXD) into ``directory``,
+    one file per format named from ``base_name``.
+
+    DFF/geometry flags come straight from each object's ``obj.inu.*`` (the
+    N-panel DFF Flags) — no separate export override. ``tri_warnings`` is
+    appended to in-place with non-fatal high-triangle-count warnings."""
+    exported = []
+    errors = []
+
+    # DFF (GTA SA RW version)
+    if models['DFF'] and not skip_dff:
+        dff_path = os.path.join(directory, f"{base_name}.dff")
+        try:
+            from .dff_export import export_dff as inu_export_dff, _resolve_export_version
+            rw_ver = _resolve_export_version(context)
+            tp = getattr(context.scene.inu_settings, 'gtatools_platform', 'PC')
+            # Collect mesh + attached 2DFX child empties.
+            dff_objects = [models['DFF']]
+            for child in models['DFF'].children:
+                if child.type == 'EMPTY' and getattr(child, 'inu', None) and child.inu.type == '2DFX':
+                    dff_objects.append(child)
+            inu_export_dff(filepath=dff_path, objects=dff_objects,
+                           version=rw_ver, target_platform=tp)
+            from ..core.dff import DFF_EXPORT_WARNINGS
+            tri_warnings.extend(DFF_EXPORT_WARNINGS)
+            exported.append(f"{base_name}.dff")
+        except Exception as e:
+            errors.append(f"{base_name}.dff: {str(e)}")
+
+    # LOD (LOD-prefixed filename, RW version from scene)
+    if models['LOD'] and not skip_lod:
+        lod_path = os.path.join(directory, f"LOD{base_name}.dff")
+        try:
+            from .dff_export import export_dff as inu_export_dff, _resolve_export_version
+            rw_ver = _resolve_export_version(context)
+            tp = getattr(context.scene.inu_settings, 'gtatools_platform', 'PC')
+            inu_export_dff(filepath=lod_path, objects=[models['LOD']],
+                           version=rw_ver, target_platform=tp)
+            from ..core.dff import DFF_EXPORT_WARNINGS
+            tri_warnings.extend(DFF_EXPORT_WARNINGS)
+            exported.append(f"LOD{base_name}.dff")
+        except Exception as e:
+            errors.append(f"LOD{base_name}.dff: {str(e)}")
+
+    # COL / CST: normally driven by the group's COL mesh. In empty mode
+    # we write a geometry-less record for the whole group (named from
+    # base_name) even when there's no COL mesh — that's the point: a
+    # model that needs a COL entry bound to it but no collision.
+    col_obj = models['COL']
+    col_present = col_obj is not None
+
+    # COL (GTA SA COL3) — always written at origin, transform restored.
+    if (col_present or empty_col) and not skip_col:
+        col_path = os.path.join(directory, f"{base_name}.col")
+        original_col_loc = col_obj.location.copy() if col_present else None
+        try:
+            from .col_export import export_col as inu_export_col, _resolve_col_version
+            if col_present and not empty_col:
+                col_obj.location = (0, 0, 0)
+            inu_export_col(
+                filepath=col_path,
+                objects=[col_obj] if col_present else [],
+                version=_resolve_col_version(context),
+                model_name=base_name,
+                empty=empty_col,
+            )
+            exported.append(f"{base_name}.col")
+        except Exception as e:
+            errors.append(f"{base_name}.col: {str(e)}")
+        finally:
+            if col_present and original_col_loc is not None:
+                col_obj.location = original_col_loc
+
+    # CST (collision as Collision File Editor II text format) — same COL
+    # mesh as the .col, written at origin with the transform restored.
+    if (col_present or empty_col) and not skip_cst:
+        cst_path = os.path.join(directory, f"{base_name}.cst")
+        original_cst_loc = col_obj.location.copy() if col_present else None
+        try:
+            from .cst_export import export_cst as inu_export_cst
+            from .col_export import _resolve_col_version
+            if col_present and not empty_col:
+                col_obj.location = (0, 0, 0)
+            inu_export_cst(
+                filepath=cst_path,
+                objects=[col_obj] if col_present else [],
+                version=_resolve_col_version(context),
+                model_name=base_name,
+                empty=empty_col,
+            )
+            exported.append(f"{base_name}.cst")
+        except Exception as e:
+            errors.append(f"{base_name}.cst: {str(e)}")
+        finally:
+            if col_present and original_cst_loc is not None:
+                col_obj.location = original_cst_loc
+
+    # TXD (textures from DFF + LOD into one archive per model)
+    if (models['DFF'] or models['LOD']) and not skip_txd:
+        txd_path = os.path.join(directory, f"{base_name}.txd")
+        prev_active = context.view_layer.objects.active
+        prev_selected = [o for o in context.selected_objects]
+        try:
+            bpy.ops.object.select_all(action='DESELECT')
+            if models['DFF']:
+                models['DFF'].select_set(True)
+                context.view_layer.objects.active = models['DFF']
+            if models['LOD']:
+                models['LOD'].select_set(True)
+                if not models['DFF']:
+                    context.view_layer.objects.active = models['LOD']
+            result, message, _ = _write_txd_file(
+                txd_path, context, backend, txd_merge)
+            if result == {'FINISHED'}:
+                exported.append(f"{base_name}.txd")
+            else:
+                errors.append(f"{base_name}.txd: {message}")
+        except Exception as e:
+            errors.append(f"{base_name}.txd: {str(e)}")
+        finally:
+            bpy.ops.object.select_all(action='DESELECT')
+            for o in prev_selected:
+                o.select_set(True)
+            if prev_active is not None:
+                context.view_layer.objects.active = prev_active
+
+    return exported, errors
+
+
+def run_group_export(context, directory, *, skip_dff, skip_col, skip_lod,
+                     skip_txd, skip_cst=True, col_library=False,
+                     col_library_name='collision', txd_shared=False,
+                     txd_shared_name='textures', backend='numpy',
+                     empty_col=False, txd_merge=False, name_override=''):
+    """Find selected model groups and export them into ``directory``.
+
+    THE shared engine: same name-based grouping, same core writers, same
+    prelight handling for Export All / Export DFF / Export LOD — the caller
+    only chooses which formats to skip. Returns
+    ``(exported, errors, tri_warnings, num_groups)``; ``num_groups == 0``
+    means nothing was selected."""
+    from ..tools.model_utils import find_all_selected_model_groups
+    from ..tools.prelight import setup_prelight_preview
+    from ..tools.txd_export import clear_dxt_cache
+
+    # Сбрасываем кэш закодированных DXT перед каждым ручным экспортом: его
+    # ключ (session_uid + размер) НЕ ловит правки пикселей «на месте», иначе
+    # после редактирования текстуры в TXD уходит старая (закэшированная)
+    # версия. Один сброс на нажатие — внутри прогона кэш ещё дедуплицирует.
+    clear_dxt_cache()
+
+    model_groups = find_all_selected_model_groups()
+    if not model_groups:
+        return [], [], [], 0
+
+    # Клик по файлу в браузере задаёт базовое имя экспорта. Применимо только
+    # к ОДНОЙ модели (одно имя на несколько групп не натянуть) — иначе
+    # оставляем имена по моделям.
+    if name_override and len(model_groups) == 1:
+        _only = next(iter(model_groups.values()))
+        model_groups = {name_override: _only}
+
+    # Disable prelight preview on the meshes about to be exported.
+    prelight_was_on = set()
+    for base_name, models in model_groups.items():
+        for model_type in ('DFF', 'LOD', 'COL'):
+            obj = models[model_type]
+            if obj and obj.type == 'MESH':
+                for mat_slot in obj.material_slots:
+                    mat = mat_slot.material
+                    if mat and mat.use_nodes and mat.node_tree.nodes.get("Prelight_Mix"):
+                        prelight_was_on.add(obj)
+                        setup_prelight_preview(obj, enable=False)
+                        break
+
+    all_exported = []
+    all_errors = []
+    tri_warnings = []
+    wm = context.window_manager
+
+    # Library COL / shared TXD divert per-group writes into one combined
+    # file written after the loop; DFF/LOD still go per-group.
+    library_col_objects = []
+    if col_library and not skip_col:
+        skip_col = True
+        for _base, _models in model_groups.items():
+            if _models['COL']:
+                library_col_objects.append(_models['COL'])
+
+    shared_txd_objects = []
+    if txd_shared and not skip_txd:
+        skip_txd = True
+        for _base, _models in model_groups.items():
+            if _models['DFF']:
+                shared_txd_objects.append(_models['DFF'])
+            if _models['LOD']:
+                shared_txd_objects.append(_models['LOD'])
+
+    def _group_steps(models):
+        has_col = bool(models['COL']) or empty_col
+        return sum([
+            1 if models['DFF'] and not skip_dff else 0,
+            1 if models['LOD'] and not skip_lod else 0,
+            1 if has_col and not skip_col else 0,
+            1 if has_col and not skip_cst else 0,
+            1 if (models['DFF'] or models['LOD']) and not skip_txd else 0,
+        ])
+
+    total_steps = sum(_group_steps(m) for m in model_groups.values())
+    current_step = 0
+    wm.progress_begin(0, max(total_steps, 1))
+    context.workspace.status_text_set(T("Экспорт..."))
+    try:
+        for group_idx, (base_name, models) in enumerate(model_groups.items()):
+            wm.progress_update(current_step)
+            context.workspace.status_text_set(
+                f"{T('Экспорт:')} {group_idx + 1}/{len(model_groups)} {base_name}")
+            exported, errors = _export_model_group(
+                context, directory, base_name, models,
+                skip_dff, skip_col, skip_lod, skip_txd, backend, tri_warnings,
+                skip_cst=skip_cst, empty_col=empty_col, txd_merge=txd_merge)
+            all_exported.extend(exported)
+            all_errors.extend(errors)
+            current_step += _group_steps(models)
+
+        # Library COL — one multi-entry .col from every group's COL mesh.
+        if col_library and library_col_objects:
+            from .col_export import export_col_library, _resolve_col_version
+            lib_path = os.path.join(directory, f"{col_library_name}.col")
+            original_locations = {}
+            try:
+                for obj in library_col_objects:
+                    original_locations[obj.name] = obj.location.copy()
+                    obj.location = (0, 0, 0)
+                count = export_col_library(lib_path, library_col_objects,
+                                           version=_resolve_col_version(context),
+                                           empty=empty_col)
+                all_exported.append(f"{col_library_name}.col ({count} records)")
+            except Exception as e:
+                all_errors.append(f"{col_library_name}.col: {e}")
+            finally:
+                for obj in library_col_objects:
+                    if obj.name in original_locations:
+                        obj.location = original_locations[obj.name]
+
+        # Shared TXD — every texture from every exported mesh into one file.
+        if txd_shared and shared_txd_objects:
+            shared_path = os.path.join(directory, f"{txd_shared_name}.txd")
+            prev_active = context.view_layer.objects.active
+            prev_selected = [o for o in context.selected_objects]
+            try:
+                bpy.ops.object.select_all(action='DESELECT')
+                for src in shared_txd_objects:
+                    src.select_set(True)
+                context.view_layer.objects.active = shared_txd_objects[0]
+                result, message, _ = _write_txd_file(
+                    shared_path, context, backend, txd_merge)
+                if result == {'FINISHED'}:
+                    all_exported.append(
+                        f"{txd_shared_name}.txd ({len(shared_txd_objects)} models)")
+                else:
+                    all_errors.append(f"{txd_shared_name}.txd: {message}")
+            except Exception as e:
+                all_errors.append(f"{txd_shared_name}.txd: {e}")
+            finally:
+                bpy.ops.object.select_all(action='DESELECT')
+                for o in prev_selected:
+                    o.select_set(True)
+                if prev_active is not None:
+                    context.view_layer.objects.active = prev_active
+    finally:
+        wm.progress_end()
+        context.workspace.status_text_set(None)
+        for obj in prelight_was_on:
+            setup_prelight_preview(obj, enable=True)
+
+    return all_exported, all_errors, tri_warnings, len(model_groups)
+
+
+def _report_group_export(op, exported, errors, tri_warnings, num_groups):
+    """Shared operator reporting for the group-export engine."""
+    if num_groups == 0:
+        op.report({'ERROR'}, T("Выделите модели для экспорта!"))
+        return {'CANCELLED'}
+    if exported:
+        op.report({'INFO'},
+                  f"{T('Экспортировано:')} {len(exported)}"
+                  f"{T(' файлов (')}{num_groups}{T(' моделей)')}")
+    if errors:
+        preview = '; '.join(errors[:5])
+        more = f" (+{len(errors) - 5})" if len(errors) > 5 else ""
+        op.report({'WARNING'}, f"{T('Ошибки:')} {preview}{more}")
+    for w in dict.fromkeys(tri_warnings):  # dedup, keep order
+        op.report({'WARNING'}, w)
+    return {'FINISHED'}
 
 
 class GTATOOLS_OT_export_all(bpy.types.Operator):
@@ -188,8 +666,50 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
     bl_options = {'REGISTER'}
 
     directory: StringProperty(subtype='DIR_PATH')
+    # Клик по файлу в браузере заполняет это поле (а не только папку). Если
+    # выбран .txd — текстуры всех моделей пишутся именно в него (merge при
+    # включённой галочке). Для папочного экспорта по моделям остаётся пустым.
+    filename: StringProperty(subtype='FILE_NAME')
+    to_img: BoolProperty(
+        name="All → IMG",
+        description=T("Экспортировать прямо в .img архив, путь к которому "
+                      "задан в настройках аддона. Выбор папки при этом "
+                      "игнорируется"),
+        default=False)
 
     def invoke(self, context, event):
+        # Имя экспорта из ВЫДЕЛЕННОЙ модели. Считаем ЗДЕСЬ (в 3D-контексте, где
+        # есть selected_objects — в draw файлового браузера их уже нет) и
+        # храним в self._export_name / self._n_groups для draw. Имя также
+        # кладём в поле имени файла внизу. Несколько групп одним именем не
+        # назвать → имя пустое, имена пишутся по моделям.
+        name = ''
+        n_groups = 0
+        try:
+            from ..tools.model_utils import (find_all_selected_model_groups,
+                                             get_model_type)
+            groups = find_all_selected_model_groups()
+            n_groups = len(groups)
+            if n_groups == 1:
+                name = next(iter(groups.keys()))
+            elif n_groups == 0:
+                # Фолбэк: активный/первый выделенный объект без суффикса
+                # (_DFF/_LOD/_COL/.00x) — на случай, если группировка не
+                # распознала объект.
+                ao = context.active_object or (
+                    context.selected_objects[0]
+                    if context.selected_objects else None)
+                if ao is not None:
+                    _t, base = get_model_type(ao)
+                    name = (base or ao.name).rstrip('_')
+                    if name:
+                        n_groups = 1
+        except Exception:
+            pass
+        self._n_groups = n_groups
+        self._export_name = name
+        if name:
+            self.filename = name
         context.window_manager.fileselect_add(self)
         return {'RUNNING_MODAL'}
 
@@ -206,295 +726,164 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
         row.prop(scn.inu_settings, "gtatools_export_all_col", text="COL")
         row.prop(scn.inu_settings, "gtatools_export_all_lod", text="LOD")
         row.prop(scn.inu_settings, "gtatools_export_all_txd", text="TXD")
+        row.prop(scn.inu_settings, "gtatools_export_all_cst", text="CST")
+        # Имя экспорта = имя выделенной модели (посчитано в invoke и хранится
+        # в self._export_name — на selected_objects в браузере полагаться
+        # нельзя). При нескольких моделях — серая невыделяемая строка, имена
+        # пишутся по моделям. (Само поле имени внизу — встроенный виджет
+        # браузера Blender, заблокировать/посерить его аддон не может, поэтому
+        # надёжный индикатор тут, в сайдбаре.)
+        n_groups = getattr(self, '_n_groups', 0)
+        name = (getattr(self, '_export_name', '')
+                or os.path.splitext((self.filename or '').strip())[0])
+        box = layout.box()
+        if n_groups > 1:
+            sub = box.row()
+            sub.enabled = False
+            sub.label(text=T("Несколько моделей — имена по моделям"),
+                      **inu_icon(safe_icon('INFO')))
+        elif name:
+            box.label(text=f"{T('Имя экспорта:')} {name}",
+                      **inu_icon(safe_icon('FILE')))
+        else:
+            sub = box.row()
+            sub.enabled = False
+            sub.label(text=T("Модель не выделена"),
+                      **inu_icon(safe_icon('INFO')))
         if scn.inu_settings.gtatools_export_all_col:
             row = layout.row(align=True)
             row.prop(scn.inu_settings, "gtatools_export_all_col_library",
                      text="", **inu_icon(safe_icon('PACKAGE')))
             row.prop(scn.inu_settings, "gtatools_export_all_col_library_name",
                      text="", placeholder="collision")
+        # Настройки коллизии — общие для .COL и .CST (одни и те же значения),
+        # поэтому показываем блок при любом из двух включённых форматов.
+        if scn.inu_settings.gtatools_export_all_col or scn.inu_settings.gtatools_export_all_cst:
+            box = layout.box()
+            box.prop(scn.inu_settings, "gtatools_export_all_col_empty",
+                     text=T("Пустая коллизия"))
             from .col_export import _draw_col_auto_light
-            _draw_col_auto_light(layout, context)
+            sub = box.column()
+            sub.enabled = not scn.inu_settings.gtatools_export_all_col_empty
+            _draw_col_auto_light(sub, context)
         if scn.inu_settings.gtatools_export_all_txd:
             row = layout.row(align=True)
             row.prop(scn.inu_settings, "gtatools_export_all_txd_shared",
                      text="", **inu_icon(safe_icon('PACKAGE')))
             row.prop(scn.inu_settings, "gtatools_export_all_txd_shared_name",
                      text="", placeholder="textures")
+            layout.prop(scn.inu_settings, "gtatools_export_all_txd_merge",
+                        text=T("Дописать в существующий TXD"))
 
         # ── Pipeline + DFF flags — shared N-panel mirror ──
+        # Показываем только когда включён формат, к которому флаги
+        # относятся (DFF или LOD — оба пишутся как DFF-геометрия).
+        if (scn.inu_settings.gtatools_export_all_dff
+                or scn.inu_settings.gtatools_export_all_lod):
+            from .dff_export import draw_dff_flags_block
+            draw_dff_flags_block(layout, context)
+
+        # ── All → IMG (в самом низу, после DFF Flags) ──
+        layout.separator()
+        box = layout.box()
+        box.prop(self, "to_img", text=T("All → IMG"),
+                 **inu_icon(safe_icon('PACKAGE')))
+        if self.to_img:
+            img_path = bpy.path.abspath(scn.inu_settings.gtatools_img_path or '')
+            if img_path:
+                box.label(text=os.path.basename(img_path) or img_path,
+                          **inu_icon(safe_icon('FILE_ARCHIVE')))
+                box.label(text=T("Папка игнорируется — экспорт в этот IMG"),
+                          **inu_icon(safe_icon('INFO')))
+            else:
+                box.label(text=T("Путь к .img не задан в настройках аддона"),
+                          **inu_icon(safe_icon('ERROR')))
+
+    def execute(self, context):
+        s = context.scene.inu_settings
+
+        # All → IMG: вместо записи в выбранную папку пишем прямо в .img
+        # архив из настроек. Переиспользуем gtatools.export_to_img через
+        # EXEC_DEFAULT (без его диалога): при пустом TXD-плане он берёт
+        # имена .txd по моделям и включает все группы по умолчанию.
+        if self.to_img:
+            img_path = bpy.path.abspath(s.gtatools_img_path or '')
+            if not img_path or not os.path.isfile(img_path):
+                self.report({'ERROR'},
+                            T("Укажите путь к .img архиву в настройках аддона"))
+                return {'CANCELLED'}
+            context.window_manager.gtatools_txd_export_plan.clear()
+            return bpy.ops.gtatools.export_to_img(
+                'EXEC_DEFAULT',
+                shared_txd=bool(getattr(s, 'gtatools_export_all_txd_shared', False)),
+                shared_txd_name=(getattr(s, 'gtatools_export_all_txd_shared_name', '')
+                                 or 'textures'))
+
+        # Клик по файлу в браузере → его имя (без расширения) становится
+        # базовым именем экспорта для ОДНОЙ выделенной модели: DFF/COL/LOD/
+        # TXD/CST пишутся как <имя>.<ext> в ту же папку (TXD — с merge при
+        # включённой галочке). Несколько моделей одним именем не назвать —
+        # тогда override игнорируется и работают имена по моделям.
+        picked = (self.filename or '').strip()
+        name_override = os.path.splitext(picked)[0] if picked else ''
+        # Браузер по умолчанию подставляет имя .blend-файла в поле имени —
+        # его нельзя пускать как имя экспорта (иначе модель уйдёт под именем
+        # карты). Сбрасываем override → имена берутся по моделям.
+        blendbase = os.path.splitext(os.path.basename(
+            bpy.data.filepath or ''))[0]
+        if name_override and blendbase and name_override == blendbase:
+            name_override = ''
+
+        exported, errors, tri_warnings, num_groups = run_group_export(
+            context, self.directory,
+            skip_dff=not s.gtatools_export_all_dff,
+            skip_col=not s.gtatools_export_all_col,
+            skip_lod=not s.gtatools_export_all_lod,
+            skip_txd=not s.gtatools_export_all_txd,
+            skip_cst=not getattr(s, 'gtatools_export_all_cst', False),
+            col_library=bool(getattr(s, 'gtatools_export_all_col_library', False)),
+            col_library_name=getattr(s, 'gtatools_export_all_col_library_name', '') or 'collision',
+            txd_shared=bool(getattr(s, 'gtatools_export_all_txd_shared', False)),
+            txd_shared_name=getattr(s, 'gtatools_export_all_txd_shared_name', '') or 'textures',
+            backend=getattr(s, 'gtatools_dxt_backend', 'numpy'),
+            empty_col=bool(getattr(s, 'gtatools_export_all_col_empty', False)),
+            txd_merge=bool(getattr(s, 'gtatools_export_all_txd_merge', False)),
+            name_override=name_override)
+        return _report_group_export(self, exported, errors, tri_warnings, num_groups)
+
+
+class GTATOOLS_OT_export_dff_models(bpy.types.Operator):
+    """Экспорт выделенных моделей в .dff — по одному файлу на модель.
+
+    Зеркало импорта: выделил несколько моделей → получил несколько .dff
+    (имена из имён моделей), части одной модели (иерархия) → в один файл.
+    Тот же общий движок, что и Export All, только включён один формат."""
+    bl_idname = "gtatools.export_dff_models"
+    bl_label = "INU: Export DFF (по моделям)"
+    bl_options = {'REGISTER'}
+
+    directory: StringProperty(subtype='DIR_PATH')
+
+    def invoke(self, context, event):
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def draw(self, context):
+        layout = self.layout
+        col = layout.column(align=True)
+        col.scale_y = 0.85
+        col.label(text=T("Каждая выделенная модель → свой .dff"),
+                  **inu_icon(safe_icon('INFO')))
         from .dff_export import draw_dff_flags_block
         draw_dff_flags_block(layout, context)
 
-    def export_model_group(self, context, base_name, models, skip_dff, skip_col, skip_lod, skip_txd, backend):
-        """Export a single model group (DFF + LOD + COL + TXD).
-
-        DFF/geometry flags come straight from each object's
-        ``obj.inu.*`` — the same values shown (and edited) in the
-        N-panel DFF Flags. The N-panel's flag-toggle update callback
-        already propagates a change to every selected mesh and stores
-        a per-pipeline global default, so there's no separate export
-        override here: whatever's set in the N-panel is what ships.
-        """
-        exported = []
-        errors = []
-
-        # Экспорт DFF (версия GTA SA)
-        if models['DFF'] and not skip_dff:
-            dff_path = os.path.join(self.directory, f"{base_name}.dff")
-            try:
-                from .dff_export import export_dff as inu_export_dff, _resolve_export_version
-                rw_ver = _resolve_export_version(context)
-                tp = getattr(context.scene.inu_settings, 'gtatools_platform', 'PC')
-                # Collect mesh + attached 2DFX objects
-                dff_objects = [models['DFF']]
-                for child in models['DFF'].children:
-                    if child.type == 'EMPTY' and getattr(child, 'inu', None) and child.inu.type == '2DFX':
-                        dff_objects.append(child)
-                inu_export_dff(filepath=dff_path, objects=dff_objects,
-                               version=rw_ver, target_platform=tp)
-                from ..core.dff import DFF_EXPORT_WARNINGS
-                self._tri_warnings.extend(DFF_EXPORT_WARNINGS)
-                exported.append(f"{base_name}.dff")
-            except Exception as e:
-                errors.append(f"{base_name}.dff: {str(e)}")
-
-        # Экспорт LOD (с префиксом LOD, RW-версия = из сцены)
-        if models['LOD'] and not skip_lod:
-            lod_path = os.path.join(self.directory, f"LOD{base_name}.dff")
-            try:
-                from .dff_export import export_dff as inu_export_dff, _resolve_export_version
-                rw_ver = _resolve_export_version(context)
-                tp = getattr(context.scene.inu_settings, 'gtatools_platform', 'PC')
-                inu_export_dff(filepath=lod_path, objects=[models['LOD']],
-                               version=rw_ver, target_platform=tp)
-                from ..core.dff import DFF_EXPORT_WARNINGS
-                self._tri_warnings.extend(DFF_EXPORT_WARNINGS)
-                exported.append(f"LOD{base_name}.dff")
-            except Exception as e:
-                errors.append(f"LOD{base_name}.dff: {str(e)}")
-
-        # Экспорт COL (версия GTA SA COL3)
-        if models['COL'] and not skip_col:
-            col_path = os.path.join(self.directory, f"{base_name}.col")
-            original_col_loc = models['COL'].location.copy()
-            try:
-                from .col_export import export_col as inu_export_col, _resolve_col_version
-
-                # COL всегда экспортируется в центре (0,0,0)
-                models['COL'].location = (0, 0, 0)
-
-                inu_export_col(
-                    filepath=col_path,
-                    objects=[models['COL']],
-                    version=_resolve_col_version(context),
-                    model_name=base_name,
-                )
-
-                # Возвращаем позицию
-                models['COL'].location = original_col_loc
-
-                exported.append(f"{base_name}.col")
-            except Exception as e:
-                errors.append(f"{base_name}.col: {str(e)}")
-            finally:
-                # Always restore object transform even when export fails.
-                models['COL'].location = original_col_loc
-
-        # Экспорт TXD (текстуры из DFF + LOD в один архив)
-        if (models['DFF'] or models['LOD']) and not skip_txd:
-            txd_path = os.path.join(self.directory, f"{base_name}.txd")
-            prev_active = context.view_layer.objects.active
-            prev_selected = [o for o in context.selected_objects]
-            try:
-                bpy.ops.object.select_all(action='DESELECT')
-                # Выделяем DFF и LOD для сбора текстур
-                if models['DFF']:
-                    models['DFF'].select_set(True)
-                    context.view_layer.objects.active = models['DFF']
-                if models['LOD']:
-                    models['LOD'].select_set(True)
-                    if not models['DFF']:
-                        context.view_layer.objects.active = models['LOD']
-                from ..tools.txd_export import export_txd
-                result, message, _ = export_txd(txd_path, context, selected_only=True, backend=backend)
-                if result == {'FINISHED'}:
-                    exported.append(f"{base_name}.txd")
-                else:
-                    errors.append(f"{base_name}.txd: {message}")
-            except Exception as e:
-                errors.append(f"{base_name}.txd: {str(e)}")
-            finally:
-                # Restore previous user selection/active object after temporary hijack.
-                bpy.ops.object.select_all(action='DESELECT')
-                for o in prev_selected:
-                    o.select_set(True)
-                if prev_active is not None:
-                    context.view_layer.objects.active = prev_active
-
-        return exported, errors
-
     def execute(self, context):
-        # Ищем все группы моделей среди выделенных
-        from ..tools.model_utils import find_all_selected_model_groups
-        model_groups = find_all_selected_model_groups()
-
-        if not model_groups:
-            self.report({'ERROR'}, T("Выделите модели для экспорта!"))
-            return {'CANCELLED'}
-
-        # Запоминаем объекты с активным prelight и отключаем
-        prelight_was_on = set()
-        for base_name, models in model_groups.items():
-            for model_type in ['DFF', 'LOD', 'COL']:
-                obj = models[model_type]
-                if obj and obj.type == 'MESH':
-                    has_prelight = False
-                    for mat_slot in obj.material_slots:
-                        mat = mat_slot.material
-                        if mat and mat.use_nodes and mat.node_tree.nodes.get("Prelight_Mix"):
-                            has_prelight = True
-                            break
-                    if has_prelight:
-                        prelight_was_on.add(obj)
-                        from ..tools.prelight import setup_prelight_preview
-                        setup_prelight_preview(obj, enable=False)
-
-        all_exported = []
-        all_errors = []
-        self._tri_warnings = []  # non-fatal high-triangle-count warnings
-        wm = context.window_manager
-
-        # Настройки экспорта
-        skip_dff = not context.scene.inu_settings.gtatools_export_all_dff
-        skip_col = not context.scene.inu_settings.gtatools_export_all_col
-        skip_lod = not context.scene.inu_settings.gtatools_export_all_lod
-        skip_txd = not context.scene.inu_settings.gtatools_export_all_txd
-        col_library = bool(getattr(context.scene.inu_settings, 'gtatools_export_all_col_library', False))
-        col_library_name = getattr(context.scene.inu_settings, 'gtatools_export_all_col_library_name', '') or 'collision'
-        txd_shared = bool(getattr(context.scene.inu_settings, 'gtatools_export_all_txd_shared', False))
-        txd_shared_name = getattr(context.scene.inu_settings, 'gtatools_export_all_txd_shared_name', '') or 'textures'
         backend = getattr(context.scene.inu_settings, 'gtatools_dxt_backend', 'numpy')
-
-        # Library mode: skip the per-group COL write path and collect all
-        # COL objects instead. A single combined .col file is written after
-        # the group loop. DFF/LOD/TXD still go per-group.
-        library_col_objects = []
-        if col_library and not skip_col:
-            skip_col = True
-            for _base, _models in model_groups.items():
-                if _models['COL']:
-                    library_col_objects.append(_models['COL'])
-
-        # Shared TXD mode: same pattern — skip per-group TXD, collect every
-        # DFF/LOD mesh, write one combined archive after the loop.
-        shared_txd_objects = []
-        if txd_shared and not skip_txd:
-            skip_txd = True
-            for _base, _models in model_groups.items():
-                if _models['DFF']:
-                    shared_txd_objects.append(_models['DFF'])
-                if _models['LOD']:
-                    shared_txd_objects.append(_models['LOD'])
-
-        # Считаем общее количество шагов для прогресс-бара
-        total_steps = 0
-        for base_name, models in model_groups.items():
-            total_steps += sum([
-                1 if models['DFF'] and not skip_dff else 0,
-                1 if models['LOD'] and not skip_lod else 0,
-                1 if models['COL'] and not skip_col else 0,
-                1 if (models['DFF'] or models['LOD']) and not skip_txd else 0
-            ])
-
-        current_step = 0
-        wm.progress_begin(0, total_steps)
-        context.workspace.status_text_set(T("Экспорт..."))
-        try:
-            # Экспортируем каждую группу моделей
-            for group_idx, (base_name, models) in enumerate(model_groups.items()):
-                wm.progress_update(current_step)
-                context.workspace.status_text_set(
-                    f"{T('Экспорт:')} {group_idx + 1}/{len(model_groups)} {base_name}")
-                exported, errors = self.export_model_group(context, base_name, models, skip_dff, skip_col, skip_lod, skip_txd, backend)
-                all_exported.extend(exported)
-                all_errors.extend(errors)
-
-                # Обновляем прогресс
-                current_step += sum([
-                    1 if models['DFF'] and not skip_dff else 0,
-                    1 if models['LOD'] and not skip_lod else 0,
-                    1 if models['COL'] and not skip_col else 0,
-                    1 if (models['DFF'] or models['LOD']) and not skip_txd else 0
-                ])
-
-            # Library COL — one multi-entry .col file from every group's COL mesh
-            if col_library and library_col_objects:
-                from .col_export import export_col_library
-                lib_path = os.path.join(self.directory, f"{col_library_name}.col")
-                # COL exports expect objects at origin — temporarily centre them
-                original_locations = {}
-                try:
-                    from .col_export import _resolve_col_version
-                    for obj in library_col_objects:
-                        original_locations[obj.name] = obj.location.copy()
-                        obj.location = (0, 0, 0)
-                    count = export_col_library(lib_path, library_col_objects,
-                                               version=_resolve_col_version(context))
-                    all_exported.append(f"{col_library_name}.col ({count} records)")
-                except Exception as e:
-                    all_errors.append(f"{col_library_name}.col: {e}")
-                finally:
-                    for obj in library_col_objects:
-                        if obj.name in original_locations:
-                            obj.location = original_locations[obj.name]
-
-            # Shared TXD — every texture from every exported mesh packed into
-            # one archive. Selection is hijacked because export_txd reads
-            # selection; we restore it on the way out.
-            if txd_shared and shared_txd_objects:
-                shared_path = os.path.join(self.directory, f"{txd_shared_name}.txd")
-                prev_active = context.view_layer.objects.active
-                prev_selected = [o for o in context.selected_objects]
-                try:
-                    bpy.ops.object.select_all(action='DESELECT')
-                    for src in shared_txd_objects:
-                        src.select_set(True)
-                    context.view_layer.objects.active = shared_txd_objects[0]
-                    from ..tools.txd_export import export_txd
-                    result, message, _ = export_txd(
-                        shared_path, context, selected_only=True, backend=backend)
-                    if result == {'FINISHED'}:
-                        all_exported.append(
-                            f"{txd_shared_name}.txd ({len(shared_txd_objects)} models)")
-                    else:
-                        all_errors.append(f"{txd_shared_name}.txd: {message}")
-                except Exception as e:
-                    all_errors.append(f"{txd_shared_name}.txd: {e}")
-                finally:
-                    bpy.ops.object.select_all(action='DESELECT')
-                    for o in prev_selected:
-                        o.select_set(True)
-                    if prev_active is not None:
-                        context.view_layer.objects.active = prev_active
-        finally:
-            wm.progress_end()
-            context.workspace.status_text_set(None)
-            # Восстанавливаем prelight только где он был включён
-            for obj in prelight_was_on:
-                setup_prelight_preview(obj, enable=True)
-
-        # Result
-        num_groups = len(model_groups)
-        if all_exported:
-            self.report({'INFO'}, f"{T('Экспортировано:')} {len(all_exported)}{T(' файлов (')}{num_groups}{T(' моделей)')}")
-        if all_errors:
-            preview = '; '.join(all_errors[:5])
-            more = f" (+{len(all_errors) - 5})" if len(all_errors) > 5 else ""
-            self.report({'WARNING'}, f"{T('Ошибки:')} {preview}{more}")
-        for w in dict.fromkeys(self._tri_warnings):  # dedup, keep order
-            self.report({'WARNING'}, w)
-
-        return {'FINISHED'}
+        exported, errors, tri_warnings, num_groups = run_group_export(
+            context, self.directory,
+            skip_dff=False, skip_col=True, skip_lod=True, skip_txd=True,
+            backend=backend)
+        return _report_group_export(self, exported, errors, tri_warnings, num_groups)
 
 
 class GTATOOLS_OT_inu_export(bpy.types.Operator, ExportHelper):
@@ -627,6 +1016,9 @@ class GTATOOLS_OT_inu_export(bpy.types.Operator, ExportHelper):
             return [o for o in context.scene.objects if o.type in ('MESH', 'EMPTY')]
 
     def execute(self, context):
+        from ..tools.txd_export import clear_dxt_cache
+        # Сброс кэша DXT: он не ловит правки пикселей «на месте».
+        clear_dxt_cache()
         directory = os.path.dirname(self.filepath) if self.filepath else self.filepath
         if not directory or not os.path.isdir(directory):
             self.report({'ERROR'}, T("Выберите папку для экспорта"))
@@ -857,8 +1249,3 @@ class GTATOOLS_OT_inu_export(bpy.types.Operator, ExportHelper):
         return {'FINISHED'} if all_exported else {'CANCELLED'}
 
 
-classes = (
-    GTATOOLS_OT_inu_import,
-    GTATOOLS_OT_export_all,
-    GTATOOLS_OT_inu_export,
-)

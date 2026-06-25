@@ -423,6 +423,34 @@ BAKE_MAPS = OrderedDict([
         node_group_builder=_prepare_bevel,
         samples=4, default_blend='OVERLAY', default_opacity=1.0,
         default_contrast=1.0, default_gamma=1.0)),
+
+    # ── PBR-карты (нативные пассы Cycles) ─────────────────────────────
+    # Полноценные карты стека, как AO/Diffuse/Bevel. Печёт сам материал
+    # объекта (свой normal/roughness/emission); для переноса детали — hi→low.
+    ('NORMAL', BakeMapDef(
+        id='NORMAL', label_key='Normal Map', bake_type='NORMAL',
+        needs_light=False, rig_kind='NONE', node_group_builder=None,
+        samples=1, default_blend='NORMAL', default_opacity=1.0,
+        default_contrast=1.0, default_gamma=1.0)),
+    # ROUGHNESS убрана из списка карт по запросу — для GTA-текстур она не
+    # нужна. Старые слои/пресеты со map_id='ROUGHNESS' безопасно
+    # игнорируются (get_map вернёт None, bake_ops такие слои пропускает).
+    ('EMISSION', BakeMapDef(
+        id='EMISSION', label_key='Emission', bake_type='EMIT',
+        needs_light=False, rig_kind='NONE', node_group_builder=None,
+        samples=1, default_blend='NORMAL', default_opacity=1.0,
+        default_contrast=1.0, default_gamma=1.0)),
+    # Свет ОТ излучающих граней на соседние поверхности (GI). В отличие от
+    # карты Emission (она снимает только само свечение грани), здесь
+    # светящийся материал работает как лампа: запекаем НЕпрямой diffuse-свет
+    # (pass_indirect, без albedo) — зелёная грань «подсвечивает» кирпич
+    # вокруг. Складываем поверх (ADD). GI шумный → сэмплы из настроек.
+    ('EMIT_GI', BakeMapDef(
+        id='EMIT_GI', label_key='Emission Light (GI)', bake_type='DIFFUSE',
+        needs_light=False, rig_kind='NONE', node_group_builder=None,
+        samples=64, default_blend='ADD', default_opacity=1.0,
+        default_contrast=1.0, default_gamma=1.0,
+        pass_direct=False, pass_indirect=True, pass_color=False)),
 ])
 
 

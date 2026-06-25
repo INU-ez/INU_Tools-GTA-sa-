@@ -85,7 +85,9 @@ class LightingFloater(B.Floater):
             # 115 + 4×18 icons = 303 + paddings = 312). UI_SIDEBAR_PANEL
             # _WIDTH default is 280 but he's resized his N-panel.
             # Match his measurement so widget widths line up.
-            width=312,
+            # Чуть шире N-панели по просьбе — длинным подписям («Запечь
+            # поверх с тенями») просторнее.
+            width=360,
         )
         # Header icon — matches the COLOR icon Blender's N-panel uses
         # for the Prelight sub-panel header (panels.py:2556).
@@ -129,6 +131,21 @@ class LightingFloater(B.Floater):
         try:
             from ...tools import compat as _c
             return _c.vcol_get(obj.data, name) is not None
+        except Exception:
+            return False
+
+    @staticmethod
+    def _is_nonstd_mesh(obj):
+        """Активный объект — MESH, но его data НЕ обычный bpy.types.Mesh
+        (например 'FastMesh' от Plumber / Source-импорта). Почти весь
+        прилайт читает геометрию через bmesh / polygons и на таком меше не
+        работает — пользователю нужно сделать Object → Convert → Mesh."""
+        if obj is None or getattr(obj, 'type', None) != 'MESH':
+            return False
+        if obj.data is None:
+            return False
+        try:
+            return not isinstance(obj.data, bpy.types.Mesh)
         except Exception:
             return False
 
@@ -183,8 +200,9 @@ class LightingFloater(B.Floater):
             preset_row.operator(op_id, icon=icon,
                                 width=self._ICON_BTN_W)
 
-        # 2. Lights toggle — single full-width button
+        # 2. Lights toggle + Солнце — две full-width кнопки.
         preset_col.operator('lights', text='Свет (8 ламп)', icon='light')
+        preset_col.operator('sun', text='Солнце', icon='light_sun')
 
         # `if obj and obj.type == 'MESH':` from panels.py:2613.
         # Without an active mesh the N-panel skips the box, Day/Night,
@@ -193,6 +211,13 @@ class LightingFloater(B.Floater):
         obj = context.active_object
         if obj is not None and obj.type == 'MESH':
             self._build_mesh_rows(preset_col)
+        # Предупреждение внизу: активный объект — не обычный меш Blender
+        # (FastMesh от Plumber / Source-импорт). Функции прилайта читают
+        # геометрию через bmesh / polygons и на нём не работают.
+        if self._is_nonstd_mesh(obj):
+            warn_col = preset_col.column(align=True)
+            warn_col.label('fastmesh_warn1', scale_y=0.9)
+            warn_col.label('fastmesh_warn2', scale_y=0.9)
         return root
 
     def _build_mesh_rows(self, preset_col):
@@ -212,7 +237,11 @@ class LightingFloater(B.Floater):
         #         v_cell = right_part.row(align=True)   # 85 % of 40 % = 34 %
         #         btn_cell = right_part.row(align=True) # 15 % of 40 % =  6 %
         UI_UNIT_X = LR.widget_unit_x()       # = 20 @ scale 1.0
-        box = preset_col.box(box_id='daynight_box')
+        # Box + кнопка альфы в одном align-столбце → они вплотную (1px),
+        # при этом кнопка остаётся обычным элементом (получает rect и
+        # рисуется — внутрь самого box её класть нельзя).
+        dn_col = preset_col.column(align=True)
+        box = dn_col.box(box_id='daynight_box')
         body = box.row(align=True)
         preview = body.column(align=True)
         preview.scale_y = 2.0
@@ -237,8 +266,22 @@ class LightingFloater(B.Floater):
             btn_cell.width = 20
             btn_cell.operator(f'{kind}_remove', icon='remove')
 
-        # 4. Bake / Bake-with-shadows — fused pair
+        # Альфа вершины (сцена) — в том же align-столбце, в упор под
+        # боксом Day/Night (1px).
+        dn_col.operator('alpha_scene', text='Альфа вершины (сцена)',
+                        icon='hide_on')
+
+        # 4. Запечь поверх / с тенями (additive, over=True) — СВЕРХУ: свет
+        # кладётся ПОВЕРХ текущего прилайта, не перезаписывая.
+        bake_over_row = preset_col.row(align=True)
+        bake_over_row.operator('bake_over', text='Запечь поверх', icon='add')
+        bake_over_row.operator('bake_over_shadow',
+                               text='Запечь поверх с тенями', icon='add')
+
+        # 4b. Запечь / с тенями (перезапись) — СНИЗУ и ВЫШЕ по высоте
+        # (как в N-панели, scale_y=1.6 — основные кнопки крупнее).
         bake_row = preset_col.row(align=True)
+        bake_row.scale_y = 1.6
         bake_row.operator('bake', text='Запечь', icon='render_still')
         bake_row.operator('bake_shadow', text='Запечь с тенями',
                           icon='render_result')
@@ -261,10 +304,27 @@ class LightingFloater(B.Floater):
         lm_row.operator('lm_remove', icon='remove',
                         width=self._ICON_BTN_W)
 
+    def _layout_for_pass(self, context, body_w):
+        """Build the layout tree + total height ONCE per compute_layout
+        pass. Both compute_body_height and extend_body_layout need them;
+        without this the tree-build (and its per-material-slot state
+        probes) ran twice every frame — the bulk of this window's
+        per-frame cost. Cache is keyed by the base's `_layout_pass` token
+        (bumped once per compute_layout) + body width."""
+        tok = getattr(self, '_layout_pass', 0)
+        cache = getattr(self, '_lt_cache', None)
+        if cache is not None and cache[0] == tok and cache[1] == body_w:
+            return cache[2], cache[3]
+        root = self._build_layout(context)
+        total_h = LS.total_height(root, body_w)
+        self._lt_cache = (tok, body_w, root, total_h)
+        return root, total_h
+
     def compute_body_height(self, context):
         # Body width = panel width (`self.width`) minus 2 × UI_PANEL_MARGIN_X.
         body_w = max(1, self.width - 2 * _panel_margin_x())
-        return LS.total_height(self._build_layout(context), body_w)
+        _root, total_h = self._layout_for_pass(context, body_w)
+        return total_h
 
     def extend_body_layout(self, context, L):
         x, w = L['x'], L['w']
@@ -276,9 +336,8 @@ class LightingFloater(B.Floater):
         # we used to hand-compute. Layout traversal walks the tree
         # using Blender-native metrics from `layout_rules.py` so the
         # output should line up with the N-panel pixel-for-pixel.
-        root = self._build_layout(context)
         body_w = w - 2 * side_pad
-        body_h = LS.total_height(root, body_w)
+        root, body_h = self._layout_for_pass(context, body_w)
         body_rect = (x + side_pad, top_y - body_h, body_w, body_h)
         solved = LS.solve(root, body_rect)
 
@@ -364,6 +423,12 @@ class LightingFloater(B.Floater):
                      hovered=(h == 'lights'), pressed=lights_on,
                      icon='light',
                      corner_mask=GS.CORNER_NONE)
+        if 'sun_rect' in L:
+            sun_on = bpy.data.objects.get("Prelight_Sun") is not None
+            WG._draw_button(L['sun_rect'], "Солнце",
+                         hovered=(h == 'sun'), pressed=sun_on,
+                         icon='light_sun',
+                         corner_mask=GS.CORNER_NONE)
 
         # Day/Night cluster sits inside a `layout.box()`-style frame —
         # matches the N-panel's Prelight section (panels.py:2628 `box =
@@ -469,6 +534,26 @@ class LightingFloater(B.Floater):
                          icon='render_result',
                          corner_mask=GS.CORNER_NONE)
 
+        # Альфа вершины (сцена) — pressed когда превью включено.
+        if 'alpha_scene_rect' in L:
+            alpha_on = bool(context.scene.get('inu_alpha_preview_on', False))
+            WG._draw_button(L['alpha_scene_rect'], "Альфа вершины (сцена)",
+                         hovered=(h == 'alpha_scene'), pressed=alpha_on,
+                         icon='hide_off' if alpha_on else 'hide_on',
+                         corner_mask=GS.CORNER_NONE)
+
+        # Запечь поверх / с тенями (additive).
+        if 'bake_over_rect' in L:
+            WG._draw_button(L['bake_over_rect'], "Запечь поверх",
+                         hovered=(h == 'bake_over'),
+                         icon='add',
+                         corner_mask=GS.CORNER_NONE)
+        if 'bake_over_shadow_rect' in L:
+            WG._draw_button(L['bake_over_shadow_rect'], "Запечь поверх с тенями",
+                         hovered=(h == 'bake_over_shadow'),
+                         icon='add',
+                         corner_mask=GS.CORNER_NONE)
+
         # Copy Day↔Night — fused pair (bake row above, lm row below).
         if 'copy_dn_rect' in L:
             WG._draw_button(L['copy_dn_rect'], "Day → Night",
@@ -512,6 +597,16 @@ class LightingFloater(B.Floater):
                          icon='remove',
                          corner_mask=GS.CORNER_BR)
 
+        # Предупреждение о не-обычном меше (FastMesh) — оранжевым внизу.
+        for key, txt in (
+                ('fastmesh_warn1_rect', "Объект — не обычный меш (FastMesh)"),
+                ('fastmesh_warn2_rect', "Конвертируй: Object → Convert → Mesh")):
+            r = L.get(key)
+            if r:
+                rx, ry, rw, rh = r
+                _, th = TA._text_dims(txt)
+                TA._text(int(rx), int(ry + (rh - th) / 2), txt, TH._C_WARN)
+
         # Open dropdown — drawn LAST so it overlays the rest.
         self._draw_open_dropdown(context, L)
 
@@ -535,6 +630,10 @@ class LightingFloater(B.Floater):
         ('preset_delete',  'preset_delete_rect'),
         ('preset_export',  'preset_export_rect'),
         ('lights',         'lights_rect'),
+        ('sun',            'sun_rect'),
+        ('alpha_scene',    'alpha_scene_rect'),
+        ('bake_over',      'bake_over_rect'),
+        ('bake_over_shadow', 'bake_over_shadow_rect'),
         ('preview',        'preview_rect'),
         ('day_name',       'day_name_rect'),
         ('day_v',          'day_v_rect'),
@@ -644,6 +743,10 @@ class LightingFloater(B.Floater):
         if B._hit(mx, my, *L['lights_rect']):
             B._invoke_operator("gtatools.toggle_prelight_lights", {})
             return True
+        # Солнце — как и Свет, доступно без активного меша.
+        if 'sun_rect' in L and B._hit(mx, my, *L['sun_rect']):
+            B._invoke_operator("gtatools.toggle_prelight_sun", {})
+            return True
         # Mesh-only widgets — absent when no active mesh.
         if 'preview_rect' not in L:
             return False
@@ -699,6 +802,21 @@ class LightingFloater(B.Floater):
         if B._hit(mx, my, *L['bake_shadow_rect']):
             B._invoke_operator("gtatools.bake_vertex_colors",
                              {"use_shadows": True})
+            return True
+        # Альфа вершины (сцена) — превью альфы (enable флипает текущее)
+        if 'alpha_scene_rect' in L and B._hit(mx, my, *L['alpha_scene_rect']):
+            alpha_on = bool(context.scene.get('inu_alpha_preview_on', False))
+            B._invoke_operator("gtatools.alpha_preview",
+                             {"enable": not alpha_on})
+            return True
+        # Запечь поверх / с тенями (additive, over=True)
+        if 'bake_over_rect' in L and B._hit(mx, my, *L['bake_over_rect']):
+            B._invoke_operator("gtatools.bake_vertex_colors_simple",
+                             {"over": True})
+            return True
+        if 'bake_over_shadow_rect' in L and B._hit(mx, my, *L['bake_over_shadow_rect']):
+            B._invoke_operator("gtatools.bake_vertex_colors",
+                             {"over": True, "use_shadows": True})
             return True
         # Copy
         if B._hit(mx, my, *L['copy_dn_rect']):

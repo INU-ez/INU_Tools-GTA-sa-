@@ -52,6 +52,30 @@ def cycles_available(scene=None):
         return False
 
 
+def _gpu_compute_available():
+    """True, если в настройках Cycles включена хотя бы одна НЕ-CPU карта
+    (CUDA/OptiX/HIP/Metal/oneAPI). Только тогда есть смысл ставить
+    scene.cycles.device='GPU' — иначе запекание упадёт обратно на CPU."""
+    try:
+        addon = bpy.context.preferences.addons.get('cycles')
+        cprefs = addon.preferences if addon else None
+        if cprefs is None:
+            return False
+        if getattr(cprefs, 'compute_device_type', 'NONE') in (None, '', 'NONE'):
+            return False
+        # Заполнить список устройств (на свежем запуске он может быть пуст).
+        try:
+            cprefs.get_devices()
+        except Exception:
+            pass
+        for d in getattr(cprefs, 'devices', []):
+            if getattr(d, 'use', False) and getattr(d, 'type', 'CPU') != 'CPU':
+                return True
+        return False
+    except Exception:
+        return False
+
+
 # ── Scene-state guard ────────────────────────────────────────────────
 
 class BakeStateGuard:
@@ -89,7 +113,7 @@ class BakeStateGuard:
         'normal_space',
     )
     # Атрибуты scene.cycles, которые подсистема может менять.
-    _CYCLES_ATTRS = ('samples', 'use_denoising', 'bake_type')
+    _CYCLES_ATTRS = ('samples', 'use_denoising', 'bake_type', 'device')
 
     def __init__(self, context):
         self.context = context
@@ -127,6 +151,15 @@ class BakeStateGuard:
             bake.target = 'IMAGE_TEXTURES'
         if cy is not None and hasattr(cy, 'use_denoising'):
             cy.use_denoising = False
+        # Авто-GPU: если в настройках Blender включена GPU-карта Cycles —
+        # печём на ней (быстрее на AO/тенях/GI/AA). Иначе оставляем CPU.
+        # Раньше device не трогали → запекание всегда шло как в сцене (CPU
+        # по умолчанию), отсюда «нет разницы от GPU».
+        if cy is not None and hasattr(cy, 'device') and _gpu_compute_available():
+            try:
+                cy.device = 'GPU'
+            except Exception:
+                pass
         return self
 
     def __exit__(self, exc_type, exc, tb):
@@ -214,26 +247,46 @@ def _ensure_bake_node(mat, image):
     return node, prev_active
 
 
+def _get_placeholder_mat():
+    mat = bpy.data.materials.get(PLACEHOLDER_MAT_NAME)
+    if mat is None:
+        mat = bpy.data.materials.new(PLACEHOLDER_MAT_NAME)
+    mat.use_nodes = True
+    return mat
+
+
 def prepare_bake_targets(obj, image):
     """Подготовить все материалы `obj` к запеканию в `image`.
 
     Обрабатывает мульти-материал (инъекция ноды в каждый уникальный
-    материал) и объект без материалов / с пустыми слотами (временный
-    placeholder-материал, удаляется в restore_bake_targets).
+    материал), объект без слотов и ПУСТЫЕ слоты (material=None).
+
+    ВАЖНО: пустые слоты заполняются placeholder'ом ПО МЕСТУ (не новым
+    слотом). Иначе bpy.ops.object.bake ругается «No active image found
+    for material slot N» на любом слоте с material=None и не пишет
+    результат — типичный кейс для low-poly billboard-плоскости с пустым
+    слотом после composite-preview.
 
     Возвращает record для restore_bake_targets().
     """
-    record = {'nodes': [], 'placeholder': None}
-    mats = [s.material for s in obj.material_slots if s.material]
-    if not mats:
-        mat = bpy.data.materials.get(PLACEHOLDER_MAT_NAME)
-        if mat is None:
-            mat = bpy.data.materials.new(PLACEHOLDER_MAT_NAME)
-        mat.use_nodes = True
+    record = {'nodes': [], 'placeholder': None, 'filled': []}
+
+    if not obj.material_slots:
+        # Совсем без слотов — добавляем временный placeholder-слот.
+        mat = _get_placeholder_mat()
         obj.data.materials.append(mat)
         record['placeholder'] = (obj, len(obj.data.materials) - 1, mat)
-        mats = [mat]
+    else:
+        # Заполняем пустые слоты placeholder'ом по месту.
+        ph = None
+        for slot in obj.material_slots:
+            if slot.material is None:
+                if ph is None:
+                    ph = _get_placeholder_mat()
+                slot.material = ph
+                record['filled'].append(slot)
 
+    mats = [s.material for s in obj.material_slots if s.material]
     seen = set()
     for mat in mats:
         if mat.name in seen:        # один материал в нескольких слотах — раз
@@ -263,6 +316,13 @@ def restore_bake_targets(record):
         except Exception:
             pass
 
+    # Пустые слоты, временно залитые placeholder'ом — вернуть в None.
+    for slot in record.get('filled', ()):
+        try:
+            slot.material = None
+        except Exception:
+            pass
+
     ph = record.get('placeholder')
     if ph is not None:
         obj, idx, mat = ph
@@ -270,9 +330,12 @@ def restore_bake_targets(record):
             obj.data.materials.pop(index=idx)
         except Exception:
             pass
+
+    # Placeholder-материал (из обоих путей) удаляем, если больше не нужен.
+    phmat = bpy.data.materials.get(PLACEHOLDER_MAT_NAME)
+    if phmat is not None and phmat.users == 0:
         try:
-            if mat.users == 0:
-                bpy.data.materials.remove(mat)
+            bpy.data.materials.remove(phmat)
         except Exception:
             pass
 

@@ -125,48 +125,59 @@ def _read_texture(mat) -> DffTexture:
     от кейса, когда TXD не был загружен и image=None на Texture-ноде, но имя
     текстуры всё равно известно из DFF.
     """
-    # 1. Если импорт DFF сохранил имя текстуры — используем его как авторитетный
+    # Как в DragonFF: имя текстуры берём из НОДЫ (её label), а НЕ из имени
+    # картинки. Так пользователь задаёт имя текстуры в DFF через ноду, и
+    # .001-суффиксы Blender / расширения файла не попадают в файл. Нода
+    # авторитетнее: сначала её label, иначе имя картинки. IDProp
+    # `dff_texture_name` (сохранённый при импорте) — только запасной вариант,
+    # когда ноды/картинки нет (TXD не был загружен).
+    principled = _get_principled(mat)
+    if principled:
+        bc_input = principled.inputs.get('Base Color')
+        if bc_input and bc_input.is_linked:
+            source_node = bc_input.links[0].from_node
+
+            # Walk through preview mix nodes (Prelight_Mix, LM_Mix) to the
+            # real texture — wrappers keep it on input 'A' / 'Color1'.
+            max_depth = 5
+            while (source_node and source_node.name in
+                   ("Prelight_Mix", "LM_Mix", "Lightmap_Mix") and max_depth > 0):
+                max_depth -= 1
+                a_input = (source_node.inputs.get('A')
+                           or source_node.inputs.get('Color1'))
+                if not a_input or not a_input.is_linked:
+                    source_node = None
+                    break
+                source_node = a_input.links[0].from_node
+
+            # Skip lightmap texture nodes if they ended up here
+            if source_node and source_node.name in ("LM_Texture",
+                                                     "Lightmap_Texture"):
+                source_node = None
+
+            if source_node and source_node.type == 'TEX_IMAGE':
+                # Точно как в DragonFF: берём label ноды, если он непустой И
+                # является подстрокой имени картинки (т.е. «чистое» имя без
+                # .001/расширения); иначе — имя картинки. Без картинки —
+                # просто label.
+                node_label = (source_node.label or "").strip()
+                image_name = (source_node.image.name
+                              if source_node.image else "")
+                if node_label and node_label in image_name:
+                    name = node_label
+                elif image_name:
+                    name = image_name
+                else:
+                    name = node_label
+                name = _strip_ext(name)
+                if name:
+                    return DffTexture(name=name, mask="")
+
+    # Запасной вариант: имя, сохранённое при импорте DFF
     dff_tex_name = mat.get('dff_texture_name')
     if dff_tex_name:
         return DffTexture(name=_strip_ext(dff_tex_name), mask="")
-
-    principled = _get_principled(mat)
-    if not principled:
-        return None
-
-    bc_input = principled.inputs.get('Base Color')
-    if not bc_input or not bc_input.is_linked:
-        return None
-
-    source_node = bc_input.links[0].from_node
-
-    # Walk through preview mix nodes (Prelight_Mix, LM_Mix) to find real texture
-    # These wrappers have original texture on input 'A' or 'Color1'
-    max_depth = 5
-    while source_node and source_node.name in ("Prelight_Mix", "LM_Mix", "Lightmap_Mix") and max_depth > 0:
-        max_depth -= 1
-        a_input = source_node.inputs.get('A') or source_node.inputs.get('Color1')
-        if not a_input or not a_input.is_linked:
-            return None
-        source_node = a_input.links[0].from_node
-
-    # Also skip lightmap texture nodes if they ended up here
-    if source_node and source_node.name in ("LM_Texture", "Lightmap_Texture"):
-        return None
-
-    if not source_node or source_node.type != 'TEX_IMAGE':
-        return None
-
-    # Prefer node label (сохранённое имя из DFF-импорта), иначе имя картинки.
-    # Разрешаем источник без прикреплённой картинки — имени label'а достаточно.
-    name = source_node.label
-    if not name and source_node.image:
-        name = source_node.image.name
-    if not name:
-        return None
-    name = _strip_ext(name)
-
-    return DffTexture(name=name, mask="")
+    return None
 
 
 def _read_surface(mat) -> SurfaceProperties:
@@ -290,6 +301,38 @@ def _collect_uv_anim_dict(materials) -> "UVAnimDict | None":
         if anim_name in seen:
             continue
         seen.add(anim_name)
+
+        # Режим «Ключевые кадры»: читаем ключи ноды Mapping (Location/Scale)
+        # и пишем их как кадры UVAnim. Если ключей нет — откат к прокрутке.
+        mode = getattr(inu, 'uv_anim_mode', 'SCROLL')
+        if mode == 'KEYFRAME':
+            try:
+                from ..tools import uv_anim_preview
+                fps = float(bpy.context.scene.render.fps)
+                res = uv_anim_preview.read_keyframes(mat, fps)
+            except Exception as exc:
+                import traceback
+                print(f"[INU] UV anim read_keyframes failed for "
+                      f"'{anim_name}': {exc}")
+                traceback.print_exc()
+                res = None
+            if res and res[0]:
+                print(f"[INU] UV anim '{anim_name}': прочитано "
+                      f"{len(res[0])} ключей (keyframe mode)")
+            else:
+                print(f"[INU] UV anim '{anim_name}': ключей не найдено — "
+                      f"откат к прокрутке (Speed U/V)")
+            if res and res[0]:
+                raw_kfs, duration = res
+                duration = max(0.01, float(duration))
+                kfs = [UVAnimKeyframe(time=t, scale_u=su, scale_v=sv,
+                                      trans_u=tu, trans_v=tv)
+                       for (t, su, sv, tu, tv) in raw_kfs]
+                anims.append(UVAnim(name=anim_name, type_id=0x1C1,
+                                    duration=duration, keyframes=kfs))
+                continue
+            # нет ключей → падаем в режим прокрутки ниже
+
         duration = max(0.01, float(getattr(inu, 'uv_anim_duration', 1.0)))
         su = float(getattr(inu, 'uv_anim_speed_u', 0.0))
         sv = float(getattr(inu, 'uv_anim_speed_v', 0.0))
@@ -298,7 +341,7 @@ def _collect_uv_anim_dict(materials) -> "UVAnimDict | None":
         kf1 = UVAnimKeyframe(time=duration, scale_u=1.0, scale_v=1.0,
                              trans_u=su * duration, trans_v=sv * duration)
         anims.append(UVAnim(
-            name=anim_name, type_id=0x1C0,
+            name=anim_name, type_id=0x1C1,
             duration=duration, keyframes=[kf0, kf1],
         ))
     if not anims:
@@ -933,10 +976,58 @@ def _process_mesh(obj, clump: DffClump, frame_index: int, *,
 
 # ── Frame building ───────────────────────────────────────────────
 
-def _build_frame(obj, parent_index: int = -1) -> DffFrame:
+def _live_frame_transform(obj):
+    """Read the object's current ``matrix_local`` as DFF (rotation, position).
+
+    ``matrix_local`` is parent-relative — exactly the space a DFF frame
+    stores — so for a top-level object it equals its global placement and
+    for a parented part it equals the offset under its parent frame.
+
+    Rotation is emitted **row-major** to match the import convention:
+    ``import_dff`` rebuilds ``matrix_basis`` row-by-row from
+    ``frame.rotation`` ([dff_import.py] matrix_basis loop), so reading the
+    live 3×3 row-major round-trips byte-for-byte. (The previous fallback
+    transposed here, which silently mirrored the matrix for any
+    non-identity rotation of a freshly-built object.)
+    """
+    ml = obj.matrix_local
+    loc = ml.to_translation()
+    m = ml.to_3x3()
+    rotation = (
+        m[0][0], m[0][1], m[0][2],
+        m[1][0], m[1][1], m[1][2],
+        m[2][0], m[2][1], m[2][2],
+    )
+    return rotation, (loc.x, loc.y, loc.z)
+
+
+def _frame_transform_moved(obj, orig_rot, orig_pos, eps: float = 1e-5) -> bool:
+    """True if the object's live transform diverges from the cached
+    import-time frame transform — i.e. the user moved/rotated/scaled it.
+
+    The cache (``dff_frame_rot``/``dff_frame_pos``) is an import-time
+    snapshot that is **not** updated when the object moves. So trusting it
+    blindly writes the stale (often (0,0,0)) placement back into the DFF
+    and every re-imported part snaps to the origin. We compare against the
+    live ``matrix_local`` and fall back to it the moment they differ."""
+    live_rot, live_pos = _live_frame_transform(obj)
+    if any(abs(live_pos[i] - orig_pos[i]) > eps for i in range(3)):
+        return True
+    return any(abs(live_rot[i] - orig_rot[i]) > eps for i in range(9))
+
+
+def _build_frame(obj, parent_index: int = -1,
+                 allow_live: bool = False) -> DffFrame:
     """Create a DffFrame from a Blender object.
 
     Uses stored original frame data for round-trip fidelity if available.
+
+    ``allow_live`` (static-hierarchy export only): when the object carries
+    a cached import-time transform but the user has since moved/rotated it,
+    write the LIVE ``matrix_local`` instead of the stale cache. Kept OFF
+    for the skinned/animated path, where the mesh frame is deliberately
+    pinned to identity and its real placement lives in the bone matrices —
+    there the cached snapshot is authoritative and must not be overridden.
     """
     frame = DffFrame()
     frame.name = _strip_ext(obj.name)
@@ -948,21 +1039,21 @@ def _build_frame(obj, parent_index: int = -1) -> DffFrame:
     orig_flags = obj.get('dff_frame_flags', 0)
     frame.write_name = obj.get('dff_frame_write_name', False)
 
-    if orig_rot and orig_pos:
+    if orig_rot and orig_pos and not (
+            allow_live and _frame_transform_moved(obj, orig_rot, orig_pos)):
+        # Untouched imported object (or skinned path) — replay the exact
+        # import-time bytes so a pure round-trip stays bit-perfect.
         frame.rotation = tuple(orig_rot)
         frame.position = tuple(orig_pos)
         frame.flags = orig_flags
     else:
-        # Fallback: compute from Blender transform
-        loc = obj.matrix_local.to_translation()
-        frame.position = (loc.x, loc.y, loc.z)
-
-        rot = obj.matrix_local.to_3x3().transposed()
-        frame.rotation = (
-            rot[0][0], rot[0][1], rot[0][2],
-            rot[1][0], rot[1][1], rot[1][2],
-            rot[2][0], rot[2][1], rot[2][2],
-        )
+        # New object, OR an imported one the user has since moved/rotated:
+        # the cached snapshot is stale, so write the LIVE transform. This
+        # is what carries the part's global placement into frame.position
+        # (mesh verts stay in local/origin space) — without it, moved
+        # parts re-import stacked at the world origin.
+        frame.rotation, frame.position = _live_frame_transform(obj)
+        frame.flags = orig_flags
 
     # User Data PLG (from object custom property)
     frame.user_data = _load_user_data(obj)
@@ -1346,7 +1437,7 @@ def _build_dff_clump_inner(objects, version: int, col_model_name: str) -> DffClu
 
         for obj, parent_obj in ordered:
             parent_idx = obj_to_frame_idx[parent_obj] if parent_obj is not None else -1
-            frame = _build_frame(obj, parent_index=parent_idx)
+            frame = _build_frame(obj, parent_index=parent_idx, allow_live=True)
             my_idx = len(clump.frames)
             clump.frames.append(frame)
             obj_to_frame_idx[obj] = my_idx
@@ -1534,8 +1625,15 @@ def draw_dff_flags_block(layout, context):
     row = layout.row(align=True)
     row.prop(scn.inu_settings, "gtatools_export_pipeline", expand=True)
 
+    # В контексте файлового браузера context.active_object бывает None —
+    # берём активный объект из view_layer (работает во всех областях),
+    # иначе блок DFF-флагов «пропадал» при открытом диалоге экспорта.
     ao = context.active_object
+    if ao is None:
+        vl = getattr(context, 'view_layer', None)
+        ao = getattr(getattr(vl, 'objects', None), 'active', None)
     if ao is None or ao.type != 'MESH' or not hasattr(ao, 'inu'):
+        layout.label(text=T("Выдели меш-объект для DFF-флагов"))
         return
     inu = ao.inu
     from ..core import game_versions as _gv
@@ -1566,7 +1664,9 @@ def draw_dff_flags_block(layout, context):
     _flag("set_material_alpha", "Set Material Alpha")
     if _is_sa:
         _flag("light_beam_asi", "Light Beam (SA_Light.asi)")
-    _flag("export_binsplit", "Bin Mesh PLG")
+    # 'export_binsplit' (Bin Mesh PLG) намеренно скрыт из UI — см. коммент
+    # у его BoolProperty в __init__.py. Дефолт True; отключение делало
+    # модель невидимой в игре.
     _flag("uv_map1", "UV1")
     _flag("uv_map2", "UV2")
     _flag("day_cols", "Day")
@@ -1672,6 +1772,3 @@ class GTATOOLS_OT_export_dff(bpy.types.Operator, ExportHelper):
             return {'CANCELLED'}
 
 
-classes = (
-    GTATOOLS_OT_export_dff,
-)

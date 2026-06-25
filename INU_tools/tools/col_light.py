@@ -313,13 +313,21 @@ class GTATOOLS_OT_bake_col_light(bpy.types.Operator):
             result.append(max(c[0], c[1], c[2]))
         return result
 
-    def _poly_avg(self, mesh, loop_brightness):
-        """Calculate per-polygon average brightness."""
+    def _poly_avg(self, mesh, brightness, domain='CORNER'):
+        """Calculate per-polygon average brightness.
+
+        ``brightness`` is indexed by loop for CORNER-domain attributes and
+        by vertex for POINT-domain attributes, so resolve the right index
+        per loop depending on ``domain``.
+        """
+        per_vertex = (domain == 'POINT')
+        loops = mesh.loops
         result = {}
         for poly in mesh.polygons:
             avg = 0.0
             for loop_idx in poly.loop_indices:
-                avg += loop_brightness[loop_idx]
+                idx = loops[loop_idx].vertex_index if per_vertex else loop_idx
+                avg += brightness[idx]
             avg /= len(poly.loop_indices)
             result[poly.index] = avg
         return result
@@ -373,8 +381,8 @@ class GTATOOLS_OT_bake_col_light(bpy.types.Operator):
         day_brightness = self._read_brightness(day_attr)
         night_brightness = self._read_brightness(night_attr)
 
-        day_avg = self._poly_avg(mesh, day_brightness)
-        night_avg = self._poly_avg(mesh, night_brightness)
+        day_avg = self._poly_avg(mesh, day_brightness, compat.vcol_domain(day_attr))
+        night_avg = self._poly_avg(mesh, night_brightness, compat.vcol_domain(night_attr))
 
         # Calculate per-polygon levels
         poly_levels = {}

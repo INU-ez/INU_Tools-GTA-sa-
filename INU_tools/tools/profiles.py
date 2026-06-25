@@ -817,10 +817,3 @@ class GTATOOLS_OT_profile_edit(bpy.types.Operator):
         return {'FINISHED'}
 
 
-classes = (
-    GTATOOLS_OT_profile_save,
-    GTATOOLS_OT_profile_delete,
-    GTATOOLS_OT_profile_pick_panel,
-    GTATOOLS_OT_profile_toggle_panel,
-    GTATOOLS_OT_profile_edit,
-)

@@ -138,6 +138,67 @@ class GTATOOLS_OT_create_2dfx(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class GTATOOLS_OT_load_fx_textures(bpy.types.Operator):
+    """Загрузить текстуры эффектов (короны/тени/вода) из указанного .txd.
+
+    Текстуры эффектов GTA SA в аддон НЕ входят (это ассеты игры) — укажи путь
+    к .txd (например particle.txd) в поле выше, либо задай Game Root, и они
+    загрузятся из твоей игры для превью 2DFX."""
+    bl_idname = "gtatools.load_fx_textures"
+    bl_label = "INU: Load FX Textures"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        from .fx_preview import _ensure_fx_txd_loaded, _ensure_particle_txd_loaded
+        n = _ensure_fx_txd_loaded() + _ensure_particle_txd_loaded()
+        if n > 0:
+            self.report({'INFO'},
+                        f"{n} {T('текстур эффектов загружено')}")
+        else:
+            self.report({'WARNING'},
+                        T("Текстуры эффектов не найдены — укажи particle.txd "
+                          "или путь к игре (Game Root)"))
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_pick_fx_txd(bpy.types.Operator):
+    """Выбрать .txd с текстурами эффектов (particle.txd и т.п.).
+
+    Открывает файловый браузер (фильтр *.txd) и записывает путь в
+    scene.inu_settings.gtatools_fx_txd_path. Сама загрузка текстур —
+    отдельной кнопкой «Загрузить текстуры эффектов»
+    (gtatools.load_fx_textures). Кнопка-папка живёт в заголовке панели
+    2DFX (GTATOOLS_PT_2dfx_panel.draw_header_preset)."""
+    bl_idname = "gtatools.pick_fx_txd"
+    bl_label = "INU: Pick FX TXD"
+    bl_options = {'REGISTER'}
+
+    filepath: StringProperty(subtype='FILE_PATH')
+    filter_glob: StringProperty(default="*.txd", options={'HIDDEN'})
+
+    def invoke(self, context, event):
+        # Стартуем браузер из уже указанного пути, если он есть.
+        cur = getattr(context.scene.inu_settings, 'gtatools_fx_txd_path', '') or ''
+        if cur:
+            self.filepath = bpy.path.abspath(cur)
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        if not self.filepath:
+            return {'CANCELLED'}
+        # Присваивание дёргает update= свойства (_save_paths_proxy) само.
+        context.scene.inu_settings.gtatools_fx_txd_path = self.filepath
+        # Отдельной кнопки «Загрузить текстуры эффектов» больше нет — грузим
+        # сразу при выборе .txd: явный TXD + (если задан Game Root) частицы.
+        from .fx_preview import _ensure_fx_txd_loaded, _ensure_particle_txd_loaded
+        n = _ensure_fx_txd_loaded() + _ensure_particle_txd_loaded()
+        self.report({'INFO'},
+                    f"{os.path.basename(self.filepath)}: "
+                    f"{n} {T('текстур эффектов загружено')}")
+        return {'FINISHED'}
+
+
 class GTATOOLS_OT_refresh_2dfx_preview(bpy.types.Operator):
     """Обновить визуальный превью (свет + корона + тень) для выбранного 2DFX"""
     bl_idname = "gtatools.refresh_2dfx_preview"
@@ -182,56 +243,6 @@ class GTATOOLS_OT_remove_2dfx_preview(bpy.types.Operator):
         remove_preview_children(context.active_object)
         self.report({'INFO'}, "2DFX preview removed")
         return {'FINISHED'}
-
-
-def _particle_effect_items(self, context):
-    """Enum items callback — lazily loads effects.fxp from the game root."""
-    from ..core import fxp as _fxp
-    game_root = bpy.path.abspath(getattr(context.scene.inu_settings, 'gtatools_game_root', '') or '')
-    if not game_root or not os.path.isdir(game_root):
-        return [('', T("<Game Root не задан>"), "")]
-    path = os.path.join(game_root, 'models', 'effects.fxp')
-    if not os.path.isfile(path):
-        return [('', T("<effects.fxp не найден>"), "")]
-    try:
-        fxf = _fxp.load_cached(path)
-    except Exception as ex:
-        return [('', f"<ошибка: {ex}>", "")]
-    return [(s.name, s.name, "") for s in fxf.systems]
-
-
-class GTATOOLS_OT_select_particle_effect(bpy.types.Operator):
-    """Выбрать имя эффекта из effects.fxp"""
-    bl_idname = "gtatools.select_particle_effect"
-    bl_label = "INU: Select Particle Effect"
-    bl_property = "effect_name"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    effect_name: EnumProperty(
-        name="Effect",
-        items=_particle_effect_items,
-    )
-
-    @classmethod
-    def poll(cls, context):
-        obj = context.active_object
-        return (obj and obj.type == 'EMPTY'
-                and getattr(obj, 'inu', None)
-                and obj.inu.type == '2DFX'
-                and obj.inu.effect_2dfx == 'PARTICLE')
-
-    def execute(self, context):
-        obj = context.active_object
-        if obj is not None and self.effect_name:
-            obj['2dfx_effect_name'] = self.effect_name
-            from .fx_preview import update_particle_preview
-            update_particle_preview(obj)
-            self.report({'INFO'}, f"2DFX effect: {self.effect_name}")
-        return {'FINISHED'}
-
-    def invoke(self, context, event):
-        context.window_manager.invoke_search_popup(self)
-        return {'RUNNING_MODAL'}
 
 
 def _get_current_emitter(obj):
@@ -321,7 +332,7 @@ def _create_blank_particle_system(name: str):
     system = FXSystem()
     system.version = "109"
     system.header = [
-        ('FILENAME', f'X:\\INU\\effects\\particles/{name}.fxs'),
+        ('FILENAME', f'effects/particles/{name}.fxs'),
         ('NAME', name),
         ('LENGTH', '1.000'),
         ('LOOPINTERVALMIN', '0.000'),
@@ -1500,9 +1511,9 @@ _2DFX_BIT_TOOLTIPS = {
     ('2dfx_flags1', 2): "Fog Type 2 — бит 2 типа тумана (см. Fog Type 1)",
     ('2dfx_flags1', 3): "Without Corona — выключает корону, остаётся только point light. Полезно для невидимых источников",
     ('2dfx_flags1', 4): "Corona Reflects — корона отражается от кузова машин (как фары)",
-    ('2dfx_flags1', 5): "Corona Flare — добавляет линзовый блик (lens flare)",
-    ('2dfx_flags1', 6): "AT_DAY — источник виден днём (06:00–20:00)",
-    ('2dfx_flags1', 7): "AT_NIGHT — источник виден ночью (20:00–06:00)",
+    ('2dfx_flags1', 5): "AT_DAY — источник виден днём (06:00–20:00)",
+    ('2dfx_flags1', 6): "AT_NIGHT — источник виден ночью (20:00–06:00)",
+    ('2dfx_flags1', 7): "Blinking 1 — источник мигает (паттерн 1)",
     ('2dfx_flags2', 0): "Blink 1 — мерцает паттерном 1 (короткие вспышки)",
     ('2dfx_flags2', 1): "Blink 2 — мерцает паттерном 2 (равномерное)",
     ('2dfx_flags2', 2): "Blink 3 — мерцает паттерном 3 (длинные вспышки)",
@@ -1542,24 +1553,3 @@ class GTATOOLS_OT_toggle_2dfx_flag_bit(bpy.types.Operator):
         return {'FINISHED'}
 
 
-classes = (
-    GTATOOLS_OT_apply_2dfx_preset,
-    GTATOOLS_OT_create_2dfx,
-    GTATOOLS_OT_toggle_2dfx_flag_bit,
-    GTATOOLS_OT_refresh_2dfx_preview,
-    GTATOOLS_OT_remove_2dfx_preview,
-    GTATOOLS_OT_select_particle_effect,
-    GTATOOLS_OT_particle_effect_new,
-    GTATOOLS_OT_particle_effect_delete,
-    GTATOOLS_OT_particle_curve_select,
-    GTATOOLS_OT_particle_curve_key_add,
-    GTATOOLS_OT_particle_curve_key_select_row,
-    GTATOOLS_OT_particle_curve_key_remove,
-    GTATOOLS_OT_particle_curve_write,
-    GTATOOLS_OT_particle_emitter_switch,
-    GTATOOLS_OT_reload_effects_fxp,
-    GTATOOLS_OT_save_particle_effect,
-    GTATOOLS_OT_attach_2dfx,
-    GTATOOLS_OT_detach_2dfx,
-    GTATOOLS_OT_detach_all_2dfx,
-)

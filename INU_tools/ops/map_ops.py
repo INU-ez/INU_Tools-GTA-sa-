@@ -559,6 +559,12 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
         scene = context.scene
         game_root = bpy.path.abspath(scene.inu_settings.gtatools_game_root)
         skip_lod = getattr(scene.inu_settings, 'gtatools_img_skip_lod', False)
+        # Read «Без 2DFX» once here in a reliable context and pass it
+        # explicitly to the builder. Relying on import_dff_from_clump's
+        # fallback (bpy.context.scene read) is fragile: in the modal/bulk
+        # path that scene can read back as None → skip_2dfx silently
+        # becomes False and 2DFX load even with the toggle ON.
+        skip_2dfx = getattr(scene.inu_settings, 'gtatools_map_skip_2dfx', False)
 
         if not game_root or not os.path.isdir(game_root):
             self.report({'ERROR'}, T("Укажите корневую папку GTA SA"))
@@ -611,15 +617,42 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
 
         # Region filter
         region = getattr(scene.inu_settings, 'gtatools_map_region', 'ALL')
-        def _ipl_matches_region(path: str) -> bool:
-            if region == 'ALL':
-                return True
+
+        def _ipl_folder_matches_region(path: str) -> bool:
+            """Vanilla rule: IPL physically lives in ``maps/<region>/`` (or,
+            when the path has no MAPS folder, its basename starts with the
+            region name)."""
             parts = path.replace('\\', '/').upper().split('/')
             for i, part in enumerate(parts):
                 if part == 'MAPS' and i + 1 < len(parts):
                     return parts[i + 1] == region
             name = path.replace('\\', '/').rsplit('/', 1)[-1].upper()
             return name.startswith(region)
+
+        # First pass: basenames of every IPL whose FOLDER is the region.
+        # Streamed / child IPLs (``countn2_stream3``, ``countryw_stream8``)
+        # usually live OUTSIDE ``maps/<region>/`` but are named
+        # ``<base>_<suffix>`` after one of these base IPLs — so a plain
+        # folder filter silently drops whole streamed chunks of the
+        # district. We pull them back in by that name relationship.
+        region_stems = set()
+        if region != 'ALL':
+            for _p in info.ipl_paths:
+                if _ipl_folder_matches_region(_p):
+                    _bn = os.path.splitext(os.path.basename(_p))[0].lower()
+                    if _bn:
+                        region_stems.add(_bn)
+
+        def _ipl_matches_region(path: str) -> bool:
+            if region == 'ALL':
+                return True
+            if _ipl_folder_matches_region(path):
+                return True
+            # ``<base>_<suffix>`` child of a base region IPL (e.g.
+            # ``countn2`` → ``countn2_stream3``). The ``_`` guard keeps
+            # ``countn`` from greedily matching ``countnXYZ`` unrelated.
+            bn = os.path.splitext(os.path.basename(path))[0].lower()
+            return any(bn.startswith(stem + '_') for stem in region_stems)
 
         # Read text IPL files.
         #
@@ -648,13 +681,35 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
         ti_use_selection = len(ti_entries) > 0
 
         instances = []
+        # Diagnostic: report which IPLs are dropped and why, so a district
+        # that «didn't fully load» can be traced to the region filter or the
+        # Scan selection rather than guessed at.
+        _ipl_total = len(info.ipl_paths)
+        _ipl_loaded = _ipl_skip_region = _ipl_skip_sel = 0
+        print(f"[MAP] region filter = {region!r}; text-IPL selection "
+              f"{'ON' if ti_use_selection else 'off'}; {_ipl_total} IPL paths")
         for p in info.ipl_paths:
-            if not (os.path.isfile(p) and _ipl_matches_region(p)):
+            if not os.path.isfile(p):
+                continue
+            if not _ipl_matches_region(p):
+                _ipl_skip_region += 1
+                # Show WHAT got dropped and from where — so a missing
+                # district chunk can be traced to the region filter's
+                # folder rule vs the mod's actual IPL layout.
+                try:
+                    _rel = os.path.relpath(p, game_root)
+                except Exception:
+                    _rel = p
+                print(f"[MAP] IPL dropped by region {region!r}: {_rel}")
                 continue
             if ti_use_selection:
                 base_lc = os.path.basename(p).lower()
                 if base_lc not in ti_enabled_loose:
+                    _ipl_skip_sel += 1
+                    print(f"[MAP] IPL dropped (not in Scan selection): "
+                          f"{os.path.basename(p)}")
                     continue
+            _ipl_loaded += 1
             if True:
                 try:
                     ipl = read_ipl(p)
@@ -673,6 +728,11 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
                         import_ipl_sections(ipl)
                 except Exception:
                     pass
+
+        print(f"[MAP] text IPL: loaded={_ipl_loaded}, "
+              f"dropped by region={_ipl_skip_region}, "
+              f"dropped by selection={_ipl_skip_sel} "
+              f"→ {len(instances)} instances")
 
         # Binary IPLs still live inside IMG archives — one-time scan
         # at invoke (NOT in the hot loop) to pull out their instance
@@ -807,6 +867,7 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
         self._instances = instances
         self._ide_models = ide_models
         self._skip_lod = skip_lod
+        self._skip_2dfx = skip_2dfx
         self._group_by_ipl = group_by_ipl
         self._ipl_collections = ipl_collections
         self._dff_far = dff_far
@@ -816,6 +877,11 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
         self._map_col_collection = map_col_collection
         self._imported = 0
         self._skipped = 0
+        # Skip-reason breakdown (LOD skips are expected and NOT counted
+        # here — these three explain «district didn't fully load»):
+        self._skip_noname = 0   # model_id has no name in the IDE
+        self._skip_nocache = 0  # DFF not found in the loaded IMG/cache
+        self._skip_error = 0    # DFF parse raised
         self._progress = 0
         self._total = len(instances)
         self._scene = scene
@@ -929,6 +995,7 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
         instances = self._instances
         ide_models = self._ide_models
         skip_lod = self._skip_lod
+        skip_2dfx = self._skip_2dfx
         scene = self._scene
         prof = self._profiler
         load_col = bool(getattr(scene.inu_settings, 'gtatools_map_load_col', True))
@@ -961,6 +1028,9 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
         # (texture_name, rgba). Same texture used by 500 different
         # buildings ⇒ one Blender material, not 500.
         material_cache: dict = {}
+        # Materials whose texture-alpha link was already evaluated (so we
+        # run the per-pixel alpha check once per material, not per instance).
+        alpha_linked: set = set()
 
         # ── Parallel DFF parse pipeline ────────────────────────────
         # numpy's zero-copy frombuffer + zlib decompress inside
@@ -1059,6 +1129,7 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
                 model_name = inst.model_name
                 if not model_name:
                     self._skipped += 1
+                    self._skip_noname += 1
                     _need_yield = (idx % 32 == 0)
                 else:
                     is_lod = is_lod_name(model_name)
@@ -1088,13 +1159,19 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
                                 # (happens when imported_models check
                                 # above misses due to exception path).
                                 self._skipped += 1
+                                self._skip_nocache += 1
+                                print(f"[MAP] no DFF in cache: id={inst.model_id} "
+                                      f"name={model_name!r}")
                             else:
                                 clump = None
                                 try:
                                     with prof.stage('parse wait', note=model_name):
                                         clump = fut.result()
-                                except Exception:
+                                except Exception as _ex:
                                     self._skipped += 1
+                                    self._skip_error += 1
+                                    print(f"[MAP] DFF parse failed: id={inst.model_id} "
+                                          f"name={model_name!r}: {_ex}")
 
                                 if clump is not None:
                                     try:
@@ -1106,17 +1183,41 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
                                         with prof.stage('build objects', note=model_name):
                                             new_objs = import_dff_from_clump(
                                                 clump, model_name,
+                                                skip_2dfx=skip_2dfx,
                                                 bulk_mode=True,
                                                 target_collection=target,
                                                 material_cache=material_cache,
                                                 profiler=prof,
+                                                fix_winding=True,
                                             )
 
                                         if load_txd and tex_cache_exists:
                                             with prof.stage('TXD cache load'):
                                                 from .. import _load_textures_from_cache
                                                 _load_textures_from_cache(tex_cache, new_objs)
+                                            # Wire texture-alpha → BSDF alpha
+                                            # for foliage/fences/windows
+                                            # (textures with a real alpha
+                                            # channel). Once per material.
+                                            with prof.stage('alpha link'):
+                                                from .texture_ops import link_material_alpha_if_textured
+                                                for _o in new_objs:
+                                                    if _o.type != 'MESH':
+                                                        continue
+                                                    for _sl in _o.material_slots:
+                                                        _m = _sl.material
+                                                        if _m is None or _m.name in alpha_linked:
+                                                            continue
+                                                        alpha_linked.add(_m.name)
+                                                        try:
+                                                            link_material_alpha_if_textured(_m)
+                                                        except Exception:
+                                                            pass
 
+                                        # LOD-именование (<base>_LOD вместо
+                                        # LOD…_DFF) теперь централизовано в
+                                        # import_dff_from_clump → _fallback_name,
+                                        # так что отдельный relabel тут не нужен.
                                         imported_models[model_name] = new_objs
                                     except Exception:
                                         new_objs = None
@@ -1242,6 +1343,17 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
                 msg = f"{T('Импортировано:')} {self._imported}"
                 if self._skipped:
                     msg += f", {T('пропущено:')} {self._skipped}"
+                    # Spell out the non-LOD skip reasons — these explain a
+                    # district that «didn't fully load».
+                    reasons = []
+                    if self._skip_noname:
+                        reasons.append(f"{self._skip_noname} {T('без имени в IDE')}")
+                    if self._skip_nocache:
+                        reasons.append(f"{self._skip_nocache} {T('нет DFF в IMG')}")
+                    if self._skip_error:
+                        reasons.append(f"{self._skip_error} {T('ошибка DFF')}")
+                    if reasons:
+                        msg += " (" + ", ".join(reasons) + ")"
                 self.report({'INFO'}, msg)
                 return {'FINISHED'}
 
@@ -1285,12 +1397,3 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
         context.view_layer.update()
 
 
-classes = (
-    GTATOOLS_OT_discover_game,
-    GTATOOLS_OT_binary_ipl_toggle_all,
-    GTATOOLS_OT_text_ipl_toggle_all,
-    GTATOOLS_OT_scan_binary_ipls,
-    GTATOOLS_OT_toggle_links,
-    GTATOOLS_OT_toggle_bbox,
-    GTATOOLS_OT_import_map,
-)

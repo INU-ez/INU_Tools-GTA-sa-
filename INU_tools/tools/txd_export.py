@@ -106,6 +106,33 @@ def write_rw_section_header(data, section_type, size):
     data.extend(struct.pack('<III', section_type, size, _active_lib_id))
 
 
+def _linear_to_srgb(c):
+    """scene-linear → sRGB (C1). Вход/выход float-массив в [0,1].
+
+    ``image.pixels`` отдаёт значения в scene-linear для sRGB-картинок, а
+    TXD (и движок) хранит ОТОБРАЖАЕМЫЕ sRGB-байты. Без этой конвертации
+    `linear*255` пишется как sRGB → текстура выходит заметно ТЕМНЕЕ. Альфу
+    конвертировать нельзя — она не цвет."""
+    c = np.clip(c, 0.0, 1.0)
+    return np.where(c <= 0.0031308, c * 12.92,
+                    1.055 * np.power(c, 1.0 / 2.4) - 0.055)
+
+
+def _img_needs_srgb_encode(image):
+    """True, если ``image.pixels`` лежат в scene-LINEAR и их нужно
+    перекодировать в sRGB для отображаемых байтов TXD.
+
+    Так бывает у FLOAT-картинок, помеченных как цвет (sRGB): 16/32-битные
+    PNG, EXR, запечённые результаты — Blender отдаёт их pixels уже
+    линеаризованными, и запись `linear*255` делает текстуру ТЁМНОЙ. Обычные
+    8-битные картинки отдают pixels уже в sRGB — их пишем как есть (иначе
+    наоборот пересветлим). Non-Color/данные не трогаем."""
+    if not getattr(image, 'is_float', False):
+        return False
+    cs = getattr(getattr(image, 'colorspace_settings', None), 'name', 'sRGB')
+    return cs == 'sRGB'
+
+
 def is_texture_connected_to_alpha(tex_node):
     # Alpha выход - индекс 1 у TEX_IMAGE
     if len(tex_node.outputs) < 2:
@@ -178,7 +205,11 @@ def collect_textures(selected_only=False):
                     continue
 
                 img = node.image
-                name = os.path.splitext(img.name)[0]
+                # Имя текстуры в TXD — из НОДЫ (label), иначе из картинки.
+                # Должно совпадать с тем, что пишет DFF-экспорт (_read_texture),
+                # иначе игра не свяжет текстуру с моделью.
+                name = os.path.splitext((node.label or "").strip()
+                                        or img.name)[0]
                 alpha_connected = is_texture_connected_to_alpha(node)
                 has_transparent = check_image_has_transparent_pixels(img)
                 if has_transparent:
@@ -227,6 +258,37 @@ def collect_textures(selected_only=False):
     return textures, list(transparent_textures)
 
 
+def _alpha_weighted_mean(blocks, axes):
+    """Average an RGBA block over ``axes``, weighting RGB by alpha.
+
+    A plain box average treats a fully-transparent texel's RGB the same
+    as an opaque one. Transparent texels usually carry black/garbage RGB
+    (nothing was drawn there), so that colour leaks into the smaller mip
+    and shows up as dark halos around the edges of alpha cut-outs — the
+    classic "MagicTXD mipmaps look wrong" artifact.
+
+    Weighting RGB by alpha (Σ rgb·a / Σ a) drops fully-transparent texels
+    out of the COLOUR average entirely, so only actually-visible colour
+    survives into the mip. Alpha itself stays a plain average (coverage
+    must shrink smoothly). Where a whole block is transparent (Σ a = 0)
+    we fall back to the plain RGB mean so the colour stays defined — it's
+    invisible anyway.
+
+    For a fully-opaque texture (all alpha=255) this is identical to the
+    old plain average, so opaque textures are unaffected.
+    """
+    f = blocks.astype(np.float32)
+    rgb = f[..., :3]
+    a = f[..., 3:4]
+    wsum = a.sum(axis=axes)                 # (.., 1)
+    rgb_weighted = (rgb * a).sum(axis=axes)  # (.., 3)
+    rgb_plain = rgb.mean(axis=axes)          # (.., 3)
+    out_rgb = np.where(wsum > 0, rgb_weighted / np.maximum(wsum, 1.0), rgb_plain)
+    out_a = a.mean(axis=axes)               # (.., 1)
+    out = np.concatenate([out_rgb, out_a], axis=-1)
+    return np.clip(out + 0.5, 0, 255).astype(np.uint8)  # +0.5 → round, not truncate
+
+
 def downsample_image(pixels, width, height):
     new_w = max(1, width // 2)
     new_h = max(1, height // 2)
@@ -234,11 +296,13 @@ def downsample_image(pixels, width, height):
         return None, 0, 0
     if width > 1 and height > 1:
         reshaped = pixels[:new_h*2, :new_w*2].reshape(new_h, 2, new_w, 2, 4)
-        downsampled = reshaped.mean(axis=(1, 3)).astype(np.uint8)
+        downsampled = _alpha_weighted_mean(reshaped, axes=(1, 3))
     elif width > 1:
-        downsampled = pixels[:1, :new_w*2].reshape(1, new_w, 2, 4).mean(axis=2).astype(np.uint8)
+        reshaped = pixels[:1, :new_w*2].reshape(1, new_w, 2, 4)
+        downsampled = _alpha_weighted_mean(reshaped, axes=(2,))
     elif height > 1:
-        downsampled = pixels[:new_h*2, :1].reshape(new_h, 2, 1, 4).mean(axis=1).astype(np.uint8)
+        reshaped = pixels[:new_h*2, :1].reshape(new_h, 2, 1, 4)
+        downsampled = _alpha_weighted_mean(reshaped, axes=(1,))
     else:
         return None, 0, 0
     return downsampled, new_w, new_h
@@ -258,6 +322,96 @@ def pad_to_4x4(pixels, width, height):
     if width < pad_w and height < pad_h:
         padded[height:, width:] = pixels[-1, -1, :]
     return padded, pad_w, pad_h
+
+
+# Alpha-test reference the GTA engine compares against (0.5 of 255).
+_ALPHA_TEST_REF = 128
+
+
+def dilate_alpha_edges(pixels, max_iters=32, opaque_thresh=1):
+    """"Solidify alpha": overwrite the RGB of (semi-)transparent texels with
+    the colour of the nearest fully-opaque texels, iteratively. Alpha is
+    never touched — only hidden/edge RGB changes.
+
+    ``opaque_thresh`` decides what counts as a trustworthy colour source
+    and which texels get rewritten:
+
+    * ``1`` (gentle) — only fully-transparent texels (alpha==0) are filled.
+      Semi-transparent texels keep their own RGB. Use for alpha-BLEND
+      textures (glass/smoke) where partial-alpha colour is meaningful.
+
+    * ``~250`` (aggressive) — only fully-opaque texels seed the colour, and
+      EVERY sub-opaque texel (including the anti-aliased edge) is rewritten
+      with leaf colour. This is what kills the WHITE FRINGE on alpha-test
+      cut-outs: artists author foliage on a white matte, so the soft edge
+      texels carry white RGB that bilinear filtering smears into a halo.
+      Use for binary alpha-test textures.
+
+    ``max_iters`` caps how far the colour spreads (px). Returns a new array.
+    """
+    h, w, _ = pixels.shape
+    rgb = pixels[..., :3].astype(np.float32)
+    known = pixels[..., 3] >= opaque_thresh
+    if known.all() or not known.any():
+        return pixels  # nothing to seed from, or nothing to fill
+    for _ in range(max_iters):
+        acc = np.zeros((h, w, 3), dtype=np.float32)
+        cnt = np.zeros((h, w), dtype=np.float32)
+        for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            acc += np.roll(rgb, (dy, dx), axis=(0, 1)) * \
+                np.roll(known, (dy, dx), axis=(0, 1)).astype(np.float32)[..., None]
+            cnt += np.roll(known, (dy, dx), axis=(0, 1)).astype(np.float32)
+        fill = (~known) & (cnt > 0)
+        if not fill.any():
+            break
+        rgb[fill] = acc[fill] / cnt[fill][..., None]
+        known = known | fill
+    out = pixels.copy()
+    out[..., :3] = np.clip(rgb + 0.5, 0, 255).astype(np.uint8)
+    return out
+
+
+def _is_binary_alpha(alpha, lo=24, hi=232, mid_frac=0.05):
+    """True when alpha is essentially binary (alpha-test cut-out) rather
+    than a smooth gradient (alpha-blend). Coverage preservation must only
+    touch the former — rescaling a glass/smoke gradient's alpha is wrong."""
+    mid = np.count_nonzero((alpha > lo) & (alpha < hi))
+    return mid <= mid_frac * alpha.size
+
+
+def _alpha_coverage(alpha, ref=_ALPHA_TEST_REF):
+    """Fraction of texels that pass the alpha test at ``ref``."""
+    return float(np.count_nonzero(alpha >= ref)) / max(alpha.size, 1)
+
+
+def _scale_alpha_for_coverage(pixels, target_cov, ref=_ALPHA_TEST_REF):
+    """Rescale a mip's alpha so the same fraction of texels passes the
+    alpha test as in the base image (Castaño/NVIDIA technique).
+
+    Without this, alpha-test cut-outs (foliage, fences, lattice) lose
+    coverage as mips shrink and thin out / vanish at distance. We binary-
+    search a single alpha multiplier that restores the base coverage.
+    """
+    alpha = pixels[..., 3].astype(np.float32)
+    if target_cov <= 0.0 or target_cov >= 1.0:
+        return pixels  # nothing passing, or everything passing — no fix needed
+    n = max(alpha.size, 1)
+    lo, hi = 0.0, 8.0
+    best_scale, best_err = 1.0, 2.0
+    for _ in range(16):
+        mid = 0.5 * (lo + hi)
+        cov = float(np.count_nonzero(alpha * mid >= ref)) / n
+        err = abs(cov - target_cov)
+        if err < best_err:  # keep the multiplier whose coverage is CLOSEST,
+            best_err = err  # not just the first that overshoots — fewer mips
+            best_scale = mid  # come out thicker than the base.
+        if cov < target_cov:
+            lo = mid
+        else:
+            hi = mid
+    out = pixels.copy()
+    out[..., 3] = np.clip(alpha * best_scale + 0.5, 0, 255).astype(np.uint8)
+    return out
 
 
 def compress_miplevel_bc1_numpy(pixels, fast=False):
@@ -285,6 +439,9 @@ def create_texture_native(name, image, use_alpha):
     new_h = (height + 3) // 4 * 4
 
     pixels = np.array(image.pixels[:]).reshape(height, width, 4)
+    # scene-linear → sRGB (только RGB) для float-картинок, иначе тёмные.
+    if _img_needs_srgb_encode(image):
+        pixels[..., :3] = _linear_to_srgb(pixels[..., :3])
     pixels = (pixels * 255).astype(np.uint8)
     pixels = np.flipud(pixels)
 
@@ -297,6 +454,16 @@ def create_texture_native(name, image, use_alpha):
             padded[height:, :] = padded[height-1:height, :]
         pixels = padded
         width, height = new_w, new_h
+
+    # Same alpha-quality pre-pass as the live path (_build_tex_native_from_pixels).
+    preserve_cov = False
+    base_cov = 0.0
+    if use_alpha:
+        binary = _is_binary_alpha(pixels[..., 3])
+        pixels = dilate_alpha_edges(pixels, opaque_thresh=250 if binary else 1)
+        if binary:
+            preserve_cov = True
+            base_cov = _alpha_coverage(pixels[..., 3])
 
     mip_levels = []
     current_pixels = pixels
@@ -312,6 +479,8 @@ def create_texture_native(name, image, use_alpha):
         current_pixels, current_w, current_h = downsample_image(current_pixels, current_w, current_h)
         if current_pixels is None:
             break
+        if preserve_cov:
+            current_pixels = _scale_alpha_for_coverage(current_pixels, base_cov)
 
     if use_alpha:
         dxt_type = 3
@@ -366,6 +535,11 @@ def prepare_texture_data(name, image, use_alpha):
     width, height = image.size[0], image.size[1]
     flat = np.empty(width * height * 4, dtype=np.float32)
     image.pixels.foreach_get(flat)
+    # scene-linear → sRGB (только RGB) для float-картинок, иначе тёмные.
+    # Делаем здесь, на главном потоке, пока есть доступ к свойствам image.
+    if _img_needs_srgb_encode(image):
+        view = flat.reshape(-1, 4)
+        view[:, :3] = _linear_to_srgb(view[:, :3])
     return (name, flat, width, height, use_alpha)
 
 
@@ -399,6 +573,24 @@ def _build_tex_native_from_pixels(texture_data, cmp_dxt1, cmp_dxt3):
         pixels = padded
         width, height = new_w, new_h
 
+    # ── Alpha-quality pre-pass (only for textures that carry alpha) ──────
+    #   1. dilate: bleed real colour under the transparency so DXT blocks
+    #      and mip averaging never pull garbage colour into edges;
+    #   2. coverage: if the alpha is a binary cut-out (auto-detected),
+    #      remember the base coverage so each mip's alpha can be rescaled
+    #      to keep foliage/fences from thinning out at distance.
+    preserve_cov = False
+    base_cov = 0.0
+    if use_alpha:
+        binary = _is_binary_alpha(pixels[..., 3])
+        # Aggressive edge-bleed for alpha-test cut-outs (rewrites the white
+        # matte on the anti-aliased edge → no fringe); gentle bleed for
+        # alpha-blend so semi-transparent colour is preserved.
+        pixels = dilate_alpha_edges(pixels, opaque_thresh=250 if binary else 1)
+        if binary:
+            preserve_cov = True
+            base_cov = _alpha_coverage(pixels[..., 3])
+
     mip_levels = []
     current_pixels = pixels
     current_w, current_h = width, height
@@ -414,6 +606,11 @@ def _build_tex_native_from_pixels(texture_data, cmp_dxt1, cmp_dxt3):
         current_pixels, current_w, current_h = downsample_image(current_pixels, current_w, current_h)
         if current_pixels is None:
             break
+        # Restore alpha-test coverage on the freshly downsampled mip before
+        # it is compressed on the next iteration. (mip 0 above is the
+        # reference, so it is never rescaled.)
+        if preserve_cov:
+            current_pixels = _scale_alpha_for_coverage(current_pixels, base_cov)
         mip_index += 1
 
     if use_alpha:
@@ -830,3 +1027,118 @@ def export_txd(filepath, context, selected_only=False, backend=None, **_legacy):
     if skipped_textures:
         msg += f"\nПРОПУЩЕНО (размер не кратен 4): {', '.join(skipped_textures)}"
     return {'FINISHED'}, msg, transparent_list
+
+
+def _assemble_txd_file(filepath, lib_id, sections):
+    """Write a TXD from pre-built ``(name, full_0x15_section_bytes)`` tuples.
+
+    Each ``section`` already includes its 12-byte Texture-Native header, so
+    we just concatenate them, prepend the dictionary Struct (texture count)
+    and append the empty Extension — the same container layout
+    :func:`export_txd` emits, but from verbatim section bytes instead of
+    freshly-encoded ones. Used by :func:`update_txd` to merge."""
+    global _active_lib_id
+    saved = _active_lib_id
+    _active_lib_id = lib_id          # write_rw_section_header reads this
+    try:
+        tex_data = bytearray()
+        for _name, sect in sections:
+            tex_data.extend(sect)
+
+        struct_section = bytearray()
+        dict_struct = struct.pack('<HH', len(sections), 0)
+        write_rw_section_header(struct_section, RW_STRUCT, len(dict_struct))
+        struct_section.extend(dict_struct)
+
+        extension_data = bytearray()
+        write_rw_section_header(extension_data, RW_EXTENSION, 0)
+
+        with open(filepath, 'wb') as f:
+            content_size = (len(struct_section) + len(tex_data)
+                            + len(extension_data))
+            f.write(struct.pack('<III', RW_TEXDICTIONARY,
+                                content_size, lib_id))
+            f.write(struct_section)
+            f.write(tex_data)
+            f.write(extension_data)
+    finally:
+        _active_lib_id = saved
+
+
+def update_txd(filepath, context, selected_only=True, backend=None):
+    """Merge the scene's textures INTO an existing TXD.
+
+    Same-named textures are REPLACED with the freshly-encoded ones, brand-new
+    names are APPENDED, and every OTHER texture already in the file is kept
+    byte-for-byte. This is the "add/update textures without nuking the other
+    models' textures" path. If ``filepath`` doesn't exist yet, falls back to
+    a normal full export.
+
+    Returns ``({'FINISHED'|'CANCELLED'}, message, transparent_list)``."""
+    import os
+    from .. import T
+    from ..core.txd import split_txd_sections
+
+    if not os.path.isfile(filepath):
+        # Nothing to merge into — behave like a plain export.
+        return export_txd(filepath, context, selected_only, backend=backend)
+
+    # 1. Encode the scene's textures into a TEMP TXD (reuse the full
+    #    encoder so DXT/alpha handling is identical), then read it back.
+    tmp = filepath + ".inu_tmp"
+    try:
+        result, message, transparent = export_txd(
+            tmp, context, selected_only, backend=backend)
+        if result != {'FINISHED'}:
+            return result, message, transparent
+        with open(tmp, 'rb') as f:
+            new_bytes = f.read()
+    finally:
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except Exception:
+            pass
+
+    # 2. Split existing + new into named, verbatim Texture-Native sections.
+    with open(filepath, 'rb') as f:
+        base_bytes = f.read()
+    base_lib, base_sections = split_txd_sections(base_bytes)
+    _new_lib, new_sections = split_txd_sections(new_bytes)
+    if base_lib is None:
+        return {'CANCELLED'}, T("Не удалось прочитать существующий TXD"), []
+    if not new_sections:
+        return {'CANCELLED'}, T("Нет текстур для добавления"), []
+
+    # 3. Merge by name (case-insensitive — TXD names are case-folded by
+    #    the engine). Existing order preserved; matches replaced in place;
+    #    new names appended in scene order.
+    new_by_name = {}
+    for name, sect in new_sections:
+        new_by_name[name.lower()] = (name, sect)
+
+    merged, used = [], set()
+    n_replaced = 0
+    for name, sect in base_sections:
+        key = name.lower()
+        if key in new_by_name:
+            merged.append(new_by_name[key])
+            used.add(key)
+            n_replaced += 1
+        else:
+            merged.append((name, sect))
+
+    n_added = 0
+    for name, sect in new_sections:
+        key = name.lower()
+        if key not in used:
+            merged.append((name, sect))
+            used.add(key)
+            n_added += 1
+
+    # 4. Re-emit, keeping the EXISTING file's RW library version.
+    _assemble_txd_file(filepath, base_lib, merged)
+
+    msg = (f"{T('TXD обновлён')}: {n_replaced} {T('обновлено')}, "
+           f"{n_added} {T('добавлено')}, {len(merged)} {T('всего')}")
+    return {'FINISHED'}, msg, transparent

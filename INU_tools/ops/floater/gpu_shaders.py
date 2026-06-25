@@ -14,11 +14,92 @@
 
 import math
 import os
+from collections import OrderedDict
+
 import bpy
 import gpu
 from gpu_extras.batch import batch_for_shader
 
 from . import theme as TH
+
+
+# Cached widget GPU batches keyed by exact padded-quad geometry. Re-minting
+# a batch for every widget every frame (≈50 widgets × N floaters × 60 fps)
+# was the dominant residual cost: batch_for_shader uploads a vertex buffer
+# each call. Geometry is constant while a floater isn't being dragged, so
+# during viewport navigation every lookup hits and zero buffers are made.
+# LRU-capped so dragging (which mints a new key each frame) can't grow it
+# unbounded. Colours / radius / corner_mask are uniforms (set per draw),
+# NOT part of the batch — so one cached batch serves every colour variant.
+_WIDGET_BATCH_CACHE = OrderedDict()
+_WIDGET_BATCH_CACHE_MAX = 4096
+# Icons share the same idea — fixed 0..1 UV quad, so the batch depends only
+# on the destination rect (texture + tint are per-draw uniforms).
+_ICON_BATCH_CACHE = OrderedDict()
+_ICON_BATCH_CACHE_MAX = 2048
+# Tessellated rounded-rect fans (drop shadow layers + SDF fallback path).
+_FAN_BATCH_CACHE = OrderedDict()
+_FAN_BATCH_CACHE_MAX = 2048
+
+# Profiler counters — hits/misses per batch kind (a MISS = a freshly built
+# GPU buffer, the expensive case). Read + reset by the floater profiler.
+_BATCH_STATS = {'w_hit': 0, 'w_miss': 0, 'i_hit': 0, 'i_miss': 0,
+                'f_hit': 0, 'f_miss': 0}
+
+
+def _widget_batch(shader, verts, locals_):
+    key = (verts[0][0], verts[0][1], verts[2][0], verts[2][1])
+    b = _WIDGET_BATCH_CACHE.get(key)
+    if b is None:
+        _BATCH_STATS['w_miss'] += 1
+        b = batch_for_shader(shader, 'TRI_FAN',
+                             {"pos": verts, "local_pos": locals_})
+        _WIDGET_BATCH_CACHE[key] = b
+        if len(_WIDGET_BATCH_CACHE) > _WIDGET_BATCH_CACHE_MAX:
+            _WIDGET_BATCH_CACHE.popitem(last=False)
+    else:
+        _BATCH_STATS['w_hit'] += 1
+        _WIDGET_BATCH_CACHE.move_to_end(key)
+    return b
+
+
+def _icon_batch(shader, verts, uvs):
+    key = (verts[0][0], verts[0][1], verts[2][0], verts[2][1])
+    b = _ICON_BATCH_CACHE.get(key)
+    if b is None:
+        _BATCH_STATS['i_miss'] += 1
+        b = batch_for_shader(shader, 'TRI_FAN', {"pos": verts, "uv": uvs})
+        _ICON_BATCH_CACHE[key] = b
+        if len(_ICON_BATCH_CACHE) > _ICON_BATCH_CACHE_MAX:
+            _ICON_BATCH_CACHE.popitem(last=False)
+    else:
+        _BATCH_STATS['i_hit'] += 1
+        _ICON_BATCH_CACHE.move_to_end(key)
+    return b
+
+
+def _fan_batch(shader, x, y, w, h, radius):
+    key = (round(x), round(y), round(w), round(h), round(radius, 1))
+    b = _FAN_BATCH_CACHE.get(key)
+    if b is None:
+        _BATCH_STATS['f_miss'] += 1
+        b = batch_for_shader(shader, 'TRI_FAN',
+                             {"pos": _rounded_rect_fan(x, y, w, h, radius)})
+        _FAN_BATCH_CACHE[key] = b
+        if len(_FAN_BATCH_CACHE) > _FAN_BATCH_CACHE_MAX:
+            _FAN_BATCH_CACHE.popitem(last=False)
+    else:
+        _BATCH_STATS['f_hit'] += 1
+        _FAN_BATCH_CACHE.move_to_end(key)
+    return b
+
+
+def _clear_batch_cache():
+    """Drop cached batches (frees their GPU buffers) — call on unregister
+    or theme/scale change so stale geometry can't pile up."""
+    _WIDGET_BATCH_CACHE.clear()
+    _ICON_BATCH_CACHE.clear()
+    _FAN_BATCH_CACHE.clear()
 
 
 # ── GPU primitives ───────────────────────────────────────────────────
@@ -243,10 +324,7 @@ def _draw_widget(x, y, w, h, color_bottom, color_top, color_outline,
 
     try:
         gpu.state.blend_set('ALPHA')
-        batch = batch_for_shader(
-            shader, 'TRI_FAN',
-            {"pos": verts, "local_pos": locals_},
-        )
+        batch = _widget_batch(shader, verts, locals_)
         shader.bind()
         # create_from_info shaders don't auto-bind ModelViewProjectionMatrix;
         # we must compute & upload it from the current gpu.matrix stacks.
@@ -325,10 +403,7 @@ def _draw_rect_rounded(x, y, w, h, color, radius):
         return
     shader = gpu.shader.from_builtin('UNIFORM_COLOR')
     gpu.state.blend_set('ALPHA')
-    batch = batch_for_shader(
-        shader, 'TRI_FAN',
-        {"pos": _rounded_rect_fan(x, y, w, h, radius)}
-    )
+    batch = _fan_batch(shader, x, y, w, h, radius)
     shader.uniform_float("color", color)
     batch.draw(shader)
     gpu.state.blend_set('NONE')
@@ -642,6 +717,81 @@ def _get_icon_shader():
     return _icon_shader if _icon_shader else None
 
 
+# ── Offscreen blit (offscreen-window-cache) ─────────────────────────
+# Blits a window's offscreen texture back to the viewport with a tunable
+# `gamma` knob. The floater shaders pre-linearise (pow 2.2) because they
+# write to Blender's LINEAR viewport framebuffer; the offscreen round-trip
+# adds/removes an extra sRGB conversion, so this knob lets us cancel it.
+#   gamma < 1.0  → brighter   (1/2.2 ≈ 0.4545 undoes one sRGB decode)
+#   gamma = 1.0  → unchanged
+#   gamma > 1.0  → darker
+_blit_shader = None
+
+_BLIT_VERT_SRC = """
+void main() {
+    v_uv = uv;
+    gl_Position = ModelViewProjectionMatrix * vec4(pos, 0.0, 1.0);
+}
+"""
+
+_BLIT_FRAG_SRC = """
+void main() {
+    vec4 c = texture(image, v_uv);
+    if (gamma != 1.0)
+        c.rgb = pow(max(c.rgb, vec3(0.0)), vec3(gamma));
+    fragColor = c;
+}
+"""
+
+
+def _get_blit_shader():
+    global _blit_shader
+    if _blit_shader is None:
+        try:
+            info = gpu.types.GPUShaderCreateInfo()
+            info.push_constant('MAT4', 'ModelViewProjectionMatrix')
+            info.push_constant('FLOAT', 'gamma')
+            info.vertex_in(0, 'VEC2', 'pos')
+            info.vertex_in(1, 'VEC2', 'uv')
+            iface = gpu.types.GPUStageInterfaceInfo("inu_blit_iface")
+            iface.smooth('VEC2', 'v_uv')
+            info.vertex_out(iface)
+            info.sampler(0, 'FLOAT_2D', 'image')
+            info.fragment_out(0, 'VEC4', 'fragColor')
+            info.vertex_source(_BLIT_VERT_SRC)
+            info.fragment_source(_BLIT_FRAG_SRC)
+            _blit_shader = gpu.shader.create_from_info(info)
+            print("[INU Floater] blit shader compile: OK")
+        except Exception as e:
+            print(f"[INU Floater] blit shader compile failed: {e}")
+            _blit_shader = False
+    return _blit_shader if _blit_shader else None
+
+
+def _draw_offscreen_texture(texture, x, y, w, h, gamma=1.0, premult=True):
+    """Blit an offscreen window texture with a tunable gamma + blend mode.
+    Falls back to the builtin preset if the custom shader didn't compile."""
+    blend = 'ALPHA_PREMULT' if premult else 'ALPHA'
+    shader = _get_blit_shader()
+    if shader is None:
+        from gpu_extras.presets import draw_texture_2d
+        gpu.state.blend_set(blend)
+        draw_texture_2d(texture, (x, y), w, h)
+        gpu.state.blend_set('NONE')
+        return
+    verts = [(x, y), (x + w, y), (x + w, y + h), (x, y + h)]
+    uvs = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]
+    batch = batch_for_shader(shader, 'TRI_FAN', {"pos": verts, "uv": uvs})
+    gpu.state.blend_set(blend)
+    shader.bind()
+    mvp = gpu.matrix.get_projection_matrix() @ gpu.matrix.get_model_view_matrix()
+    shader.uniform_float("ModelViewProjectionMatrix", mvp)
+    shader.uniform_sampler("image", texture)
+    shader.uniform_float("gamma", float(gamma))
+    batch.draw(shader)
+    gpu.state.blend_set('NONE')
+
+
 def _load_icons():
     """Eager-load every PNG under INU_tools/data/icons/ into a
     GPUTexture cache keyed by the file's base name (without .png).
@@ -715,6 +865,8 @@ def _load_icons():
 def _free_icons():
     """Drop the icon texture cache on unregister."""
     _ICON_TEXTURES.clear()
+    # Cached widget batches hold GPU vertex buffers — release on unregister.
+    _clear_batch_cache()
 
 
 def _draw_icon(rect, name, tint=None):
@@ -753,8 +905,7 @@ def _draw_icon(rect, name, tint=None):
     ]
     try:
         gpu.state.blend_set('ALPHA')
-        batch = batch_for_shader(shader, 'TRI_FAN',
-                                 {"pos": verts, "uv": uvs})
+        batch = _icon_batch(shader, verts, uvs)
         shader.bind()
         mvp = (gpu.matrix.get_projection_matrix()
                @ gpu.matrix.get_model_view_matrix())

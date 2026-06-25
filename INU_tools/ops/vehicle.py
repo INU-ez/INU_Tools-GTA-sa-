@@ -43,26 +43,5 @@ class GTATOOLS_OT_sa_vehicle_preset(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class GTATOOLS_OT_apply_vehicle_pipeline(bpy.types.Operator):
-    """Выставить Vehicle pipeline (0x53F2009A) на выделенных MESH-объектах.
-    Нужен чтобы кузов получил env-map отражения в игре."""
-    bl_idname = "gtatools.apply_vehicle_pipeline"
-    bl_label = "INU: Set Vehicle Pipeline on selected"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    def execute(self, context):
-        count = 0
-        for obj in context.selected_objects:
-            if obj.type != 'MESH':
-                continue
-            if hasattr(obj, 'inu'):
-                obj.inu.pipeline = '0x53F2009A'
-                count += 1
-        self.report({'INFO'}, f"Vehicle pipeline set on {count} object(s)")
-        return {'FINISHED'}
 
 
-classes = (
-    GTATOOLS_OT_sa_vehicle_preset,
-    GTATOOLS_OT_apply_vehicle_pipeline,
-)

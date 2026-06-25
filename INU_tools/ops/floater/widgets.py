@@ -177,10 +177,15 @@ def _draw_value_dropdown(rect, label, hovered, active=False,
 
 
 def _draw_menu_button(rect, label, prefix_glyph, hovered,
-                      corner_mask=GS.CORNER_ALL, active=False):
+                      corner_mask=GS.CORNER_ALL, active=False,
+                      show_tria=True):
     """Button styled as a dropdown — prefix icon at left, label centred,
     ▼ dropdown indicator at right. Uses the same #292929 fill as the
     value-dropdown to read as one widget family.
+
+    ``show_tria=False`` hides the ▼ chevron — for direct-action buttons
+    (Import / Export now invoke the operator immediately, like the
+    N-panel, instead of opening an in-floater dropdown).
 
     `prefix_glyph` can be either an icon name (Blender SVG bake) or a
     plain unicode character; we try the icon cache first, then fall
@@ -225,12 +230,16 @@ def _draw_menu_button(rect, label, prefix_glyph, hovered,
 
     # Right dropdown chevron. Pinned to 16 px so the 32 px source PNG
     # downsamples at integer 2:1 — matches every other floater icon
-    # and keeps the chevron readable at native UI scale.
-    chev_sz = LR.icon_size()
-    chev_x = x + w - chev_sz - 6
-    GS._draw_menu_tria((chev_x, y + (h - chev_sz) // 2,
-                        chev_sz, chev_sz), TH._C_TEXT_SEL)
-    avail_r = chev_x - 4
+    # and keeps the chevron readable at native UI scale. Skipped for
+    # direct-action buttons (show_tria=False).
+    if show_tria:
+        chev_sz = LR.icon_size()
+        chev_x = x + w - chev_sz - 6
+        GS._draw_menu_tria((chev_x, y + (h - chev_sz) // 2,
+                            chev_sz, chev_sz), TH._C_TEXT_SEL)
+        avail_r = chev_x - 4
+    else:
+        avail_r = x + w - 6
 
     # Left-align label right after the prefix icon. Native menu/operator
     # rows with `text="..."` after an icon put the text immediately to

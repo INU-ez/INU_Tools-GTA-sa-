@@ -1095,6 +1095,7 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
         export_txd_flag = getattr(context.scene.inu_settings, 'gtatools_export_all_txd', True)
         col_library = bool(getattr(context.scene.inu_settings, 'gtatools_export_all_col_library', False))
         col_library_name = getattr(context.scene.inu_settings, 'gtatools_export_all_col_library_name', '') or 'collision'
+        empty_col_flag = bool(getattr(context.scene.inu_settings, 'gtatools_export_all_col_empty', False))
         backend = getattr(context.scene.inu_settings, 'gtatools_dxt_backend', 'numpy')
 
         wm = context.window_manager
@@ -1159,7 +1160,7 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
         for _base, _m in included_groups:
             if export_lod_flag and _m['LOD']: total_steps += 1
             if export_dff_flag and _m['DFF']: total_steps += 1
-            if write_col_per_group and _m['COL']: total_steps += 1
+            if write_col_per_group and (_m['COL'] or empty_col_flag): total_steps += 1
         if export_txd_flag:
             total_steps += len({_txd_for(b) for b, m in included_groups
                                 if m['DFF'] or m['LOD']})
@@ -1231,9 +1232,10 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
                             results.append(f"{base_name}.dff error: {e}")
                             _tick(f"{base_name}.dff")
 
-                    if write_col_per_group and models['COL']:
+                    if write_col_per_group and (models['COL'] or empty_col_flag):
                         try:
-                            col_model = build_col_model([models['COL']], version=col_version, model_name=base_name)
+                            col_src = [models['COL']] if models['COL'] else []
+                            col_model = build_col_model(col_src, version=col_version, model_name=base_name, empty=empty_col_flag)
                             encode_jobs.append((base_name + '.col', (lambda m=col_model: write_col([m])), f"{base_name}.col"))
                         except Exception as e:
                             results.append(f"{base_name}.col error: {e}")
@@ -1295,7 +1297,7 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
                         for obj in library_col_objects:
                             original_locations[obj.name] = obj.location.copy()
                             obj.location = (0, 0, 0)
-                        count = export_col_library(lib_path, library_col_objects, version=col_version)
+                        count = export_col_library(lib_path, library_col_objects, version=col_version, empty=empty_col_flag)
                         with open(lib_path, 'rb') as f:
                             status = writer.add(lib_filename, f.read())
                         results.append(f"{lib_filename} {status} ({count} records)")
@@ -1338,10 +1340,3 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
         return {'FINISHED'}
 
 
-classes = (
-    GTATOOLS_OT_refresh_img_list,
-    GTATOOLS_OT_extract_resources,
-    GTATOOLS_OT_import_from_img,
-    GTATOOLS_OT_remove_from_img,
-    GTATOOLS_OT_export_to_img,
-)

@@ -713,12 +713,3 @@ class GTATOOLS_OT_validate_fix_modulate_color(bpy.types.Operator):
         return {'FINISHED'}
 
 
-classes = (
-    INUValidateIssue,
-    GTATOOLS_OT_validate_run,
-    GTATOOLS_OT_validate_clear,
-    GTATOOLS_OT_validate_goto,
-    GTATOOLS_OT_validate_fix_quaternions,
-    GTATOOLS_OT_validate_fix_suffix,
-    GTATOOLS_OT_validate_fix_modulate_color,
-)

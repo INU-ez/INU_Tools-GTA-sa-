@@ -2,10 +2,10 @@ schema_version = "1.0.0"
 
 # Unique extension ID — reverse-DNS-style. Must not change between versions.
 id = "inu_tools_gta_sa"
-version = "2.0.4"
+version = "2.1.0"
 name = "INU Tools (GTA SA)"
 tagline = "Full-pipeline Blender addon for GTA San Andreas modding"
-maintainer = "INU <discord:1.n.u>"
+maintainer = "INU <https://github.com/INU-ez/INU_Tools-GTA-sa->"
 
 # add-on / theme / asset-pack — INU is an addon
 type = "add-on"
@@ -44,15 +44,17 @@ copyright = [
 [permissions]
 files = "Read and write GTA San Andreas model and map files"
 
-# Build options — files/folders to exclude from the packaged .zip.
-# __pycache__ is auto-generated, never ship it.
+# Build packaging — files excluded from the published .zip.
+# Keeps the extension clean (no caches / VCS / dev artefacts).
 [build]
 paths_exclude_pattern = [
   "__pycache__/",
   "*.pyc",
-  ".DS_Store",
-  "Thumbs.db",
-  "*.bak",
+  "*.pyo",
   ".git/",
-  ".gitignore",
+  ".github/",
+  ".pytest_cache/",
+  "*.blend1",
+  "*.orig",
+  "*.tmp",
 ]

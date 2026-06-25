@@ -137,10 +137,15 @@ class GTATOOLS_PT_library_panel(bpy.types.Panel):
 
         layout.separator()
 
+        # ── Enable gate (this feature spawns a background Blender process) ──
+        layout.prop(settings, "gtatools_enable_asset_builder",
+                    text=T("Разрешить сборку (фоновый процесс Blender)"))
+
         # ── Build button ──
         btn_row = layout.row(align=True)
         btn_row.scale_y = 1.5
-        ready = saved and game_root_set and cache_exists and output_set
+        ready = (saved and game_root_set and cache_exists and output_set
+                 and settings.gtatools_enable_asset_builder)
         if not ready:
             btn_row.enabled = False
         btn_row.operator(
@@ -164,7 +169,7 @@ class GTATOOLS_PT_library_panel(bpy.types.Panel):
                     pass
 
         regen_row = layout.row(align=True)
-        if not regen_available:
+        if not (regen_available and settings.gtatools_enable_asset_builder):
             regen_row.enabled = False
         regen_row.operator(
             "gtatools.regenerate_previews",

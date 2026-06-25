@@ -128,9 +128,3 @@ class GTATOOLS_OT_whats_new(bpy.types.Operator):
         return {'FINISHED'}
 
 
-classes = (
-    GTATOOLS_OT_open_docs,
-    GTATOOLS_OT_open_issues,
-    GTATOOLS_OT_open_release,
-    GTATOOLS_OT_whats_new,
-)

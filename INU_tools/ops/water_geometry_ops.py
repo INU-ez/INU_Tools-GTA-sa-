@@ -237,9 +237,3 @@ class GTATOOLS_OT_water_stitch(bpy.types.Operator):
         return {'FINISHED'}
 
 
-classes = (
-    GTATOOLS_OT_add_water,
-    GTATOOLS_OT_water_snap_grid,
-    GTATOOLS_OT_water_set_params,
-    GTATOOLS_OT_water_stitch,
-)

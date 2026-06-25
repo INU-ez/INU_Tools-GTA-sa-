@@ -8,7 +8,32 @@ import bpy
 from bpy.props import BoolProperty
 
 from .. import T
-from ..tools.model_utils import check_loose_geometry
+from ..tools.model_utils import check_loose_geometry, bmesh_from_object_safe
+
+
+def _flash_status(context, msg, level='INFO'):
+    """Surface a check result at the bottom of the screen — Blender's
+    status bar AND the floater status strip (shared by all windows).
+
+    Why not rely on ``self.report()``: launched from a floater button these
+    ops are dispatched through ``bpy.ops`` (Python), and Blender suppresses
+    the report *banner* for Python-invoked operators — the message reaches
+    only the Info log / console. ``set_floater_status`` surfaces it both in
+    the bottom status bar and in the floater's in-window strip. *level*
+    (``INFO`` / ``WARNING`` / ``ERROR``) colours the strip. Works the same
+    from the N-panel button.
+    """
+    try:
+        from .floater import base as _B
+        _B.set_floater_status(msg, level, context=context)
+    except Exception:
+        # Floater subsystem unavailable — degrade to the status bar only.
+        ws = getattr(context, 'workspace', None)
+        if ws is not None:
+            try:
+                ws.status_text_set(str(msg))
+            except Exception:
+                pass
 
 
 class GTATOOLS_OT_check_geometry(bpy.types.Operator):
@@ -27,19 +52,24 @@ class GTATOOLS_OT_check_geometry(bpy.types.Operator):
         obj = context.active_object
 
         if obj is None or obj.type != 'MESH':
-            self.report({'ERROR'}, T("Выберите меш объект!"))
+            msg = T("Выберите меш объект!")
+            self.report({'ERROR'}, msg)
+            _flash_status(context, msg, 'ERROR')
             return {'CANCELLED'}
 
         loose_verts, loose_edges, error = check_loose_geometry(obj)
 
         if error:
             self.report({'ERROR'}, T(error))
+            _flash_status(context, T(error), 'ERROR')
             return {'CANCELLED'}
 
         total_problems = len(loose_verts) + len(loose_edges)
 
         if total_problems == 0:
-            self.report({'INFO'}, f"✓ {obj.name}: {T('Геометрия в порядке!')}")
+            msg = f"✓ {obj.name}: {T('Геометрия в порядке!')}"
+            self.report({'INFO'}, msg)
+            _flash_status(context, msg)
             return {'FINISHED'}
 
         if self.select_loose and (loose_verts or loose_edges):
@@ -66,6 +96,7 @@ class GTATOOLS_OT_check_geometry(bpy.types.Operator):
             message += f"{len(loose_edges)} {T('висящих рёбер')}"
 
         self.report({'WARNING'}, message)
+        _flash_status(context, message, 'WARNING')
         return {'FINISHED'}
 
 
@@ -79,19 +110,25 @@ class GTATOOLS_OT_check_ngons(bpy.types.Operator):
         obj = context.active_object
 
         if obj is None or obj.type != 'MESH':
-            self.report({'ERROR'}, T("Выберите меш объект!"))
+            msg = T("Выберите меш объект!")
+            self.report({'ERROR'}, msg)
+            _flash_status(context, msg, 'ERROR')
             return {'CANCELLED'}
 
-        import bmesh
-        bm = bmesh.new()
-        bm.from_mesh(obj.data)
+        bm, err = bmesh_from_object_safe(obj)
+        if err:
+            self.report({'ERROR'}, T(err))
+            _flash_status(context, T(err), 'ERROR')
+            return {'CANCELLED'}
 
         ngon_indices = [f.index for f in bm.faces if len(f.verts) > 4]
 
         bm.free()
 
         if not ngon_indices:
-            self.report({'INFO'}, f"✓ {obj.name}: {T('N-gons не найдены!')}")
+            msg = f"✓ {obj.name}: {T('N-gons не найдены!')}"
+            self.report({'INFO'}, msg)
+            _flash_status(context, msg)
             return {'FINISHED'}
 
         bpy.ops.object.mode_set(mode='EDIT')
@@ -105,91 +142,9 @@ class GTATOOLS_OT_check_ngons(bpy.types.Operator):
         bpy.ops.object.mode_set(mode='EDIT')
         bpy.context.tool_settings.mesh_select_mode = (False, False, True)
 
-        self.report({'WARNING'}, f"⚠ {obj.name}: {len(ngon_indices)} {T('N-gons (5+ вершин)')}")
+        msg = f"⚠ {obj.name}: {len(ngon_indices)} {T('N-gons (5+ вершин)')}"
+        self.report({'WARNING'}, msg)
+        _flash_status(context, msg, 'WARNING')
         return {'FINISHED'}
 
 
-class GTATOOLS_OT_clean_geometry(bpy.types.Operator):
-    """Удалить висящие вершины и рёбра"""
-    bl_idname = "gtatools.clean_geometry"
-    bl_label = "INU: Clean Geometry"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    def execute(self, context):
-        obj = context.active_object
-
-        if obj is None or obj.type != 'MESH':
-            self.report({'ERROR'}, T("Выберите меш объект!"))
-            return {'CANCELLED'}
-
-        loose_verts, loose_edges, error = check_loose_geometry(obj)
-
-        if error:
-            self.report({'ERROR'}, T(error))
-            return {'CANCELLED'}
-
-        if not loose_verts and not loose_edges:
-            self.report({'INFO'}, T("Нечего удалять - геометрия чистая!"))
-            return {'FINISHED'}
-
-        import bmesh
-        bm = bmesh.new()
-        bm.from_mesh(obj.data)
-
-        verts_to_remove = [v for v in bm.verts if not v.link_faces]
-        for v in verts_to_remove:
-            bm.verts.remove(v)
-
-        bm.to_mesh(obj.data)
-        bm.free()
-        obj.data.update()
-
-        message = f"{T('Удалено:')} {len(loose_verts)} {T('вершин,')}{len(loose_edges)} {T('рёбер')}"
-        self.report({'INFO'}, message)
-        return {'FINISHED'}
-
-
-class GTATOOLS_OT_clear_raw_dff(bpy.types.Operator):
-    """Очистить сохранённые raw DFF данные для экспорта отредактированной геометрии"""
-    bl_idname = "gtatools.clear_raw_dff"
-    bl_label = "INU: Clear Raw DFF Data"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    def execute(self, context):
-        obj = context.active_object
-        if obj is None:
-            self.report({'ERROR'}, T("Нет активного объекта!"))
-            return {'CANCELLED'}
-
-        arm_obj = None
-        if obj.type == 'MESH':
-            for mod in obj.modifiers:
-                if mod.type == 'ARMATURE' and mod.object:
-                    arm_obj = mod.object
-                    break
-        elif obj.type == 'ARMATURE':
-            arm_obj = obj
-
-        if arm_obj is None:
-            self.report({'ERROR'}, T("Не найден Armature!"))
-            return {'CANCELLED'}
-
-        cleared = []
-        for key in ('dff_raw_geometry_list', 'dff_raw_atomics'):
-            if key in arm_obj:
-                del arm_obj[key]
-                cleared.append(key)
-
-        if cleared:
-            self.report({'INFO'}, f"Cleared: {', '.join(cleared)}")
-        else:
-            self.report({'INFO'}, "No raw DFF data to clear")
-        return {'FINISHED'}
-
-
-classes = (
-    GTATOOLS_OT_check_geometry,
-    GTATOOLS_OT_check_ngons,
-    GTATOOLS_OT_clean_geometry,
-    GTATOOLS_OT_clear_raw_dff,
-)

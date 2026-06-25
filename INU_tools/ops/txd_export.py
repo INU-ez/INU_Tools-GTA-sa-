@@ -37,6 +37,14 @@ class GTATOOLS_OT_export_txd(bpy.types.Operator, ExportHelper):
         description=T("Базовое имя для общего TXD (без .txd)"),
         default="",
     )
+    merge_existing: BoolProperty(
+        name=T("Дописать в существующий"),
+        description=T(
+            "Если выбранный TXD уже существует — добавить/обновить в нём "
+            "текстуры сцены, сохранив остальные текстуры файла (от других "
+            "моделей). Иначе файл перезаписывается целиком."),
+        default=False,
+    )
 
     def invoke(self, context, event):
         # Pre-fill shared name from scene preset so the user only types it once
@@ -47,6 +55,10 @@ class GTATOOLS_OT_export_txd(bpy.types.Operator, ExportHelper):
 
     def execute(self, context):
         import os
+        from ..tools.txd_export import clear_dxt_cache
+        # Сброс кэша DXT: он не ловит правки пикселей «на месте», иначе
+        # экспорт отдаёт старую (закэшированную) версию текстуры.
+        clear_dxt_cache()
         # Shared TXD implies selected-only collection
         sel_only = self.selected_only or self.shared_txd
         backend = getattr(context.scene.inu_settings, 'gtatools_dxt_backend', 'numpy')
@@ -72,7 +84,7 @@ class GTATOOLS_OT_export_txd(bpy.types.Operator, ExportHelper):
                 name += '.txd'
             target = os.path.join(os.path.dirname(target), name)
 
-        result, message, _ = export_txd(target, context, sel_only, backend=backend)
+        result, message, _ = self._write_txd(target, context, sel_only, backend)
         # Mobile target: we still write a PC-format TXD (PVRTC/ETC1
         # codecs aren't shipped). Surface a WARNING so the user knows
         # to run TxdGen for PC → mobile conversion.
@@ -82,6 +94,16 @@ class GTATOOLS_OT_export_txd(bpy.types.Operator, ExportHelper):
         else:
             self.report({'INFO'} if result == {'FINISHED'} else {'ERROR'}, message)
         return result
+
+    def _write_txd(self, target, context, sel_only, backend):
+        """Route to merge-into-existing vs full overwrite based on the
+        «Дописать в существующий» checkbox. Returns export_txd's
+        ``(result, message, transparent)`` tuple either way."""
+        import os
+        if self.merge_existing and os.path.isfile(target):
+            from ..tools.txd_export import update_txd
+            return update_txd(target, context, sel_only, backend=backend)
+        return export_txd(target, context, sel_only, backend=backend)
 
     def _export_per_mesh(self, context, selected_meshes, backend, is_mobile):
         """Write one .txd per selected mesh, named after the mesh with
@@ -116,8 +138,8 @@ class GTATOOLS_OT_export_txd(bpy.types.Operator, ExportHelper):
                 base = _basename_for(obj)
                 txd_path = os.path.join(out_dir, f"{base}.txd")
                 try:
-                    result, msg, _ = export_txd(
-                        txd_path, context, True, backend=backend)
+                    result, msg, _ = self._write_txd(
+                        txd_path, context, True, backend)
                     if result == {'FINISHED'}:
                         written.append(f"{base}.txd")
                     else:
@@ -161,44 +183,9 @@ class GTATOOLS_OT_export_txd(bpy.types.Operator, ExportHelper):
         col.prop(self, "shared_txd")
         if self.shared_txd:
             col.prop(self, "shared_name")
+        col.separator()
+        col.prop(self, "merge_existing")
 
 
-class GTATOOLS_OT_export_shared_txd(bpy.types.Operator, ExportHelper):
-    """Экспортировать один общий TXD для нескольких DFF моделей"""
-    bl_idname = "gtatools.export_shared_txd"
-    bl_label = "INU: Export Shared TXD"
-    bl_options = {'PRESET'}
-    filename_ext = ".txd"
-    filter_glob: StringProperty(default="*.txd", options={'HIDDEN'})
-
-    def invoke(self, context, event):
-        # Pre-fill filename from scene property
-        txd_name = getattr(context.scene.inu_settings, 'gtatools_shared_txd_name', '').strip()
-        if txd_name:
-            if not txd_name.lower().endswith('.txd'):
-                txd_name += '.txd'
-            self.filepath = txd_name
-        return super().invoke(context, event)
-
-    def execute(self, context):
-        selected_meshes = [o for o in context.selected_objects if o.type == 'MESH']
-        if not selected_meshes:
-            self.report({'ERROR'}, T("Выделите меш объекты"))
-            return {'CANCELLED'}
-
-        backend = getattr(context.scene.inu_settings, 'gtatools_dxt_backend', 'numpy')
-        # Force selected_only=True for shared TXD (collects from all selected DFFs)
-        result, message, transparent_list = export_txd(self.filepath, context, True, backend=backend)
-        if result == {'FINISHED'} and getattr(
-                context.scene.inu_settings, 'gtatools_platform', 'PC') == 'MOBILE':
-            self.report({'WARNING'},
-                        T("TXD сохранён в PC формате. Для mobile конвертируй через TxdGen (PVRTC/ETC1)."))
-        else:
-            self.report({'INFO'} if result == {'FINISHED'} else {'ERROR'}, message)
-        return result
 
 
-classes = (
-    GTATOOLS_OT_export_txd,
-    GTATOOLS_OT_export_shared_txd,
-)

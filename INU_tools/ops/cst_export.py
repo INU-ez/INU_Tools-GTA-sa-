@@ -12,21 +12,22 @@ from .col_export import (
 
 
 def export_cst(filepath: str, objects, version: int = 3,
-               model_name: str = "") -> ColModel:
+               model_name: str = "", empty: bool = False) -> ColModel:
     if not model_name:
         model_name = os.path.splitext(os.path.basename(filepath))[0]
     model = ColModel(version=version, model_name=model_name)
-    for obj in objects:
-        if obj.type == 'MESH':
-            if _is_shadow_mesh(obj):
-                _collect_shadow_mesh(obj, model)
-            else:
-                _collect_mesh(obj, model)
-        elif obj.type == 'EMPTY':
-            # Same sphere/box dispatcher as col_export — picks by
-            # `empty_display_type`. CST is the text-format twin of
-            # COL so it serialises the same `model.boxes` structure.
-            _collect_empty(obj, model)
+    if not empty:
+        for obj in objects:
+            if obj.type == 'MESH':
+                if _is_shadow_mesh(obj):
+                    _collect_shadow_mesh(obj, model)
+                else:
+                    _collect_mesh(obj, model)
+            elif obj.type == 'EMPTY':
+                # Same sphere/box dispatcher as col_export — picks by
+                # `empty_display_type`. CST is the text-format twin of
+                # COL so it serialises the same `model.boxes` structure.
+                _collect_empty(obj, model)
     model.bounds = _compute_bounds(model)
     write_cst(filepath, [model])
     return model
@@ -66,6 +67,3 @@ class GTATOOLS_OT_export_cst(bpy.types.Operator):
             return {'CANCELLED'}
 
 
-classes = (
-    GTATOOLS_OT_export_cst,
-)

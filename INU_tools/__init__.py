@@ -28,7 +28,7 @@
 bl_info = {
     "name": "INU_tools(gta_sa)",
     "author": "INU",
-    "version": (2, 0, 4),
+    "version": (2, 1, 0),
     # Минимум 2.83 LTS — поддержка через tools/compat.py:
     # • bake / preview / DFF I/O работают через legacy mesh.vertex_colors
     # • prelight preview shader использует ShaderNodeMixRGB на ≤3.3
@@ -399,8 +399,8 @@ from .tools.uv_tools import (
     GTATOOLS_OT_toggle_uv_editor, GTATOOLS_OT_toggle_uv_grid,
     GTATOOLS_OT_randomize_uv_grid, GTATOOLS_OT_snap_uv_to_grid,
     GTATOOLS_OT_set_uv_align, GTATOOLS_PT_uv_tools_panel,
-    GTATOOLS_OT_add_gtasa_model, VIEW3D_MT_gtasa_add_menu,
-    _gtasa_add_menu_draw,
+    GTATOOLS_OT_uv_anim_insert_key, GTATOOLS_OT_uv_anim_clear_keys,
+    GTATOOLS_PT_uv_anim_panel,
 )
 from .tools.bitmaps_manager import (
     GTATOOLS_OT_bitmaps_scan, GTATOOLS_OT_bitmaps_resolve,
@@ -412,7 +412,7 @@ from .tools.bitmaps_manager import (
 from .tools.vc_layers import (
     GTATOOLS_VCLayerItem,
     GTATOOLS_OT_vcl_add, GTATOOLS_OT_vcl_remove, GTATOOLS_OT_vcl_move,
-    GTATOOLS_OT_vcl_promote, GTATOOLS_OT_vcl_demote,
+    GTATOOLS_OT_vcl_promote,
     GTATOOLS_OT_vcl_set_active_attr,
     GTATOOLS_OT_vcl_show_composite, GTATOOLS_OT_vcl_refresh_composite,
     GTATOOLS_OT_vcl_apply_multi, GTATOOLS_OT_vcl_recolor_selected,
@@ -430,12 +430,11 @@ from .ui.panels import (  # noqa: E501
     GTATOOLS_PT_material_panel,
     GTATOOLS_UL_txd_export_plan,
     GTATOOLS_UL_img_files,
+    GTATOOLS_UL_ipl_sync_list,
     GTATOOLS_PT_main_panel,
     GTATOOLS_PT_ide_ipl_panel,
     GTATOOLS_PT_export_panel,
     GTATOOLS_PT_validate_scene,
-    GTATOOLS_MT_import_menu,
-    GTATOOLS_MT_export_menu,
     GTATOOLS_MT_create_2dfx,
     GTATOOLS_MT_radar_generate,
     GTATOOLS_MT_path_traffic,
@@ -459,6 +458,7 @@ from .ui.panels import (  # noqa: E501
     GTATOOLS_PT_prelight_panel,
     GTATOOLS_PT_bake_settings_subpanel,
     GTATOOLS_PT_scatter_color_subpanel,
+    GTATOOLS_PT_foliage_subpanel,
     GTATOOLS_PT_vc_postprocess_panel,
     GTATOOLS_PT_itera_panel,
     GTATOOLS_PT_prelight_col_panel,
@@ -478,7 +478,6 @@ from .ops.bake_ops import (
     GTATOOLS_OT_bake_layer_add,
     GTATOOLS_OT_bake_layer_remove,
     GTATOOLS_OT_bake_layer_move,
-    GTATOOLS_OT_bake_add_uv,
     GTATOOLS_OT_bake_preview,
     GTATOOLS_OT_bake_flatten,
     GTATOOLS_OT_bake_save_map,
@@ -487,6 +486,7 @@ from .scene_settings import (
     INUSceneSettings,
     INUValidateIssue,
     INUBakeLayer,
+    INULightCutRing,
     GTATOOLS_BinaryIplEntry,
     GTATOOLS_TextIplEntry,
     GTATOOLS_ImgFileEntry,
@@ -525,7 +525,6 @@ from .ops.frame_hierarchy import (
     GTATOOLS_OT_frame_mirror_lr,
 )
 from .ops.animobj_ops import (
-    GTATOOLS_OT_animobj_setup,
     GTATOOLS_OT_animobj_validate,
     GTATOOLS_OT_animobj_export,
     GTATOOLS_OT_animobj_parent_to_pivot,
@@ -561,8 +560,6 @@ from .tools.map_export import (
 )
 from .tools.gta_material_panel import (
     GTATOOLS_OT_material_preset,
-    GTATOOLS_OT_material_preset_save,
-    GTATOOLS_OT_material_preset_delete,
 )
 
 addon_keymaps = []
@@ -1422,14 +1419,20 @@ class INUObjectProps(bpy.types.PropertyGroup):
 
     corona_size_2dfx : FloatProperty(
         name="Corona Size",
-        description=T("Размер короны"),
+        description=T("Размер короны — сияющего спрайта, который всегда "
+                      "повёрнут к камере (видимый «огонёк» лампы). "
+                      "0 — корона не видна. Это и есть сам видимый свет"),
         default=1.0, min=0.0, soft_max=10.0, precision=3,
         update=_update_2dfx_preview,
     )
 
     shadow_size_2dfx : FloatProperty(
         name="Shadow Size",
-        description=T("Размер тени / интенсивность света"),
+        description=T("Размер светового пятна (тени) на земле под лампой "
+                      "и яркость заливающего света вокруг. "
+                      "ЧТОБЫ ОСТАВИТЬ ТОЛЬКО КОРОНУ без пятна и подсветки — "
+                      "поставь 0 (корона при этом сохранится, ей управляет "
+                      "«Размер короны»)"),
         default=8.0, min=0.0, soft_max=50.0, precision=3,
         update=_update_2dfx_preview,
     )
@@ -1464,40 +1467,75 @@ class INUObjectProps(bpy.types.PropertyGroup):
 
     corona_tex_2dfx : EnumProperty(
         items=[
-            ('coronastar', 'coronastar', ''),
-            ('coronamoon', 'coronamoon', ''),
-            ('coronaringb', 'coronaringb', ''),
-            ('coronareflect', 'coronareflect', ''),
-            ('coronaheadlightline', 'coronaheadlightline', ''),
-            ('headlight', 'headlight', ''),
-            ('headlight1', 'headlight1', ''),
-            ('lockon', 'lockon', ''),
-            ('lockonFire', 'lockonFire', ''),
-            ('lunar', 'lunar', ''),
-            ('roadsignfont', 'roadsignfont', ''),
-            ('particleskid', 'particleskid', ''),
-            ('finishFlag', 'finishFlag', ''),
-            ('handman', 'handman', ''),
-            ('seabd32', 'seabd32', ''),
-            ('shad_exp', 'shad_exp', ''),
-            ('shad_car', 'shad_car', ''),
-            ('shad_bike', 'shad_bike', ''),
-            ('shad_heli', 'shad_heli', ''),
-            ('shad_ped', 'shad_ped', ''),
-            ('shad_rcbaron', 'shad_rcbaron', ''),
-            ('lamp_shad_64', 'lamp_shad_64', ''),
-            ('bloodpool_64', 'bloodpool_64', ''),
-            ('target256', 'target256', ''),
-            ('white', 'white', ''),
-            ('cloud1', 'cloud1', ''),
-            ('cloudhigh', 'cloudhigh', ''),
-            ('cloudmasked', 'cloudmasked', ''),
-            ('carfx1', 'carfx1', ''),
-            ('wincrack_32', 'wincrack_32', ''),
-            ('waterclear256', 'waterclear256', ''),
-            ('waterwake', 'waterwake', ''),
-            ('txgrassbig0', 'txgrassbig0', ''),
-            ('txgrassbig1', 'txgrassbig1', ''),
+            ('coronastar', 'coronastar',
+             T("Классическая звезда-блик — стандартная корона уличных "
+               "фонарей. Универсальный выбор")),
+            ('coronamoon', 'coronamoon',
+             T("Мягкое круглое свечение без лучей (как луна)")),
+            ('coronaringb', 'coronaringb',
+             T("Светящееся кольцо")),
+            ('coronareflect', 'coronareflect',
+             T("Размытое гало/отражение — рассеянное мягкое свечение")),
+            ('coronaheadlightline', 'coronaheadlightline',
+             T("Горизонтальная линия-блик (как от фар)")),
+            ('headlight', 'headlight',
+             T("Корона фары")),
+            ('headlight1', 'headlight1',
+             T("Корона фары, вариант 2")),
+            ('lockon', 'lockon',
+             T("Метка захвата цели (прицел)")),
+            ('lockonFire', 'lockonFire',
+             T("Метка захвата цели, готов к выстрелу")),
+            ('lunar', 'lunar',
+             T("Лунное гало — крупное мягкое свечение")),
+            ('roadsignfont', 'roadsignfont',
+             T("Текстура шрифта дорожных знаков (спец. использование)")),
+            ('particleskid', 'particleskid',
+             T("След от заноса (спец. использование)")),
+            ('finishFlag', 'finishFlag',
+             T("Финишный флаг (спец. использование)")),
+            ('handman', 'handman',
+             T("Спрайт-указатель (спец. использование)")),
+            ('seabd32', 'seabd32',
+             T("Мелкая частица морской пены (спец. использование)")),
+            ('shad_exp', 'shad_exp',
+             T("Мягкое круглое пятно (обычно для тени, не для короны)")),
+            ('shad_car', 'shad_car',
+             T("Силуэт машины (обычно для тени)")),
+            ('shad_bike', 'shad_bike',
+             T("Силуэт мотоцикла (обычно для тени)")),
+            ('shad_heli', 'shad_heli',
+             T("Силуэт вертолёта (обычно для тени)")),
+            ('shad_ped', 'shad_ped',
+             T("Силуэт пешехода (обычно для тени)")),
+            ('shad_rcbaron', 'shad_rcbaron',
+             T("Силуэт RC-самолёта (обычно для тени)")),
+            ('lamp_shad_64', 'lamp_shad_64',
+             T("Световой круг фонаря (обычно для тени)")),
+            ('bloodpool_64', 'bloodpool_64',
+             T("Лужа крови (обычно как декаль)")),
+            ('target256', 'target256',
+             T("Большая метка-мишень")),
+            ('white', 'white',
+             T("Сплошной белый круг — чистое свечение без рисунка")),
+            ('cloud1', 'cloud1',
+             T("Текстура облака (спец. использование)")),
+            ('cloudhigh', 'cloudhigh',
+             T("Высотное облако (спец. использование)")),
+            ('cloudmasked', 'cloudmasked',
+             T("Облако с маской (спец. использование)")),
+            ('carfx1', 'carfx1',
+             T("Эффект машины (спец. использование)")),
+            ('wincrack_32', 'wincrack_32',
+             T("Трещина на стекле (спец. использование)")),
+            ('waterclear256', 'waterclear256',
+             T("Текстура чистой воды (спец. использование)")),
+            ('waterwake', 'waterwake',
+             T("След на воде (спец. использование)")),
+            ('txgrassbig0', 'txgrassbig0',
+             T("Текстура травы (спец. использование)")),
+            ('txgrassbig1', 'txgrassbig1',
+             T("Текстура травы, вариант 2 (спец. использование)")),
         ],
         name="Corona Texture",
         default='coronastar',
@@ -1506,19 +1544,34 @@ class INUObjectProps(bpy.types.PropertyGroup):
 
     shadow_tex_2dfx : EnumProperty(
         items=[
-            ('shad_exp', 'shad_exp', ''),
-            ('shad_car', 'shad_car', ''),
-            ('shad_bike', 'shad_bike', ''),
-            ('shad_heli', 'shad_heli', ''),
-            ('shad_ped', 'shad_ped', ''),
-            ('shad_rcbaron', 'shad_rcbaron', ''),
-            ('lamp_shad_64', 'lamp_shad_64', ''),
-            ('bloodpool_64', 'bloodpool_64', ''),
-            ('coronastar', 'coronastar', ''),
-            ('coronamoon', 'coronamoon', ''),
-            ('coronaringb', 'coronaringb', ''),
-            ('coronareflect', 'coronareflect', ''),
-            ('white', 'white', ''),
+            ('shad_exp', 'shad_exp',
+             T("Мягкое круглое пятно — универсальный «световой круг» под "
+               "лампой. Стандартный выбор для фонарей")),
+            ('shad_car', 'shad_car',
+             T("Тень-силуэт легковой машины")),
+            ('shad_bike', 'shad_bike',
+             T("Тень-силуэт мотоцикла")),
+            ('shad_heli', 'shad_heli',
+             T("Тень-силуэт вертолёта")),
+            ('shad_ped', 'shad_ped',
+             T("Тень-силуэт пешехода")),
+            ('shad_rcbaron', 'shad_rcbaron',
+             T("Тень-силуэт RC-самолёта")),
+            ('lamp_shad_64', 'lamp_shad_64',
+             T("Световой круг под уличным фонарём (64×64), чуть резче "
+               "shad_exp")),
+            ('bloodpool_64', 'bloodpool_64',
+             T("Лужа крови (декаль на земле)")),
+            ('coronastar', 'coronastar',
+             T("Использовать звезду короны как световое пятно на земле")),
+            ('coronamoon', 'coronamoon',
+             T("Мягкое круглое свечение как пятно на земле")),
+            ('coronaringb', 'coronaringb',
+             T("Кольцо как пятно на земле")),
+            ('coronareflect', 'coronareflect',
+             T("Размытое гало/отражение как пятно на земле")),
+            ('white', 'white',
+             T("Сплошной белый круг — чистое световое пятно без рисунка")),
         ],
         name="Shadow Texture",
         default='shad_exp',
@@ -1526,12 +1579,22 @@ class INUObjectProps(bpy.types.PropertyGroup):
 
     show_mode_2dfx : EnumProperty(
         items=[
-            ('0', '0 DEFAULT', 'Default behavior'),
-            ('1', '1 RANDOM_FLASHING', 'Random flashing'),
-            ('2', '2 FLASH_RAIN', 'Flashing when raining'),
-            ('3', '3 ONLY_RAIN', 'Only visible in rain'),
-            ('4', '4 NO_RAIN', 'Not visible in rain'),
-            ('5', '5 FLASH_5', 'Flashing variant 2'),
+            ('0', '0 DEFAULT',
+             T("Обычный режим: лампа горит постоянно (днём/ночью — по "
+               "флагам видимости). Подходит для большинства уличных ламп")),
+            ('1', '1 RANDOM_FLASHING',
+             T("Случайное мерцание вкл/выкл со случайным интервалом — "
+               "неисправная/моргающая лампа, аварийки")),
+            ('2', '2 FLASH_RAIN',
+             T("Мерцает ТОЛЬКО во время дождя, в сухую погоду горит ровно")),
+            ('3', '3 ONLY_RAIN',
+             T("Видна только во время дождя, в сухую погоду полностью "
+               "выключена")),
+            ('4', '4 NO_RAIN',
+             T("Скрывается во время дождя, видна только в сухую погоду")),
+            ('5', '5 FLASH_5',
+             T("Быстрое стробоскопическое мигание (~5 Гц) — маяки, "
+               "спецсигналы, проблесковые огни")),
         ],
         name="Show Mode",
         default='0',
@@ -1539,10 +1602,15 @@ class INUObjectProps(bpy.types.PropertyGroup):
 
     flare_type_2dfx : EnumProperty(
         items=[
-            ('0', '0 None', 'No lens flare'),
-            ('1', '1 Type 1', 'Lens flare style 1'),
-            ('2', '2 Type 2', 'Lens flare style 2'),
-            ('3', '3 Type 3', 'Lens flare style 3'),
+            ('0', '0 None',
+             T("Без линзовых бликов. Обычный выбор для уличных ламп")),
+            ('1', '1 Type 1',
+             T("Линзовый блик (lens flare) — лучи/гало как от яркого "
+               "источника при взгляде на него. Стиль 1")),
+            ('2', '2 Type 2',
+             T("Линзовый блик, стиль 2 (другой набор лучей/колец)")),
+            ('3', '3 Type 3',
+             T("Линзовый блик, стиль 3")),
         ],
         name="Flare Type",
         default='0',
@@ -1578,6 +1646,16 @@ class INUObjectProps(bpy.types.PropertyGroup):
                       "движок нормали не использует. Файл получается меньше"),
         update=_make_inu_flag_update("export_normals"),
     )
+    # ВНИМАНИЕ: галки 'export_binsplit' НЕТ в UI (ни в N-панели, ни в
+    # I/E-флоатере) — и это намеренно. Bin Mesh PLG нужен ЛЮБОЙ рендеримой
+    # геометрии GTA: без него модель невидима в MEd/вьюерах и не рисуется
+    # частью движков. Единственный «плюс» отключения — экономия пары КБ на
+    # модели, которая заведомо не идёт в игру, — для GTA-аддона смысла не
+    # имеет, зато молча выдавал сломанный DFF (ночные цвета есть, bin mesh
+    # нет). Свойство оставлено в коде (default=True) для round-trip и для
+    # редких пайплайнов, которые осознанно выставят export_binsplit=False
+    # через пресет/API (напр. bin mesh потом генерит внешний tristripifier).
+    # Значение по-прежнему доезжает до DffGeometry.write_bin_mesh в экспорте.
     export_binsplit : BoolProperty(
         default=True,
         description=T("Экспорт chunk'а Bin Mesh PLG в DFF.\n\n"
@@ -1922,6 +2000,20 @@ def _on_vehicle_color_slot_update(self, context):
                 break
 
 
+def _uv_anim_preview_update(self, context):
+    """При включении/выключении UV-анимации (или смене режима) строить/убирать/
+    перестраивать ноды предпросмотра в шейдере (см. tools/uv_anim_preview)."""
+    mat = self.id_data
+    try:
+        from .tools import uv_anim_preview
+        if self.uv_anim_write:
+            uv_anim_preview.setup(mat, mode=self.uv_anim_mode)
+        else:
+            uv_anim_preview.remove(mat)
+    except Exception as exc:
+        print(f"[INU] UV anim preview: {exc}")
+
+
 class INUMaterialProps(bpy.types.PropertyGroup):
     """INU_tools material properties (replaces DragonFF mat.dff)."""
 
@@ -1930,8 +2022,7 @@ class INUMaterialProps(bpy.types.PropertyGroup):
         name="Material Tab",
         items=[
             ('SURFACE',  "Surface",  T("COL Surface Type — тип физической поверхности и Day/Night Light")),
-            ('EFFECTS',  "Effects",  T("RW-эффекты материала: env map, bump, specular, reflection, dual texture, UV anim")),
-            ('PIPELINE', "Pipeline", T("Пресеты материала и сводка активных эффектов")),
+            ('EFFECTS',  "Effects",  T("RW-эффекты материала: env map, bump, specular, reflection, dual texture, UV anim + пресеты")),
         ],
         default='SURFACE',
     )
@@ -2040,8 +2131,24 @@ class INUMaterialProps(bpy.types.PropertyGroup):
     # UV Animation written into DFF binary (chunks 0x2B / 0x135)
     uv_anim_write : BoolProperty(
         name="Write UV Anim to DFF",
-        description=T("Вписать простую UV-прокрутку в экспортируемый DFF"),
+        description=T("Вписать UV-анимацию в экспортируемый DFF. "
+                      "Также строит ноды предпросмотра — текстура едет в "
+                      "вьюпорте при проигрывании таймлайна"),
         default=False,
+        update=_uv_anim_preview_update,
+    )
+    uv_anim_mode : EnumProperty(
+        name="UV Anim Mode",
+        description=T("Режим UV-анимации"),
+        items=[
+            ('SCROLL', T("Прокрутка"),
+             T("Постоянная линейная прокрутка по Speed U/V")),
+            ('KEYFRAME', T("Ключевые кадры"),
+             T("Своя анимация: расставь ключи на ноде Mapping "
+               "(Location/Scale), экспорт прочитает их")),
+        ],
+        default='SCROLL',
+        update=_uv_anim_preview_update,
     )
     uv_anim_speed_u : FloatProperty(
         name="Scroll U",
@@ -2143,14 +2250,12 @@ class GTATOOLS_FillColorItem(bpy.types.PropertyGroup):
 from .ops.check import (
     GTATOOLS_OT_check_geometry,
     GTATOOLS_OT_check_ngons,
-    GTATOOLS_OT_clear_raw_dff,
 )
 
 
 # Vehicle operators moved to ops/vehicle.py in Phase 3 of UI redesign.
 from .ops.vehicle import (
     GTATOOLS_OT_sa_vehicle_preset,
-    GTATOOLS_OT_apply_vehicle_pipeline,
 )
 
 
@@ -2158,7 +2263,6 @@ from .ops.vehicle import (
 # redesign. Each engine module now also owns its Blender operator wrapper.
 from .ops.txd_export import (
     GTATOOLS_OT_export_txd,
-    GTATOOLS_OT_export_shared_txd,
 )
 from .ops.dff_export import GTATOOLS_OT_export_dff
 from .ops.col_export import GTATOOLS_OT_export_col
@@ -2299,10 +2403,13 @@ def _append_export_report(report_path: str, title: str, rows, max_chars: int = 2
 from .ops.ide_ipl import (
     GTATOOLS_OT_upsert_ide,
     GTATOOLS_OT_upsert_ipl,
+    GTATOOLS_OT_pick_setting_path,
     GTATOOLS_OT_ide_sync_from_file,
     GTATOOLS_OT_ide_remove_link,
     GTATOOLS_OT_ide_verify_links,
     GTATOOLS_OT_ipl_sync_from_file,
+    GTATOOLS_OT_ipl_sync_add,
+    GTATOOLS_OT_ipl_sync_remove,
     GTATOOLS_OT_ipl_remove_link,
     GTATOOLS_OT_ipl_verify_links,
     GTATOOLS_OT_link_sync,
@@ -2334,6 +2441,7 @@ def _clean_name_typed_ipl(name):
 from .ops.inu_export import (
     GTATOOLS_OT_inu_import,
     GTATOOLS_OT_export_all,
+    GTATOOLS_OT_export_dff_models,
     GTATOOLS_OT_inu_export,
     menu_func_import,
 )
@@ -2375,20 +2483,21 @@ def _draw_label_with_info(layout, text, tooltip, **icon_kw):
 # Light/Lightmap/Itera/VertexPaint/Scatter operators moved to
 # ops/light_ops.py in Phase 3 batch 6 (38 ops + helpers).
 from .ops.light_ops import (
-    GTATOOLS_OT_detect_models,
-    GTATOOLS_OT_average_colors,
+    GTATOOLS_OT_prelight_foliage,
+    GTATOOLS_OT_foliage_color_reset,
+    GTATOOLS_OT_light_topo_cut,
+    GTATOOLS_OT_lightcut_ring_add,
+    GTATOOLS_OT_lightcut_ring_remove,
+    GTATOOLS_OT_lightcut_create,
     GTATOOLS_OT_lightmap_generate,
     GTATOOLS_OT_lightmap_copy,
     GTATOOLS_OT_lightmap_clear,
-    GTATOOLS_OT_create_prelight_lights,
-    GTATOOLS_OT_remove_prelight_lights,
     GTATOOLS_OT_toggle_prelight_lights,
+    GTATOOLS_OT_toggle_prelight_sun,
     GTATOOLS_OT_bake_vertex_colors,
     GTATOOLS_OT_bake_vertex_colors_simple,
     GTATOOLS_OT_reset_bake_settings,
     GTATOOLS_OT_reset_scatter_settings,
-    GTATOOLS_OT_analyze_vertex_colors,
-    GTATOOLS_OT_apply_v_offset,
     GTATOOLS_OT_vc_smooth,
     GTATOOLS_OT_vc_contrast,
     GTATOOLS_OT_vc_brightness,
@@ -2397,15 +2506,17 @@ from .ops.light_ops import (
     GTATOOLS_OT_vc_smooth_between,
     GTATOOLS_OT_load_lightmap,
     GTATOOLS_OT_remove_lightmap,
-    GTATOOLS_OT_create_day_night,
+    GTATOOLS_OT_fill_prelight,
+    GTATOOLS_OT_prelight_merge_paint,
+    GTATOOLS_OT_prelight_split_paint,
     GTATOOLS_OT_copy_color_attr,
     GTATOOLS_OT_prelight_preview,
+    GTATOOLS_OT_alpha_preview,
+    GTATOOLS_OT_alpha_cleanup,
     GTATOOLS_OT_fix_itera_collection,
     GTATOOLS_OT_apply_itera_material,
     GTATOOLS_OT_apply_itera_quickstart,
     GTATOOLS_OT_remove_itera_material,
-    GTATOOLS_OT_save_materials,
-    GTATOOLS_OT_restore_materials,
     GTATOOLS_OT_eyedropper_color,
     GTATOOLS_OT_fill_faces,
     GTATOOLS_OT_restore_fill,
@@ -2419,8 +2530,6 @@ from .ops.light_ops import (
     GTATOOLS_OT_switch_to_edit,
     GTATOOLS_OT_switch_to_vpaint,
     GTATOOLS_OT_select_color_attribute,
-    GTATOOLS_OT_add_color_attribute,
-    GTATOOLS_OT_remove_color_attribute,
     GTATOOLS_OT_create_color_attr,
     GTATOOLS_OT_remove_color_attr,
 )
@@ -2432,6 +2541,7 @@ from .ops.light_ops import (
 
 # Operators moved to ops/texture_ops.py in Phase 3.
 from .ops.texture_ops import (
+    GTATOOLS_OT_toggle_scene_alpha,
     GTATOOLS_OT_load_textures,
     GTATOOLS_OT_set_blend_folder,
     GTATOOLS_OT_drop_texture_as_material,
@@ -2467,8 +2577,6 @@ from .ops.world_ops import (
     GTATOOLS_OT_convert_to_path,
     GTATOOLS_OT_add_path_ipl,
     GTATOOLS_OT_add_track,
-    GTATOOLS_OT_add_vehicle_path,
-    GTATOOLS_OT_add_ped_path,
     GTATOOLS_OT_mark_station,
 )
 from .ops.path_curves import (
@@ -2568,9 +2676,10 @@ from .ops.effects_ops import (
     GTATOOLS_OT_apply_2dfx_preset,
     GTATOOLS_OT_create_2dfx,
     GTATOOLS_OT_toggle_2dfx_flag_bit,
+    GTATOOLS_OT_load_fx_textures,
+    GTATOOLS_OT_pick_fx_txd,
     GTATOOLS_OT_refresh_2dfx_preview,
     GTATOOLS_OT_remove_2dfx_preview,
-    GTATOOLS_OT_select_particle_effect,
     GTATOOLS_OT_particle_effect_new,
     GTATOOLS_OT_particle_effect_delete,
     GTATOOLS_OT_particle_curve_select,
@@ -2956,6 +3065,7 @@ classes = (
     GTATOOLS_TxdExportEntry,
     GTATOOLS_UL_txd_export_plan,
     GTATOOLS_UL_img_files,
+    GTATOOLS_UL_ipl_sync_list,
     GTATOOLS_OT_refresh_img_list,
     GTATOOLS_OT_discover_game,
     GTATOOLS_OT_set_preset_dir,
@@ -2969,27 +3079,28 @@ classes = (
     GTATOOLS_OT_snap_to_dff,
     GTATOOLS_OT_check_geometry,
     GTATOOLS_OT_check_ngons,
-    GTATOOLS_OT_clear_raw_dff,
     GTATOOLS_OT_sa_vehicle_preset,
-    GTATOOLS_OT_apply_vehicle_pipeline,
     GTATOOLS_OT_export_txd,
-    GTATOOLS_OT_export_shared_txd,
     GTATOOLS_OT_copy_color_attr,
     GTATOOLS_OT_export_dff,
     GTATOOLS_OT_export_col,
     GTATOOLS_OT_export_all,
+    GTATOOLS_OT_export_dff_models,
     GTATOOLS_OT_inu_export,
     GTATOOLS_OT_floater_modal,
     GTATOOLS_OT_floater_toggle,
     GTATOOLS_OT_info_tooltip,
-    GTATOOLS_OT_detect_models,
-    GTATOOLS_OT_average_colors,
+    GTATOOLS_OT_prelight_foliage,
+    GTATOOLS_OT_foliage_color_reset,
+    GTATOOLS_OT_light_topo_cut,
+    GTATOOLS_OT_lightcut_ring_add,
+    GTATOOLS_OT_lightcut_ring_remove,
+    GTATOOLS_OT_lightcut_create,
     GTATOOLS_OT_lightmap_generate,
     GTATOOLS_OT_lightmap_copy,
     GTATOOLS_OT_lightmap_clear,
-    GTATOOLS_OT_create_prelight_lights,
-    GTATOOLS_OT_remove_prelight_lights,
     GTATOOLS_OT_toggle_prelight_lights,
+    GTATOOLS_OT_toggle_prelight_sun,
     GTATOOLS_OT_bake_vertex_colors,
     GTATOOLS_OT_bake_vertex_colors_simple,
     GTATOOLS_OT_reset_bake_settings,
@@ -2999,8 +3110,6 @@ classes = (
     GTATOOLS_OT_prelight_preset_apply,
     GTATOOLS_OT_prelight_preset_rename,
     GTATOOLS_OT_reset_scatter_settings,
-    GTATOOLS_OT_analyze_vertex_colors,
-    GTATOOLS_OT_apply_v_offset,
     GTATOOLS_OT_vc_smooth,
     GTATOOLS_OT_vc_contrast,
     GTATOOLS_OT_vc_brightness,
@@ -3009,14 +3118,16 @@ classes = (
     GTATOOLS_OT_vc_smooth_between,
     GTATOOLS_OT_load_lightmap,
     GTATOOLS_OT_remove_lightmap,
-    GTATOOLS_OT_create_day_night,
+    GTATOOLS_OT_fill_prelight,
+    GTATOOLS_OT_prelight_merge_paint,
+    GTATOOLS_OT_prelight_split_paint,
     GTATOOLS_OT_prelight_preview,
+    GTATOOLS_OT_alpha_preview,
+    GTATOOLS_OT_alpha_cleanup,
     GTATOOLS_OT_fix_itera_collection,
     GTATOOLS_OT_apply_itera_material,
     GTATOOLS_OT_apply_itera_quickstart,
     GTATOOLS_OT_remove_itera_material,
-    GTATOOLS_OT_save_materials,
-    GTATOOLS_OT_restore_materials,
     GTATOOLS_OT_eyedropper_color,
     GTATOOLS_OT_fill_faces,
     GTATOOLS_OT_restore_fill,
@@ -3030,10 +3141,9 @@ classes = (
     GTATOOLS_OT_switch_to_edit,
     GTATOOLS_OT_switch_to_vpaint,
     GTATOOLS_OT_select_color_attribute,
-    GTATOOLS_OT_add_color_attribute,
-    GTATOOLS_OT_remove_color_attribute,
     GTATOOLS_OT_create_color_attr,
     GTATOOLS_OT_remove_color_attr,
+    GTATOOLS_OT_toggle_scene_alpha,
     GTATOOLS_OT_load_textures,
     GTATOOLS_OT_set_blend_folder,
     GTATOOLS_OT_drop_texture_as_material,
@@ -3066,6 +3176,8 @@ classes = (
     GTATOOLS_OT_randomize_uv_grid,
     GTATOOLS_OT_snap_uv_to_grid,
     GTATOOLS_OT_set_uv_align,
+    GTATOOLS_OT_uv_anim_insert_key,
+    GTATOOLS_OT_uv_anim_clear_keys,
     GTATOOLS_PT_main_panel,
     GTATOOLS_PT_library_panel,
     GTATOOLS_OT_import_dff,
@@ -3139,17 +3251,18 @@ classes = (
     GTATOOLS_OT_convert_to_path,
     GTATOOLS_OT_add_path_ipl,
     GTATOOLS_OT_add_track,
-    GTATOOLS_OT_add_vehicle_path,
-    GTATOOLS_OT_add_ped_path,
     GTATOOLS_OT_mark_station,
     GTATOOLS_OT_export_to_img,
     GTATOOLS_OT_remove_from_img,
     GTATOOLS_OT_upsert_ide,
     GTATOOLS_OT_upsert_ipl,
+    GTATOOLS_OT_pick_setting_path,
     GTATOOLS_OT_ide_sync_from_file,
     GTATOOLS_OT_ide_remove_link,
     GTATOOLS_OT_ide_verify_links,
     GTATOOLS_OT_ipl_sync_from_file,
+    GTATOOLS_OT_ipl_sync_add,
+    GTATOOLS_OT_ipl_sync_remove,
     GTATOOLS_OT_ipl_remove_link,
     GTATOOLS_OT_ipl_verify_links,
     GTATOOLS_OT_link_sync,
@@ -3165,8 +3278,6 @@ classes = (
     GTATOOLS_PT_ide_ipl_panel,
     GTATOOLS_PT_export_panel,
     GTATOOLS_PT_validate_scene,
-    GTATOOLS_MT_import_menu,
-    GTATOOLS_MT_export_menu,
     GTATOOLS_MT_create_2dfx,
     GTATOOLS_MT_radar_generate,
     GTATOOLS_MT_path_traffic,
@@ -3184,9 +3295,10 @@ classes = (
     GTATOOLS_OT_attach_2dfx,
     GTATOOLS_OT_detach_2dfx,
     GTATOOLS_OT_detach_all_2dfx,
+    GTATOOLS_OT_load_fx_textures,
+    GTATOOLS_OT_pick_fx_txd,
     GTATOOLS_OT_refresh_2dfx_preview,
     GTATOOLS_OT_remove_2dfx_preview,
-    GTATOOLS_OT_select_particle_effect,
     GTATOOLS_OT_particle_effect_new,
     GTATOOLS_OT_particle_effect_delete,
     GTATOOLS_OT_particle_emitter_switch,
@@ -3211,7 +3323,6 @@ classes = (
     GTATOOLS_OT_bake_layer_add,
     GTATOOLS_OT_bake_layer_remove,
     GTATOOLS_OT_bake_layer_move,
-    GTATOOLS_OT_bake_add_uv,
     GTATOOLS_OT_bake_preview,
     GTATOOLS_OT_bake_flatten,
     GTATOOLS_OT_bake_save_map,
@@ -3223,6 +3334,7 @@ classes = (
     GTATOOLS_PT_prelight_panel,
     GTATOOLS_PT_bake_settings_subpanel,
     GTATOOLS_PT_scatter_color_subpanel,
+    GTATOOLS_PT_foliage_subpanel,
     GTATOOLS_PT_vc_postprocess_panel,
     GTATOOLS_OT_preview_col_light,
     GTATOOLS_OT_bake_col_light,
@@ -3239,8 +3351,7 @@ classes = (
     GTATOOLS_PT_paths_panel,
     GTATOOLS_PT_footer_panel,
     GTATOOLS_PT_uv_tools_panel,
-    GTATOOLS_OT_add_gtasa_model,
-    VIEW3D_MT_gtasa_add_menu,
+    GTATOOLS_PT_uv_anim_panel,
     GTATOOLS_OT_bitmaps_scan,
     GTATOOLS_OT_bitmaps_resolve,
     GTATOOLS_OT_bitmaps_copy,
@@ -3255,7 +3366,6 @@ classes = (
     GTATOOLS_OT_vcl_remove,
     GTATOOLS_OT_vcl_move,
     GTATOOLS_OT_vcl_promote,
-    GTATOOLS_OT_vcl_demote,
     GTATOOLS_OT_vcl_set_active_attr,
     GTATOOLS_OT_vcl_show_composite,
     GTATOOLS_OT_vcl_refresh_composite,
@@ -3267,8 +3377,6 @@ classes = (
     GTATOOLS_OT_path_node_flag,
     GTATOOLS_OT_map_export,
     GTATOOLS_OT_material_preset,
-    GTATOOLS_OT_material_preset_save,
-    GTATOOLS_OT_material_preset_delete,
     GTATOOLS_OT_import_cst,
     GTATOOLS_OT_export_cst,
     GTATOOLS_OT_validate_paintjobs,
@@ -3278,6 +3386,7 @@ classes = (
     GTATOOLS_OT_whats_new,
     INUValidateIssue,
     INUBakeLayer,
+    INULightCutRing,
     GTATOOLS_OT_validate_run,
     GTATOOLS_OT_validate_clear,
     GTATOOLS_OT_validate_goto,
@@ -3290,7 +3399,6 @@ classes = (
     GTATOOLS_OT_frame_unparent,
     GTATOOLS_OT_frame_validate,
     GTATOOLS_OT_frame_mirror_lr,
-    GTATOOLS_OT_animobj_setup,
     GTATOOLS_OT_animobj_validate,
     GTATOOLS_OT_animobj_export,
     INUAnimObjEmptyProps,
@@ -4003,9 +4111,6 @@ def register():
     bpy.types.TOPBAR_MT_file_export.append(menu_func_export)
     bpy.types.TOPBAR_MT_file_import.append(menu_func_import)
 
-    # Add > GTA SA submenu
-    bpy.types.VIEW3D_MT_add.append(_gtasa_add_menu_draw)
-
     # Pre-warm DFF import path so the user's first Shift+A → GTA SA
     # Model click is fast. Without this, the first click takes 1-3s
     # because Blender does cold-start work (RNA init for materials/
@@ -4024,6 +4129,7 @@ def register():
     bpy.app.handlers.load_post.append(_on_file_load_restore_paths)
     bpy.app.handlers.load_post.append(_on_file_load_resume_toggles)
     bpy.app.handlers.load_post.append(_on_file_load_migrate_modulate)
+    bpy.app.handlers.load_post.append(_on_file_load_migrate_prelight_nodes)
     bpy.app.handlers.load_post.append(_on_file_load_migrate_2dfx_size)
     bpy.app.handlers.load_post.append(_on_file_load_migrate_scene_settings)
     bpy.app.handlers.load_post.append(_on_file_load_sync_pipeline_prev)
@@ -4031,6 +4137,10 @@ def register():
     # Run migration once at register too — для уже открытой сцены.
     try:
         _on_file_load_migrate_modulate(None)
+    except Exception:
+        pass
+    try:
+        _on_file_load_migrate_prelight_nodes(None)
     except Exception:
         pass
 
@@ -4196,6 +4306,41 @@ def _on_file_load_migrate_modulate(dummy):
                 if abs(cur - old) < 1e-6:
                     setattr(scn, prop_name, new)
                     break
+
+
+@persistent
+def _on_file_load_migrate_prelight_nodes(dummy):
+    """Мигрировать старый тяжёлый граф превью прилайта (8 нод с Modulate) на
+    новый минимальный (VertexColor × текстура). Старые .blend держат в
+    материалах лишние modulate-ноды — пересобираем превью: если оно было
+    активно — строим минимальный граф, иначе удаляем остатки. Дёшево —
+    трогаем только объекты, где реально есть наши preview-ноды."""
+    try:
+        from .tools.prelight import setup_prelight_preview
+    except Exception:
+        return
+    LEGACY = ("Prelight_Mix", "Prelight_Ambient", "Prelight_PostFx1",
+              "Prelight_PostFx2", "Prelight_BrightContrast", "Prelight_Gamma")
+    for obj in bpy.data.objects:
+        if obj.type != 'MESH' or obj.data is None:
+            continue
+        touched = False
+        active = False
+        for slot in obj.material_slots:
+            m = slot.material
+            if not m or not m.use_nodes or m.node_tree is None:
+                continue
+            ns = m.node_tree.nodes
+            if any(ns.get(nm) for nm in LEGACY):
+                touched = True
+                if m.get('prelight_preview_active'):
+                    active = True
+        if touched:
+            try:
+                setup_prelight_preview(obj, enable=bool(active))
+            except Exception as exc:
+                print(f"[INU] prelight node migration failed for "
+                      f"{obj.name}: {exc}")
 
 
 @persistent
@@ -4383,6 +4528,8 @@ def unregister():
         bpy.app.handlers.load_post.remove(_on_file_load_resume_toggles)
     if _on_file_load_migrate_modulate in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(_on_file_load_migrate_modulate)
+    if _on_file_load_migrate_prelight_nodes in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_on_file_load_migrate_prelight_nodes)
     if _on_file_load_migrate_2dfx_size in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(_on_file_load_migrate_2dfx_size)
     if _on_file_load_migrate_scene_settings in bpy.app.handlers.load_post:
@@ -4395,9 +4542,6 @@ def unregister():
     # File > Export / Import menus
     bpy.types.TOPBAR_MT_file_export.remove(menu_func_export)
     bpy.types.TOPBAR_MT_file_import.remove(menu_func_import)
-
-    # Add > GTA SA submenu
-    bpy.types.VIEW3D_MT_add.remove(_gtasa_add_menu_draw)
 
     del bpy.types.Object.inu
     del bpy.types.Material.inu

@@ -273,7 +273,10 @@ def average_colors_on_coplanar_faces(obj, normal_threshold=0.01):
         )
 
         for loop_idx in group_loops:
-            color_layer.data[loop_idx].color = (avg_color[0], avg_color[1], avg_color[2], 1.0)
+            # Keep each loop's own alpha — averaging RGB across coplanar
+            # faces must not flatten painted vertex transparency.
+            a = color_layer.data[loop_idx].color[3]
+            color_layer.data[loop_idx].color = (avg_color[0], avg_color[1], avg_color[2], a)
 
     return True
 
@@ -386,6 +389,65 @@ def remove_prelight_scene_lights():
         bpy.data.collections.remove(collection)
         return True
     return False
+
+
+# Имя SUN-лампы prelight (отдельно от 8 точек, включается своей кнопкой).
+PRELIGHT_SUN_NAME = "Prelight_Sun"
+
+
+def create_prelight_sun(center, energy=9.0):
+    """Создать направленное «солнце» для prelight (тип SUN).
+
+    Светит так же, как 8 точечных ламп (тот же цвет #BCBCBC), но как
+    направленный источник под углом «сверху-спереди» (как солнце GTA SA).
+    Энергия по умолчанию ≈ среднему 8 точек (7..11 → ~9): у SUN нет
+    затухания по расстоянию (atten=1 против ~0.33 у точек на d=100),
+    поэтому одно солнце примерно повторяет суммарную яркость лит-поверхности
+    восьмёрки. Точная подгонка — параметром energy.
+
+    Живёт в ОТДЕЛЬНОЙ коллекции Prelight_Sun (не в Prelight_Lights), чтобы
+    тумблер «8 ламп» (он сносит всю коллекцию восьмёрки) не удалял солнце —
+    включается/выключается полностью независимо. Запекание берёт лампы по
+    сцене (и POINT, и SUN), коллекция роли не играет.
+    Положение роли не играет (солнце направленное) — ставим над центром
+    для наглядности; направление задаёт rotation_euler."""
+    light_color = (0.737, 0.737, 0.737)   # #BCBCBC — как у 8 точек
+
+    collection_name = "Prelight_Sun"
+    collection = bpy.data.collections.get(collection_name)
+    if collection is None:
+        collection = bpy.data.collections.new(collection_name)
+        bpy.context.scene.collection.children.link(collection)
+
+    # get-or-replace по имени (без .001-дубликатов)
+    old = bpy.data.objects.get(PRELIGHT_SUN_NAME)
+    if old is not None:
+        bpy.data.objects.remove(old, do_unlink=True)
+
+    sun_data = bpy.data.lights.new(name=PRELIGHT_SUN_NAME, type='SUN')
+    sun_data.color = light_color
+    sun_data.energy = energy
+
+    sun_obj = bpy.data.objects.new(name=PRELIGHT_SUN_NAME, object_data=sun_data)
+    cx, cy, cz = center
+    sun_obj.location = (cx, cy, cz + 100.0)     # косметика (на свет не влияет)
+    # Угол «сверху-спереди», как ключевое солнце (тот же, что в bake-риге).
+    sun_obj.rotation_euler = (math.radians(50.0), 0.0, math.radians(40.0))
+    collection.objects.link(sun_obj)
+    return sun_obj
+
+
+def remove_prelight_sun():
+    """Удалить только SUN-лампу prelight (8 точек не трогаем). Пустую
+    коллекцию Prelight_Sun после этого убираем."""
+    sun = bpy.data.objects.get(PRELIGHT_SUN_NAME)
+    if sun is None:
+        return False
+    bpy.data.objects.remove(sun, do_unlink=True)
+    coll = bpy.data.collections.get("Prelight_Sun")
+    if coll is not None and len(coll.objects) == 0:
+        bpy.data.collections.remove(coll)
+    return True
 
 
 def _eval_loop_normals(obj):
@@ -528,8 +590,39 @@ def _restore_smooth_state(mesh, snapshot):
                 mesh.edges[i].use_edge_sharp = bool(val)
 
 
+def _sun_loop_intensity(light_obj, loop_world_no, loop_vidx, world_pos,
+                        vert_world_no, n_verts, use_shadows, depsgraph):
+    """Per-loop вклад SUN-лампы: n·L БЕЗ затухания по расстоянию (солнце
+    направленное), с теневым raycast'ом per-vertex.
+
+    Направление НА солнце = локальный +Z лампы (Blender светит вдоль -Z).
+    Тень — луч от вершины в сторону солнца на большую дистанцию (1e4).
+    Возвращает (n_loops,) float32 = n_dot_l · shadow. Множитель цвета/энергии
+    накладывает вызывающий — как и для POINT, чтобы код света был единым."""
+    import numpy as np
+    Lv = light_obj.matrix_world.to_3x3() @ Vector((0.0, 0.0, 1.0))
+    Lv.normalize()
+    L_np = np.array((Lv.x, Lv.y, Lv.z), dtype=np.float32)
+
+    shadow_per_vert = np.ones(n_verts, dtype=np.float32)
+    if use_shadows and depsgraph is not None:
+        ray_dir = Vector((float(L_np[0]), float(L_np[1]), float(L_np[2])))
+        for i in range(n_verts):
+            wp = world_pos[i]
+            ray_start = wp + vert_world_no[i] * 0.02
+            hit = bpy.context.scene.ray_cast(
+                depsgraph,
+                Vector((float(ray_start[0]), float(ray_start[1]), float(ray_start[2]))),
+                ray_dir, distance=1.0e4)[0]
+            if hit:
+                shadow_per_vert[i] = 0.0
+
+    n_dot_l = np.maximum(loop_world_no @ L_np, 0.0)
+    return n_dot_l * shadow_per_vert[loop_vidx]
+
+
 def bake_vertex_colors_from_lights(obj, use_shadows=True):
-    """Запечь освещение от Point источников в vertex colors.
+    """Запечь освещение от Point/Sun источников в vertex colors.
 
     Lambert per-corner (loop.normal сохраняет smooth shading), но
     теневой raycast выполняется один раз на вершину — corner'ы одной
@@ -541,7 +634,7 @@ def bake_vertex_colors_from_lights(obj, use_shadows=True):
 
     lights = []
     for light_obj in bpy.data.objects:
-        if light_obj.type == 'LIGHT' and light_obj.data.type == 'POINT':
+        if light_obj.type == 'LIGHT' and light_obj.data.type in ('POINT', 'SUN'):
             if not light_obj.visible_get():
                 continue
             if light_obj.hide_render:
@@ -549,7 +642,7 @@ def bake_vertex_colors_from_lights(obj, use_shadows=True):
             lights.append(light_obj)
 
     if not lights:
-        return False, "No visible Point lights in scene!"
+        return False, "No visible Point/Sun lights in scene!"
 
     mesh = obj.data
     n_verts = len(mesh.vertices)
@@ -557,12 +650,25 @@ def bake_vertex_colors_from_lights(obj, use_shadows=True):
     if n_loops == 0:
         return False, "Mesh has no loops"
 
-    color_name = "BakedLight"
-    existing = compat.vcol_get(mesh, color_name)
-    if existing is not None:
-        compat.vcol_remove(mesh, existing)
-    color_attr = compat.vcol_new(mesh, color_name)
-    compat.vcol_active(mesh, color_attr)
+    # Пишем в АКТИВНЫЙ канал (Day/Night/Col), как и быстрый bake_..._simple.
+    # Раньше функция всегда удаляла и пересоздавала "BakedLight" и делала его
+    # активным — из-за этого «Запечь поверх с тенями» складывал снимок с чужим
+    # ПЕРЕСОЗДАННЫМ атрибутом, активный канал юзера (Day) не менялся, а
+    # следующее «Запечь» уходило уже в "BakedLight" вместо Day.
+    color_attr = compat.vcol_active(mesh)
+    if color_attr is None:
+        existing = compat.vcol_list(mesh)
+        if existing:
+            color_attr = existing[0]
+        else:
+            color_attr = compat.vcol_new(mesh, "Col")
+        compat.vcol_active(mesh, color_attr)
+    # Сохранить альфу активного канала — bake обновляет только RGB.
+    prev_alpha = None
+    if len(color_attr.data) == n_loops:
+        _tmp = np.empty(n_loops * 4, dtype=np.float32)
+        color_attr.data.foreach_get('color', _tmp)
+        prev_alpha = _tmp[3::4].copy()
 
     world_matrix = obj.matrix_world
     normal_matrix = world_matrix.to_3x3().inverted().transposed()
@@ -611,8 +717,17 @@ def bake_vertex_colors_from_lights(obj, use_shadows=True):
 
     for light_obj in lights:
         light = light_obj.data
-        light_pos = np.array(light_obj.location, dtype=np.float32)
         light_color = np.array(light.color, dtype=np.float32) * light.energy
+
+        # ── SUN: направленный свет (n·L, без затухания) ──
+        if light.type == 'SUN':
+            sun_i = _sun_loop_intensity(
+                light_obj, loop_world_no, loop_vidx, world_pos,
+                vert_world_no, n_verts, use_shadows, depsgraph)
+            total += sun_i[:, None] * light_color[None, :]
+            continue
+
+        light_pos = np.array(light_obj.location, dtype=np.float32)
 
         # ── Per-vertex shadow raycast (cached, reused by all corners)
         shadow_per_vert = np.ones(n_verts, dtype=np.float32)
@@ -652,7 +767,7 @@ def bake_vertex_colors_from_lights(obj, use_shadows=True):
     flat[0::4] = total[:, 0]
     flat[1::4] = total[:, 1]
     flat[2::4] = total[:, 2]
-    flat[3::4] = 1.0
+    flat[3::4] = prev_alpha if prev_alpha is not None else 1.0
     color_attr.data.foreach_set('color', flat)
 
     return True, f"Baked lighting from {len(lights)} lights"
@@ -668,7 +783,7 @@ def bake_vertex_colors_simple(obj, ambient=0.05, intensity_mult=0.008, gamma=1.8
 
     lights = []
     for light_obj in bpy.data.objects:
-        if light_obj.type == 'LIGHT' and light_obj.data.type == 'POINT':
+        if light_obj.type == 'LIGHT' and light_obj.data.type in ('POINT', 'SUN'):
             if not light_obj.visible_get():
                 continue
             if light_obj.hide_render:
@@ -676,7 +791,7 @@ def bake_vertex_colors_simple(obj, ambient=0.05, intensity_mult=0.008, gamma=1.8
             lights.append(light_obj)
 
     if not lights:
-        return False, "No visible Point lights in scene!"
+        return False, "No visible Point/Sun lights in scene!"
 
     mesh = obj.data
     n_verts = len(mesh.vertices)
@@ -684,6 +799,7 @@ def bake_vertex_colors_simple(obj, ambient=0.05, intensity_mult=0.008, gamma=1.8
     if n_loops == 0:
         return False, "Mesh has no loops"
 
+    created = False
     color_attr = compat.vcol_active(mesh)
     if color_attr is None:
         existing = compat.vcol_list(mesh)
@@ -691,6 +807,7 @@ def bake_vertex_colors_simple(obj, ambient=0.05, intensity_mult=0.008, gamma=1.8
             color_attr = existing[0]
         else:
             color_attr = compat.vcol_new(mesh, "Col")
+            created = True
         compat.vcol_active(mesh, color_attr)
     color_name = color_attr.name
 
@@ -738,9 +855,18 @@ def bake_vertex_colors_simple(obj, ambient=0.05, intensity_mult=0.008, gamma=1.8
 
     for light_obj in lights:
         light = light_obj.data
-        light_pos = np.array(light_obj.location, dtype=np.float32)
         light_color = np.array(light.color, dtype=np.float32) * (
             light.energy * intensity_mult)
+
+        # ── SUN: направленный свет (n·L, без затухания) ──
+        if light.type == 'SUN':
+            sun_i = _sun_loop_intensity(
+                light_obj, loop_world_no, loop_vidx, world_pos,
+                vert_world_no, n_verts, use_shadows, depsgraph)
+            total += sun_i[:, None] * light_color[None, :]
+            continue
+
+        light_pos = np.array(light_obj.location, dtype=np.float32)
 
         shadow_per_vert = np.ones(n_verts, dtype=np.float32)
         if use_shadows and depsgraph is not None:
@@ -779,13 +905,238 @@ def bake_vertex_colors_simple(obj, ambient=0.05, intensity_mult=0.008, gamma=1.8
     np.clip(total, 0.0, 1.0, out=total)
 
     flat = np.empty(n_loops * 4, dtype=np.float32)
+    # Preserve the layer's existing alpha — baking prelight into the active
+    # Day/Night layer must NOT wipe painted vertex transparency. Only a
+    # freshly-created layer (no prior alpha) starts opaque.
+    if created or len(color_attr.data) != n_loops:
+        flat[3::4] = 1.0
+    else:
+        color_attr.data.foreach_get('color', flat)
     flat[0::4] = total[:, 0]
     flat[1::4] = total[:, 1]
     flat[2::4] = total[:, 2]
-    flat[3::4] = 1.0
     color_attr.data.foreach_set('color', flat)
 
     return True, f"Baked to '{color_name}' from {len(lights)} lights"
+
+
+def prelight_foliage(obj, *, material_index=None, select_only=False,
+                     inside=0.25, outside=1.0, gamma=1.0, height_dark=0.0,
+                     color_height_dark=0.0,
+                     top_bright=0.0, top_height=1.0, variation=0.0,
+                     light_tint=(1.0, 1.0, 1.0), shadow_tint=(1.0, 1.0, 1.0),
+                     tint_strength=0.0, metric='SPHERE', blend='MULTIPLY',
+                     both_sides=False, mode='BOTH'):
+    """Радиальный prelight листвы: темнее в центре кроны, светлее на
+    периферии (+ опциональный tint оттенка листвы).
+
+    Не использует свет сцены — чисто геометрический градиент по
+    расстоянию вершины от центра кроны. Идеален для billboard-листвы
+    GTA-деревьев, где обычный AO-bake шумит на alpha-картах.
+
+    Параметры:
+      material_index — красить ТОЛЬКО loops с этим material_index
+                       (None = без фильтра по материалу).
+      select_only    — красить только выделенные полигоны (Edit-выделение).
+      inside/outside — яркость в центре кроны / на периферии [0..1].
+      gamma          — кривизна градиента; >1 расширяет светлую зону,
+                       <1 — тёмную.
+      height_dark    — доп. затемнение НИЗА кроны [0..1] (самозатенение
+                       сверху); 0 = выкл.
+      tint           — цвет листвы (RGB 0..1); подмешивается multiply,
+                       сохраняя затенение.
+      tint_strength  — сила tint [0..1]; 0 = цвет не меняется.
+      metric         — 'SPHERE' (3D-расстояние от центроида) или
+                       'CYLINDER' (горизонтальное от вертикальной оси
+                       ствола через центроид).
+      blend          — 'MULTIPLY' (поверх существующего прилайта —
+                       затенение и tint множатся на текущий vcol,
+                       запечённый свет сохраняется) или 'REPLACE'
+                       (заменить vcol целиком).
+
+    Пишет в активный color attribute (как bake_vertex_colors_*). Loops
+    вне маски (ствол, не-выделенное) сохраняют прежний цвет.
+
+    Возвращает (ok: bool, message: str)."""
+    if obj is None or obj.type != 'MESH':
+        return False, "Select a mesh object!"
+    mesh = obj.data
+    n_loops = len(mesh.loops)
+    n_polys = len(mesh.polygons)
+    if n_loops == 0:
+        return False, "Mesh has no loops"
+
+    created = False
+    color_attr = compat.vcol_active(mesh)
+    if color_attr is None:
+        existing = compat.vcol_list(mesh)
+        if existing:
+            color_attr = existing[0]
+        else:
+            color_attr = compat.vcol_new(mesh, "Col")
+            created = True
+        compat.vcol_active(mesh, color_attr)
+    color_name = color_attr.name
+
+    # ── loop → vertex / material / select ────────────────────────────
+    loop_vidx = np.empty(n_loops, dtype=np.int32)
+    mesh.loops.foreach_get('vertex_index', loop_vidx)
+
+    loop_total = np.empty(n_polys, dtype=np.int32)
+    mesh.polygons.foreach_get('loop_total', loop_total)
+    # Loops хранятся последовательно по полигонам (poly.loop_start —
+    # кумулятивная сумма), поэтому np.repeat даёт per-loop атрибут.
+    poly_mat = np.empty(n_polys, dtype=np.int32)
+    mesh.polygons.foreach_get('material_index', poly_mat)
+    loop_mat = np.repeat(poly_mat, loop_total)
+
+    # ── позиции вершин (local — масштаб не влияет на нормализованный t) ─
+    n_verts = len(mesh.vertices)
+    vco = np.empty(n_verts * 3, dtype=np.float32)
+    mesh.vertices.foreach_get('co', vco)
+    vco = vco.reshape(n_verts, 3)
+    loop_pos = vco[loop_vidx]                 # (n_loops, 3)
+
+    # ── маска ГРАНЕЙ: материал + выделение ──
+    poly_mask = np.ones(n_polys, dtype=bool)
+    if material_index is not None:
+        poly_mask &= (poly_mat == int(material_index))
+    if select_only:
+        poly_sel = np.empty(n_polys, dtype=bool)
+        mesh.polygons.foreach_get('select', poly_sel)
+        poly_mask &= poly_sel
+
+    # «Обе стороны»: GTA-листья часто дублированы — задняя «карта» лежит в той
+    # же точке, но с перевёрнутой намоткой (видна с обратной стороны). Красим
+    # обе.
+    #
+    # Полигоны триангулированы, и передняя/задняя карты могут быть разбиты по
+    # РАЗНЫМ диагоналям — тогда у треугольников разные центроиды, и матч по
+    # грани/центроиду срывается. Поэтому работаем по ПОЗИЦИЯМ ВЕРШИН:
+    #   1) собираем множество позиций вершин закрашенной области (квантованных
+    #      по сетке + соседние ячейки — снимает float-погрешность и границу);
+    #   2) добавляем в маску любую грань, ВСЕ вершины которой лежат в этом
+    #      множестве. Дубль листа (как угодно триангулированный) проходит, а
+    #      ствол — нет (у него совпадают лишь отдельные вершины, не все).
+    if both_sides and poly_mask.any():
+        TOL = 1.0e-3                              # размер ячейки, лок. ед.
+        q = np.round(vco / TOL).astype(np.int64)  # (n_verts, 3) квантованные
+        qt = [(int(a), int(b), int(c)) for a, b, c in q.tolist()]
+
+        masked_loops = np.repeat(poly_mask, loop_total)
+        masked_vids = np.unique(loop_vidx[masked_loops])
+        pos_set = set()
+        for vid in masked_vids:
+            bx, by, bz = qt[int(vid)]
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    for dz in (-1, 0, 1):
+                        pos_set.add((bx + dx, by + dy, bz + dz))
+
+        loop_start = np.empty(n_polys, dtype=np.int32)
+        mesh.polygons.foreach_get('loop_start', loop_start)
+        for fi in range(n_polys):
+            if poly_mask[fi]:
+                continue
+            ls = int(loop_start[fi])
+            lt = int(loop_total[fi])
+            if all(qt[int(v)] in pos_set for v in loop_vidx[ls:ls + lt]):
+                poly_mask[fi] = True
+
+    mask = np.repeat(poly_mask, loop_total)
+    if not mask.any():
+        return False, "No matching faces (material / selection empty)"
+
+    fol = loop_pos[mask]                        # позиции loops листвы
+    center = fol.mean(axis=0)                   # центроид кроны
+
+    if metric == 'CYLINDER':
+        # горизонтальное расстояние от вертикальной оси через центроид
+        delta = loop_pos[:, :2] - center[:2]
+        dist = np.linalg.norm(delta, axis=1)
+    else:                                       # 'SPHERE'
+        dist = np.linalg.norm(loop_pos - center, axis=1)
+
+    dmax = float(dist[mask].max())
+    if dmax < 1e-9:
+        dmax = 1.0
+    t = np.clip(dist / dmax, 0.0, 1.0)
+    g = max(float(gamma), 1e-3)
+    tgrad = (t ** g).astype(np.float32)         # 0 = центр кроны, 1 = периферия
+
+    apply_shade = mode in ('SHADE', 'BOTH')      # затенение (градиент яркости)
+    apply_color = mode in ('COLOR', 'BOTH')      # цвет листвы (свет/тень)
+
+    # ── вертикальный градиент кроны (0 = низ, 1 = верх) ──
+    # Нужен и затемнению низа (затенение), и подсветке верха (цвет).
+    z = loop_pos[:, 2]
+    zf = z[mask]
+    zmin, zmax = float(zf.min()), float(zf.max())
+    if zmax - zmin > 1e-9:
+        zt = np.clip((z - zmin) / (zmax - zmin), 0.0, 1.0).astype(np.float32)
+    else:
+        zt = np.zeros(n_loops, dtype=np.float32)
+
+    # ── затенение кроны: радиальный градиент яркости (блок «Крона») ──
+    if apply_shade:
+        bright = float(inside) + (float(outside) - float(inside)) * tgrad
+        if height_dark > 0.0:                    # затемнить низ — настройка кроны
+            bright = bright * ((1.0 - float(height_dark))
+                               + float(height_dark) * zt)
+        bright = np.clip(bright, 0.0, 1.0).astype(np.float32)
+    else:
+        bright = np.ones(n_loops, dtype=np.float32)   # цвет-режим: базовая яркость 1
+
+    # ── модификаторы вида листвы (блок «Цвет»): низ / верх / разброс ──
+    # Все три — мультипликаторы яркости; работают и поверх затенения (BOTH),
+    # и на чистой белой базе (только «Цвет»). Итоговый клип к [0..1] — в конце.
+    if apply_color:
+        if color_height_dark > 0.0:              # затемнить низ — настройка цвета
+            bright = bright * ((1.0 - float(color_height_dark))
+                               + float(color_height_dark) * zt)
+        if top_bright > 0.0:                     # подсветить макушку (>1 = ярче)
+            thr = 1.0 - float(np.clip(top_height, 0.0, 1.0))
+            zt_top = np.clip((zt - thr) / max(1.0 - thr, 1e-6), 0.0, 1.0)
+            bright = bright * (1.0 + float(top_bright) * zt_top)
+        if variation > 0.0:                      # случайный разброс ПО ВЕРШИНАМ
+            rng = np.random.default_rng(1234)
+            vrand = rng.uniform(1.0 - float(variation), 1.0,
+                                size=n_verts).astype(np.float32)
+            bright = bright * vrand[loop_vidx]
+
+    # ── цвет листвы: тень (центр) → свет (периферия) по градиенту ──
+    if apply_color:
+        light_rgb = np.array(light_tint, dtype=np.float32)
+        shadow_rgb = np.array(shadow_tint, dtype=np.float32)
+        s = float(np.clip(tint_strength, 0.0, 1.0))
+        tint_per = (shadow_rgb[None, :] * (1.0 - tgrad[:, None])
+                    + light_rgb[None, :] * tgrad[:, None])      # (n_loops, 3)
+        eff_tint = (1.0 - s) * np.ones((1, 3), dtype=np.float32) + s * tint_per
+    else:
+        eff_tint = np.ones((1, 3), dtype=np.float32)            # затенение-режим: цвет не трогаем
+
+    # ── читаем текущие цвета, переписываем только loops маски ─────────
+    flat = np.empty(n_loops * 4, dtype=np.float32)
+    color_attr.data.foreach_get('color', flat)
+    flat4 = flat.reshape(n_loops, 4)
+    # Свежесозданный attr инициализируется нулями (чёрный) — для MULTIPLY
+    # это дало бы чёрный результат, поэтому стартуем с белой базы.
+    if created:
+        flat4[:, 0:3] = 1.0
+        flat4[:, 3] = 1.0
+
+    shade = bright[:, None] * eff_tint               # затенение × оттенок (per-loop)
+    if blend == 'MULTIPLY':
+        # AO кроны + tint множатся на существующий прилайт (свет остаётся)
+        out = flat4[:, 0:3] * shade
+    else:                                            # 'REPLACE'
+        out = shade
+    flat4[mask, 0:3] = np.clip(out[mask], 0.0, 1.0)
+    flat4[mask, 3] = 1.0
+    color_attr.data.foreach_set('color', flat4.ravel())
+
+    n_painted = int(mask.sum())
+    return True, f"Foliage prelight → '{color_name}' ({n_painted} loops)"
 
 
 def apply_brightness_offset(obj, v_offset):
@@ -1148,9 +1499,13 @@ def _modulate_preset_values(mode, mix=0.15, contrast=0.0, gamma=1.0):
 
 
 def setup_prelight_preview(obj, enable=True):
-    """Setup materials to show vertex colors multiplied with textures in Material Preview
+    """Превью прилайта: умножает vertex colors на текстуру в Material Preview.
 
-    Adds a Vertex Color node and MixRGB (Multiply) between texture and shader.
+    Минимальный граф — 2 ноды на материал:
+        Attribute(vertex color) → MixRGB(Multiply) ×текстура → Base Color.
+    Лёгкий для компиляции шейдера, поэтому переключение моделей не тормозит.
+    (Старый режим «Modulate» с 8 нодами убран; оставшиеся modulate-ноды из
+    старых .blend здесь вычищаются.)
     """
     if obj is None or obj.type != 'MESH':
         return False, "Select a mesh object!"
@@ -1159,23 +1514,14 @@ def setup_prelight_preview(obj, enable=True):
     if not compat.vcol_list(mesh):
         return False, "No vertex colors on object!"
 
-    # Get active color attribute name
     color_attr = compat.vcol_active(mesh)
     if color_attr is None:
         color_attr = compat.vcol_list(mesh)[0]
     color_name = color_attr.name
 
-    # Read «Modulate Color» preview state from scene (если scene доступна)
-    # — ambient_obj × surfAmbient добавляется к vertex color, имитируя
-    # формулу из ванильного шейдера зданий SA (см. euryopa
-    # pcBuildingVS.hlsl: OUT.Color.rgb += ambient * surfAmb).
-    scene = getattr(bpy.context, 'scene', None)
-    mode = getattr(scene.inu_settings, 'gtatools_modulate_mode', 'OFF') if scene else 'OFF'
-    mix = float(getattr(scene.inu_settings, 'gtatools_modulate_mix', 0.15)) if scene else 0.15
-    contrast = float(getattr(scene.inu_settings, 'gtatools_modulate_contrast', 0.0)) if scene else 0.0
-    gamma = float(getattr(scene.inu_settings, 'gtatools_modulate_gamma', 1.0)) if scene else 1.0
-    (amb_b, amb_factor, pf1_b, pf1_f, pf2_b, pf2_f,
-     bc_contrast, gm_gamma) = _modulate_preset_values(mode, mix, contrast, gamma)
+    # Устаревшие modulate-ноды — могли остаться в файлах со старым превью.
+    _LEGACY = ("Prelight_Bright", "Prelight_Ambient", "Prelight_PostFx1",
+               "Prelight_PostFx2", "Prelight_BrightContrast", "Prelight_Gamma")
 
     modified_count = 0
 
@@ -1187,362 +1533,126 @@ def setup_prelight_preview(obj, enable=True):
         nodes = mat.node_tree.nodes
         links = mat.node_tree.links
 
-        # Find existing prelight nodes
+        principled = next(
+            (n for n in nodes if n.type == 'BSDF_PRINCIPLED'), None)
+        if principled is None:
+            continue
+        base_color = principled.inputs.get('Base Color')
+        if base_color is None:
+            continue
+
         vc_node = nodes.get("Prelight_VertexColor")
         mix_node = nodes.get("Prelight_Mix")
-        bright_node = nodes.get("Prelight_Bright")
-        amb_node = nodes.get("Prelight_Ambient")
-        pf1_node = nodes.get("Prelight_PostFx1")
-        pf2_node = nodes.get("Prelight_PostFx2")
-        bc_node = nodes.get("Prelight_BrightContrast")
-        gm_node = nodes.get("Prelight_Gamma")
 
         if enable:
-            # Find the Principled BSDF and texture connected to Base Color
-            principled = None
-            tex_node = None
-            original_link = None
+            # Текстура: сохранённый вход Mix.A (если превью уже стоит), иначе
+            # то, что сейчас идёт в Base Color (но не наш Mix).
+            tex_socket = None
+            if mix_node is not None:
+                ma = compat.mix_input_a(mix_node)
+                if ma.is_linked:
+                    tex_socket = ma.links[0].from_socket
+            if tex_socket is None and base_color.is_linked:
+                src_node = base_color.links[0].from_node
+                if src_node is not mix_node:
+                    tex_socket = base_color.links[0].from_socket
+            if tex_socket is None:
+                # Фоллбэк для старых/битых графов: текстура висит отключённой
+                # (Base Color ни к чему не привязан). Берём её прямо из ноды
+                # Image Texture — иначе превью = vertex color × белый, без
+                # текстуры (как на скрине старой сцены).
+                tex_socket = _find_base_image_socket(nodes, principled)
 
-            for node in nodes:
-                if node.type == 'BSDF_PRINCIPLED':
-                    principled = node
-                    break
-
-            if not principled:
-                continue
-
-            # Get what's connected to Base Color
-            base_color_input = principled.inputs.get('Base Color')
-            if base_color_input and base_color_input.is_linked:
-                original_link = base_color_input.links[0]
-                tex_node = original_link.from_node
-                tex_output = original_link.from_socket
-
-            # If already has prelight setup - just update values
-            if mix_node and vc_node and bright_node:
-                # Set color attribute name (compatible with both node types)
-                if hasattr(vc_node, 'layer_name'):
-                    vc_node.layer_name = color_name
-                elif hasattr(vc_node, 'attribute_name'):
-                    vc_node.attribute_name = color_name
-                compat.mix_input_b(bright_node).default_value = (0.0, 0.0, 0.0, 0.0)
-                # Insert Prelight_Ambient if missing (older preview without it)
-                if amb_node is None:
-                    amb_node = nodes.new(compat.MIX_NODE_TYPE)
-                    amb_node.name = "Prelight_Ambient"
-                    amb_node.label = "Ambient (Modulate)"
-                    compat.setup_mix_rgba_node(amb_node, blend='ADD')
-                    amb_node.location = (
-                        principled.location.x - 800, principled.location.y - 200)
-                    # Splice between bright_node and mix_node B
-                    for lnk in list(compat.mix_input_b(mix_node).links):
-                        links.remove(lnk)
-                    links.new(compat.mix_output_result(bright_node), compat.mix_input_a(amb_node))
-                    links.new(compat.mix_output_result(amb_node), compat.mix_input_b(mix_node))
-                compat.mix_input_factor(amb_node).default_value = amb_factor
-                compat.mix_input_b(amb_node).default_value = amb_b
-                # Создать недостающие ноды: PostFx1, PostFx2, BrightContrast, Gamma
-                if pf1_node is None:
-                    pf1_node = nodes.new(compat.MIX_NODE_TYPE)
-                    pf1_node.name = "Prelight_PostFx1"
-                    pf1_node.label = "PostFx1 (Add)"
-                    compat.setup_mix_rgba_node(pf1_node, blend='ADD')
-                    pf1_node.location = (
-                        principled.location.x - 200, principled.location.y - 50)
-                if pf2_node is None:
-                    pf2_node = nodes.new(compat.MIX_NODE_TYPE)
-                    pf2_node.name = "Prelight_PostFx2"
-                    pf2_node.label = "PostFx2 (Add)"
-                    compat.setup_mix_rgba_node(pf2_node, blend='ADD')
-                    pf2_node.location = (
-                        principled.location.x - 150, principled.location.y - 50)
-                if bc_node is None:
-                    bc_node = nodes.new('ShaderNodeBrightContrast')
-                    bc_node.name = "Prelight_BrightContrast"
-                    bc_node.label = "Contrast"
-                    bc_node.location = (
-                        principled.location.x - 100, principled.location.y - 50)
-                    bc_node.inputs['Bright'].default_value = 0.0
-                if gm_node is None:
-                    gm_node = nodes.new('ShaderNodeGamma')
-                    gm_node.name = "Prelight_Gamma"
-                    gm_node.label = "Gamma"
-                    gm_node.location = (
-                        principled.location.x - 50, principled.location.y - 50)
-                # Перевязать цепочку: Mix → PostFx1 → PostFx2 → BrightContrast → Gamma → Base Color
-                for lnk in list(base_color_input.links):
-                    links.remove(lnk)
-                for lnk in list(compat.mix_input_a(pf1_node).links):
-                    links.remove(lnk)
-                for lnk in list(compat.mix_input_a(pf2_node).links):
-                    links.remove(lnk)
-                for lnk in list(bc_node.inputs['Color'].links):
-                    links.remove(lnk)
-                for lnk in list(gm_node.inputs['Color'].links):
-                    links.remove(lnk)
-                links.new(compat.mix_output_result(mix_node), compat.mix_input_a(pf1_node))
-                links.new(compat.mix_output_result(pf1_node), compat.mix_input_a(pf2_node))
-                links.new(compat.mix_output_result(pf2_node), bc_node.inputs['Color'])
-                links.new(bc_node.outputs['Color'], gm_node.inputs['Color'])
-                links.new(gm_node.outputs['Color'], base_color_input)
-                compat.mix_input_factor(pf1_node).default_value = pf1_f
-                compat.mix_input_b(pf1_node).default_value = pf1_b
-                compat.mix_input_factor(pf2_node).default_value = pf2_f
-                compat.mix_input_b(pf2_node).default_value = pf2_b
-                bc_node.inputs['Contrast'].default_value = bc_contrast
-                gm_node.inputs['Gamma'].default_value = gm_gamma
-                continue
-
-            # Create Color Attribute node (compatible 4.4+)
-            if not vc_node:
-                if bpy.app.version >= (4, 0, 0):
-                    vc_node = nodes.new('ShaderNodeAttribute')
-                    vc_node.attribute_type = 'GEOMETRY'
-                    vc_node.attribute_name = color_name
-                else:
-                    vc_node = nodes.new('ShaderNodeVertexColor')
-                    vc_node.layer_name = color_name
+            if vc_node is None:
+                vc_node = _make_color_attr_node(nodes, color_name)
                 vc_node.name = "Prelight_VertexColor"
                 vc_node.label = "Prelight"
-                # Side-chain row sits 200 px below Principled; main
-                # chain (Mix → ... → Gamma → BaseColor) runs along
-                # Principled's Y. 180 px spacing between nodes is
-                # roughly node-width + 40 px breathing room, so the
-                # graph stays readable without huge gaps.
-                vc_node.location = (principled.location.x - 1200, principled.location.y - 200)
+                vc_node.location = (principled.location.x - 600,
+                                    principled.location.y - 220)
             else:
                 if hasattr(vc_node, 'layer_name'):
                     vc_node.layer_name = color_name
                 elif hasattr(vc_node, 'attribute_name'):
                     vc_node.attribute_name = color_name
 
-            # Create Brightness node (+ brightness offset)
-            if not bright_node:
-                bright_node = nodes.new(compat.MIX_NODE_TYPE)
-                bright_node.name = "Prelight_Bright"
-                bright_node.label = "Brightness"
-                compat.setup_mix_rgba_node(bright_node, blend='ADD')
-                bright_node.location = (principled.location.x - 1000, principled.location.y - 200)
-                compat.mix_input_factor(bright_node).default_value = 1.0
-            compat.mix_input_b(bright_node).default_value = (0.0, 0.0, 0.0, 0.0)
-
-            # Create Ambient (Modulate) node — adds ambient_obj × surfAmb
-            # to vertex color, mirroring ванильный SA-шейдер зданий
-            # (см. euryopa pcBuildingVS.hlsl: Color.rgb += ambient*surfAmb).
-            # B input управляется глобальной настройкой scene; default 0.
-            if not amb_node:
-                amb_node = nodes.new(compat.MIX_NODE_TYPE)
-                amb_node.name = "Prelight_Ambient"
-                amb_node.label = "Ambient (Modulate)"
-                compat.setup_mix_rgba_node(amb_node, blend='ADD')
-                amb_node.location = (
-                    principled.location.x - 280, principled.location.y - 100)
-            compat.mix_input_factor(amb_node).default_value = amb_factor
-            compat.mix_input_b(amb_node).default_value = amb_b
-
-            # Create Mix node (Multiply with texture)
-            if not mix_node:
+            if mix_node is None:
                 mix_node = nodes.new(compat.MIX_NODE_TYPE)
                 mix_node.name = "Prelight_Mix"
                 mix_node.label = "Prelight Multiply"
                 compat.setup_mix_rgba_node(mix_node, blend='MULTIPLY')
-                mix_node.location = (principled.location.x - 860, principled.location.y)
+                mix_node.location = (principled.location.x - 300,
+                                     principled.location.y)
                 compat.mix_input_factor(mix_node).default_value = 1.0
 
-            # ── PostFx1 + PostFx2 — точная игровая формула из
-            # CPostEffects::ColourFilter (gta-reversed-modern):
-            #   final += postfx1.rgb*alpha + postfx2.rgb*alpha
-            # Два аддитивных тинта с настраиваемой alpha. По дефолту
-            # alpha=0 для DAY/NIGHT (Blender'овский AgX-тонмап
-            # пересвечивает их), цветовое значение оставлено для
-            # будущей точной настройки.
-            if not pf1_node:
-                pf1_node = nodes.new(compat.MIX_NODE_TYPE)
-                pf1_node.name = "Prelight_PostFx1"
-                pf1_node.label = "PostFx1 (Add)"
-                compat.setup_mix_rgba_node(pf1_node, blend='ADD')
-                pf1_node.location = (principled.location.x - 690, principled.location.y)
-            compat.mix_input_factor(pf1_node).default_value = pf1_f
-            compat.mix_input_b(pf1_node).default_value = pf1_b
-
-            if not pf2_node:
-                pf2_node = nodes.new(compat.MIX_NODE_TYPE)
-                pf2_node.name = "Prelight_PostFx2"
-                pf2_node.label = "PostFx2 (Add)"
-                compat.setup_mix_rgba_node(pf2_node, blend='ADD')
-                pf2_node.location = (principled.location.x - 520, principled.location.y)
-            compat.mix_input_factor(pf2_node).default_value = pf2_f
-            compat.mix_input_b(pf2_node).default_value = pf2_b
-
-            # ── BrightContrast + Gamma — color-grading на финальный результат
-            if not bc_node:
-                bc_node = nodes.new('ShaderNodeBrightContrast')
-                bc_node.name = "Prelight_BrightContrast"
-                bc_node.label = "Contrast"
-                bc_node.location = (principled.location.x - 350, principled.location.y)
-            bc_node.inputs['Bright'].default_value = 0.0
-            bc_node.inputs['Contrast'].default_value = bc_contrast
-
-            if not gm_node:
-                gm_node = nodes.new('ShaderNodeGamma')
-                gm_node.name = "Prelight_Gamma"
-                gm_node.label = "Gamma"
-                gm_node.location = (principled.location.x - 180, principled.location.y)
-            gm_node.inputs['Gamma'].default_value = gm_gamma
-
-            # Connect nodes
-            if tex_node and original_link:
-                # Texture -> Mix A
-                links.new(tex_output, compat.mix_input_a(mix_node))
+            # A = текстура, B = vertex color
+            if tex_socket is not None:
+                links.new(tex_socket, compat.mix_input_a(mix_node))
             else:
-                # No texture - use white
-                compat.mix_input_a(mix_node).default_value = (1, 1, 1, 1)
+                compat.mix_input_a(mix_node).default_value = (1.0, 1.0, 1.0, 1.0)
+            links.new(vc_node.outputs['Color'], compat.mix_input_b(mix_node))
 
-            # Vertex Color -> Bright A
-            links.new(vc_node.outputs['Color'], compat.mix_input_a(bright_node))
+            # Mix → Base Color
+            for lnk in list(base_color.links):
+                links.remove(lnk)
+            links.new(compat.mix_output_result(mix_node), base_color)
 
-            # Bright Result -> Ambient A
-            links.new(compat.mix_output_result(bright_node), compat.mix_input_a(amb_node))
-
-            # Ambient Result -> Mix B
-            links.new(compat.mix_output_result(amb_node), compat.mix_input_b(mix_node))
-
-            # Mix -> PostFx1 -> PostFx2 -> BrightContrast -> Gamma -> Base Color
-            links.new(compat.mix_output_result(mix_node), compat.mix_input_a(pf1_node))
-            links.new(compat.mix_output_result(pf1_node), compat.mix_input_a(pf2_node))
-            links.new(compat.mix_output_result(pf2_node), bc_node.inputs['Color'])
-            links.new(bc_node.outputs['Color'], gm_node.inputs['Color'])
-            links.new(gm_node.outputs['Color'], base_color_input)
-
-            # ── Alpha: vertex color alpha → Principled Alpha ──
-            # Only if active color attribute actually has any alpha < 1.0 painted
-            has_alpha_painted = False
-            active_attr = compat.vcol_get(mesh, color_name)
-            if active_attr and compat.vcol_data_type(active_attr) in ('BYTE_COLOR', 'FLOAT_COLOR'):
-                for d in active_attr.data:
-                    if d.color[3] < 0.999:
-                        has_alpha_painted = True
-                        break
-
-            alpha_input = principled.inputs.get('Alpha')
-            if has_alpha_painted and alpha_input and 'Alpha' in vc_node.outputs:
-                # Save original blend_method
-                if 'prelight_orig_blend' not in mat:
-                    mat['prelight_orig_blend'] = getattr(mat, 'blend_method', 'OPAQUE')
-                if hasattr(mat, 'blend_method'):
-                    mat.blend_method = 'HASHED'
-
-                if alpha_input.is_linked:
-                    # Texture alpha already connected — insert Multiply node
-                    orig_alpha_socket = alpha_input.links[0].from_socket
-                    alpha_mult = nodes.get("Prelight_AlphaMult")
-                    if not alpha_mult:
-                        alpha_mult = nodes.new('ShaderNodeMath')
-                        alpha_mult.name = "Prelight_AlphaMult"
-                        alpha_mult.label = "Prelight Alpha Mult"
-                        alpha_mult.operation = 'MULTIPLY'
-                        alpha_mult.location = (principled.location.x - 350, principled.location.y - 400)
-                    # Disconnect old alpha link
-                    for lnk in list(alpha_input.links):
-                        links.remove(lnk)
-                    # texture_alpha × vc_alpha → Principled Alpha
-                    links.new(orig_alpha_socket, alpha_mult.inputs[0])
-                    links.new(vc_node.outputs['Alpha'], alpha_mult.inputs[1])
-                    links.new(alpha_mult.outputs[0], alpha_input)
-                    mat['prelight_alpha_mode'] = 'mult'
-                else:
-                    # No existing alpha — connect vc alpha directly
-                    links.new(vc_node.outputs['Alpha'], alpha_input)
-                    mat['prelight_alpha_mode'] = 'direct'
-
+            # Вычистить устаревшие modulate-ноды.
+            for nm in _LEGACY:
+                n = nodes.get(nm)
+                if n is not None:
+                    nodes.remove(n)
             modified_count += 1
 
         else:
-            # Disable - remove prelight nodes and restore original connection
-            if mix_node:
-                # Find what was connected to Mix A input (original texture or Lightmap_Mix)
-                mix_a_input = mix_node.inputs.get('A')
-                original_source = None
-                original_socket = None
+            # Выключение: вернуть текстуру на Base Color и удалить наши ноды.
+            tex_socket = None
+            if mix_node is not None:
+                ma = compat.mix_input_a(mix_node)
+                if ma.is_linked:
+                    tex_socket = ma.links[0].from_socket
+            if tex_socket is None:
+                tex_socket = _find_base_image_socket(nodes, principled)
+            for lnk in list(base_color.links):
+                links.remove(lnk)
+            if tex_socket is not None:
+                links.new(tex_socket, base_color)
 
-                if mix_a_input and mix_a_input.is_linked:
-                    original_source = mix_a_input.links[0].from_node
-                    original_socket = mix_a_input.links[0].from_socket
-
-                # Find Principled BSDF
-                principled = None
-                for node in nodes:
-                    if node.type == 'BSDF_PRINCIPLED':
-                        principled = node
-                        break
-
-                if principled:
-                    base_color_input = principled.inputs.get('Base Color')
-                    # Always cut whatever is currently driving Base
-                    # Color (the prelight chain's gm_node → here) so
-                    # the prelight signal doesn't leak through with
-                    # the chain still wired up. If we have a saved
-                    # original source, link it back; otherwise leave
-                    # Base Color on its default value.
-                    for lnk in list(base_color_input.links):
+            # Legacy alpha cleanup (Prelight_AlphaMult / prelight_alpha_mode).
+            alpha_mode = mat.get('prelight_alpha_mode')
+            alpha_input = principled.inputs.get('Alpha')
+            alpha_mult = nodes.get("Prelight_AlphaMult")
+            if alpha_mode == 'mult' and alpha_mult and alpha_input:
+                orig_socket = None
+                if alpha_mult.inputs[0].is_linked:
+                    orig_socket = alpha_mult.inputs[0].links[0].from_socket
+                for lnk in list(alpha_input.links):
+                    links.remove(lnk)
+                if orig_socket:
+                    links.new(orig_socket, alpha_input)
+                nodes.remove(alpha_mult)
+            elif alpha_mode == 'direct' and alpha_input:
+                for lnk in list(alpha_input.links):
+                    if vc_node is not None and lnk.from_node == vc_node:
                         links.remove(lnk)
-                    if original_source and original_socket:
-                        links.new(original_socket, base_color_input)
+                alpha_input.default_value = 1.0
+            if 'prelight_alpha_mode' in mat:
+                del mat['prelight_alpha_mode']
+            if 'prelight_orig_blend' in mat:
+                if hasattr(mat, 'blend_method'):
+                    try:
+                        mat.blend_method = mat['prelight_orig_blend']
+                    except Exception:
+                        mat.blend_method = 'OPAQUE'
+                del mat['prelight_orig_blend']
 
-                    # ── Alpha cleanup ──
-                    alpha_mode = mat.get('prelight_alpha_mode')
-                    alpha_input = principled.inputs.get('Alpha')
-                    alpha_mult = nodes.get("Prelight_AlphaMult")
+            # Удалить наши ноды (минимальные + любые устаревшие modulate).
+            for nm in ("Prelight_VertexColor", "Prelight_Mix") + _LEGACY:
+                n = nodes.get(nm)
+                if n is not None:
+                    nodes.remove(n)
+            modified_count += 1
 
-                    if alpha_mode == 'mult' and alpha_mult and alpha_input:
-                        # Restore original texture alpha → Principled Alpha
-                        orig_socket = None
-                        if alpha_mult.inputs[0].is_linked:
-                            orig_socket = alpha_mult.inputs[0].links[0].from_socket
-                        # Disconnect mult output
-                        for lnk in list(alpha_input.links):
-                            links.remove(lnk)
-                        if orig_socket:
-                            links.new(orig_socket, alpha_input)
-                        nodes.remove(alpha_mult)
-                    elif alpha_mode == 'direct' and alpha_input:
-                        # Disconnect VC alpha, reset to 1.0
-                        for lnk in list(alpha_input.links):
-                            if lnk.from_node == vc_node:
-                                links.remove(lnk)
-                        alpha_input.default_value = 1.0
-
-                    if 'prelight_alpha_mode' in mat:
-                        del mat['prelight_alpha_mode']
-
-                    # Restore blend_method
-                    if 'prelight_orig_blend' in mat:
-                        if hasattr(mat, 'blend_method'):
-                            try:
-                                mat.blend_method = mat['prelight_orig_blend']
-                            except Exception:
-                                mat.blend_method = 'OPAQUE'
-                        del mat['prelight_orig_blend']
-
-                # Keep the prelight chain nodes in place — only the
-                # Mix → Principled connection got cut above (Principled
-                # is now back on the raw texture, so the viewport
-                # shows "preview off"). Leaving the nodes alone makes
-                # the next enable-toggle a cheap re-link via the
-                # "already has prelight setup" fast path at line 1222
-                # instead of rebuilding 8 nodes every time.
-                #
-                # The DFF exporter walks past `Prelight_Mix` to find
-                # the real texture (dff_export.py:146), so leftover
-                # preview nodes don't affect export output. It still
-                # calls `setup_prelight_preview(enable=False)` for
-                # safety, which now restores links without churn.
-                modified_count += 1
-
-    # Stamp an explicit on/off flag onto each touched material so
-    # the button-state checks don't have to rely on the presence of
-    # `Prelight_Mix` (which now persists even while preview is off —
-    # we no longer destroy the prelight chain on toggle).
+    # Флаг состояния на каждом материале — кнопки UI смотрят на него.
     for mat_slot in obj.material_slots:
         mat = mat_slot.material
         if mat is None:
@@ -1558,8 +1668,433 @@ def setup_prelight_preview(obj, enable=True):
 
     if enable:
         return True, f"Prelight preview enabled on {modified_count} materials"
+    return True, f"Prelight preview disabled on {modified_count} materials"
+
+
+def _make_color_attr_node(nodes, color_name):
+    """Create a vertex-colour reader node (Attribute on 4.0+, Vertex Color
+    below) wired to ``color_name``. Returns the node — caller positions
+    it and reads ``.outputs['Color']`` / ``.outputs['Alpha']``."""
+    if bpy.app.version >= (4, 0, 0):
+        node = nodes.new('ShaderNodeAttribute')
+        node.attribute_type = 'GEOMETRY'
+        node.attribute_name = color_name
     else:
-        return True, f"Prelight preview disabled on {modified_count} materials"
+        node = nodes.new('ShaderNodeVertexColor')
+        node.layer_name = color_name
+    return node
+
+
+def _find_base_image_socket(nodes, principled):
+    """Найти выход 'Color' основной текстуры материала — даже если она сейчас
+    НЕ подключена (старые/битые графы, где текстура висит отдельно).
+
+    Предпочтение: TEX_IMAGE, идущая в Base Color (если связь ещё цела), иначе
+    первая TEX_IMAGE, имя которой не похоже на env/bump/spec/refl-карту, иначе
+    любая первая TEX_IMAGE. Возвращает socket или None."""
+    def _color_out(n):
+        out = n.outputs.get('Color')
+        if out is None and len(n.outputs):
+            out = n.outputs[0]
+        return out
+
+    # 1) то, что прямо сейчас в Base Color
+    if principled is not None:
+        bc = principled.inputs.get('Base Color')
+        if bc is not None and bc.is_linked:
+            src = bc.links[0].from_node
+            if src.type == 'TEX_IMAGE':
+                return _color_out(src)
+
+    tex_nodes = [n for n in nodes if n.type == 'TEX_IMAGE']
+    if not tex_nodes:
+        return None
+    # 2) первая «не служебная» текстура
+    skip = ('env', 'bump', 'spec', 'refl', 'norm', 'dual')
+    for n in tex_nodes:
+        nm = ((n.image.name if n.image else '') + ' ' + n.name).lower()
+        if not any(s in nm for s in skip):
+            return _color_out(n)
+    # 3) хоть какая-то
+    return _color_out(tex_nodes[0])
+
+
+def _enable_alpha_on_material(mat, color_name):
+    """Wire vertex-colour ALPHA of layer ``color_name`` into ``mat``'s
+    Principled BSDF Alpha (× any existing texture alpha) and flip the
+    material to a blended draw mode, so per-vertex transparency shows in
+    the viewport.
+
+    Idempotent and side-effect-isolated: own node namespace ``AlphaView_*``
+    + bookkeeping keys (``alphaview_mode``/``alphaview_orig_blend``/
+    ``alpha_preview_active``). If the Prelight preview already drives Alpha
+    (``prelight_alpha_mode``) we leave it and just mark ``shared``. Shared
+    by the manual toggle (`setup_alpha_preview`) and the import-time
+    auto-viz (`wire_mesh_vertex_alpha`). Returns True if the material was
+    handled (already-wired counts as handled)."""
+    if not mat or not mat.use_nodes:
+        return False
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+    principled = next(
+        (n for n in nodes if n.type == 'BSDF_PRINCIPLED'), None)
+    if not principled:
+        return False
+    alpha_input = principled.inputs.get('Alpha')
+    if alpha_input is None:
+        return False
+
+    # Alpha is now owned solely by this preview — the Prelight preview no
+    # longer touches the Alpha input, so there's no `prelight_alpha_mode`
+    # to defer to. Clean up any leftover legacy Prelight alpha wiring so it
+    # doesn't double-drive Alpha (older .blend files toggled before the
+    # systems were decoupled).
+    if mat.get('prelight_alpha_mode') is not None:
+        legacy_mult = nodes.get("Prelight_AlphaMult")
+        if legacy_mult is not None:
+            for lnk in list(alpha_input.links):
+                links.remove(lnk)
+            nodes.remove(legacy_mult)
+        else:
+            for lnk in list(alpha_input.links):
+                links.remove(lnk)
+        del mat['prelight_alpha_mode']
+
+    # Already wired by us — skip so we don't churn the node tree (and
+    # trigger a redundant EEVEE shader recompile) on a no-op.
+    if (mat.get('alpha_preview_active')
+            and mat.get('alphaview_mode') in ('direct', 'mult')):
+        return True
+
+    vc_node = nodes.get("AlphaView_VC")
+    mult_node = nodes.get("AlphaView_Mult")
+
+    if not vc_node:
+        vc_node = _make_color_attr_node(nodes, color_name)
+        vc_node.name = "AlphaView_VC"
+        vc_node.label = "Vertex Alpha"
+        vc_node.location = (principled.location.x - 350,
+                            principled.location.y - 400)
+    else:
+        if hasattr(vc_node, 'attribute_name'):
+            vc_node.attribute_name = color_name
+        elif hasattr(vc_node, 'layer_name'):
+            vc_node.layer_name = color_name
+
+    if 'Alpha' not in vc_node.outputs:
+        return False  # node type without an Alpha output — bail safely
+
+    # Remember the draw mode once so disable can restore it.
+    if 'alphaview_orig_blend' not in mat and hasattr(mat, 'blend_method'):
+        mat['alphaview_orig_blend'] = mat.blend_method
+    if hasattr(mat, 'blend_method'):
+        mat.blend_method = 'BLEND'
+
+    if alpha_input.is_linked:
+        # Texture alpha already feeds Alpha — multiply it by the vertex
+        # alpha so both contribute (tex_a × vc_a → Alpha).
+        orig_socket = alpha_input.links[0].from_socket
+        if not mult_node:
+            mult_node = nodes.new('ShaderNodeMath')
+            mult_node.name = "AlphaView_Mult"
+            mult_node.label = "Vertex Alpha Mult"
+            mult_node.operation = 'MULTIPLY'
+            mult_node.location = (principled.location.x - 180,
+                                  principled.location.y - 400)
+        for lnk in list(alpha_input.links):
+            links.remove(lnk)
+        links.new(orig_socket, mult_node.inputs[0])
+        links.new(vc_node.outputs['Alpha'], mult_node.inputs[1])
+        links.new(mult_node.outputs[0], alpha_input)
+        mat['alphaview_mode'] = 'mult'
+    else:
+        links.new(vc_node.outputs['Alpha'], alpha_input)
+        mat['alphaview_mode'] = 'direct'
+
+    mat['alpha_preview_active'] = True
+    return True
+
+
+def _disable_alpha_on_material(mat):
+    """Undo :func:`_enable_alpha_on_material` on one material: restore the
+    original Alpha source + draw mode, drop the bookkeeping keys, and FULLY
+    REMOVE the ``AlphaView_*`` nodes so the graph is left clean (no orphan
+    nodes lingering after the preview is turned off). Returns True if any
+    AlphaView node/bookkeeping was found and removed.
+
+    Earlier this kept the nodes in place for a «cheap re-enable»; that left
+    dead nodes in materials whose vertex alpha was later erased. Re-enable
+    just recreates the 1–2 nodes anyway, so removal is the right default."""
+    if not mat or not mat.use_nodes:
+        return False
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+    principled = next(
+        (n for n in nodes if n.type == 'BSDF_PRINCIPLED'), None)
+    if not principled:
+        return False
+    alpha_input = principled.inputs.get('Alpha')
+    if alpha_input is None:
+        return False
+
+    vc_node = nodes.get("AlphaView_VC")
+    mult_node = nodes.get("AlphaView_Mult")
+    mode = mat.get('alphaview_mode')
+
+    # Nothing of ours here — report «not handled» so callers can count.
+    if (vc_node is None and mult_node is None
+            and mode is None and 'alpha_preview_active' not in mat):
+        return False
+
+    if mode == 'mult' and mult_node:
+        orig_socket = None
+        if mult_node.inputs[0].is_linked:
+            orig_socket = mult_node.inputs[0].links[0].from_socket
+        for lnk in list(alpha_input.links):
+            links.remove(lnk)
+        if orig_socket:
+            links.new(orig_socket, alpha_input)
+    elif mode == 'direct':
+        for lnk in list(alpha_input.links):
+            if vc_node is not None and lnk.from_node == vc_node:
+                links.remove(lnk)
+        alpha_input.default_value = 1.0
+
+    # Physically delete our nodes. Removing a node also drops any remaining
+    # links to it, so do this AFTER restoring the original alpha wiring.
+    for n in (mult_node, vc_node):
+        if n is not None:
+            try:
+                nodes.remove(n)
+            except Exception:
+                pass
+
+    # Safety: if Alpha ended up driven by nothing, make the material opaque
+    # again rather than leaving a stale 0 default (invisible material).
+    if not alpha_input.is_linked and alpha_input.default_value <= 0.0:
+        alpha_input.default_value = 1.0
+
+    # Restore draw mode only if WE changed it (shared mode left it to the
+    # Prelight preview, which restores it on its own toggle).
+    if mode != 'shared' and 'alphaview_orig_blend' in mat:
+        if hasattr(mat, 'blend_method'):
+            try:
+                mat.blend_method = mat['alphaview_orig_blend']
+            except Exception:
+                mat.blend_method = 'OPAQUE'
+    for key in ('alphaview_mode', 'alphaview_orig_blend',
+                'alpha_preview_active'):
+        if key in mat:
+            del mat[key]
+    return True
+
+
+def cleanup_orphan_alpha_nodes(context=None):
+    """The «check»: walk all scene meshes and remove ``AlphaView_*`` nodes
+    from every material that still carries them but is no longer used by ANY
+    mesh with real per-vertex alpha (Day/Night layer < 255).
+
+    Materials shared between a transparent and an opaque mesh are kept (they
+    are still needed by the transparent one). Returns the number of
+    materials cleaned. Safe to call any time — idempotent."""
+    ctx = context or bpy.context
+
+    # Materials still needed: used by at least one slot whose own faces fade
+    # (per-slot, not per-mesh — an opaque slot sharing a mesh with a faded
+    # one must NOT keep its nodes).
+    needed = set()
+    for obj in ctx.scene.objects:
+        if obj.type != 'MESH' or obj.data is None:
+            continue
+        layer = _mesh_vertex_alpha_layer(obj.data)
+        if layer is None:
+            continue
+        alpha_idx = _alpha_material_indices(obj.data, layer)
+        for i, mat_slot in enumerate(obj.material_slots):
+            if i in alpha_idx and mat_slot.material is not None:
+                needed.add(mat_slot.material.name)
+
+    purged = 0
+    for mat in bpy.data.materials:
+        if not mat.use_nodes:
+            continue
+        nodes = mat.node_tree.nodes
+        has_nodes = (nodes.get("AlphaView_VC") is not None
+                     or nodes.get("AlphaView_Mult") is not None
+                     or 'alpha_preview_active' in mat)
+        if not has_nodes or mat.name in needed:
+            continue
+        if _disable_alpha_on_material(mat):
+            purged += 1
+    return purged
+
+
+def _alpha_material_indices(mesh, layer_name, threshold=0.999):
+    """Set of ``material_index`` values whose FACES actually carry alpha
+    ``< threshold`` on ``layer_name``.
+
+    This is what stops nodes landing on the wrong slot: a mesh can mix a
+    faded material (foliage, glass) with a fully-opaque one, and earlier we
+    wired EVERY slot whenever the mesh had any alpha anywhere. Now we wire
+    only the slots whose own polygons fade. Empty set → no slot needs it."""
+    attr = compat.vcol_get(mesh, layer_name)
+    data = getattr(attr, 'data', None) if attr else None
+    n = len(data) if data else 0
+    if n == 0:
+        return set()
+    import numpy as np
+    flat = np.empty(n * 4, dtype=np.float32)
+    try:
+        data.foreach_get('color', flat)
+    except Exception:
+        return set()
+    alpha = flat[3::4]
+    na = len(alpha)
+    domain = getattr(attr, 'domain', 'CORNER')
+    nmats = max(1, len(mesh.materials))
+    # FastMesh (Plumber и пр. нестандартные меши) не даёт доступа к
+    # mesh.polygons → пер-слотовую проверку сделать нельзя; заводим альфу
+    # на ВСЕ слоты (грубо, но работает и не падает).
+    try:
+        polys = mesh.polygons
+        if len(polys) == 0:
+            return set(range(nmats))
+    except Exception:
+        return set(range(nmats))
+    result = set()
+    for poly in polys:
+        mi = poly.material_index
+        if mi in result:
+            continue
+        if domain == 'POINT':
+            idxs = poly.vertices
+        else:  # CORNER — indexed by loop
+            idxs = range(poly.loop_start, poly.loop_start + poly.loop_total)
+        for i in idxs:
+            if i < na and alpha[i] < threshold:
+                result.add(mi)
+                break
+        if len(result) >= nmats:
+            break
+    return result
+
+
+def setup_alpha_preview(obj, enable=True, color_name=None):
+    """Toggle a viewport-only preview of vertex-colour ALPHA, independent
+    of the RGB Prelight preview. See :func:`_enable_alpha_on_material`.
+
+    ``color_name`` selects the layer; ``None`` follows the active colour
+    attribute (so the preview tracks the Day/Night selector), falling back
+    to "Day" then the first layer. Returns ``(ok: bool, message: str)``.
+
+    On enable, only material slots whose OWN faces fade are wired
+    (per-slot check via :func:`_alpha_material_indices`) — opaque slots on
+    a mixed mesh are left untouched."""
+    if obj is None or obj.type != 'MESH':
+        return False, "Select a mesh object!"
+
+    mesh = obj.data
+    if not compat.vcol_list(mesh):
+        return False, "No vertex colors on object!"
+
+    if color_name is None:
+        color_attr = compat.vcol_active(mesh)
+        if color_attr is None:
+            color_attr = compat.vcol_get(mesh, "Day") or compat.vcol_list(mesh)[0]
+        color_name = color_attr.name
+
+    modified_count = 0
+    if enable:
+        alpha_idx = _alpha_material_indices(mesh, color_name)
+        for i, mat_slot in enumerate(obj.material_slots):
+            if i not in alpha_idx:
+                continue  # this slot's faces are opaque — don't wire it
+            if _enable_alpha_on_material(mat_slot.material, color_name):
+                modified_count += 1
+    else:
+        for mat_slot in obj.material_slots:
+            if _disable_alpha_on_material(mat_slot.material):
+                modified_count += 1
+
+    if enable:
+        return True, f"Vertex-alpha preview enabled on {modified_count} materials"
+    return True, f"Vertex-alpha preview disabled on {modified_count} materials"
+
+
+def _mesh_vertex_alpha_layer(mesh, threshold=0.999):
+    """Name of a colour attribute that carries REAL per-vertex alpha (any
+    value < ``threshold``), or ``None`` if the mesh is fully opaque.
+    ``threshold`` defaults just under 1.0 so only byte 255 (→ exactly 1.0)
+    counts as opaque; byte 254 (≈0.996) and below count as alpha.
+
+    Проверяем Day/Night В ПЕРВУЮ ОЧЕРЕДЬ (канонические prelit-слои), а затем
+    ЛЮБОЙ другой цветовой атрибут — модели часто хранят альфу в слое с иным
+    именем (например `vertex_alpha`), и раньше такие не находились вовсе.
+
+    This is the gate that keeps the scene-wide preview off solid map
+    geometry: a mesh whose every colour attribute is all-255 alpha returns
+    None and is never wired. Only models that actually fade — foliage,
+    fences, glass, LOD edges — come back with a layer name."""
+    import numpy as np
+    # Порядок проверки: Day, Night, затем все остальные атрибуты.
+    names = []
+    for n in ("Day", "Night"):
+        if compat.vcol_get(mesh, n):
+            names.append(n)
+    try:
+        for a in compat.vcol_list(mesh):
+            if a.name not in names:
+                names.append(a.name)
+    except Exception:
+        pass
+    for name in names:
+        attr = compat.vcol_get(mesh, name)
+        data = getattr(attr, 'data', None) if attr else None
+        n = len(data) if data else 0
+        if n == 0:
+            continue
+        flat = np.empty(n * 4, dtype=np.float32)
+        try:
+            data.foreach_get('color', flat)
+        except Exception:
+            continue
+        if float(flat[3::4].min()) < threshold:
+            return name
+    return None
+
+
+def scene_vertex_alpha_objects(context=None):
+    """``[(obj, layer_name), …]`` for every mesh in the scene that has
+    real vertex alpha (see :func:`_mesh_vertex_alpha_layer`). The
+    scene-wide «Альфа вершин» toggle drives exactly this set — found
+    automatically, so the user never has to hand-select the transparent
+    models out of a whole map."""
+    ctx = context or bpy.context
+    out = []
+    for obj in ctx.scene.objects:
+        if obj.type != 'MESH' or obj.data is None:
+            continue
+        layer = _mesh_vertex_alpha_layer(obj.data)
+        if layer:
+            out.append((obj, layer))
+    return out
+
+
+def wire_mesh_vertex_alpha(mesh, color_name="Day"):
+    """Import-time auto-visualisation of vertex alpha — wire every material
+    on ``mesh`` so a model's per-vertex transparency is visible right after
+    import on EVERY path (single DFF, map/IPL, IMG, library) since they all
+    funnel through ``_build_mesh``.
+
+    Uses the same ``AlphaView_*`` mechanism as the manual «Альфа вершин»
+    toggle, so the button reflects the state and can switch it off.
+    Idempotent — safe on cached/shared materials reused across many map
+    models. Returns the number of materials wired."""
+    n = 0
+    for mat in mesh.materials:
+        if _enable_alpha_on_material(mat, color_name):
+            n += 1
+    return n
 
 
 def apply_modulate_preview(scene=None):

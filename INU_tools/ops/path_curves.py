@@ -1293,18 +1293,3 @@ class GTATOOLS_OT_toggle_path_debug(bpy.types.Operator):
         return {'FINISHED'}
 
 
-classes = (
-    GTATOOLS_OT_nodes_to_curves,
-    GTATOOLS_OT_curves_to_nodes,
-    GTATOOLS_OT_select_path_peds,
-    GTATOOLS_OT_select_path_vehs,
-    GTATOOLS_OT_select_path_all,
-    GTATOOLS_OT_refresh_path_colors,
-    GTATOOLS_OT_pick_path_props,
-    GTATOOLS_OT_apply_path_props,
-    GTATOOLS_OT_bulk_set_path_props,
-    GTATOOLS_OT_add_path_accessory,
-    GTATOOLS_OT_remove_path_accessory,
-    GTATOOLS_OT_start_accessory_sync,
-    GTATOOLS_OT_toggle_path_debug,
-)

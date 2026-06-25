@@ -315,9 +315,3 @@ class GTATOOLS_OT_vehicle_pair_report(bpy.types.Operator):
         return {'FINISHED'}
 
 
-classes = (
-    GTATOOLS_OT_vehicle_scale,
-    GTATOOLS_OT_vehicle_add_damage_variant,
-    GTATOOLS_OT_vehicle_show_damage,
-    GTATOOLS_OT_vehicle_pair_report,
-)

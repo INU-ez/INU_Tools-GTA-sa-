@@ -791,13 +791,3 @@ class GTATOOLS_OT_delete_active_action(bpy.types.Operator):
         return {'FINISHED'}
 
 
-classes = (
-    GTATOOLS_OT_import_ifp,
-    GTATOOLS_OT_export_ifp,
-    GTATOOLS_OT_ifp_roundtrip,
-    GTATOOLS_OT_merge_ifp,
-    GTATOOLS_OT_ifp_preview_toggle,
-    GTATOOLS_OT_apply_ifp,
-    GTATOOLS_OT_fix_quat_signs,
-    GTATOOLS_OT_delete_active_action,
-)

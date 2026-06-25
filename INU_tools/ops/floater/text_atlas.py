@@ -253,6 +253,9 @@ def _free_font_atlases():
             except Exception:
                 pass
     _FONT_ATLASES.clear()
+    # Cached glyph batches reference the (now freed) atlas UVs — drop them
+    # too so a re-register rebakes cleanly instead of drawing stale glyphs.
+    _clear_glyph_batch_cache()
 
 
 # ── Text shader (atlas sampler) ──────────────────────────────────────
@@ -376,6 +379,41 @@ def _build_glyph_quads(text, x, y, atlas):
     return verts, uvs
 
 
+# Cached glyph batches keyed by (text, x, y, px_size). Each label is drawn
+# ~5× per frame (4 shadow passes + foreground) and re-tessellated every
+# time — that buffer upload was the text half of the per-frame cost.
+# Geometry is constant while a floater isn't being dragged, so during
+# viewport navigation every lookup hits. Colour is a per-draw uniform (not
+# in the batch). Cleared whenever the atlas is rebaked (size/scale change).
+from collections import OrderedDict as _OD
+_GLYPH_BATCH_CACHE = _OD()
+_GLYPH_BATCH_CACHE_MAX = 8192
+# Profiler counters (a MISS = a freshly tessellated glyph batch).
+_GLYPH_STATS = {'hit': 0, 'miss': 0}
+
+
+def _clear_glyph_batch_cache():
+    _GLYPH_BATCH_CACHE.clear()
+
+
+def _glyph_batch(shader, text, x, y, px_size, atlas):
+    key = (text, int(round(x)), int(round(y)), px_size)
+    b = _GLYPH_BATCH_CACHE.get(key)
+    if b is None:
+        _GLYPH_STATS['miss'] += 1
+        verts, uvs = _build_glyph_quads(text, x, y, atlas)
+        if not verts:
+            return None
+        b = batch_for_shader(shader, 'TRIS', {"pos": verts, "uv": uvs})
+        _GLYPH_BATCH_CACHE[key] = b
+        if len(_GLYPH_BATCH_CACHE) > _GLYPH_BATCH_CACHE_MAX:
+            _GLYPH_BATCH_CACHE.popitem(last=False)
+    else:
+        _GLYPH_STATS['hit'] += 1
+        _GLYPH_BATCH_CACHE.move_to_end(key)
+    return b
+
+
 def _draw_text_atlas(x, y, text, color, px_size):
     """Render `text` at baseline (x, y) via the blf-baked atlas for
     `px_size`. Returns True on success."""
@@ -388,13 +426,12 @@ def _draw_text_atlas(x, y, text, color, px_size):
     if not text:
         return True
 
-    verts, uvs = _build_glyph_quads(text, x, y, atlas)
-    if not verts:
+    batch = _glyph_batch(shader, text, x, y, px_size, atlas)
+    if batch is None:
         return True
 
     try:
         gpu.state.blend_set('ALPHA')
-        batch = batch_for_shader(shader, 'TRIS', {"pos": verts, "uv": uvs})
         shader.bind()
         mvp = (gpu.matrix.get_projection_matrix()
                @ gpu.matrix.get_model_view_matrix())

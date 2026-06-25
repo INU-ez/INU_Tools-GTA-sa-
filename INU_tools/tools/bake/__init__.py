@@ -32,6 +32,11 @@ from .bake_maps import (
     HI_SUFFIX,
     LOW_SUFFIX,
 )
+from .bake_camera import (
+    render_one_map_camera,
+    plane_normal_world,
+    reproject_billboard_uv,
+)
 from .bake_composite import (
     LayerSpec,
     BLEND_MODES,
@@ -59,6 +64,10 @@ __all__ = [
     'find_hilow_pair',
     'HI_SUFFIX',
     'LOW_SUFFIX',
+    # bake_camera
+    'render_one_map_camera',
+    'plane_normal_world',
+    'reproject_billboard_uv',
     # bake_composite
     'LayerSpec',
     'BLEND_MODES',

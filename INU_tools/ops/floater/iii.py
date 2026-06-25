@@ -54,6 +54,7 @@ def _invoke_op_from_npanel(context, op_id: str):
     for p in parts:
         op = getattr(op, p)
 
+    B._floater_dispatch_active = True
     try:
         if target_region is not None:
             with live.temp_override(
@@ -65,6 +66,8 @@ def _invoke_op_from_npanel(context, op_id: str):
             op('INVOKE_DEFAULT')
     except Exception as ex:
         print(f"[IDE/IPL Floater] {op_id} failed: {ex}")
+    finally:
+        B._floater_dispatch_active = False
 
 
 # Padding between the section box's outline and its inner content.
@@ -119,7 +122,8 @@ class IdeIplImgFloater(B.Floater):
         # the 2-row action cluster itself uses 1-px vertical overlap;
         # label rows sit below the action cluster with a small gap.
         return (3 * TH._BUTTON_H
-                + WG._BTN_GAP                        # header → row1
+                + self._LABEL_H + 2                  # path row под заголовком
+                + WG._BTN_GAP                        # path → row1
                 + (-_FUSED_OVERLAP)                  # row1 ↔ row2 overlap
                 + 4                                  # row2 → counts label
                 + 2 * self._LABEL_H + 2              # counts + status + gap
@@ -129,6 +133,7 @@ class IdeIplImgFloater(B.Floater):
         # 4 inner rows: header, 3-toggle row, Import+Export pair, Remove.
         # Internal rows fused via overlap (4 rows = 3 overlaps of 1 px).
         return (4 * TH._BUTTON_H - 3 * _FUSED_OVERLAP
+                + self._LABEL_H + 4                  # path row под заголовком
                 + _BOX_PAD_TOP + _BOX_PAD_BOT)
 
     def compute_body_height(self, context):
@@ -173,8 +178,10 @@ class IdeIplImgFloater(B.Floater):
             ix = bx + _BOX_PAD_X
             iw = bw - 2 * _BOX_PAD_X
             header_y = by + bh - _BOX_PAD_TOP - TH._BUTTON_H
-            # Header → row1: regular gap (independent groups visually).
-            row1_y = header_y - WG._BTN_GAP - TH._BUTTON_H
+            # Короткий путь к файлу — сразу под заголовком.
+            path_y = header_y - 2 - self._LABEL_H
+            # Path → row1: regular gap (independent groups visually).
+            row1_y = path_y - WG._BTN_GAP - TH._BUTTON_H
             # row1 ↔ row2: 1-px vertical overlap so the two action rows
             # read as one fused 2×2 cluster.
             row2_y = row1_y - TH._BUTTON_H + _FUSED_OVERLAP
@@ -187,6 +194,7 @@ class IdeIplImgFloater(B.Floater):
             r2_l, r2_r = WG._enum_row_rects((ix, row2_y, iw, TH._BUTTON_H), 2)
             return {
                 'header': (ix, header_y, iw, TH._BUTTON_H),
+                'path': (ix, path_y, iw, self._LABEL_H),
                 'r1_l': r1_l, 'r1_r': r1_r,
                 'r2_l': r2_l, 'r2_r': r2_r,
                 'counts': (ix, counts_y, iw, self._LABEL_H),
@@ -195,6 +203,7 @@ class IdeIplImgFloater(B.Floater):
 
         ide_r = _layout_box_rows(L['ide_box_rect'])
         L['ide_header_rect'] = ide_r['header']
+        L['ide_path_rect']   = ide_r['path']
         L['ide_add_rect']    = ide_r['r1_l']
         L['ide_del_rect']    = ide_r['r1_r']
         L['ide_import_rect'] = ide_r['r2_l']
@@ -204,6 +213,7 @@ class IdeIplImgFloater(B.Floater):
 
         ipl_r = _layout_box_rows(L['ipl_box_rect'])
         L['ipl_header_rect'] = ipl_r['header']
+        L['ipl_path_rect']   = ipl_r['path']
         L['ipl_add_rect']    = ipl_r['r1_l']
         L['ipl_del_rect']    = ipl_r['r1_r']
         L['ipl_import_rect'] = ipl_r['r2_l']
@@ -236,9 +246,12 @@ class IdeIplImgFloater(B.Floater):
         iw = inner_w - 2 * _BOX_PAD_X
 
         img_header_y = img_y + img_h - _BOX_PAD_TOP - TH._BUTTON_H
-        # Header → toggle row, toggle → Import, Import → Export,
+        # Короткий путь к .img — под заголовком.
+        img_path_y = img_header_y - 2 - self._LABEL_H
+        L['img_path_rect'] = (ix, img_path_y, iw, self._LABEL_H)
+        # Path → toggle row, toggle → Import, Import → Export,
         # Export → Remove — все через 1-px overlap, без 18-px gap.
-        toggle_y = img_header_y + _FUSED_OVERLAP - TH._BUTTON_H
+        toggle_y = img_path_y - TH._BUTTON_H
         L['img_header_rect'] = (ix, img_header_y, iw, TH._BUTTON_H)
 
         # 3-toggle row — fused via `_enum_row_rects`.
@@ -267,13 +280,13 @@ class IdeIplImgFloater(B.Floater):
             return
         x, y, w, h = rect
         ix = x + 4
-        # Optional 12-px icon at the left edge.
+        # Иконка слева — крупнее (как в N-панели), а не зажата в 12 px.
         icon_w = 0
         if icon_name:
-            icon_size = max(10, min(12, h - 2))
+            icon_size = max(12, min(16, h - 1))
             iy = y + (h - icon_size) // 2
             GS._draw_icon((ix, iy, icon_size, icon_size),
-                          icon_name, tint=(color or TH._C_LABEL))
+                          icon_name, tint=(color or TH._C_TEXT))
             ix += icon_size + 3
             icon_w = icon_size + 3
         # Compute max text width that fits, truncate with ellipsis
@@ -286,7 +299,31 @@ class IdeIplImgFloater(B.Floater):
                 text = text[:-1]
             text = text + "…" if text else ""
         ty = y + (h - th) // 2
-        TA._text(int(ix), int(ty), text, color or TH._C_LABEL)
+        # Белый (как в N-панели), а не тусклый _C_LABEL.
+        TA._text(int(ix), int(ty), text, color or TH._C_TEXT)
+
+    @staticmethod
+    def _short_path(p):
+        """Короткий путь — последние 2 сегмента (как в N-панели:
+        Props_obj\\GR_props.ide)."""
+        import os
+        p = bpy.path.abspath(p or '')
+        if not p:
+            return ''
+        parts = p.replace('/', os.sep).rstrip(os.sep).split(os.sep)
+        parts = [s for s in parts if s]
+        return os.sep.join(parts[-2:]) if len(parts) >= 2 else (
+            parts[-1] if parts else '')
+
+    def _draw_path(self, context, rect, prop):
+        """Строка с коротким путём к IDE/IPL/IMG файлу (белым, под
+        заголовком бокса). Пусто — «Файл не выбран»."""
+        if rect is None:
+            return
+        raw = getattr(context.scene.inu_settings, prop, '') or ''
+        short = self._short_path(raw)
+        self._draw_label_line(rect, short or "Файл не выбран",
+                              icon_name='text')
 
     def _draw_ide_counts(self, context, rect):
         scn = context.scene
@@ -419,6 +456,7 @@ class IdeIplImgFloater(B.Floater):
         # Секции IPL ниже.
         WG._draw_box(L['ide_box_rect'], corner_mask=GS.CORNER_TL)
         self._draw_section_header(L['ide_header_rect'], "IDE", 'text')
+        self._draw_path(context, L.get('ide_path_rect'), 'gtatools_ide_path')
         WG._draw_button(L['ide_add_rect'], "Add",
                         hovered=(h == 'ide_add'), icon='add',
                         translate=False, corner_mask=GS.CORNER_TL)
@@ -436,6 +474,7 @@ class IdeIplImgFloater(B.Floater):
         # BL/BR прилегают к Секции IPL ниже.
         WG._draw_box(L['ipl_box_rect'], corner_mask=GS.CORNER_TR)
         self._draw_section_header(L['ipl_header_rect'], "IPL", 'empty_axis')
+        self._draw_path(context, L.get('ipl_path_rect'), 'gtatools_ipl_path')
         WG._draw_button(L['ipl_add_rect'], "Add",
                         hovered=(h == 'ipl_add'), icon='add',
                         translate=False, corner_mask=GS.CORNER_TL)
@@ -492,6 +531,7 @@ class IdeIplImgFloater(B.Floater):
         # поэтому скругляем только BL/BR.
         WG._draw_box(L['img_box_rect'], corner_mask=GS.CORNER_BOTTOM)
         self._draw_section_header(L['img_header_rect'], "IMG", 'package')
+        self._draw_path(context, L.get('img_path_rect'), 'gtatools_img_path')
 
         settings = context.scene.inu_settings
         skip_lod = bool(getattr(settings, 'gtatools_img_skip_lod', False))
