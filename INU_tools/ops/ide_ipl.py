@@ -95,8 +95,12 @@ class GTATOOLS_OT_upsert_ide(bpy.types.Operator):
                     elif mt2 == 'DFF':
                         dff_obj = o2
 
+            # Import unconditionally: a local import inside `if dff_obj`
+            # made Python treat the name as a function-local everywhere, so
+            # the `if lod_obj` branch below raised UnboundLocalError when a
+            # LOD was selected without a paired DFF.
+            from .. import _ide_entry_from_obj
             if dff_obj:
-                from .. import _ide_entry_from_obj
                 entries.append(_ide_entry_from_obj(dff_obj))
             if lod_obj:
                 lod_entry = _ide_entry_from_obj(lod_obj)
