@@ -8,7 +8,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/Blender-2.83%E2%80%935.1-orange?logo=blender" alt="Blender">
-  <img src="https://img.shields.io/badge/Version-2.0.0-green" alt="Version">
+  <img src="https://img.shields.io/badge/Version-2.1.0-green" alt="Version">
   <img src="https://img.shields.io/badge/License-GPL--3.0-blue" alt="License">
 </p>
 
@@ -56,24 +56,18 @@
 - 🎬 **IFP Library Viewer** — превью любой из 294 анимаций на временном armature без создания ped'а
 - 🎆 **Auto-LOD generation** — при отсутствии парного `_L0` Map Export генерит decimate-копию автоматически (по примеру EMAPTool)
 
-## 🆕 Что нового в 2.0.0
+## 🆕 Что нового в 2.1.0
 
-- 🪟 **Floater окна** — 5 свободно-плавающих GPU-окон для частых операций без скролла N-панели: **Info / Import-Export / Validation / Lighting / IDE-IPL-IMG**. SDF-шейдеры, своё AA, тема-адаптивная палитра, drag/resize/collapse/dock между workspace'ами. Кликабельная иконка в шапке каждой панели открывает соответствующий floater.
-- 🌐 **Поддержка GTA III / VC / SA** — авто-детект игры по содержимому файла, отдельные таблицы IDE flags / surface IDs / ped masks для каждой игры, корректное чтение/запись III/VC форматов IMG / DFF / COL / IPL / IDE
-- 📱 **Поддержка Mobile (iOS / Android)** — переключатель **PC / Mobile** в Scene settings. Импорт авто-детектит мобильные DFF по Native Data PLG чанкам и сам переключает сцену. Экспорт DFF умеет писать Mobile-вариант (флипнутые triangle winding'и + Native Data). Детект 4-файлового mobile-TXD контейнера (`.pvr` / `.etc` / `.dxt` + `.txt` / `.toc` / `.dat` / `.tmb`) с подсказкой на TxdGen для PVRTC/ETC1 конвертации
-- 🔍 **Game Validator** — кросс-файловые проверки IDE/IPL: пропущенные ссылки, дубликаты ID, конфликты, IMG-cross-check. Sub-panel «Анализ карты» с группировкой Critical / Warning / Info
-- 🧪 **Lint Profiles** — переключатель **STANDARD / FLA / STRICT / LENIENT** для File Scanner и Game Validator (FLA-сборки имеют другие лимиты, LENIENT для legacy-проектов)
-- 🖼️ **Texture Browser** — UIList со всеми текстурами из выбранного источника (IMG/папка/IDE-список), с превью, поиском и cross-ref «где используется»
-- 🎬 **Анимированные объекты на эмпти** — переписан animobj-пайплайн, обходит rest_quat баг бонового флоу. IFP экспорт стабильно работает с custom анимациями
-- 🛠️ **Light Master** — 5 lighting-панелей (Prelight, Prelight COL, Vertex Paint, LightMap, Itera) теперь подпанели одной мастер-панели, collapsible одним кликом
-- 🎨 **Material панель унифицирована** — 3 материальные панели (SURFACE / EFFECTS / PIPELINE) объединены в одну с внутренним табом
-- 🦴 **IK Rig + IFP фиксы** — bone-based controls с фиксами POSE vs REST, brute-force pole_angle, FK bake on Add, visual_key at union, FLOOR constraint
-- 🇪🇸 **Локализация ES** — полный испанский перевод UI (819+ строк)
-- 🧱 **Архитектура** — `__init__.py` разбит на 22 ops-модуля (~140 операторов вынесены, −64% размера файла), `ui/registry.py` с zone-based порядком панелей
-- 💡 **2DFX** — каждый тип эффекта (Свет / Частица / Ped Attractor / Блик солнца) получил развёрнутые описания. Свободные кнопки IDE/IPL/IMG в floater'е читаются как fused-кластер
-- 🐛 **Hotfix'ы из main** — все 14 пост-1.9.0 фиксов включены: col empty, light col day/night, anim object rest_quat, path nodes parser, install extension, particle save и др.
+- 🧩 **TXD «Дописать в существующий»** — добавляет/обновляет текстуры модели в готовом `.txd`, а все чужие текстуры файла сохраняются байт-в-байт (без полного перекодирования)
+- 🔥 **Послойное запекание текстур** — стек слоёв как в Photoshop: **18 режимов смешивания** и **8 типов карт** (AO, Diffuse, Diffuse-Lit, Shadow, Bevel, Normal, Emission, Emission-GI), смешиваешь живьём на модели и сводишь в одну GTA-текстуру. Режимы **UV→UV / Hi→Low / Камера** (Камера = EEVEE-в-текстуру для billboard/импостер-деревьев); свет рига генерируется сам (лампы в сцене не нужны), AA + padding, пер-слой превью и сохранение
+- 🎞️ **UV-анимация переписана** под рабочий бинарный формат Kam's UVanim_tool — чинит невидимые модели и неиграющую анимацию; плюс режим ключей с живым превью во вьюпорте
+- 🌿 **Набор прилайта** — затенение листвы/деревьев, **Резак света** (радиальная «лужа» света под фонарём, врезанная в пол), солнце для прилайта, плоская заливка Day/Night, merge/split для покраски, и **превью вертекс-альфы** по всей сцене
+- 📦 **Экспорт** — Export DFF по моделям; Export All получил CST, пустую коллизию, TXD-merge, **All → IMG** и префилл имени из выделенной модели
+- ⏳ **Import All больше не морозит Blender** — модальный с прогрессом и отменой; чекбоксы-фильтры форматов + импорт CST; мульти-IPL sync-лист
+- 🧱 **Корректность форматов** — reuse материалов учитывается при импорте (нет «не тех текстур» у моделей с общим материалом, сверено с исходником RenderWare 3.7); 16/32-бит sRGB-текстуры больше не тёмные на экспорте; быстрее экспорт DFF (O(N²)→O(N))
+- 🧹 **Готово к Blender Extensions** — **никаких ассетов игры** в пакете; текстуры эффектов (короны/тени/вода) грузятся из твоего `particle.txd` / Game Root; манифест проходит `blender --command extension validate/build`
 
-→ [Полные release notes](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v2.0.0) · [История версий](../../../releases)
+→ [Release notes 2.1.0](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v2.1.0) · [2.0.0](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v2.0.0) · [История версий](../../../releases)
 
 ## 🧰 Возможности
 
@@ -97,7 +91,7 @@
 
 - 🗺️ **Полный Map round-trip** — импорт всей карты прямо из игровой папки (IDE + IPL + IMG → Blender), правка, Map Export обратно с сохранением лейаута
 - 🆔 **ID Manager** — файл, multi-preset, sync со сценой, загрузка из игры, FLA-расширение, детекция конфликтов
-- 💡 **Запекание Prelight** — Day/Night vcols, raycast-тени, scatter, LightMap UV2, Modulate Color preview
+- 💡 **Запекание Prelight** — Day/Night vcols, raycast-тени, scatter, листва, **Резак света** (лужи света под фонарями), заливка, превью вертекс-альфы, LightMap UV2, Modulate Color preview
 - 🎯 **2DFX** — Light / Particle / Ped Attractor / Sun Glare с пресетами и attach/detach
 - 🎨 **Материалы** — Env Map, Bump, Specular, Reflection, UV Animation, Dual Texture, COL Surface
 - 🦴 **Skinned DFF + IK Rig** — арматура, веса, FK→IK bake для педов, **Frame Hierarchy Editor** с vanilla VEHICLE/PED шаблонами, byte-perfect round-trip
@@ -126,14 +120,15 @@
 |---|---|
 | `Shift+T` | Открыть / закрыть UV Editor |
 
-В стандартное меню `Shift+A` (Add) добавлен пункт **GTA SA** — быстрая вставка Army.dff (пед) / Admiral.dff (машина).
-
 ## 📹 Видеоурок
 
 → [Экспорт и импорт IDE / IPL / IMG / Map](https://www.youtube.com/watch?v=Jw_R9QFYxWE)
 
 ## 📦 Установка
 
+**Blender Extensions (Blender 4.2+):** ставь с [extensions.blender.org](https://extensions.blender.org) (Get Extensions → найди "INU Tools"), либо **Edit → Preferences → Get Extensions → Install from Disk…** с релизным `.zip`.
+
+**Вручную (Blender 2.83+):**
 1. Скачай папку `INU_tools/` (или zip-архив)
 2. Скопируй её в директорию аддонов Blender:
    ```

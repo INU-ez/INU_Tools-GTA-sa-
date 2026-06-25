@@ -8,7 +8,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/Blender-2.83%E2%80%935.1-orange?logo=blender" alt="Blender">
-  <img src="https://img.shields.io/badge/Version-2.0.0-green" alt="Version">
+  <img src="https://img.shields.io/badge/Version-2.1.0-green" alt="Version">
   <img src="https://img.shields.io/badge/License-GPL--3.0-blue" alt="License">
 </p>
 
@@ -56,24 +56,18 @@ Ideas being considered. Not all of these will ship — some may turn out impract
 - 🎬 **IFP Library Viewer** — preview any of the 294 animations on a temporary armature without creating a ped
 - 🎆 **Auto-LOD generation** — when no paired `_L0` is found, Map Export auto-generates a decimated copy (EMAPTool-style)
 
-## 🆕 What's New in 2.0.0
+## 🆕 What's New in 2.1.0
 
-- 🪟 **Floater windows** — 5 free-floating GPU-rendered windows for frequent operations without scrolling the N-sidebar: **Info / Import-Export / Validation / Lighting / IDE-IPL-IMG**. SDF shaders, custom anti-aliasing, theme-adaptive palette, drag/resize/collapse/dock across workspaces. Click the header icon in any N-panel to open its floater
-- 🌐 **GTA III / VC / SA support** — auto-detect the game from file content, separate IDE flag / surface ID / ped mask translation tables per game, correct read/write of III/VC formats (IMG / DFF / COL / IPL / IDE)
-- 📱 **Mobile (iOS / Android) support** — **PC / Mobile** platform switch in Scene settings. DFF import auto-detects mobile geometry by Native Data PLG chunks and flips the scene to Mobile. DFF export can write Mobile variant (flipped triangle winding + Native Data). Detection of 4-file mobile TXD container (`.pvr` / `.etc` / `.dxt` + `.txt` / `.toc` / `.dat` / `.tmb`) with a pointer to TxdGen for PVRTC/ETC1 conversion
-- 🔍 **Game Validator** — cross-file IDE/IPL checks: missing references, duplicate IDs, conflicts, IMG cross-check. «Map Analyzer» sub-panel with Critical / Warning / Info grouping
-- 🧪 **Lint Profiles** — **STANDARD / FLA / STRICT / LENIENT** toggle for File Scanner and Game Validator (FLA builds have different limits, LENIENT drops INFO-level for legacy projects)
-- 🖼️ **Texture Browser** — UIList with all textures from a selected source (IMG / folder / IDE list), with preview, search, and «used by» cross-reference
-- 🎬 **Empty-based animated objects** — rewritten animobj pipeline, sidesteps the rest_quat bug of the bone-flow. IFP export now works reliably with custom animations
-- 🛠️ **Light Master** — five lighting sub-panels (Prelight, Prelight COL, Vertex Paint, LightMap, Itera) folded under one master panel, collapsible with a single click
-- 🎨 **Unified Material panel** — three material panels (SURFACE / EFFECTS / PIPELINE) merged into one with an internal tab row
-- 🦴 **IK Rig + IFP fixes** — bone-based controls with documented pitfall fixes (POSE vs REST, brute-force pole_angle, FK bake on Add, visual_key at union, FLOOR constraint)
-- 🇪🇸 **Spanish locale** — full UI translation (819+ strings)
-- 🧱 **Architecture** — `__init__.py` split into 22 ops modules (~140 operators extracted, −64% file size), `ui/registry.py` with zone-based panel order
-- 💡 **2DFX** — each effect type (Light / Particle / Ped Attractor / Sun Glare) got a detailed tooltip. IDE/IPL/IMG buttons in the floater read as a single fused cluster
-- 🐛 **Hotfixes from main** — all 14 post-1.9.0 fixes folded in: col empty support, light col day/night, anim object rest_quat, path nodes parser, install extension, particle save, etc.
+- 🧩 **TXD «Append to existing»** — add/update a model's textures into an existing `.txd` while every other model's textures in the file are kept byte-for-byte (no full re-encode)
+- 🎞️ **UV animation reworked** to Kam's UVanim_tool binary layout — fixes invisible models and animations that wouldn't play; plus a keyframe mode with live in-viewport preview
+- 🌿 **Prelight toolkit** — foliage/tree shading, **Light Cutter** (radial light pool baked into the floor under lamps), prelight sun, flat Day/Night fill, paint merge/split, and a scene-wide **vertex-alpha viewport preview**
+- 🔥 **Layered texture baking** — Photoshop-style layer stack with **18 blend modes** and **8 map types** (AO, Diffuse, Diffuse-Lit, Shadow, Bevel, Normal, Emission, Emission-GI), blended live on the model and flattened to one GTA-ready texture. **UV→UV / Hi→Low / Camera** modes (Camera = EEVEE-to-texture for billboard/impostor trees); built-in light rig (no scene lamps needed), AA + padding, per-layer preview & save
+- 📦 **Export upgrades** — Export DFF per model; Export All gains CST, empty-collision, TXD-merge, **All → IMG**, and export-name prefill from the selected model
+- ⏳ **Import All no longer freezes Blender** — cancellable modal with live progress; per-format filter checkboxes + CST import; multi-IPL sync list
+- 🧱 **Format correctness** — material-list reuse honoured on import (no more wrong textures on shared-material models, verified against the RenderWare 3.7 source); 16/32-bit sRGB textures no longer export too dark; faster DFF export (O(N²)→O(N))
+- 🧹 **Blender Extensions ready** — ships **no GTA assets**; effect-preview textures (coronas/shadows/water) now load from your own `particle.txd` / Game Root; manifest validates and builds clean with `blender --command extension validate/build`
 
-→ [Release notes 2.0.0](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v2.0.0) · [Version history](../../releases)
+→ [Release notes 2.1.0](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v2.1.0) · [2.0.0](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v2.0.0) · [Version history](../../releases)
 
 ## 🧰 Features
 
@@ -97,7 +91,7 @@ Ideas being considered. Not all of these will ship — some may turn out impract
 
 - 🗺️ **Full Map round-trip** — import the entire map straight from the game folder (IDE + IPL + IMG → Blender), edit, Map Export back preserving the layout
 - 🆔 **ID Manager** — file-backed, multi-preset, scene sync, load from game, FLA range extension, conflict detection
-- 💡 **Prelight baking** — Day/Night vcols, raycast shadows, scatter, LightMap UV2, Modulate Color preview
+- 💡 **Prelight baking** — Day/Night vcols, raycast shadows, scatter, foliage shading, **Light Cutter** (light pools under lamps), Fill, vertex-alpha preview, LightMap UV2, Modulate Color preview
 - 🎯 **2DFX** — Light / Particle / Ped Attractor / Sun Glare with presets and attach/detach
 - 🎨 **Materials** — Env Map, Bump, Specular, Reflection, UV Animation, Dual Texture, COL Surface
 - 🦴 **Skinned DFF + IK Rig** — armature, weights, FK→IK bake for peds, **Frame Hierarchy Editor** with vanilla VEHICLE/PED templates, byte-perfect round-trip
@@ -126,14 +120,15 @@ Ideas being considered. Not all of these will ship — some may turn out impract
 |---|---|
 | `Shift+T` | Toggle UV Editor |
 
-A **GTA SA** entry is added to Blender's standard `Shift+A` (Add) menu — quick-insert Army.dff (ped) / Admiral.dff (car).
-
 ## 📹 Video Tutorial
 
 → [Export & Import IDE / IPL / IMG / Map](https://www.youtube.com/watch?v=Jw_R9QFYxWE)
 
 ## 📦 Installation
 
+**Blender Extensions (Blender 4.2+):** install from [extensions.blender.org](https://extensions.blender.org) (Get Extensions → search "INU Tools"), or **Edit → Preferences → Get Extensions → Install from Disk…** with the release `.zip`.
+
+**Manual (Blender 2.83+):**
 1. Download the `INU_tools/` folder (or zip archive)
 2. Copy it into your Blender addons directory:
    ```
