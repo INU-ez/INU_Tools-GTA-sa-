@@ -106,9 +106,17 @@ class GTATOOLS_OT_upsert_ide(bpy.types.Operator):
                 lod_entry = _ide_entry_from_obj(lod_obj)
                 # LOD model name: LOD + base_name
                 lod_entry.model_name = "LOD" + base_name
-                # LOD TXD = same as DFF TXD (base_name without suffixes)
+                # LOD shares the model's TXD. Prefer the paired DFF's TXD,
+                # then the LOD's own (what the user set — _ide_entry_from_obj
+                # already read it), and only fall back to the cleaned base
+                # name. Previously this ALWAYS used the base name, clobbering
+                # a user-set TXD (e.g. «base» → «base67»).
                 from .. import _clean_model_name_ide
-                lod_entry.txd_name = _clean_model_name_ide(base_name)
+                dff_txd = ((getattr(dff_obj.inu, 'txd_name', '') or '').strip()
+                           if dff_obj else '')
+                lod_txd = (lod_entry.txd_name or '').strip()
+                lod_entry.txd_name = (dff_txd or lod_txd
+                                      or _clean_model_name_ide(base_name))
                 # LOD model_id = DFF model_id + 1 if LOD has no ID
                 if lod_entry.model_id == 0 and dff_obj:
                     dff_id = getattr(dff_obj.inu, 'model_id', 0)
