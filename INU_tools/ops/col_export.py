@@ -329,6 +329,24 @@ def _compute_bounds(model: ColModel) -> Bounds:
     return Bounds(center=center, radius=radius, bb_min=bb_min, bb_max=bb_max)
 
 
+def _stored_bounds(objects):
+    """Return the SOURCE COL's saved Bounds if an imported object carries the
+    ``inu_col_bounds`` custom property, else ``None``.
+
+    Set by col_import on the COL mesh. Reusing it makes a round-trip export
+    reproduce the original camera distance + shadow length exactly — R* builds
+    vehicle bounds from the broad-phase spheres (not the mesh), which we can't
+    recompute identically. Models built from scratch have no property → the
+    freshly computed bounds are used."""
+    for obj in objects:
+        s = obj.get('inu_col_bounds') if hasattr(obj, 'get') else None
+        if s is not None and len(s) == 10:
+            return Bounds(center=Vec3(s[1], s[2], s[3]), radius=float(s[0]),
+                          bb_min=Vec3(s[4], s[5], s[6]),
+                          bb_max=Vec3(s[7], s[8], s[9]))
+    return None
+
+
 def export_col(filepath: str, objects, version: int = 3, model_name: str = "",
                empty: bool = False):
     """
@@ -364,6 +382,10 @@ def export_col(filepath: str, objects, version: int = 3, model_name: str = "",
                 _collect_empty(obj, model)
 
     model.bounds = _compute_bounds(model)
+    if not empty:
+        saved = _stored_bounds(objects)
+        if saved is not None:
+            model.bounds = saved
     write_col_file(filepath, [model])
     return model
 
@@ -393,6 +415,10 @@ def build_col_model(objects, version: int = 3, model_name: str = "",
                 _collect_empty(obj, model)
 
     model.bounds = _compute_bounds(model)
+    if not empty:
+        saved = _stored_bounds(objects)
+        if saved is not None:
+            model.bounds = saved
     return model
 
 

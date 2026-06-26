@@ -1002,6 +1002,24 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
         return _report_group_export(self, exported, errors, tri_warnings, num_groups)
 
 
+class GTATOOLS_OT_quick_single_export(bpy.types.Operator):
+    """Быстрый экспорт одной модели (машина / пед) в ОДИН .dff.
+
+    Включает режим «Один DFF» + формат DFF и сразу открывает диалог Export All
+    — остаётся выбрать папку/имя и нажать Export. Коллизия машины (меш +
+    сферы) встраивается в .dff автоматически. Кнопка для тематических вкладок
+    («Машины», «Скины»), чтобы не искать экспорт в общем меню."""
+    bl_idname = "gtatools.quick_single_export"
+    bl_label = "INU: Экспорт (один DFF)"
+    bl_options = {'INTERNAL'}
+
+    def execute(self, context):
+        s = context.scene.inu_settings
+        s.gtatools_export_all_single_dff = True
+        s.gtatools_export_all_dff = True
+        return bpy.ops.gtatools.export_all('INVOKE_DEFAULT')
+
+
 class GTATOOLS_OT_export_dff_models(bpy.types.Operator):
     """Экспорт выделенных моделей в .dff — по одному файлу на модель.
 

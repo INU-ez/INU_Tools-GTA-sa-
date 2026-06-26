@@ -1785,6 +1785,12 @@ class GTATOOLS_PT_vehicle_panel(bpy.types.Panel):
         # Damage-variants block read as a single Vehicle toolkit без
         # 18-px gap'ов между button-боксами.
         col = layout.column(align=True)
+        # Быстрый экспорт машины в один .dff (с встроенной коллизией) —
+        # чтобы не лезть в общий диалог экспорта.
+        col.operator("gtatools.quick_single_export",
+                     text=T("Экспорт машины (один DFF)…"),
+                     **inu_icon(safe_icon('EXPORT')))
+        col.separator()
         col.operator("gtatools.vehicle_scale",
                      text=T("Масштаб машины…"),
                      **inu_icon(safe_icon('FULLSCREEN_ENTER')))
@@ -4137,6 +4143,13 @@ class GTATOOLS_PT_anim_panel(bpy.types.Panel):
                      text=T("Экспорт"), **inu_icon(safe_icon('EXPORT')))
         row.operator("gtatools.merge_ifp",
                      text=T("Добавить"), **inu_icon(safe_icon('FILE_REFRESH')))
+
+        # Экспорт самой МОДЕЛИ скина/педа (скелетный DFF) в один .dff —
+        # отдельно от IFP-анимаций выше. Кнопки IFP-ряда пишут анимацию, а
+        # это пишет геометрию + скелет.
+        layout.operator("gtatools.quick_single_export",
+                        text=T("Экспорт скина (один DFF)…"),
+                        **inu_icon(safe_icon('EXPORT')))
 
         # ── Loaded actions + apply / preview ─────────────────────
         ifp_actions = [a for a in bpy.data.actions if a.get('ifp_source')]

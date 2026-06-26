@@ -990,6 +990,8 @@ LANG = {
     "Импорт CST": "Importar CST",
     "Экспорт CST": "Exportar CST",
     "Масштаб машины…": "Escala de Vehículo…",
+    "Экспорт машины (один DFF)…": "Exportar vehículo (un solo DFF)…",
+    "Экспорт скина (один DFF)…": "Exportar skin (un solo DFF)…",
     "Batch папка…": "Carpeta Batch…",
     "Обновить маркеры станций": "Actualizar Marcadores de Estaciones",
     "Флаги выделенных точек:": "Banderas en puntos seleccionados:",

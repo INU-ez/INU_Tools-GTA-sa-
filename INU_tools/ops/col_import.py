@@ -258,6 +258,22 @@ def import_col_from_models(models, *, bulk_mode: bool = False,
                                   model.model_name or "col", i)
                 imported_objects.append(emp)
 
+        # Preserve the source COL's bounds (sphere radius/center + AABB) on the
+        # COL mesh so a round-trip export reproduces them EXACTLY. R* computes
+        # vehicle bounds from the broad-phase spheres (NOT the mesh) — and they
+        # drive the in-game camera distance AND shadow length — so recomputing
+        # from the longer mesh inflates both. build_col_model reuses this on
+        # export; models built from scratch (no property) fall back to compute.
+        anchor = obj or sha_obj
+        if anchor is not None:
+            b = model.bounds
+            anchor['inu_col_bounds'] = [
+                float(b.radius),
+                float(b.center.x), float(b.center.y), float(b.center.z),
+                float(b.bb_min.x), float(b.bb_min.y), float(b.bb_min.z),
+                float(b.bb_max.x), float(b.bb_max.y), float(b.bb_max.z),
+            ]
+
     # Single-file-import UX: place COL at the matching DFF's origin
     # so the user sees them aligned. Map import skips this — it sets
     # position directly from the IPL instance.

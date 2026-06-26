@@ -2446,6 +2446,7 @@ def _clean_name_typed_ipl(name):
 from .ops.inu_export import (
     GTATOOLS_OT_inu_import,
     GTATOOLS_OT_export_all,
+    GTATOOLS_OT_quick_single_export,
     GTATOOLS_OT_export_dff_models,
     GTATOOLS_OT_inu_export,
     menu_func_import,
@@ -3090,6 +3091,7 @@ classes = (
     GTATOOLS_OT_export_dff,
     GTATOOLS_OT_export_col,
     GTATOOLS_OT_export_all,
+    GTATOOLS_OT_quick_single_export,
     GTATOOLS_OT_export_dff_models,
     GTATOOLS_OT_inu_export,
     GTATOOLS_OT_floater_modal,
