@@ -261,58 +261,70 @@ def _collect_empty(obj, model: ColModel):
 
 
 def _compute_bounds(model: ColModel) -> Bounds:
-    """Calculate bounding sphere and AABB from all geometry.
+    """Bounding sphere + AABB over the COLLISION geometry.
 
-    Accounts for vertices (mesh + shadow mesh), spheres AND boxes.
-    Missing boxes was a bug that broke bounds for COL files that
-    only have box collision (e.g. light beams with dummy box bounds).
+    Covers mesh vertices and sphere/box primitives — but deliberately NOT the
+    shadow mesh, and the sphere radius is the distance to the farthest real
+    collision point, not half the AABB diagonal. Both of the latter inflate
+    the sphere:
+      • the shadow mesh often extends past the collision hull, and
+      • the AABB diagonal measures to an empty box corner.
+    An inflated collision bounding sphere makes GTA SA pull the vehicle
+    follow-camera too far back — R* writes a tight sphere. Verified against a
+    stock vehicle: this matches the R* radius far more closely than the old
+    shadow-inclusive AABB-diagonal value.
+
+    A shadow-only model (e.g. a light beam with no real collision) falls back
+    to the shadow verts so it still gets non-empty bounds.
     """
-    all_verts = model.vertices + model.shadow_vertices
-    has_any = bool(all_verts) or bool(model.spheres) or bool(model.boxes)
-
-    if not has_any:
+    col_verts = model.vertices
+    has_col = bool(col_verts) or bool(model.spheres) or bool(model.boxes)
+    verts = col_verts if has_col else model.shadow_vertices
+    if not (verts or model.spheres or model.boxes):
         return Bounds()
 
-    # Seed AABB from first available source
     INF = float('inf')
     bb_min = Vec3(INF, INF, INF)
     bb_max = Vec3(-INF, -INF, -INF)
 
-    for v in all_verts:
-        if v.x < bb_min.x: bb_min.x = v.x
-        if v.y < bb_min.y: bb_min.y = v.y
-        if v.z < bb_min.z: bb_min.z = v.z
-        if v.x > bb_max.x: bb_max.x = v.x
-        if v.y > bb_max.y: bb_max.y = v.y
-        if v.z > bb_max.z: bb_max.z = v.z
+    def _grow(x, y, z):
+        if x < bb_min.x: bb_min.x = x
+        if y < bb_min.y: bb_min.y = y
+        if z < bb_min.z: bb_min.z = z
+        if x > bb_max.x: bb_max.x = x
+        if y > bb_max.y: bb_max.y = y
+        if z > bb_max.z: bb_max.z = z
 
+    for v in verts:
+        _grow(v.x, v.y, v.z)
     for s in model.spheres:
-        if s.center.x - s.radius < bb_min.x: bb_min.x = s.center.x - s.radius
-        if s.center.y - s.radius < bb_min.y: bb_min.y = s.center.y - s.radius
-        if s.center.z - s.radius < bb_min.z: bb_min.z = s.center.z - s.radius
-        if s.center.x + s.radius > bb_max.x: bb_max.x = s.center.x + s.radius
-        if s.center.y + s.radius > bb_max.y: bb_max.y = s.center.y + s.radius
-        if s.center.z + s.radius > bb_max.z: bb_max.z = s.center.z + s.radius
-
+        _grow(s.center.x - s.radius, s.center.y - s.radius, s.center.z - s.radius)
+        _grow(s.center.x + s.radius, s.center.y + s.radius, s.center.z + s.radius)
     for b in model.boxes:
-        if b.bb_min.x < bb_min.x: bb_min.x = b.bb_min.x
-        if b.bb_min.y < bb_min.y: bb_min.y = b.bb_min.y
-        if b.bb_min.z < bb_min.z: bb_min.z = b.bb_min.z
-        if b.bb_max.x > bb_max.x: bb_max.x = b.bb_max.x
-        if b.bb_max.y > bb_max.y: bb_max.y = b.bb_max.y
-        if b.bb_max.z > bb_max.z: bb_max.z = b.bb_max.z
+        _grow(b.bb_min.x, b.bb_min.y, b.bb_min.z)
+        _grow(b.bb_max.x, b.bb_max.y, b.bb_max.z)
 
-    # Bounding sphere
     center = Vec3(
         (bb_min.x + bb_max.x) / 2,
         (bb_min.y + bb_max.y) / 2,
         (bb_min.z + bb_max.z) / 2,
     )
-    radius = math.sqrt(
-        (bb_max.x - bb_min.x) ** 2 +
-        (bb_max.y - bb_min.y) ** 2 +
-        (bb_max.z - bb_min.z) ** 2
-    ) / 2
+
+    # Tight radius: distance to the farthest real collision point — vertices,
+    # sphere surfaces, box corners — NOT the AABB corner.
+    radius = 0.0
+    for v in verts:
+        dx, dy, dz = v.x - center.x, v.y - center.y, v.z - center.z
+        radius = max(radius, math.sqrt(dx * dx + dy * dy + dz * dz))
+    for s in model.spheres:
+        dx, dy, dz = s.center.x - center.x, s.center.y - center.y, s.center.z - center.z
+        radius = max(radius, math.sqrt(dx * dx + dy * dy + dz * dz) + s.radius)
+    for b in model.boxes:
+        for cx in (b.bb_min.x, b.bb_max.x):
+            for cy in (b.bb_min.y, b.bb_max.y):
+                for cz in (b.bb_min.z, b.bb_max.z):
+                    dx, dy, dz = cx - center.x, cy - center.y, cz - center.z
+                    radius = max(radius, math.sqrt(dx * dx + dy * dy + dz * dz))
 
     return Bounds(center=center, radius=radius, bb_min=bb_min, bb_max=bb_max)
 
