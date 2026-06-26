@@ -645,6 +645,39 @@ def _process_mesh(obj, clump: DffClump, frame_index: int, *,
 
     num_original = len(bm.verts)
 
+    # ── Custom split normals (per-vertex) ──
+    # Vehicles/peds carry per-vertex custom normals (set on import via
+    # normals_split_custom_set_from_vertices). bmesh `vert.normal` is the
+    # GEOMETRIC average and ignores them, so a re-export would change the
+    # in-game shading — the model looks slightly darker. When the mesh actually
+    # has custom normals, read the corner normals and key them per vertex so the
+    # export writes the SOURCE normals. Plain/map meshes (no custom normals)
+    # keep the existing bmesh-normal path → zero regression risk.
+    vert_custom_normal = None
+    if getattr(orig_mesh, 'has_custom_normals', False):
+        try:
+            nloops = len(mesh.loops)
+            if nloops:
+                try:
+                    mesh.calc_normals_split()  # pre-4.1; 4.1+ auto-computes
+                except (AttributeError, RuntimeError):
+                    pass
+                cn = np.empty(nloops * 3, dtype=np.float32)
+                mesh.loops.foreach_get('normal', cn)
+                lvi = np.empty(nloops, dtype=np.int32)
+                mesh.loops.foreach_get('vertex_index', lvi)
+                vcn = np.zeros((len(mesh.vertices), 3), dtype=np.float32)
+                vcn[lvi] = cn.reshape(-1, 3)  # corners of a vert share its normal
+                vert_custom_normal = vcn
+        except Exception:
+            vert_custom_normal = None
+
+    def _normal_of(bvert):
+        if vert_custom_normal is not None and 0 <= bvert.index < len(vert_custom_normal):
+            n = vert_custom_normal[bvert.index]
+            return (float(n[0]), float(n[1]), float(n[2]))
+        return (bvert.normal.x, bvert.normal.y, bvert.normal.z)
+
     # Vertex data lists (will grow as we split)
     positions = []
     normals_list = []
@@ -653,7 +686,7 @@ def _process_mesh(obj, clump: DffClump, frame_index: int, *,
 
     for v in bm.verts:
         positions.append((v.co.x, v.co.y, v.co.z))
-        normals_list.append((v.normal.x, v.normal.y, v.normal.z))
+        normals_list.append(_normal_of(v))
         split_origin.append(v.index)
 
     # Maps: BMLoop object → vertex index in output
@@ -676,7 +709,7 @@ def _process_mesh(obj, clump: DffClump, frame_index: int, *,
             for group in groups[1:]:
                 new_idx = len(positions)
                 positions.append((vert.co.x, vert.co.y, vert.co.z))
-                normals_list.append((vert.normal.x, vert.normal.y, vert.normal.z))
+                normals_list.append(_normal_of(vert))
                 split_origin.append(vert.index)
                 for loop in group:
                     loop_vert_map[loop] = new_idx
