@@ -465,11 +465,45 @@ def bake_map_enum_items():
     return [(m.id, m.label_key, '') for m in BAKE_MAPS.values()]
 
 
-def find_hilow_pair(obj, hi_suffix, low_suffix):
-    """По объекту `obj` (хай- или лоуполи) найти пару через суффиксы имени.
+def _find_dff_lod_pair(obj):
+    """GTA DFF↔LOD pair for `obj`: the main DFF acts as high-detail, the LOD
+    as low-detail. Resolved through the addon's model-type detection, so any
+    naming convention (suffix `_LOD`, prefix `LOD…`, or the user's configured
+    suffixes) matches `base_dff` ↔ `base_lod` / `LODbase`. Returns
+    (dff_obj, lod_obj); either may be None when no partner exists."""
+    try:
+        from ..model_utils import get_model_type
+    except Exception:
+        return (None, None)
+    mt, base = get_model_type(obj)
+    if mt not in ('DFF', 'LOD') or not base:
+        return (None, None)
+    base_u = base.upper()
+    want = 'LOD' if mt == 'DFF' else 'DFF'
+    dff = obj if mt == 'DFF' else None
+    lod = obj if mt == 'LOD' else None
+    for o in bpy.data.objects:
+        if o.type != 'MESH' or o is obj:
+            continue
+        omt, obase = get_model_type(o)
+        if omt == want and (obase or '').upper() == base_u:
+            if want == 'DFF':
+                dff = o
+            else:
+                lod = o
+            break
+    return (dff, lod)
 
-    'wheel_hi' ↔ 'wheel_low'. Принимает любой из пары, ищет напарника по
-    базовому имени. Возвращает (high_obj, low_obj); любой может быть None.
+
+def find_hilow_pair(obj, hi_suffix, low_suffix, dff_lod_fallback=False):
+    """По объекту `obj` (хай- или лоуполи) найти пару.
+
+    Сначала по явным суффиксам 'wheel_hi' ↔ 'wheel_low'. Если их нет и
+    включён `dff_lod_fallback` — пробуем GTA-пару DFF↔LOD (DFF = high,
+    LOD = low), например `base_dff` ↔ `base_lod`. Фолбэк опционален: в
+    режиме «Камера» low — это плоский billboard, а LOD-меш им не является,
+    поэтому там его не используем (только в режиме Hi→Low). Принимает любой
+    из пары. Возвращает (high_obj, low_obj); любой может быть None.
     """
     if obj is None:
         return (None, None)
@@ -480,4 +514,10 @@ def find_hilow_pair(obj, hi_suffix, low_suffix):
     if hi_suffix and name.endswith(hi_suffix):
         base = name[:-len(hi_suffix)]
         return (obj, bpy.data.objects.get(base + low_suffix))
+    # Fallback: GTA DFF/LOD pair (DFF acts as hi, LOD as low). Only when a
+    # real pair exists — a lone object returns nothing usable.
+    if dff_lod_fallback:
+        dff, lod = _find_dff_lod_pair(obj)
+        if dff is not None and lod is not None:
+            return (dff, lod)
     return (None, None)

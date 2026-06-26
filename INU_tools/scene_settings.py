@@ -1743,6 +1743,14 @@ class INUSceneSettings(bpy.types.PropertyGroup):
         name="Empty COL",
         description=T("Писать COL/CST без геометрии (ноль faces/вершин/сфер/боксов, нулевой bounds), но с именем модели. Для моделей, которым коллизия не нужна, но запись COL должна существовать и быть привязана к модели"),
         default=False)
+    gtatools_export_all_single_dff: BoolProperty(
+        name=T("Один DFF (машина/пед)"),
+        description=T(
+            "Экспортировать ВСЮ выделенную иерархию в ОДИН .dff (машина, "
+            "пед, любая многокомпонентная модель), а не разбивать по именам "
+            "на отдельные файлы. TXD/COL при этом пишутся одним общим "
+            "файлом. Имя берётся из поля имени внизу."),
+        default=False)
     gtatools_export_all_col_library: BoolProperty(
         name="COL Library",
         description=T("Писать все коллизии в один .col файл"),

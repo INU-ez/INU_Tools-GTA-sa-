@@ -477,6 +477,10 @@ def _export_model_group(context, directory, base_name, models,
                 txd_path, context, backend, txd_merge)
             if result == {'FINISHED'}:
                 exported.append(f"{base_name}.txd")
+            elif 'No textures' in (message or ''):
+                # A part with no textures (collision, plain mesh) simply
+                # gets no .txd — that's not an error, just skip it.
+                pass
             else:
                 errors.append(f"{base_name}.txd: {message}")
         except Exception as e:
@@ -727,6 +731,10 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
         row.prop(scn.inu_settings, "gtatools_export_all_lod", text="LOD")
         row.prop(scn.inu_settings, "gtatools_export_all_txd", text="TXD")
         row.prop(scn.inu_settings, "gtatools_export_all_cst", text="CST")
+        # Один DFF (машина/пед): вся выделенная иерархия → один .dff, а не
+        # разбивка по именам. CST/COL-library при этом не нужны.
+        layout.prop(scn.inu_settings, "gtatools_export_all_single_dff",
+                    text=T("Один DFF (машина/пед)"))
         # Имя экспорта = имя выделенной модели (посчитано в invoke и хранится
         # в self._export_name — на selected_objects в браузере полагаться
         # нельзя). При нескольких моделях — серая невыделяемая строка, имена
@@ -799,6 +807,72 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
                 box.label(text=T("Путь к .img не задан в настройках аддона"),
                           **inu_icon(safe_icon('ERROR')))
 
+    def _export_single_dff(self, context, name_override):
+        """Один DFF: вся выделенная иерархия (машина / пед / любая
+        многокомпонентная модель) → ОДИН .dff. TXD (если включён) → один
+        общий .txd; COL → один .col из выделенных COL-мешей."""
+        s = context.scene.inu_settings
+        sel = list(context.selected_objects)
+        # Разворачиваем до полной иерархии — чтобы хватило выделить корень
+        # (а не все части): добавляем всех потомков выделенных объектов.
+        full, stack = set(sel), list(sel)
+        while stack:
+            o = stack.pop()
+            for c in o.children:
+                if c not in full:
+                    full.add(c)
+                    stack.append(c)
+        sel = list(full)
+        meshes = [o for o in sel if o.type == 'MESH']
+        if not meshes:
+            self.report({'ERROR'}, T("Нет меш объектов для экспорта"))
+            return {'CANCELLED'}
+        name = (name_override or getattr(self, '_export_name', '') or 'model')
+        tp = getattr(s, 'gtatools_platform', 'PC')
+        out, errors = [], []
+
+        if s.gtatools_export_all_dff:
+            try:
+                from .dff_export import (export_dff as inu_export_dff,
+                                         _resolve_export_version)
+                inu_export_dff(
+                    filepath=os.path.join(self.directory, name + '.dff'),
+                    objects=sel, version=_resolve_export_version(context),
+                    target_platform=tp)
+                out.append(name + '.dff')
+            except Exception as e:
+                errors.append(f"{name}.dff: {e}")
+
+        if s.gtatools_export_all_txd:
+            try:
+                merge = bool(getattr(s, 'gtatools_export_all_txd_merge', False))
+                r, msg, _ = _write_txd_file(
+                    os.path.join(self.directory, name + '.txd'), context,
+                    getattr(s, 'gtatools_dxt_backend', 'numpy'), merge)
+                out.append(name + '.txd') if r == {'FINISHED'} \
+                    else errors.append(f"{name}.txd: {msg}")
+            except Exception as e:
+                errors.append(f"{name}.txd: {e}")
+
+        # COL: НЕ пишем отдельный .col. У машины/педа коллизия встраивается
+        # ВНУТРЬ .dff (CHUNK_COLLISION_MODEL) — export_dff делает это сам, если
+        # среди выделенных есть COL-меш (obj.inu.type == COL/SHA). Имя
+        # встроенной коллизии = имя .dff.
+        if s.gtatools_export_all_col:
+            has_col = any(getattr(getattr(o, 'inu', None), 'type', '')
+                          in ('COL', 'SHA') for o in meshes)
+            if has_col:
+                out.append(name + '.dff (collision embedded)')
+
+        if not out:
+            self.report({'ERROR'}, T("Ничего не экспортировано")
+                        + ((": " + "; ".join(errors[:3])) if errors else ""))
+            return {'CANCELLED'}
+        self.report({'WARNING'} if errors else {'INFO'},
+                    f"{T('Экспортировано:')} {', '.join(out)}"
+                    + ((" | " + "; ".join(errors[:2])) if errors else ""))
+        return {'FINISHED'}
+
     def execute(self, context):
         s = context.scene.inu_settings
 
@@ -833,6 +907,11 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
             bpy.data.filepath or ''))[0]
         if name_override and blendbase and name_override == blendbase:
             name_override = ''
+
+        # Один DFF (машина/пед): вся выделенная иерархия → один .dff, без
+        # разбивки по именам моделей.
+        if getattr(s, 'gtatools_export_all_single_dff', False):
+            return self._export_single_dff(context, name_override)
 
         exported, errors, tri_warnings, num_groups = run_group_export(
             context, self.directory,

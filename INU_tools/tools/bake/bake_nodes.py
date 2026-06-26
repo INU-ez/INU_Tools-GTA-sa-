@@ -15,13 +15,15 @@ from .bake_composite import BLEND_NODE_TYPE
 COMPOSITE_MAT = 'INU_BakeComposite'
 
 
-def build_composite_material(specs, base_name, uv_name):
+def build_composite_material(specs, base_name, uv_name, vcol_name=None):
     """Собрать/пересобрать материал INU_BakeComposite по списку слоёв.
 
     specs: list[dict(map_id, blend_mode, opacity, enabled)] СНИЗУ ВВЕРХ
            (index 0 = база). Картинки берутся как <base_name>_<map_id>.
-    Возвращает материал. Если материал уже на объекте — пересборка его нод
-    обновляет живое превью мгновенно.
+    `vcol_name` — если задан, итоговый композит умножается на вертекс-цвет
+    прилайта (texture × prelight), чтобы прилайт не пропадал визуально после
+    запекания. Возвращает материал. Если материал уже на объекте —
+    пересборка его нод обновляет живое превью мгновенно.
     """
     mat = (bpy.data.materials.get(COMPOSITE_MAT)
            or bpy.data.materials.new(COMPOSITE_MAT))
@@ -99,5 +101,29 @@ def build_composite_material(specs, base_name, uv_name):
         nt.links.new(top_col, wrap.b)
         acc = wrap.result
         x += 220
+    # Прилайт: умножаем итоговый композит на вертекс-цвет (texture × prelight),
+    # чтобы прилайт оставался виден после запекания. Только превью — на
+    # сохранённую/экспортируемую текстуру не влияет (там сырой композит).
+    if vcol_name:
+        vc = None
+        for tname in ('ShaderNodeColorAttribute', 'ShaderNodeVertexColor'):
+            try:
+                vc = nt.nodes.new(tname)
+                break
+            except RuntimeError:
+                vc = None
+        if vc is not None:
+            try:
+                vc.layer_name = vcol_name
+            except Exception:
+                pass
+            vc.location = (50, -250)
+            wrap = compat.make_mix_rgba(nt.nodes, blend='MULTIPLY',
+                                        label='prelight')
+            wrap.node.location = (150, 0)
+            wrap.factor.default_value = 1.0
+            nt.links.new(acc, wrap.a)
+            nt.links.new(vc.outputs['Color'], wrap.b)
+            acc = wrap.result
     nt.links.new(acc, emit.inputs['Color'])
     return mat

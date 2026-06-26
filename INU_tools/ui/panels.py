@@ -4684,12 +4684,13 @@ class GTATOOLS_PT_bake_panel(bpy.types.Panel):
             else:
                 box.label(text=T("У объекта нет UV-развёртки"),
                           **inu_icon(safe_icon('ERROR')))
-        elif s.gtatools_bake_mode == 'HILOW':  # детект пары по _hi / _low
+        elif s.gtatools_bake_mode == 'HILOW':  # пара по _hi/_low или DFF/LOD
             if sel is None:
                 box.label(text=T("Выделите модель"), **inu_icon(safe_icon('INFO')))
             else:
                 from ..tools.bake import find_hilow_pair, HI_SUFFIX, LOW_SUFFIX
-                high, low = find_hilow_pair(sel, HI_SUFFIX, LOW_SUFFIX)
+                high, low = find_hilow_pair(sel, HI_SUFFIX, LOW_SUFFIX,
+                                            dff_lod_fallback=True)
                 info = box.column(align=True)
                 info.scale_y = 0.85
                 info.label(text="High:  " + (high.name if high else "—"),

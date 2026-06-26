@@ -2283,6 +2283,11 @@ from .ops.txd_import import GTATOOLS_OT_import_txd
 def menu_func_export(self, context):
     self.layout.operator(GTATOOLS_OT_inu_export.bl_idname,
                          text="INU Export (.dff/.col/.txd/.ide/.ipl)")
+    # Single-DFF export: the whole selected hierarchy → ONE .dff (vehicle /
+    # ped / any multi-part model). INU Export / Export All split by model
+    # name, which is wrong for a car (each part would become its own .dff).
+    self.layout.operator(GTATOOLS_OT_export_dff.bl_idname,
+                         text="INU Export DFF — single model (vehicle / ped)")
 
 
 # ── IDE / IPL panel operators ──

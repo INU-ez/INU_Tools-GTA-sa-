@@ -141,8 +141,61 @@ def _restore_materials(obj):
                 pass
 
 
-def _build_single_image_mat(img, uv_name):
-    """Материал INU_BakePreview — flat-эмиссия одной картинки (per-map)."""
+def _prelight_attr_name(obj):
+    """Имя вертекс-цветового атрибута прилайта, на который умножаем
+    запечённую текстуру (слой «Day», иначе активный цветовой атрибут).
+    None — если у меша нет вертекс-цветов (тогда материал = просто текстура,
+    как раньше). Так прилайт переносится в запечённый материал и виден как
+    в игре (texture × prelight), а не теряется визуально."""
+    me = getattr(obj, 'data', None)
+    cattrs = getattr(me, 'color_attributes', None)
+    if not cattrs or len(cattrs) == 0:
+        return None
+    for nm in ('Day', 'day'):
+        if cattrs.get(nm) is not None:
+            return nm
+    act = getattr(cattrs, 'active_color', None)
+    if act is not None:
+        return act.name
+    return cattrs[0].name
+
+
+def _new_vcol_node(nt, vcol_name):
+    """Нода чтения вертекс-цвета (compat 2.83–5.1): ColorAttribute (3.3+)
+    или VertexColor (старее). Возвращает ноду или None."""
+    for tname in ('ShaderNodeColorAttribute', 'ShaderNodeVertexColor'):
+        try:
+            n = nt.nodes.new(tname)
+        except RuntimeError:
+            continue
+        try:
+            n.layer_name = vcol_name
+        except Exception:
+            pass
+        return n
+    return None
+
+
+def _mul_by_vcol(nt, tex_color_out, vcol_name):
+    """Вставить умножение texture-color × vertex-color (прилайт). Возвращает
+    выходной сокет для дальнейшей привязки (или исходный, если не вышло).
+    Использует версия-безопасный compat.make_mix_rgba (Mix-нода 5.1)."""
+    if not vcol_name:
+        return tex_color_out
+    vc = _new_vcol_node(nt, vcol_name)
+    if vc is None:
+        return tex_color_out
+    from ..tools import compat
+    wrap = compat.make_mix_rgba(nt.nodes, blend='MULTIPLY', label='prelight')
+    wrap.factor.default_value = 1.0
+    nt.links.new(tex_color_out, wrap.a)
+    nt.links.new(vc.outputs['Color'], wrap.b)
+    return wrap.result
+
+
+def _build_single_image_mat(img, uv_name, vcol_name=None):
+    """Материал INU_BakePreview — flat-эмиссия одной картинки (per-map),
+    опционально умноженной на вертекс-цвет прилайта (`vcol_name`)."""
     pm = (bpy.data.materials.get("INU_BakePreview")
           or bpy.data.materials.new("INU_BakePreview"))
     pm.use_nodes = True
@@ -157,16 +210,16 @@ def _build_single_image_mat(img, uv_name):
         uvm = nt.nodes.new('ShaderNodeUVMap')
         uvm.uv_map = uv_name
         nt.links.new(uvm.outputs['UV'], tex.inputs['Vector'])
-    nt.links.new(tex.outputs['Color'], emit.inputs['Color'])
+    color_out = _mul_by_vcol(nt, tex.outputs['Color'], vcol_name)
+    nt.links.new(color_out, emit.inputs['Color'])
     nt.links.new(emit.outputs['Emission'], out.inputs['Surface'])
     return pm
 
 
-def _build_standard_material(img, uv_name):
-    """Финальный СТАНДАРТНЫЙ материал billboard: Principled BSDF +
-    запечённая текстура. Base Color ← текстура; Alpha ← альфа текстуры
-    (если она RGBA) с alpha-clip. Никаких лишних композит/эмиссия-нод —
-    чистый материал, готовый к экспорту/использованию."""
+def _build_standard_material(img, uv_name, vcol_name=None):
+    """Финальный СТАНДАРТНЫЙ материал: Principled BSDF + запечённая текстура,
+    опционально умноженная на вертекс-цвет прилайта (`vcol_name`). Base Color
+    ← texture(× prelight); Alpha ← альфа текстуры (если RGBA) с alpha-clip."""
     mat = (bpy.data.materials.get("INU_BakeStandard")
            or bpy.data.materials.new("INU_BakeStandard"))
     mat.use_nodes = True
@@ -181,7 +234,8 @@ def _build_standard_material(img, uv_name):
         uvm = nt.nodes.new('ShaderNodeUVMap')
         uvm.uv_map = uv_name
         nt.links.new(uvm.outputs['UV'], tex.inputs['Vector'])
-    nt.links.new(tex.outputs['Color'], bsdf.inputs['Base Color'])
+    color_out = _mul_by_vcol(nt, tex.outputs['Color'], vcol_name)
+    nt.links.new(color_out, bsdf.inputs['Base Color'])
     # Альфа — только если текстура RGBA (есть силуэт).
     has_alpha = (img is not None and img.channels == 4)
     if has_alpha:
@@ -205,7 +259,7 @@ def _apply_standard_material(obj, img, uv_name):
     """Применить финальный стандартный материал на obj (с сохранением
     исходных материалов для preview-toggle)."""
     _snapshot_materials(obj)
-    mat = _build_standard_material(img, uv_name)
+    mat = _build_standard_material(img, uv_name, _prelight_attr_name(obj))
     _assign_material(obj, mat, uv_name)
     obj["inu_bake_mode_live"] = 0
     return mat
@@ -227,12 +281,13 @@ def _apply_result_material(obj):
     _snapshot_materials(obj)
     if obj.get("inu_bake_mode_live", 0):
         from ..tools.bake import bake_nodes
-        mat = bake_nodes.build_composite_material(_layer_specs(s), base, uv)
+        mat = bake_nodes.build_composite_material(
+            _layer_specs(s), base, uv, _prelight_attr_name(obj))
     else:
         img = bpy.data.images.get(obj.get("inu_bake_image", ""))
         if img is None:
             return None
-        mat = _build_single_image_mat(img, uv)
+        mat = _build_single_image_mat(img, uv, _prelight_attr_name(obj))
     _assign_material(obj, mat, uv)
     return mat
 
@@ -246,7 +301,8 @@ def rebuild_live_composite(obj):
     from ..tools.bake import bake_nodes
     s = bpy.context.scene.inu_settings
     bake_nodes.build_composite_material(
-        _layer_specs(s), obj.get("inu_bake_base", ""), obj.get("inu_bake_uv", ""))
+        _layer_specs(s), obj.get("inu_bake_base", ""),
+        obj.get("inu_bake_uv", ""), _prelight_attr_name(obj))
 
 
 class GTATOOLS_OT_bake_run(bpy.types.Operator):
@@ -341,13 +397,13 @@ class GTATOOLS_OT_bake_run(bpy.types.Operator):
                     pass
             context.view_layer.objects.active = bake_obj
         elif s.gtatools_bake_mode == 'HILOW':
-            high, low = B.find_hilow_pair(obj, B.HI_SUFFIX, B.LOW_SUFFIX)
+            high, low = B.find_hilow_pair(obj, B.HI_SUFFIX, B.LOW_SUFFIX,
+                                          dff_lod_fallback=True)
             if high is None or low is None:
                 self.report(
                     {'ERROR'},
-                    T("У выделенной модели нет пары по суффиксам ")
-                    + f"{B.HI_SUFFIX} / {B.LOW_SUFFIX} "
-                    + T("(назовите модели вида name_hi и name_low)"))
+                    T("У выделенной модели нет пары: "
+                      "name_hi/name_low или GTA DFF/LOD (name_dff/name_lod)"))
                 return {'CANCELLED'}
             if not low.data.uv_layers or not low.data.uv_layers.active:
                 self.report({'ERROR'}, T("У лоуполи нет UV-развёртки"))
