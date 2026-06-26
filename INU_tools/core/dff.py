@@ -167,7 +167,11 @@ class DffTexture:
     filters: int = 0x1106  # default filter mode
 
     def to_bytes(self, lib_id: int) -> bytes:
-        struct_data = pack('<H2x', self.filters)
+        # Write the FULL 32-bit filter/addressing word. The low 16 bits are
+        # filter + U/V addressing; the high 16 bits are flags some textures set
+        # (e.g. 0x0001) — writing them as `2x` padding dropped them, so a
+        # re-export no longer matched the source byte-for-byte.
+        struct_data = pack('<I', self.filters)
         body = _chunk(CHUNK_STRUCT, struct_data, lib_id)
         body += _chunk(CHUNK_STRING, _pad_string(self.name), lib_id)
         body += _chunk(CHUNK_STRING, _pad_string(self.mask), lib_id)
@@ -528,7 +532,7 @@ class DffMaterial:
         has_tex = 1 if self.texture else 0
         struct_data = pack('<4x')  # padding
         struct_data += pack('<4B', self.color.r, self.color.g, self.color.b, self.color.a)
-        struct_data += pack('<II', 1, has_tex)  # unused=1, textured flag
+        struct_data += pack('<II', 0, has_tex)  # unused=0 (as vanilla), textured flag
         if rw_version > 0x30400:
             struct_data += pack('<3f', self.surface.ambient, self.surface.specular, self.surface.diffuse)
 
@@ -940,7 +944,12 @@ class DffGeometry:
             if num_uv == 1:
                 flags |= GEOM_TEXTURED
             elif num_uv >= 2:
-                flags |= GEOM_TEXTURED2
+                # Vanilla GTA SA sets BOTH TEXTURED + TEXTURED2 on multi-UV
+                # geometry. Clearing TEXTURED (the old Kam's convention) makes
+                # the engine treat the geometry as non-textured on some render
+                # paths — the remap car-paint texture isn't applied and the
+                # body renders with its (darker) base colour. Match vanilla.
+                flags |= GEOM_TEXTURED | GEOM_TEXTURED2
 
             # Update prelit based on actual data
             if self.prelit_colors:
@@ -975,8 +984,10 @@ class DffGeometry:
         if num_uv == 1:
             flags |= GEOM_TEXTURED
         elif num_uv >= 2:
-            # Kams: UV2 sets TEXTURED2 only, clears TEXTURED
-            flags |= GEOM_TEXTURED2
+            # Vanilla GTA SA sets BOTH TEXTURED + TEXTURED2 on multi-UV
+            # geometry (not Kam's TEXTURED2-only) — see the original_flags
+            # path above for why (remap paint renders untextured/dark).
+            flags |= GEOM_TEXTURED | GEOM_TEXTURED2
         if self.prelit_colors:
             flags |= GEOM_PRELIT
         if self.export_normals and self.normals:
@@ -1245,13 +1256,14 @@ class DffGeometry:
         if self.user_data and self.user_data.sections:
             ext_data += self.user_data.to_bytes(lib_id)
 
-        # MatFX indicator on geometry extension (if any material has effects)
-        has_matfx = any(
-            m.bump_map or m.env_map or m.dual_texture
-            for m in self.materials
-        )
-        if has_matfx:
-            ext_data += _chunk(CHUNK_MATFX_PLG, pack('<I', 1), lib_id)
+        # NOTE: NO MatFX (0x120) chunk on the GEOMETRY extension. MatFX is a
+        # material/atomic RW plugin — vanilla GTA SA vehicle geometries do NOT
+        # carry a 0x120 here (they carry Breakable instead). Writing 0x120 on
+        # the geometry made the engine misread the geometry extension and the
+        # env-map reflections stopped drawing → the car rendered dull/dark.
+        # The MatFX flag lives on the ATOMIC (see DffClump.to_bytes) where the
+        # engine expects it, plus the per-material effect data — that's all the
+        # game needs.
 
         # 2DFX effects (usually on last geometry only). Pass through
         # rw_version so types not supported by the target engine
@@ -1479,15 +1491,34 @@ class DffClump:
                 if geom.skin:
                     atomic_ext += _chunk(0x001F, pack('<II', 0x0116, 1), lib_id)  # Right to Render
                     atomic_ext += _chunk(0x0120, pack('<I', 0), lib_id)  # Node Name PLG (required for SA skinned)
-                # MatFX-флаг атомика (Material Effects PLG 0x120 = 1) — движок
-                # использует MatFX-пайплайн. Нужен для bump/env/dual И для
-                # UV-анимации (UV transform — это MatFX effectType 5). Ровно
-                # как DragonFF (if geometry._hasMatFX). Никакого 0x1F для
-                # UV-анима НЕ нужно (это и ломало проигрывание).
+                # MatFX flag (Material Effects PLG 0x120 = 1) — engine uses the
+                # MatFX pipeline. Vanilla GTA SA vehicles carry it on EVERY
+                # effect atomic (env / reflection / specular / bump / dual /
+                # uv-anim). The narrower bump/env/dual/uv-anim test left
+                # reflection/specular-only parts WITHOUT the flag, so they
+                # skipped the effect pipeline and rendered slightly darker.
+                # Match vanilla — same effect set as Right-to-Render below.
                 _matfx = any(
                     m.bump_map or m.env_map or m.dual_texture
+                    or m.specular or m.reflection
                     or getattr(m, 'uv_anim_names', None)
                     for m in geom.materials)
+                # Right to Render (0x1F) = (0x120, 0): bind the atomic to the
+                # MatFX render pipeline. Vanilla VEHICLES carry this — and BEFORE
+                # the MatFX flag — on every effect atomic. WITHOUT it the engine
+                # sees the MatFX flag but never runs the MatFX render callback,
+                # so env-map reflections / vehicle specular don't draw and the
+                # car renders dull/dark. Gate on env/reflection/specular/bump
+                # (SA vehicles), EXCLUDE uv-anim (0x1F breaks UV-anim playback)
+                # and skinned (writes its own 0x1F above).
+                _veh_fx = any(
+                    m.env_map or m.reflection or m.specular or m.bump_map
+                    for m in geom.materials)
+                _uvanim = any(getattr(m, 'uv_anim_names', None)
+                              for m in geom.materials)
+                if (_veh_fx and not _uvanim and not geom.skin
+                        and rw_version >= 0x36000):
+                    atomic_ext += _chunk(0x001F, pack('<II', 0x0120, 0), lib_id)
                 if _matfx:
                     atomic_ext += _chunk(CHUNK_MATFX_PLG, pack('<I', 1), lib_id)
                 # Pipeline chunk (0x253F2F3) — SA-specific RW pipeline ID
@@ -1592,8 +1623,8 @@ def _read_texture_chunk(r: BinaryReader, size: int) -> DffTexture:
     # Struct
     ct, cs, cl = _read_chunk_header(r)
     if ct == CHUNK_STRUCT:
-        tex.filters = r.read_one('<H')
-        r.skip(cs - 2)  # skip remaining struct bytes
+        tex.filters = r.read_one('<I')  # full 32-bit filter/addressing word
+        r.skip(cs - 4)  # skip remaining struct bytes
 
     # Name string
     ct, cs, cl = _read_chunk_header(r)

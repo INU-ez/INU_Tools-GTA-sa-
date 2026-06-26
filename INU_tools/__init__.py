@@ -2028,6 +2028,12 @@ class INUMaterialProps(bpy.types.PropertyGroup):
     )
 
     ambient : FloatProperty(name="Ambient Shading", default=1.0)
+    # RW surface lighting coefficients — preserved verbatim from the DFF.
+    # Vanilla GTA uses specular=1.0, diffuse=1.0; reading these from Blender
+    # shader inputs (Roughness/Specular) instead halved every material's
+    # brightness on round-trip ("slightly darker after export").
+    surf_specular : FloatProperty(name="Surface Specular", default=1.0)
+    surf_diffuse  : FloatProperty(name="Surface Diffuse",  default=1.0)
 
     # Vehicle color slot — только для машин (GTA SA)
     vehicle_color_slot : EnumProperty(

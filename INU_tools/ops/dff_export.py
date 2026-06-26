@@ -181,26 +181,20 @@ def _read_texture(mat) -> DffTexture:
 
 
 def _read_surface(mat) -> SurfaceProperties:
-    """Read surface properties (ambient, specular, diffuse)."""
+    """Read RW surface lighting coefficients (ambient, specular, diffuse).
+
+    These are stored verbatim from the DFF on import — NOT derived from Blender
+    shader inputs. The old code read diffuse from 'Roughness' (default 0.5) and
+    specular from 'Specular' (default 0.0), which halved every material's
+    brightness on round-trip (the "slightly darker after export" bug). Vanilla
+    GTA uses specular=1.0, diffuse=1.0; our props default to 1.0 so materials
+    authored from scratch in Blender also export at full brightness."""
     props = SurfaceProperties()
-    principled = _get_principled(mat)
-
-    if principled:
-        spec_input = principled.inputs.get('Specular IOR Level')
-        if spec_input is None:
-            spec_input = principled.inputs.get('Specular')
-        if spec_input:
-            props.specular = spec_input.default_value
-
-        rough_input = principled.inputs.get('Roughness')
-        if rough_input:
-            props.diffuse = rough_input.default_value
-
-    # DragonFF ambient property (backward compatible)
     inu = getattr(mat, 'inu', None)
     if inu:
         props.ambient = getattr(inu, 'ambient', 1.0)
-
+        props.specular = getattr(inu, 'surf_specular', 1.0)
+        props.diffuse = getattr(inu, 'surf_diffuse', 1.0)
     return props
 
 
@@ -760,6 +754,61 @@ def _process_mesh(obj, clump: DffClump, frame_index: int, *,
                 alpha = _mesh_alpha[1].get(loop.vert.index, int(c[3]*255))
                 night_colors[out_idx] = RGBA(
                     int(c[0]*255), int(c[1]*255), int(c[2]*255), alpha)
+
+    # ── Weld exact-duplicate vertices ───────────────────────────────────
+    # The DFF import gives each overlapping overlay face (the reflective
+    # env-map layer GTA stacks on vehicle bodies) its own copy of the shared
+    # verts, because Blender can't hold two faces on one vertex set. Those
+    # copies are identical to the base verts, so collapse them back — vanilla
+    # shares the verts and the file would otherwise grow ~0.3% with duplicate
+    # vertex data. Keyed on every per-vertex attribute, so the model looks and
+    # round-trips identically; only true duplicates merge. Skipped when
+    # skinned: merging would have to reconcile bone weights, and the overlay
+    # trick is vehicle-only anyway.
+    _maybe_skinned = bool(obj.vertex_groups) and any(
+        m.type == 'ARMATURE' and m.object for m in obj.modifiers)
+    if num_verts and not _maybe_skinned:
+        _key_to_new = {}
+        _remap = [0] * num_verts
+        _keep = []
+        for i in range(num_verts):
+            p = positions[i]
+            n = normals_list[i]
+            # Strict 1e-6 keys: merge ONLY bit-identical duplicates so this can
+            # never collapse a hard edge or two genuinely-distinct verts. Looser
+            # normal tolerances recover a few more split-overlay verts but start
+            # eating real geometry on other parts (wheels etc.), so we keep it
+            # tight and accept that a handful of overlay verts stay split.
+            key = (
+                (round(p[0], 6), round(p[1], 6), round(p[2], 6)),
+                (round(n[0], 6), round(n[1], 6), round(n[2], 6)),
+                tuple((round(uv_data[l][i].u, 6), round(uv_data[l][i].v, 6))
+                      for l in range(max_uv)),
+                (day_colors[i].r, day_colors[i].g, day_colors[i].b,
+                 day_colors[i].a) if has_day else 0,
+                (night_colors[i].r, night_colors[i].g, night_colors[i].b,
+                 night_colors[i].a) if has_night else 0,
+            )
+            j = _key_to_new.get(key)
+            if j is None:
+                j = len(_keep)
+                _key_to_new[key] = j
+                _keep.append(i)
+            _remap[i] = j
+        if len(_keep) < num_verts:
+            positions = [positions[i] for i in _keep]
+            normals_list = [normals_list[i] for i in _keep]
+            split_origin = [split_origin[i] for i in _keep]
+            uv_data = [[layer[i] for i in _keep] for layer in uv_data]
+            if has_day:
+                day_colors = [day_colors[i] for i in _keep]
+            if has_night:
+                night_colors = [night_colors[i] for i in _keep]
+            num_verts = len(positions)
+            for t in triangles:
+                t.a = _remap[t.a]
+                t.b = _remap[t.b]
+                t.c = _remap[t.c]
 
     # ── Bounding sphere (from actual vertex positions, local space) ──
     if positions:
@@ -1479,6 +1528,8 @@ def _build_dff_clump_inner(objects, version: int, col_model_name: str) -> DffClu
         ordered = _collect_frame_objects(objects)
         obj_to_frame_idx = {}
 
+        # Pass 1: FRAME list in DFS/hierarchy order (parents before children —
+        # required for the parentIndex references).
         for obj, parent_obj in ordered:
             parent_idx = obj_to_frame_idx[parent_obj] if parent_obj is not None else -1
             frame = _build_frame(obj, parent_index=parent_idx, allow_live=True)
@@ -1486,8 +1537,17 @@ def _build_dff_clump_inner(objects, version: int, col_model_name: str) -> DffClu
             clump.frames.append(frame)
             obj_to_frame_idx[obj] = my_idx
 
-            if obj.type == 'MESH':
-                _process_mesh(obj, clump, my_idx)
+        # Pass 2: ATOMICS/geometries in the ORIGINAL render order. GTA renders
+        # atomics in DFF-list order; for alpha-blended parts (glossy car paint,
+        # glass) that order decides the blend, so a re-export MUST reproduce it
+        # — Blender's alphabetical child order otherwise scrambles it and the
+        # car renders dull/dark. `inu_atomic_order` is stamped on import;
+        # objects without it (built from scratch) keep their DFS order via the
+        # stable sort.
+        mesh_objs = [o for o, _ in ordered if o.type == 'MESH']
+        mesh_objs.sort(key=lambda o: o.get('inu_atomic_order', 1 << 30))
+        for obj in mesh_objs:
+            _process_mesh(obj, clump, obj_to_frame_idx[obj])
 
         print(f"[DFF Export] Static hierarchy: {len(clump.frames)} frames "
               f"({sum(1 for o, _ in ordered if o.type == 'EMPTY')} dummies)")

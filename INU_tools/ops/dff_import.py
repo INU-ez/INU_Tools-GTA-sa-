@@ -228,8 +228,15 @@ def _create_blender_material(dff_mat: DffMaterial, index: int,
         if tex_node:
             tree.links.new(tex_node.outputs['Alpha'], bsdf.inputs['Alpha'])
 
-    # Ambient в INU свойства
-    mat.inu.ambient = dff_mat.surface.ambient if dff_mat.surface else 1.0
+    # Surface lighting coefficients (ambient/specular/diffuse) → INU свойства,
+    # verbatim. ОБЯЗАТЕЛЬНО хранить specular+diffuse тоже: иначе экспорт берёт
+    # их из Blender-входов (Roughness=0.5 → diffuse 0.5) и модель темнеет вдвое.
+    if dff_mat.surface:
+        mat.inu.ambient = dff_mat.surface.ambient
+        mat.inu.surf_specular = dff_mat.surface.specular
+        mat.inu.surf_diffuse = dff_mat.surface.diffuse
+    else:
+        mat.inu.ambient = 1.0
 
     # Material effects → INU свойства
     if dff_mat.env_map:
@@ -389,6 +396,63 @@ def _weld_and_sharpen(obj):
     me.update()
 
 
+def _split_duplicate_faces(geom: DffGeometry) -> int:
+    """Give overlapping (same-vertex-set) faces their OWN copies of the verts.
+
+    GTA vehicles encode the glossy/reflective env-map layer as a SECOND set of
+    triangles sharing the SAME vertices as the body panel. Blender can't hold
+    two faces on one vertex set — ``mesh.validate()`` deletes the duplicate —
+    so the overlay (and the reflection it carries) is lost and the model
+    renders darker / weighs less. Here we duplicate the vertices of every
+    repeated face so each face is unique and survives the round-trip. Returns
+    the number of faces split. Caller restricts this to authored-normal models
+    (vehicles/peds); terrain/roads keep their duplicate-stripping pass."""
+    tris = geom.triangles
+    if not tris:
+        return 0
+    seen = set()
+    verts = list(geom.vertices)
+    normals = list(geom.normals) if geom.normals else None
+    uvs = [list(u) for u in (geom.uv_layers or [])]
+    day = list(geom.prelit_colors) if geom.prelit_colors else None
+    ec = getattr(geom, 'extra_colors', None)
+    night = list(ec.colors) if (ec and getattr(ec, 'colors', None)) else None
+    n0 = len(geom.vertices)
+    split = 0
+    for tri in tris:
+        key = tuple(sorted((tri.a, tri.b, tri.c)))
+        if key in seen:
+            for attr in ('a', 'b', 'c'):
+                old = getattr(tri, attr)
+                if old >= n0:
+                    continue
+                ni = len(verts)
+                verts.append(geom.vertices[old])
+                if normals is not None:
+                    normals.append(geom.normals[old])
+                for li in range(len(uvs)):
+                    uvs[li].append(geom.uv_layers[li][old])
+                if day is not None:
+                    day.append(geom.prelit_colors[old])
+                if night is not None:
+                    night.append(ec.colors[old])
+                setattr(tri, attr, ni)
+            split += 1
+        else:
+            seen.add(key)
+    if split:
+        geom.vertices = verts
+        if normals is not None:
+            geom.normals = normals
+        if uvs:
+            geom.uv_layers = uvs
+        if day is not None:
+            geom.prelit_colors = day
+        if night is not None:
+            ec.colors = night
+    return split
+
+
 def _build_mesh(geom: DffGeometry, name: str, materials: list,
                 material_cache: Optional[dict] = None,
                 uv_anim_dict=None, fix_winding: bool = False) -> bpy.types.Mesh:
@@ -425,6 +489,19 @@ def _build_mesh(geom: DffGeometry, name: str, materials: list,
         if geom.user_data:
             _store_user_data(mesh, geom.user_data)
         return mesh
+
+    # Preserve the duplicate-face overlay (the reflective env-map / glossy
+    # layer GTA stacks on vehicle bodies): split its verts so validate() can't
+    # delete it and the model keeps its reflection. Gated to authored-normal,
+    # NON-skinned geometry = vehicles. Terrain/roads have no authored normals
+    # (and keep the duplicate-STRIPPING pass below — their duplicates are
+    # 2-sided artifacts, not overlays). Skinned meshes (peds) are skipped: the
+    # split would grow the vertex count without growing the per-vertex skin
+    # weight table (skin.bone_indices/weights), misaligning it. The export
+    # welds these split verts back, so the file stays vanilla-compact.
+    if bool(geom.normals) and len(geom.normals) == n_verts and not geom.skin:
+        if _split_duplicate_faces(geom):
+            n_verts = len(geom.vertices)  # grew; n_tris unchanged
 
     try:
         # ── Vertices ────────────────────────────────────────────────────
@@ -1183,7 +1260,7 @@ def import_dff_from_clump(clump, base_name: str, *, skip_2dfx=None,
         return f"{_name_stem}{_name_suffix}_{gi}"
 
     # Создаём объекты из Atomic связей (frame → geometry)
-    for atomic in clump.atomics:
+    for atom_idx, atomic in enumerate(clump.atomics):
         gi = atomic.geometry_index
         fi = atomic.frame_index
 
@@ -1223,6 +1300,11 @@ def import_dff_from_clump(clump, base_name: str, *, skip_2dfx=None,
         _set_object_props(obj, geom)
         # Store original UV layer count for round-trip
         obj['dff_num_uv_layers'] = len(geom.uv_layers)
+        # Preserve the ATOMIC render order. GTA renders atomics in DFF-list
+        # order; for alpha-blended parts (glossy car paint / glass) this order
+        # decides the blend result. Re-export must keep it — otherwise Blender's
+        # alphabetical child order scrambles it and the car renders dull/dark.
+        obj['inu_atomic_order'] = atom_idx
         obj['dff_orig_vert_count'] = len(obj.data.vertices)
         # Store original geometry flags for round-trip
         obj['dff_geom_flags'] = geom._import_flags if hasattr(geom, '_import_flags') else 0
