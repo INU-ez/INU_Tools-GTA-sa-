@@ -1267,8 +1267,19 @@ def _collect_frame_objects(objects):
         if itype == 'NON':
             continue
         if obj.type == 'MESH':
+            # COL/SHA collision meshes are embedded separately as
+            # CHUNK_COLLISION_MODEL — they must NOT also become visible frame
+            # atomics (that would render the collision hull in-game and add a
+            # stray frame). They still reach build_dff_clump via the objects
+            # list, which picks them up for embedding.
+            if itype in ('COL', 'SHA'):
+                continue
             valid.append(obj)
         elif obj.type == 'EMPTY' and itype != '2DFX':
+            # SPHERE/CUBE-display empties are collision sphere/box primitives
+            # (embedded as COL), not frames — skip them too.
+            if getattr(obj, 'empty_display_type', '') in ('SPHERE', 'CUBE'):
+                continue
             valid.append(obj)
 
     obj_set = set(valid)
@@ -1552,8 +1563,19 @@ def _build_dff_clump_inner(objects, version: int, col_model_name: str) -> DffClu
     # 0x33002=COL1. Inline rather than calling _resolve_col_version()
     # since build_dff_clump receives `version` directly and we want
     # the COL version to track the requested DFF version exactly.
-    col_objects = [obj for obj in objects if obj.type == 'MESH'
-                   and getattr(getattr(obj, 'inu', None), 'type', '') in ('COL', 'SHA')]
+    # Collision = COL/SHA meshes (faces + shadow) AND sphere/box collision
+    # primitives, which the importer creates as SPHERE/CUBE-display Empties.
+    # Both must be embedded — otherwise the vehicle keeps its body-mesh
+    # collision but loses the sphere primitives (wheels, bumpers) and drives
+    # through other models. build_col_model already turns sphere/cube empties
+    # into ColSphere/ColBox via _collect_empty.
+    col_objects = [obj for obj in objects
+                   if (obj.type == 'MESH'
+                       and getattr(getattr(obj, 'inu', None), 'type', '')
+                       in ('COL', 'SHA'))
+                   or (obj.type == 'EMPTY'
+                       and getattr(obj, 'empty_display_type', '')
+                       in ('SPHERE', 'CUBE'))]
     if col_objects:
         from .col_export import export_col_bytes
         if version >= 0x36000:

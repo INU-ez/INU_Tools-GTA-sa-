@@ -953,6 +953,7 @@ LANG = {
     "Один DFF (машина/пед)": "Un solo DFF (vehículo / ped)",
     "вне иерархии корня, пропущено объектов": "fuera de la jerarquía raíz, objetos omitidos",
     "корень": "raíz",
+    "COL-меш не найден — коллизия не встроена в .dff": "No se encontró malla COL — la colisión no se incrustó en el .dff",
     "Экспортировать ВСЮ выделенную иерархию в ОДИН .dff (машина, пед, любая многокомпонентная модель), а не разбивать по именам на отдельные файлы. TXD/COL при этом пишутся одним общим файлом. Имя берётся из поля имени внизу.": "Exporta TODA la jerarquía seleccionada en UN solo .dff (vehículo, ped, cualquier modelo de varias partes) en vez de dividir por nombre en archivos separados. TXD/COL se escriben como un único archivo compartido. El nombre se toma del campo de nombre de abajo.",
     "Ничего не экспортировано": "No se exportó nada",
     "Текстуры в": "Texturas en",

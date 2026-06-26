@@ -833,14 +833,40 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
             for ch in o.children:
                 sel.append(ch)
                 stack.append(ch)
-        # COL-меш часто лежит соседом корня, а не внутри иерархии — добавим
-        # выделенные COL/SHA-меши, чтобы коллизия всё равно встроилась в .dff.
+        # Collision objects live OUTSIDE the vehicle root subtree: the importer
+        # creates the COL/SHA meshes AND the sphere/box primitives (SPHERE/CUBE
+        # empties) all top-level and unparented. Gather the WHOLE set so the
+        # complete collision embeds — пропустить сферы = машина проезжает сквозь
+        # модели. Лишних фреймов они не добавят: _collect_frame_objects
+        # пропускает COL/SHA-меши и сфера/бокс-empties.
+        import re
         sel_set = set(sel)
-        for o in meshes0:
-            if (o not in sel_set
-                    and getattr(getattr(o, 'inu', None), 'type', '') in ('COL', 'SHA')):
+        picked_set = set(picked)
+        meshes0_set = set(meshes0)
+        # 1) COL/SHA меши (top-level или выделенные) — запоминаем их имена
+        col_mesh_names = []
+        for o in context.scene.objects:
+            if (o.type == 'MESH' and o not in sel_set
+                    and getattr(getattr(o, 'inu', None), 'type', '') in ('COL', 'SHA')
+                    and (o.parent is None or o in meshes0_set)):
                 sel.append(o)
                 sel_set.add(o)
+                col_mesh_names.append(o.name)
+        # 2) сфера/бокс-empties коллизии: отрезаем `_sphere_N`/`_box_N` от имени
+        # и проверяем, что остаток — префикс имени одного из COL-мешей (импорт
+        # называет их `<model>_sphere_N` рядом с `<model>_col`).
+        def _owner(nm):
+            m = re.match(r'^(.*)_(?:sphere|box)_\d+$', nm)
+            return m.group(1) if m else nm
+        for o in context.scene.objects:
+            if (o.type == 'EMPTY' and o not in sel_set
+                    and getattr(o, 'empty_display_type', '') in ('SPHERE', 'CUBE')
+                    and (o.parent is None or o in picked_set)):
+                base_e = _owner(o.name)
+                if (not col_mesh_names
+                        or any(cn.startswith(base_e) for cn in col_mesh_names)):
+                    sel.append(o)
+                    sel_set.add(o)
         dropped = sum(1 for o in picked if o not in sel_set)
         meshes = [o for o in sel if o.type == 'MESH']
         name = (name_override or getattr(root, 'name', '') or 'model')
@@ -892,11 +918,17 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
         # ВНУТРЬ .dff (CHUNK_COLLISION_MODEL) — export_dff делает это сам, если
         # среди выделенных есть COL-меш (obj.inu.type == COL/SHA). Имя
         # встроенной коллизии = имя .dff.
-        if s.gtatools_export_all_col:
-            has_col = any(getattr(getattr(o, 'inu', None), 'type', '')
-                          in ('COL', 'SHA') for o in meshes)
-            if has_col:
-                out.append(name + '.dff (collision embedded)')
+        has_col = (any(getattr(getattr(o, 'inu', None), 'type', '')
+                       in ('COL', 'SHA') for o in meshes)
+                   or any(o.type == 'EMPTY'
+                          and getattr(o, 'empty_display_type', '') in ('SPHERE', 'CUBE')
+                          for o in sel))
+        if has_col:
+            out.append(name + '.dff (+collision)')
+        elif s.gtatools_export_all_col:
+            # Пользователь просил COL, но COL-меша нет → коллизия НЕ встроена,
+            # машина будет проезжать сквозь модели. Явно предупреждаем.
+            errors.append(T("COL-меш не найден — коллизия не встроена в .dff"))
 
         if not out:
             self.report({'ERROR'}, T("Ничего не экспортировано")
@@ -908,7 +940,8 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
         if errors:
             tail += " | " + "; ".join(errors[:2])
         self.report({'WARNING'} if (errors or dropped) else {'INFO'},
-                    f"{T('Экспортировано:')} {', '.join(out)} ({T('корень')}: {name}){tail}")
+                    f"{T('Экспортировано:')} {', '.join(out)} "
+                    f"({T('корень')}: {getattr(root, 'name', name)}){tail}")
         return {'FINISHED'}
 
     def execute(self, context):
