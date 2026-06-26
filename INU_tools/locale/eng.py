@@ -1040,6 +1040,8 @@ LANG = {
     "Если выбранный TXD уже существует — добавить/обновить в нём текстуры сцены, сохранив остальные текстуры файла (от других моделей). Иначе файл перезаписывается целиком.": "If the chosen TXD already exists, add/update the scene's textures in it while keeping the file's other textures (from other models). Otherwise the file is fully overwritten.",
     "Дописать в существующий TXD": "Append to existing TXD",
     "Один DFF (машина/пед)": "Single DFF (vehicle / ped)",
+    "вне иерархии корня, пропущено объектов": "outside the root hierarchy, objects skipped",
+    "корень": "root",
     "Экспортировать ВСЮ выделенную иерархию в ОДИН .dff (машина, пед, любая многокомпонентная модель), а не разбивать по именам на отдельные файлы. TXD/COL при этом пишутся одним общим файлом. Имя берётся из поля имени внизу.": "Export the WHOLE selected hierarchy into ONE .dff (vehicle, ped, any multi-part model) instead of splitting by name into separate files. TXD/COL are written as one shared file. The name is taken from the filename field below.",
     "Ничего не экспортировано": "Nothing was exported",
     "Текстуры в": "Textures into",

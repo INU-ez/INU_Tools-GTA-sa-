@@ -812,22 +812,38 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
         многокомпонентная модель) → ОДИН .dff. TXD (если включён) → один
         общий .txd; COL → один .col из выделенных COL-мешей."""
         s = context.scene.inu_settings
-        sel = list(context.selected_objects)
-        # Разворачиваем до полной иерархии — чтобы хватило выделить корень
-        # (а не все части): добавляем всех потомков выделенных объектов.
-        full, stack = set(sel), list(sel)
-        while stack:
-            o = stack.pop()
-            for c in o.children:
-                if c not in full:
-                    full.add(c)
-                    stack.append(c)
-        sel = list(full)
-        meshes = [o for o in sel if o.type == 'MESH']
-        if not meshes:
+        # Машине/педу нужен ОДИН root-фрейм. Берём корень = самый верхний
+        # предок КРУПНЕЙШЕГО выделенного меша (кузова) и экспортируем всю его
+        # иерархию. Так отсекаются посторонние верхнеуровневые объекты
+        # (light-маркеры, пустышки, остатки): иначе они уходят в клапм как
+        # фантомные root-фреймы и ломают машину — настоящий root перестаёт
+        # быть кадром 0, камера и текстуры съезжают. Достаточно выделить любую
+        # часть машины (или корень) — иерархия соберётся сама.
+        picked = list(context.selected_objects)
+        meshes0 = [o for o in picked if o.type == 'MESH']
+        if not meshes0:
             self.report({'ERROR'}, T("Нет меш объектов для экспорта"))
             return {'CANCELLED'}
-        name = (name_override or getattr(self, '_export_name', '') or 'model')
+        root = max(meshes0, key=lambda o: len(o.data.vertices))
+        while root.parent is not None:
+            root = root.parent
+        sel, stack = [root], [root]
+        while stack:
+            o = stack.pop()
+            for ch in o.children:
+                sel.append(ch)
+                stack.append(ch)
+        # COL-меш часто лежит соседом корня, а не внутри иерархии — добавим
+        # выделенные COL/SHA-меши, чтобы коллизия всё равно встроилась в .dff.
+        sel_set = set(sel)
+        for o in meshes0:
+            if (o not in sel_set
+                    and getattr(getattr(o, 'inu', None), 'type', '') in ('COL', 'SHA')):
+                sel.append(o)
+                sel_set.add(o)
+        dropped = sum(1 for o in picked if o not in sel_set)
+        meshes = [o for o in sel if o.type == 'MESH']
+        name = (name_override or getattr(root, 'name', '') or 'model')
         tp = getattr(s, 'gtatools_platform', 'PC')
         out, errors = [], []
 
@@ -844,7 +860,17 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
                 errors.append(f"{name}.dff: {e}")
 
         if s.gtatools_export_all_txd:
+            # TXD пишем из ТЕХ ЖЕ мешей, что и DFF (а не из текущего выделения,
+            # которое export_txd берёт через selected_only) — иначе текстуры
+            # берутся не из тех объектов. Временно выделяем meshes и
+            # восстанавливаем выделение после.
+            prev_sel = list(context.selected_objects)
+            prev_active = context.view_layer.objects.active
             try:
+                bpy.ops.object.select_all(action='DESELECT')
+                for o in meshes:
+                    o.select_set(True)
+                context.view_layer.objects.active = meshes[0]
                 merge = bool(getattr(s, 'gtatools_export_all_txd_merge', False))
                 r, msg, _ = _write_txd_file(
                     os.path.join(self.directory, name + '.txd'), context,
@@ -853,6 +879,14 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
                     else errors.append(f"{name}.txd: {msg}")
             except Exception as e:
                 errors.append(f"{name}.txd: {e}")
+            finally:
+                bpy.ops.object.select_all(action='DESELECT')
+                for o in prev_sel:
+                    try:
+                        o.select_set(True)
+                    except Exception:
+                        pass
+                context.view_layer.objects.active = prev_active
 
         # COL: НЕ пишем отдельный .col. У машины/педа коллизия встраивается
         # ВНУТРЬ .dff (CHUNK_COLLISION_MODEL) — export_dff делает это сам, если
@@ -868,9 +902,13 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
             self.report({'ERROR'}, T("Ничего не экспортировано")
                         + ((": " + "; ".join(errors[:3])) if errors else ""))
             return {'CANCELLED'}
-        self.report({'WARNING'} if errors else {'INFO'},
-                    f"{T('Экспортировано:')} {', '.join(out)}"
-                    + ((" | " + "; ".join(errors[:2])) if errors else ""))
+        tail = ""
+        if dropped:
+            tail += f" | {T('вне иерархии корня, пропущено объектов')}: {dropped}"
+        if errors:
+            tail += " | " + "; ".join(errors[:2])
+        self.report({'WARNING'} if (errors or dropped) else {'INFO'},
+                    f"{T('Экспортировано:')} {', '.join(out)} ({T('корень')}: {name}){tail}")
         return {'FINISHED'}
 
     def execute(self, context):
