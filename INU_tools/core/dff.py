@@ -167,6 +167,14 @@ class DffTexture:
     filters: int = 0x1106  # default filter mode
 
     def to_bytes(self, lib_id: int) -> bytes:
+        # Texture names must be ASCII. A non-ASCII char (a leftover U+FFFD from
+        # a bad import, or one the user typed) gets written back as '?' by the
+        # ascii encoder — a DIFFERENT name that won't link to the TXD in-game.
+        # Warn at export so a name left unchanged since import is caught.
+        if self.name and any(ord(c) > 127 for c in self.name):
+            print(f"[INU] WARN: texture name '{self.name}' has a non-ASCII "
+                  f"character — it will be written as '?' and won't link "
+                  f"in-game. Rename it to ASCII (a-z, 0-9, _) before export.")
         # Write the FULL 32-bit filter/addressing word. The low 16 bits are
         # filter + U/V addressing; the high 16 bits are flags some textures set
         # (e.g. 0x0001) — writing them as `2x` padding dropped them, so a
@@ -1630,6 +1638,14 @@ def _read_texture_chunk(r: BinaryReader, size: int) -> DffTexture:
     ct, cs, cl = _read_chunk_header(r)
     if ct == CHUNK_STRING:
         tex.name = _read_string_chunk(r, cs)
+        # GTA texture names must be ASCII. A non-ASCII byte (modder's locale,
+        # e.g. Turkish 'ö') gets decoded to U+FFFD here and would be written
+        # back as '?' on export — a different name that won't link in-game.
+        # Warn so the user renames the texture at the source instead.
+        if '�' in tex.name:  # U+FFFD = decode-replacement char
+            print(f"[INU] WARN: texture name '{tex.name}' contains a non-ASCII "
+                  f"character — GTA names must be ASCII (a-z, 0-9, _). Rename "
+                  f"the texture in the TXD + material or it won't link in-game.")
 
     # Mask string
     if r.pos < end:
