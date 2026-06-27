@@ -511,6 +511,18 @@ def _classify_skin(obj, arm_obj):
     return 0
 
 
+def overlay_face_key(verts, a, b, c) -> str:
+    """Stable position key for an overlay face (sorted, rounded to 0.1 mm).
+
+    MUST produce the exact same string as ``dff_import.overlay_face_key`` — the
+    importer records overlay faces by this key and the exporter matches base
+    triangles against it to re-add the reflection layer on shared verts."""
+    pts = sorted(
+        (round(verts[v][0], 4), round(verts[v][1], 4), round(verts[v][2], 4))
+        for v in (a, b, c))
+    return "|".join("%.4f,%.4f,%.4f" % p for p in pts)
+
+
 def _process_mesh(obj, clump: DffClump, frame_index: int, *,
                   force_no_skin: bool = False):
     """
@@ -755,60 +767,39 @@ def _process_mesh(obj, clump: DffClump, frame_index: int, *,
                 night_colors[out_idx] = RGBA(
                     int(c[0]*255), int(c[1]*255), int(c[2]*255), alpha)
 
-    # ── Weld exact-duplicate vertices ───────────────────────────────────
-    # The DFF import gives each overlapping overlay face (the reflective
-    # env-map layer GTA stacks on vehicle bodies) its own copy of the shared
-    # verts, because Blender can't hold two faces on one vertex set. Those
-    # copies are identical to the base verts, so collapse them back — vanilla
-    # shares the verts and the file would otherwise grow ~0.3% with duplicate
-    # vertex data. Keyed on every per-vertex attribute, so the model looks and
-    # round-trips identically; only true duplicates merge. Skipped when
-    # skinned: merging would have to reconcile bone weights, and the overlay
-    # trick is vehicle-only anyway.
-    _maybe_skinned = bool(obj.vertex_groups) and any(
-        m.type == 'ARMATURE' and m.object for m in obj.modifiers)
-    if num_verts and not _maybe_skinned:
-        _key_to_new = {}
-        _remap = [0] * num_verts
-        _keep = []
-        for i in range(num_verts):
-            p = positions[i]
-            n = normals_list[i]
-            # Strict 1e-6 keys: merge ONLY bit-identical duplicates so this can
-            # never collapse a hard edge or two genuinely-distinct verts. Looser
-            # normal tolerances recover a few more split-overlay verts but start
-            # eating real geometry on other parts (wheels etc.), so we keep it
-            # tight and accept that a handful of overlay verts stay split.
-            key = (
-                (round(p[0], 6), round(p[1], 6), round(p[2], 6)),
-                (round(n[0], 6), round(n[1], 6), round(n[2], 6)),
-                tuple((round(uv_data[l][i].u, 6), round(uv_data[l][i].v, 6))
-                      for l in range(max_uv)),
-                (day_colors[i].r, day_colors[i].g, day_colors[i].b,
-                 day_colors[i].a) if has_day else 0,
-                (night_colors[i].r, night_colors[i].g, night_colors[i].b,
-                 night_colors[i].a) if has_night else 0,
-            )
-            j = _key_to_new.get(key)
-            if j is None:
-                j = len(_keep)
-                _key_to_new[key] = j
-                _keep.append(i)
-            _remap[i] = j
-        if len(_keep) < num_verts:
-            positions = [positions[i] for i in _keep]
-            normals_list = [normals_list[i] for i in _keep]
-            split_origin = [split_origin[i] for i in _keep]
-            uv_data = [[layer[i] for i in _keep] for layer in uv_data]
-            if has_day:
-                day_colors = [day_colors[i] for i in _keep]
-            if has_night:
-                night_colors = [night_colors[i] for i in _keep]
-            num_verts = len(positions)
+    # ── Restore the reflective-overlay faces recorded on import ─────────────
+    # Vehicles stack the env-map gloss as duplicate faces on the SAME verts. The
+    # importer kept them OFF the Blender mesh (which can't hold two faces on one
+    # vertex set) and stashed them as position-keyed entries. Re-add each on its
+    # base face's existing output verts — no new verts, so the mesh stays
+    # vanilla-compact while the reflection layer survives the round-trip.
+    overlay_json = obj.data.get('inu_overlay_faces')
+    if overlay_json and triangles:
+        import json
+        try:
+            overlay = json.loads(overlay_json)
+        except Exception:
+            overlay = []
+        if overlay:
+            num_mats = len(obj.data.materials) or 1
+            pos_to_tri = {}
             for t in triangles:
-                t.a = _remap[t.a]
-                t.b = _remap[t.b]
-                t.c = _remap[t.c]
+                k = overlay_face_key(positions, t.a, t.b, t.c)
+                if k not in pos_to_tri:
+                    pos_to_tri[k] = (t.a, t.b, t.c)
+            restored = missed = 0
+            for pkey, mat in overlay:
+                tv = pos_to_tri.get(pkey)
+                if tv is None:
+                    missed += 1
+                    continue
+                triangles.append(Triangle(
+                    a=tv[0], b=tv[1], c=tv[2],
+                    material=mat if 0 <= mat < num_mats else 0))
+                restored += 1
+            if restored or missed:
+                print(f"[INU] overlay restore: +{restored} faces"
+                      + (f", {missed} unmatched" if missed else ""))
 
     # ── Bounding sphere (from actual vertex positions, local space) ──
     if positions:

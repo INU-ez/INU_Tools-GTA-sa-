@@ -396,61 +396,76 @@ def _weld_and_sharpen(obj):
     me.update()
 
 
-def _split_duplicate_faces(geom: DffGeometry) -> int:
-    """Give overlapping (same-vertex-set) faces their OWN copies of the verts.
+def _weld_keep_normals(obj):
+    """Merge coincident verts so a vehicle mesh is editable (connected) and keep
+    its hard-edge shading — a verbatim port of DragonFF's
+    ``remove_object_doubles``.
 
-    GTA vehicles encode the glossy/reflective env-map layer as a SECOND set of
-    triangles sharing the SAME vertices as the body panel. Blender can't hold
-    two faces on one vertex set — ``mesh.validate()`` deletes the duplicate —
-    so the overlay (and the reflection it carries) is lost and the model
-    renders darker / weighs less. Here we duplicate the vertices of every
-    repeated face so each face is unique and survives the round-trip. Returns
-    the number of faces split. Caller restricts this to authored-normal models
-    (vehicles/peds); terrain/roads keep their duplicate-stripping pass."""
+    GTA cars are split at every crease/seam, so before welding those edges have
+    a single linked face (boundaries). We mark every such edge sharp FIRST, then
+    merge by distance, then add an EdgeSplit modifier (sharp edges only, no
+    angle) so the marked edges shade hard while the body stays smooth. The
+    custom split normals set at build time are left untouched."""
+    me = obj.data
+    if not me or not len(me.vertices):
+        return
+    bm = bmesh.new()
+    try:
+        bm.from_mesh(me)
+        # Mark edges with 1 linked face (creases/seams/boundaries) sharp.
+        for edge in bm.edges:
+            if len(edge.link_loops) == 1:
+                edge.smooth = False
+        bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.00001)
+        bm.to_mesh(me)
+    finally:
+        bm.free()
+    # EdgeSplit modifier (sharp-only): splits the marked edges at display so
+    # they shade hard, while the base mesh stays connected/editable.
+    if not me.shape_keys and not any(m.type == 'EDGE_SPLIT' for m in obj.modifiers):
+        mod = obj.modifiers.new("EdgeSplit", 'EDGE_SPLIT')
+        mod.use_edge_angle = False
+    me.update()
+
+
+def overlay_face_key(verts, a, b, c) -> str:
+    """Stable position key for an overlay face (sorted, rounded to 0.1 mm).
+
+    Used on BOTH sides of the round-trip — import records overlay faces by this
+    key, export re-adds them by matching base triangles — so the exact format
+    MUST match ``dff_export.overlay_face_key``."""
+    pts = sorted(
+        (round(verts[v][0], 4), round(verts[v][1], 4), round(verts[v][2], 4))
+        for v in (a, b, c))
+    return "|".join("%.4f,%.4f,%.4f" % p for p in pts)
+
+
+def _detect_overlay_faces(geom: DffGeometry):
+    """Record the reflective-overlay faces WITHOUT touching the mesh.
+
+    GTA vehicles encode the glossy/reflective env-map layer as a SECOND (3rd,
+    4th…) set of triangles sharing the SAME vertices as the body panel. Blender
+    can't hold two faces on one vertex set — ``mesh.validate()`` drops the
+    duplicate — so instead of splitting verts (bloats the file) or losing the
+    layer (like DragonFF, which renders darker / less glossy) we just record
+    each repeated face as ``(position-key, material)``. The exporter re-adds
+    them on their base face's shared verts, keeping the mesh clean/compact in
+    Blender while the round-trip preserves the reflection. Caller restricts
+    this to authored-normal, non-skinned models (vehicles)."""
     tris = geom.triangles
     if not tris:
-        return 0
+        return []
+    verts = geom.vertices
     seen = set()
-    verts = list(geom.vertices)
-    normals = list(geom.normals) if geom.normals else None
-    uvs = [list(u) for u in (geom.uv_layers or [])]
-    day = list(geom.prelit_colors) if geom.prelit_colors else None
-    ec = getattr(geom, 'extra_colors', None)
-    night = list(ec.colors) if (ec and getattr(ec, 'colors', None)) else None
-    n0 = len(geom.vertices)
-    split = 0
+    overlay = []
     for tri in tris:
-        key = tuple(sorted((tri.a, tri.b, tri.c)))
-        if key in seen:
-            for attr in ('a', 'b', 'c'):
-                old = getattr(tri, attr)
-                if old >= n0:
-                    continue
-                ni = len(verts)
-                verts.append(geom.vertices[old])
-                if normals is not None:
-                    normals.append(geom.normals[old])
-                for li in range(len(uvs)):
-                    uvs[li].append(geom.uv_layers[li][old])
-                if day is not None:
-                    day.append(geom.prelit_colors[old])
-                if night is not None:
-                    night.append(ec.colors[old])
-                setattr(tri, attr, ni)
-            split += 1
+        ikey = tuple(sorted((tri.a, tri.b, tri.c)))
+        if ikey in seen:
+            overlay.append([overlay_face_key(verts, tri.a, tri.b, tri.c),
+                            tri.material])
         else:
-            seen.add(key)
-    if split:
-        geom.vertices = verts
-        if normals is not None:
-            geom.normals = normals
-        if uvs:
-            geom.uv_layers = uvs
-        if day is not None:
-            geom.prelit_colors = day
-        if night is not None:
-            ec.colors = night
-    return split
+            seen.add(ikey)
+    return overlay
 
 
 def _build_mesh(geom: DffGeometry, name: str, materials: list,
@@ -490,18 +505,17 @@ def _build_mesh(geom: DffGeometry, name: str, materials: list,
             _store_user_data(mesh, geom.user_data)
         return mesh
 
-    # Preserve the duplicate-face overlay (the reflective env-map / glossy
-    # layer GTA stacks on vehicle bodies): split its verts so validate() can't
-    # delete it and the model keeps its reflection. Gated to authored-normal,
-    # NON-skinned geometry = vehicles. Terrain/roads have no authored normals
-    # (and keep the duplicate-STRIPPING pass below — their duplicates are
-    # 2-sided artifacts, not overlays). Skinned meshes (peds) are skipped: the
-    # split would grow the vertex count without growing the per-vertex skin
-    # weight table (skin.bone_indices/weights), misaligning it. The export
-    # welds these split verts back, so the file stays vanilla-compact.
+    # Record the reflective-overlay faces (the env-map / glossy layer GTA stacks
+    # on vehicle bodies as duplicate faces) and stash them on the mesh. They are
+    # NOT added to Blender — it can't hold two faces on one vertex set — so the
+    # mesh stays clean/compact like a DragonFF import; the exporter re-adds them
+    # on the base faces' shared verts, preserving the reflection without bloating
+    # the file. Gated to authored-normal, non-skinned geometry = vehicles.
     if bool(geom.normals) and len(geom.normals) == n_verts and not geom.skin:
-        if _split_duplicate_faces(geom):
-            n_verts = len(geom.vertices)  # grew; n_tris unchanged
+        overlay = _detect_overlay_faces(geom)
+        if overlay:
+            import json
+            mesh['inu_overlay_faces'] = json.dumps(overlay, separators=(',', ':'))
 
     try:
         # ── Vertices ────────────────────────────────────────────────────
@@ -1220,6 +1234,7 @@ def import_dff_from_clump(clump, base_name: str, *, skip_2dfx=None,
     # их автоматически сшиваем (сварка + острые рёбра, как DragonFF) в конце.
     # Модели с нормалями (транспорт/педы) сюда не попадают.
     weld_targets = []
+    editable_targets = []  # authored-normal, non-skinned meshes (vehicles)
     frame_to_obj = {}  # frame_index → Blender object (MESH or EMPTY dummy)
 
     is_skinned = _has_skeleton(clump)
@@ -1326,6 +1341,8 @@ def import_dff_from_clump(clump, base_name: str, *, skip_2dfx=None,
         imported_objects.append(obj)
         if not (geom.normals and len(geom.normals) == len(geom.vertices)):
             weld_targets.append(obj)
+        elif not geom.skin:
+            editable_targets.append(obj)
         if frame is not None:
             frame_to_obj[fi] = obj
 
@@ -1343,6 +1360,8 @@ def import_dff_from_clump(clump, base_name: str, *, skip_2dfx=None,
             imported_objects.append(obj)
             if not (geom.normals and len(geom.normals) == len(geom.vertices)):
                 weld_targets.append(obj)
+            elif not geom.skin:
+                editable_targets.append(obj)
 
     # Создаём Empty для каждого фрейма БЕЗ atomic'а (это dummy вроде wheel_lf_dummy)
     # Пропускаем если в DFF есть скелет — там фреймы представлены костями армутуры
@@ -1538,15 +1557,23 @@ def import_dff_from_clump(clump, base_name: str, *, skip_2dfx=None,
                   f"{base_name}: {e}")
 
     # Авто-сварка вершин + острые рёбра (как DragonFF) для моделей без
-    # авторских нормалей (карты/дороги/террейн). Транспорт/педы (с
-    # нормалями) не трогаем — у них корректное жёсткое затенение от
-    # custom split normals, сварка его бы испортила.
+    # авторских нормалей (карты/дороги/террейн).
     for obj in weld_targets:
         if getattr(obj, 'type', None) == 'MESH':
             try:
                 _weld_and_sharpen(obj)
             except Exception as we:
                 print(f"[INU] weld/sharpen failed for {obj.name}: {we}")
+
+    # Транспорт (авторские нормали, без скина): свариваем совпадающие вершины,
+    # чтобы меш был СВЯЗНЫМ и редактируемым (как DragonFF «remove doubles»), но
+    # БЕЗ EdgeSplit — custom split normals сохраняются, затенение не страдает.
+    for obj in editable_targets:
+        if getattr(obj, 'type', None) == 'MESH':
+            try:
+                _weld_keep_normals(obj)
+            except Exception as we:
+                print(f"[INU] vehicle weld failed for {obj.name}: {we}")
 
     # Выделяем импортированные объекты. При bulk_mode пропускаем
     # select_all — это O(scene_size) операция, которая для импорта
