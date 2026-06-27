@@ -1510,6 +1510,16 @@ def import_dff_from_clump(clump, base_name: str, *, skip_2dfx=None,
                     else:
                         print(f"[INU] WARN: cannot parent mesh '{obj.name}' to "
                               f"bone '{target_bone}' — not in bone_names={bone_names}")
+
+            # Stand the character upright for convenient editing. GTA peds
+            # import lying flat along the ground; rotate the rig -90° about Y so
+            # it stands on Z. Object-level transform ONLY — the mesh data and
+            # bind matrices stay in DFF space, so the export round-trips
+            # unchanged (it reads mesh-local verts + stored bone matrices, never
+            # the object's world rotation). Skinned peds only; animated map
+            # objects keep their world placement.
+            if any(getattr(g, 'skin', None) for g in clump.geometries):
+                arm_obj.rotation_euler = (0.0, -1.5707963267948966, 0.0)  # -90° Y
         except Exception as e:
             import traceback
             print(f"[INU_tools] Skeleton import error: {e}")

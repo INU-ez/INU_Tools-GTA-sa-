@@ -29,10 +29,14 @@ def export_ipl(filepath: str, objects: list, *, binary: bool = False,
     it. Off by default to keep diffs minimal against vanilla output.
 
     LOD pairing: each ``inst`` line ends with ``lod_index`` — a position
-    pointer into the same IPL's instance list. We resolve it by reading
-    ``obj.inu.lod_object`` (PointerProperty set by Map Import) and
-    finding that pointee's index in the current export. Without an LOD
-    pointer the value defaults to -1 (no LOD).
+    pointer into the same IPL's instance list. We resolve it in two
+    tiers: first ``obj.inu.lod_object`` (PointerProperty set by Map
+    Import) — its pointee's index in *this* export is recomputed, so it
+    survives reordering. If no pointer is set we fall back to the raw
+    ``obj.inu.lod_index`` carried in from a plain IPL import or typed in
+    the panel; without that fallback such links silently became -1 on
+    export (the "LOD index doesn't work anymore" regression). Either way
+    -1 means "no LOD".
     """
     ipl = IplFile()
     obj_per_inst: list = []
@@ -99,22 +103,30 @@ def export_ipl(filepath: str, objects: list, *, binary: bool = False,
         ipl.instances = [ipl.instances[i] for i in keep_idx]
         obj_per_inst = [obj_per_inst[i] for i in keep_idx]
 
-    # ── Resolve lod_index from PointerProperty ──
-    # Build object → index map once, then walk instances and write
-    # the LOD partner's index where the pointer is set and the
-    # pointee is also being exported. Pointer to an object that's
-    # outside the export selection silently degrades to -1.
+    # ── Resolve lod_index ──
+    # Tier 1: the LOD partner PointerProperty. Recompute the pointee's
+    #   position in THIS export so the pointer survives dedupe/reorder.
+    #   A pointer to an object outside the export selection means the
+    #   LOD genuinely isn't in this IPL → stays -1 (no fallback).
+    # Tier 2 (only when no pointer): honour the raw ``inu.lod_index``
+    #   preserved from a plain IPL import or set by hand. Bounds-checked
+    #   so a stale pointer can't index past the instance list and
+    #   corrupt the file.
     obj_to_idx = {id(obj): i for i, obj in enumerate(obj_per_inst)}
+    n_inst = len(ipl.instances)
     for i, obj in enumerate(obj_per_inst):
         inu = getattr(obj, 'inu', None)
         if inu is None:
             continue
         lod_obj = getattr(inu, 'lod_object', None)
-        if lod_obj is None:
+        if lod_obj is not None:
+            lod_idx = obj_to_idx.get(id(lod_obj), -1)
+            if lod_idx >= 0:
+                ipl.instances[i].lod_index = lod_idx
             continue
-        lod_idx = obj_to_idx.get(id(lod_obj), -1)
-        if lod_idx >= 0:
-            ipl.instances[i].lod_index = lod_idx
+        raw = getattr(inu, 'lod_index', -1)
+        if raw is not None and 0 <= raw < n_inst:
+            ipl.instances[i].lod_index = raw
 
     write_ipl(filepath, ipl, binary=binary, fla_extended=fla_extended,
               game=_scene_game())

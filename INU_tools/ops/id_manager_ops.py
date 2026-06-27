@@ -65,19 +65,26 @@ class GTATOOLS_OT_id_manager_auto_assign(bpy.types.Operator):
     def execute(self, context):
         from .. import _id_preset_sync
         _id_preset_sync(context)
-        from ..data.id_manager import allocate_id, sync_scene_to_preset
+        from ..data.id_manager import allocate_id
 
         objs = [o for o in context.selected_objects if o.type == 'MESH']
         if not objs:
             self.report({'ERROR'}, T("Выделите меш объекты"))
             return {'CANCELLED'}
 
-        # Bring the preset in line with the scene before allocating.
-        # Map-imported objects (or anything hand-edited) may carry IDs
-        # that the preset has never heard of; without this sync those
-        # IDs stay flagged as free in the preset but get silently
-        # skipped during allocation — a classic source of gaps.
-        sync_scene_to_preset(bpy.data.objects)
+        # Collect every ID already claimed by a scene object so
+        # allocation steps over them (no collision with map-imported or
+        # hand-edited IDs). We pass these to allocate_id as a *skip*
+        # set rather than writing them into the preset: dragging the
+        # whole scene into the preset used to flood the manager's
+        # "used" list with IDs the user never assigned (the «shows
+        # other ids I don't want» report). Newly allocated IDs still
+        # land in the preset — those are the ones the user wants to see.
+        scene_used = {
+            o.inu.model_id for o in bpy.data.objects
+            if o.type == 'MESH' and getattr(o, 'inu', None)
+            and o.inu.model_id > 0
+        }
 
         # Group by base_name, order: DFF then LOD per group (skip COL)
         pairs = {}  # base_name -> {'DFF': obj, 'LOD': obj}
@@ -113,11 +120,12 @@ class GTATOOLS_OT_id_manager_auto_assign(bpy.types.Operator):
             else:
                 display_name = clean_name
 
-            new_id = allocate_id(display_name)
+            new_id = allocate_id(display_name, skip=scene_used)
             if new_id is None:
                 self.report({'ERROR'}, T("Нет свободных ID в активном пресете"))
                 return {'CANCELLED'}
             obj.inu.model_id = new_id
+            scene_used.add(new_id)
             assigned += 1
 
         self.report({'INFO'}, f"{T('Назначено ID:')} {assigned}")
@@ -143,24 +151,22 @@ class GTATOOLS_OT_id_manager_assign_from(bpy.types.Operator):
     def execute(self, context):
         from .. import _id_preset_sync
         _id_preset_sync(context)
-        from ..data.id_manager import get_used_ids, reserve_id, sync_scene_to_preset
+        from ..data.id_manager import get_used_ids, reserve_id
 
         objs = [o for o in context.selected_objects if o.type == 'MESH']
         if not objs:
             self.report({'ERROR'}, T("Выделите меш объекты"))
             return {'CANCELLED'}
 
-        # Sync first so the preset reflects every ID that's already
-        # placed in the scene. Otherwise we'd skip around those IDs
-        # (because they're taken by some scene object) while leaving
-        # them visibly "free" in the preset — that's the mysterious
-        # gap users see after running this operator.
-        sync_scene_to_preset(bpy.data.objects)
-
+        # Collision avoidance reads scene IDs directly (loop below) — we
+        # deliberately do NOT pull the whole scene into the preset here.
+        # Doing so flooded the manager's "used" list with map-imported
+        # IDs the user never assigned (the «From ID 80000 shows other
+        # ids I don't want» report). Only the IDs we hand out below get
+        # reserved in the preset.
         used = set(get_used_ids().keys())
-        # Also collect IDs already on scene objects (belt and braces:
-        # the sync above should have covered these, but a preset that
-        # has been cleared after the sync would miss them).
+        # IDs already on scene objects are skipped so we never clash
+        # with a model that's already placed on the map.
         for o in bpy.data.objects:
             if o.type == 'MESH' and hasattr(o, 'inu') and o.inu.model_id > 0:
                 used.add(o.inu.model_id)

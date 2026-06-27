@@ -252,11 +252,20 @@ def get_all():
     return _load()
 
 
-def allocate_id(model_name):
-    """Take first free ID, assign model_name, save. Returns ID or None."""
+def allocate_id(model_name, skip=None):
+    """Take first free ID, assign model_name, save. Returns ID or None.
+
+    ``skip`` is an optional iterable of IDs to treat as unavailable
+    even though the preset still lists them as free. Callers pass the
+    set of IDs already claimed by scene objects so allocation steps
+    over them WITHOUT writing every scene ID into the preset — the
+    latter floods the manager's "used" list with map-imported IDs the
+    user never assigned (see id_manager_ops.auto_assign).
+    """
+    skip = set(skip) if skip else ()
     entries = _load()
     for i, (id_num, name) in enumerate(entries):
-        if name is None:
+        if name is None and id_num not in skip:
             entries[i] = (id_num, model_name)
             _save(entries)
             return id_num
