@@ -1,9 +1,9 @@
 # Build INU Tools as a Blender extension package.
 #
 # Single unified build — same .zip works on GitHub release and on
-# extensions.blender.org. NVTT subprocess path was removed in 1.8.x;
-# DXT compression now goes through the bundled core.dxt numpy encoder
-# (and an optional bpy.gpu compute shader path that's WIP).
+# extensions.blender.org. DXT compression goes through the bundled
+# core.dxt numpy encoder (and an optional bpy.gpu compute shader path
+# that's WIP) — no external binaries.
 #
 # Uses Blender's official `extension build` command which:
 #   - Validates blender_manifest.toml

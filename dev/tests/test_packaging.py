@@ -1,17 +1,14 @@
-"""Build the addon two ways (store and full) and assert each ships
-the right contents.
+"""Build the addon as a Blender extension and assert the produced zip
+is clean and valid.
 
-These tests need a Blender executable. They auto-skip when one isn't
+This test needs a Blender executable. It auto-skips when one isn't
 findable so the rest of the pure-Python test suite stays runnable on
 machines without Blender.
 
-Why both builds:
-  * STORE  — uploaded to extensions.blender.org. NVTT must be absent
-             (third-party binary, ToS violation).
-  * FULL   — attached to the GitHub release. NVTT included for users
-             who want hardware DXT compression.
-A single missing/extra file on either side breaks the dual-release
-plan, so we build both and verify each.
+There is a SINGLE build — the same .zip is uploaded to
+extensions.blender.org and attached to the GitHub release. (The old
+"full" split was dropped when the external-binary compression path was
+removed; the addon now compresses DXT purely in-process via core.dxt.)
 """
 
 from __future__ import annotations
@@ -29,8 +26,6 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ADDON_DIR = REPO_ROOT / "INU_tools"
-NVTT_SOURCE = REPO_ROOT / "extras" / "nvtt_compress.py"
-NVTT_TARGET = ADDON_DIR / "tools" / "nvtt_compress.py"
 
 
 # ── Blender discovery ────────────────────────────────────────────
@@ -110,73 +105,15 @@ def _validate_zip(blender: str, zip_path: Path) -> None:
     )
 
 
-# ── Build mode setup ─────────────────────────────────────────────
+# ── Tests ────────────────────────────────────────────────────────
 
-@pytest.fixture
-def store_layout():
-    """Ensure NVTT module is ABSENT during the test, then restore
-    whatever was there before. Matches `dev/build_extension.ps1 -Store`.
-
-    Both this fixture and `full_layout` save+restore so tests never
-    leak NVTT state across each other or to a subsequent CI artifact
-    build step. Earlier versions left NVTT in place after `full_layout`,
-    which made the order-of-execution part of the contract — fragile."""
-    pre_existing = NVTT_TARGET.read_bytes() if NVTT_TARGET.is_file() else None
-    if pre_existing is not None:
-        NVTT_TARGET.unlink()
-    try:
-        yield
-    finally:
-        if pre_existing is not None:
-            NVTT_TARGET.write_bytes(pre_existing)
-        elif NVTT_TARGET.is_file():
-            # Some interrupted run could have left NVTT behind; clean.
-            NVTT_TARGET.unlink()
-
-
-@pytest.fixture
-def full_layout():
-    """Ensure NVTT module is PRESENT during the test, then restore
-    whatever was there before."""
-    if not NVTT_SOURCE.is_file():
-        pytest.skip(f"{NVTT_SOURCE.name} missing — can't build full release")
-    pre_existing = NVTT_TARGET.read_bytes() if NVTT_TARGET.is_file() else None
-    if pre_existing is None:
-        shutil.copy2(NVTT_SOURCE, NVTT_TARGET)
-    try:
-        yield
-    finally:
-        if pre_existing is None:
-            # We added the file — remove it.
-            if NVTT_TARGET.is_file():
-                NVTT_TARGET.unlink()
-        else:
-            NVTT_TARGET.write_bytes(pre_existing)
-
-
-# ── Tests: store build ───────────────────────────────────────────
-
-def test_store_build_succeeds(tmp_path, blender, store_layout):
-    """The store zip builds and `extension validate` accepts it."""
+def test_build_succeeds(tmp_path, blender):
+    """The extension zip builds and `extension validate` accepts it."""
     zip_path = _build_zip(blender, ADDON_DIR, tmp_path)
     _validate_zip(blender, zip_path)
 
 
-def test_store_build_excludes_nvtt(tmp_path, blender, store_layout):
-    """Walk the produced store zip; nothing matching NVTT may be
-    inside. This is the ToS-critical check — NVTT bundled in a store
-    upload triggers immediate rejection."""
-    zip_path = _build_zip(blender, ADDON_DIR, tmp_path)
-    with zipfile.ZipFile(zip_path) as zf:
-        names = zf.namelist()
-
-    nvtt_files = [n for n in names if "nvtt" in n.lower()]
-    assert not nvtt_files, (
-        f"NVTT files leaked into store zip {zip_path.name}: {nvtt_files}"
-    )
-
-
-def test_store_build_no_pycache(tmp_path, blender, store_layout):
+def test_build_no_pycache(tmp_path, blender):
     """`__pycache__/` is excluded by manifest, but verify — a stale
     .pyc snuck in once before."""
     zip_path = _build_zip(blender, ADDON_DIR, tmp_path)
@@ -185,35 +122,12 @@ def test_store_build_no_pycache(tmp_path, blender, store_layout):
             n for n in zf.namelist()
             if "__pycache__" in n or n.endswith(".pyc")
         ]
-    assert not offenders, f"bytecode leaked into store zip: {offenders}"
+    assert not offenders, f"bytecode leaked into zip: {offenders}"
 
 
-# ── Tests: full build ────────────────────────────────────────────
-
-def test_full_build_succeeds(tmp_path, blender, full_layout):
-    """The full (NVTT-included) zip builds and validates."""
-    zip_path = _build_zip(blender, ADDON_DIR, tmp_path)
-    _validate_zip(blender, zip_path)
-
-
-def test_full_build_includes_nvtt(tmp_path, blender, full_layout):
-    """The full zip is for users who want NVTT — confirm it actually
-    ships the module."""
-    zip_path = _build_zip(blender, ADDON_DIR, tmp_path)
-    with zipfile.ZipFile(zip_path) as zf:
-        names = zf.namelist()
-    has_nvtt = any(n.endswith("nvtt_compress.py") for n in names)
-    assert has_nvtt, f"full zip is missing nvtt_compress.py:\n  {names}"
-
-
-# ── Sanity: zip is a real addon ──────────────────────────────────
-
-def test_store_zip_contains_manifest(tmp_path, blender, store_layout):
-    """Every produced zip must have blender_manifest.toml at its
-    addon-root path. If it's missing, the addon won't register.
-    Pinned to the store build so CI matrix filtering by `-k store`
-    picks it up exactly once (full and store would both pass identically,
-    so checking once is enough)."""
+def test_zip_contains_manifest(tmp_path, blender):
+    """The produced zip must have blender_manifest.toml at its
+    addon-root path. If it's missing, the addon won't register."""
     zip_path = _build_zip(blender, ADDON_DIR, tmp_path)
     with zipfile.ZipFile(zip_path) as zf:
         names = zf.namelist()

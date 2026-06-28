@@ -116,17 +116,6 @@ ALLOWED_SUBPROCESS_USES = {
         "explicit button click), no shell=True, args is a literal "
         "list with a fixed path arg. Windows path uses os.startfile."
     ),
-    "INU_tools/tools/nvtt_compress.py": (
-        "spawns the NVTT binary for hardware DXT compression; "
-        "FULL build only — store build excludes this file entirely "
-        "(verified by test_packaging.test_store_build_excludes_nvtt)"
-    ),
-    "INU_tools/tools/txd_export.py": (
-        "FULL build path: spawns nvcompress.exe for GPU DXT compression. "
-        "Store build doesn't ship the nvcompress binary so this branch "
-        "is dead in store; no ToS issue. Kept here so the FULL branch "
-        "doesn't break the compliance test."
-    ),
 }
 
 

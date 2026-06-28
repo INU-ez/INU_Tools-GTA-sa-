@@ -94,7 +94,7 @@ A focused comparison of the three GTA San Andreas modding toolchains in active u
 |---|:---:|:---:|:---:|
 | TXD read | ✅ | ✅ | ✅ |
 | TXD write (DXT1/3/5) | ✅ | — | ✅ experimental |
-| Vectorised DXT encoder (no external binaries) | ✅ pure numpy, ~7× NVTT speed | — | — |
+| Vectorised DXT encoder (no external binaries) | ✅ pure numpy, ~7× faster | — | — |
 | Environment / Bump / Specular / Reflection | ✅ | ✅ | ✅ |
 | UV Animation in DFF (read + write) | ✅ | ✅ | ✅ |
 | Dual Texture / Blend Mode | ✅ | ✅ | — |

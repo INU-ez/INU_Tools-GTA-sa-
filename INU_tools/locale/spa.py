@@ -239,8 +239,8 @@ LANG = {
     "None — без pipeline\nVehicle — машины (отражения кузова, env map)\nBuilding DN — здания с day/night vertex colors\nBuilding — обычные здания":
         "None — sin pipeline\nVehicle — coches (reflejos de carrocería, env map)\nBuilding DN — edificios con colores de vértice de día/noche\nBuilding — edificios simples",
 
-    "DFF — модель (меш, материалы, UV)\nCOL — коллизия\nTXD — текстуры\nCheck vertex — висящие вершины и рёбра\nCheck N-gon — полигоны с 5+ вершинами\nCheck Material — лимит 50 материалов\nGPU (NVTT) — сжатие текстур на видеокарте":
-        "DFF — modelo (malla, materiales, UV)\nCOL — colisión\nTXD — texturas\nCheck vertex — vértices y bordes sueltos\nCheck N-gon — polígonos con 5+ vértices\nCheck Material — límite de 50 materiales\nGPU (NVTT) — compresión de texturas en GPU",
+    "DFF — модель (меш, материалы, UV)\nCOL — коллизия\nTXD — текстуры\nCheck vertex — висящие вершины и рёбра\nCheck N-gon — полигоны с 5+ вершинами\nCheck Material — лимит 50 материалов\nGPU — сжатие текстур на видеокарте":
+        "DFF — modelo (malla, materiales, UV)\nCOL — colisión\nTXD — texturas\nCheck vertex — vértices y bordes sueltos\nCheck N-gon — polígonos con 5+ vértices\nCheck Material — límite de 50 materiales\nGPU — compresión de texturas en GPU",
 
     "DFF — импорт модели с мешем и материалами\nCOL — импорт коллизии\nTXD — импорт текстур\nImport TXD — автоимпорт текстур при импорте DFF":
         "DFF — importar modelo con malla y materiales\nCOL — importar colisión\nTXD — importar texturas\nImport TXD — auto-importar texturas al importar DFF",
@@ -1303,7 +1303,6 @@ LANG = {
     "<Game Root не задан>": "<Raíz del juego no establecida>",
     "<effects.fxp не найден>": "<efectos.fxp no encontrado>",
     "<нет эффектов>": "<sin efectos>",
-    "nvcompress.exe не найден в указанной папке": "nvcompress.exe no encontrado en la carpeta indicada",
     "Имя пустое": "El nombre está vacío.",
     "Подтверждение не получено": "Confirmación no dada",
     "Имя эффекта пустое": "El nombre del efecto está vacío.",
@@ -1971,7 +1970,7 @@ LANG = {
     "Глубокая вода с волнами": "Aguas profundas con olas",
     "Переместить активный слой вверх/вниз в стеке (меняет порядок блендинга)": "Mover la capa activa hacia arriba o hacia abajo en la pila (cambia el orden de fusión)",
     "Мелкая вода, не отображается": "Aguas poco profundas, no mostradas",
-    "Бэкенд сжатия DXT-текстур.\nPure numpy, без NVTT и внешних бинарей — соответствует требованиям\nextensions.blender.org. Поверх любого бэкенда работает кэш по\nsession_uid: повторный экспорт без правок текстур почти мгновенный.": "Compresión backend de texturas DXT.\nPuro numpy, sin NVTT ni binarios externos: cumple con los requisitos\nextensiones.blender.org. Un caché se ejecuta encima de cualquier backend\nsession_uid: la reexportación sin ediciones de textura es casi instantánea.",
+    "Бэкенд сжатия DXT-текстур.\nPure numpy, без внешних бинарей — соответствует требованиям\nextensions.blender.org. Поверх любого бэкенда работает кэш по\nsession_uid: повторный экспорт без правок текстур почти мгновенный.": "Compresión backend de texturas DXT.\nPuro numpy, sin binarios externos: cumple con los requisitos\nextensiones.blender.org. Un caché se ejecuta encima de cualquier backend\nsession_uid: la reexportación sin ediciones de textura es casi instantánea.",
     "Geometry имеет очень много треугольников. На практике стабильно работает до ~30-40k, дальше зависит от GPU драйвера.": "La geometría tiene muchos triángulos. En la práctica, funciona de manera estable hasta ~30-40k, luego depende del controlador de GPU.",
     "Создать рiг для animated map object (мельница, кран, флюгер):\n    Armature с одной костью + Action с цикличной Z-вращением.\n\n    Все вершины активного меша автоматически привязываются к\n    единственной кости (vertex group weight=1.0). Готово к экспорту в\n    DFF + IFP без ручной настройки скелета.": "Cree una plataforma para un objeto de mapa animado (molino, grúa, veleta):\n    Armadura con un hueso + Acción con rotación Z cíclica.\n\n    Todos los vértices de la malla activa se ajustan automáticamente a\n    un solo hueso (peso del grupo de vértices = 1,0). Listo para exportar a\n    DFF + IFP sin configuración manual de esqueleto.",
     "верхний dummy всей машины": "muñeco superior de toda la máquina",
@@ -2277,7 +2276,7 @@ LANG = {
     "INU: Создать 2DFX": "INU: Crear 2DFX",
     "Сохрани текущую сцену — оператор открывает .blend файлы библиотеки в этом окне Blender и потеряет несохранённые изменения": "Guarde la escena actual: el operador abre los archivos de la biblioteca .blend en esta ventana de Blender y perderá los cambios no guardados.",
     "Базовое имя для .ifp (без расширения). Пусто = взять из «Базовое имя». Можно ввести общее имя типа 'myhood_anims' чтобы складывать анимации мельницы, крана и флюгера в один файл": "Nombre base para .ifp (sin extensión). Vacío = tomar de \"Nombre base\". Puede ingresar un nombre común como 'myhood_anims' para poner las animaciones del molino, la grúa y la veleta en un solo archivo.",
-    "Рекомендуемый режим для финального экспорта в IMG.\nRange-fit на mip 0 (главный уровень детализации) + bbox-int\nна меньших мипах. Лучшее качество — на уровне NVTT2 «fast».\nСкорость: ~0.5с на 54 текстурах (1024²). В ~7× быстрее старого\nNVTT-пути. Бери его, если не уверен какой выбрать": "Modo recomendado para exportación final a IMG.\nAjuste de rango en mip 0 (nivel principal de detalle) + bbox-int\nen mips más pequeños. La mejor calidad se encuentra en el nivel “rápido” NVTT2.\nVelocidad: ~0,5 s en 54 texturas (1024²). ~7 veces más rápido que el anterior\nRutas NVTT. Tómalo si no estás seguro de cuál elegir.",
+    "Рекомендуемый режим для финального экспорта в IMG.\nRange-fit на mip 0 (главный уровень детализации) + bbox-int\nна меньших мипах. Лучшее качество без внешних бинарей.\nСкорость: ~0.5с на 54 текстурах (1024²).\nБери его, если не уверен какой выбрать": "Modo recomendado para exportación final a IMG.\nAjuste de rango en mip 0 (nivel principal de detalle) + bbox-int\nen mips más pequeños. La mejor calidad, sin binarios externos.\nVelocidad: ~0,5 s en 54 texturas (1024²).\nTómalo si no estás seguro de cuál elegir.",
     "Switch active object out of EDIT (or other non-OBJECT) mode and\n    return a `(prev_mode, prev_obj)` tuple for later restore.\n\n    Bake helpers iterate `mesh.color_attributes.data` via foreach_set;\n    в EDIT mode mesh-данные стейджатся в BMesh, поэтому foreach_set\n    видит 0-length массив → cryptic TypeError. Принудительный выход\n    в OBJECT — единственный надёжный способ.\n\n    Returns ``(None, None)`` если переключение не нужно или невозможно.\n    ": "Cambie el objeto activo del modo EDITAR (u otro modo que no sea OBJETO) y\n    devuelve una tupla `(prev_mode, prev_obj)` para restaurarla más tarde.\n\n    Los ayudantes de horneado iteran `mesh.color_attributes.data` a través de foreach_set;\n    en el modo EDITAR, los datos de la malla se organizan en BMesh, por lo que foreach_set\n    ve una matriz de longitud 0 → TypeError críptico. salida forzada\n    en OBJECT es la única forma confiable.\n\n    Devuelve ``(Ninguno, Ninguno)`` si el cambio es innecesario o imposible.",
     "Fog Type 1 — бит 1 типа тумана (комбинируется с битом 2: 00=без, 01=type1, 10=type2, 11=type3)": "Tipo de niebla 1: bit 1 del tipo de niebla (combinable con el bit 2: 00=no, 01=tipo1, 10=tipo2, 11=tipo3)",
     "Размер DXT-текстуры не кратен 4. DXT блоки 4x4, мипмапы будут битые.": "El tamaño de la textura DXT no es múltiplo de 4. Los bloques DXT son 4x4, los mapas mip se romperán.",
@@ -3191,8 +3190,8 @@ LANG = {
         'Actualmente ocultando mallas COL mediante el botón «Comprobar»',
     'Currently hiding shadow meshes via the «Проверка» toggle':
         'Actualmente ocultando mallas de sombra mediante el botón «Comprobar»',
-    'Бэкенд сжатия DXT-текстур.\nPure numpy, без NVTT и внешних бинарей — соответствует требованиям\nextensions.blender.org. Поверх любого бэкенда работает кэш по\nsession_uid: повторный экспорт без правок текстур почти мгновенный.':
-        'Backend de compresión de texturas DXT.\nNumpy puro, sin NVTT ni binarios externos — cumple los requisitos de\nextensions.blender.org. Sobre cualquier backend funciona una caché por\nsession_uid: reexportar sin editar texturas es casi instantáneo.',
+    'Бэкенд сжатия DXT-текстур.\nPure numpy, без внешних бинарей — соответствует требованиям\nextensions.blender.org. Поверх любого бэкенда работает кэш по\nsession_uid: повторный экспорт без правок текстур почти мгновенный.':
+        'Backend de compresión de texturas DXT.\nNumpy puro, sin binarios externos — cumple los requisitos de\nextensions.blender.org. Sobre cualquier backend funciona una caché por\nsession_uid: reexportar sin editar texturas es casi instantáneo.',
     'Куда привесить выбранный пипеткой меш:\n  Новый pivot — анимированная часть (своя ось/скорость)\n  К существующему pivot — на тот же pivot что и предыдущая\n  К root — статичная часть без анимации':
         'Dónde adjuntar la malla elegida con el cuentagotas:\n  Nuevo pivot — parte animada (eje/velocidad propios)\n  A pivot existente — el mismo pivot que la anterior\n  A root — parte estática sin animación',
     "Кликни на пипетку и выбери меш в сцене или 3D-окне. Если rig'а ещё нет — он создастся автоматически. После пика поле очищается — можно сразу подбирать следующий":

@@ -118,7 +118,7 @@ bl_info = {
 #        - TXD bucketing per-txd_name: модели с одинаковым inu.txd_name группируются
 #          в один .txd; per-DFF COL по умолчанию (один col на модель, не one-shared).
 #        - Modal Map Export с progress bar и ESC cancel; multi-collection чекбоксный
-#          picker; NVTT auto + параллельный DXT1.
+#          picker; параллельный DXT1.
 #        - Format conformance: CRLF line endings в IDE/IPL/IFP, IPL inst dedup,
 #          согласованность ID для .NNN дубликатов в outliner.
 #        - Vehicles панель вынесена из Check как dedicated.
@@ -271,7 +271,7 @@ bl_info = {
 #        - IPL ZONE секция: парсинг/запись/визуализация зон карты
 #        - Динамические регионы из gta.dat
 #        - TXD: исправлена декомпрессия RASTER_888, улучшена детекция DXT
-#        - GPU NVTT автодетект
+#        - GPU автодетект
 #        - UI: объединены Экспорт/Импорт, компактный layout, панель Проверка на русском
 #        - Экспорт коллекций (активная коллекция если ничего не выделено)
 #        - Убраны: Fake mode, Bounds mode, LOD view, Auto-discover

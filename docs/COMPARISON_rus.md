@@ -94,7 +94,7 @@
 |---|:---:|:---:|:---:|
 | TXD чтение | ✅ | ✅ | ✅ |
 | TXD запись (DXT1/3/5) | ✅ | — | ✅ experimental |
-| Векторизованный DXT-энкодер (без внешних бинарников) | ✅ pure numpy, ~×7 NVTT | — | — |
+| Векторизованный DXT-энкодер (без внешних бинарников) | ✅ pure numpy, ~×7 быстрее | — | — |
 | Environment / Bump / Specular / Reflection | ✅ | ✅ | ✅ |
 | UV Animation в DFF (чтение + запись) | ✅ | ✅ | ✅ |
 | Dual Texture / Blend Mode | ✅ | ✅ | — |

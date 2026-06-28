@@ -672,7 +672,7 @@ collision.col: 'collision': 78432 треугольников — COL форма�
 | Импорт TXD | `gtatools.import_txd` | Извлечение текстур и привязка к материалам |
 | Экспорт TXD | `gtatools.export_txd` | Сборка текстур в .txd архив |
 
-**Compression backend:** pure-numpy DXT-энкодер встроен в аддон (`core/dxt.py`) — векторизованный BC1/BC3, ~×7 быстрее NVTT cluster-fit на текстурах ванильного SA. Никаких внешних бинарников. В Scene properties есть селектор `gtatools_dxt_backend` для экспериментального `bpy.gpu` compute-shader варианта.
+**Compression backend:** pure-numpy DXT-энкодер встроен в аддон (`core/dxt.py`) — векторизованный BC1/BC3, ~×7 быстрее старого cluster-fit на текстурах ванильного SA. Никаких внешних бинарников. В Scene properties есть селектор `gtatools_dxt_backend` для экспериментального `bpy.gpu` compute-shader варианта.
 
 **Поддерживаемые форматы:** DXT1 (непрозрачные), DXT3 (резкая альфа), DXT5 (плавная альфа). Автоопределение по альфа-каналу.
 
@@ -2834,7 +2834,7 @@ INU_tools/
 │   ├── col.py                   # COL1/2/3/4 формат коллизии
 │   ├── txd.py                   # TXD текстуры (DXT1/3/5, RASTER_*, PAL8)
 │   ├── txd_mobile.py            # Mobile (iOS/Android) 4-файловый TXD-контейнер
-│   ├── dxt.py                   # Pure-numpy DXT1/BC3 энкодер (заменяет NVTT subprocess)
+│   ├── dxt.py                   # Pure-numpy DXT1/BC3 энкодер (без внешних бинарников)
 │   ├── dxt_gpu.py               # Опциональный GPU compute-shader DXT
 │   ├── ide.py                   # IDE definition file I/O
 │   ├── ide_flag_translate.py    # Перевод IDE-флагов между играми (III/VC/SA)
@@ -2964,7 +2964,7 @@ INU_tools/
 Поддержка COL1, COL2, COL3 (стандарт GTA SA), COL4. Чтение/запись: полигоны, вершины, группы, **сферы**, **боксы** (через empties с `display_type='CUBE'`), свойства поверхностей (материал, флаги, яркость, day/night light nibbles).
 
 #### txd.py + dxt.py — Текстуры
-Pure-numpy DXT1/BC3 энкодер/декодер (~7× быстрее NVTT). Форматы: DXT1, DXT3, DXT5, RASTER_8888, RASTER_888 (32-bit BGRX), RASTER_565, RASTER_1555, RASTER_4444, PAL8. Платформа: D3D8/D3D9. Опциональный `dxt_gpu.py` для compute-shader пути.
+Pure-numpy DXT1/BC3 энкодер/декодер (~7× быстрее старого энкодера). Форматы: DXT1, DXT3, DXT5, RASTER_8888, RASTER_888 (32-bit BGRX), RASTER_565, RASTER_1555, RASTER_4444, PAL8. Платформа: D3D8/D3D9. Опциональный `dxt_gpu.py` для compute-shader пути.
 
 #### txd_mobile.py — Mobile TXD контейнер
 Детект 4-файлового мобильного контейнера (`.pvr` / `.etc` / `.dxt` + `.txt` / `.toc` / `.dat` / `.tmb`). Pixel-декодирование делегировано TxdGen (нет in-tree PVRTC/ETC1 кодека).

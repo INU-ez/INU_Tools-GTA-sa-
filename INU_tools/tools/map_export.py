@@ -691,7 +691,7 @@ def iter_export_map(context, target_dir: str, *, objects=None,
         from ..tools.txd_export import export_txd as _export_txd
         # DXT compression backend — read once at the top so every bucket
         # uses the same encoder. Default 'numpy' is the vectorized core.dxt
-        # path (no NVTT, ToS-clean for extensions.blender.org).
+        # path (no external binaries, ToS-clean for extensions.blender.org).
         _txd_backend = getattr(
             getattr(getattr(context, 'scene', None), 'inu_settings', None),
             'gtatools_dxt_backend', 'numpy')

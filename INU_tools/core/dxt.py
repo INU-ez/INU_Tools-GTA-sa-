@@ -3,13 +3,13 @@
 # Pure-numpy, MIT-licensed, no external dependencies. Designed for
 # extensions.blender.org compliance: no subprocess, no external
 # binaries, no closed-source libraries. Replaces the per-block Python
-# loop in tools/txd_export.py and the NVTT subprocess path in
-# extras/nvtt_compress.py with a single self-contained module.
+# loop in tools/txd_export.py with a single self-contained module —
+# the addon's old external-binary subprocess path was dropped entirely.
 #
 # Algorithm: range-fit endpoints on the principal axis of each block
 # (covariance largest eigenvector via 6-step power iteration),
 # 4-color BC1 mode, 8-value BC3 alpha. Quality is in the same band
-# as NVTT 2 CPU "fast" / stb_dxt; cluster-fit is not implemented
+# as stb_dxt's "fast" range-fit; cluster-fit is not implemented
 # because range-fit is enough for ~99% of real GTA-SA textures and
 # 5–10× faster.
 #

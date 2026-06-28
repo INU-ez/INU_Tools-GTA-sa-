@@ -269,7 +269,7 @@ Split the mesh or simplify (Decimate).
 | Import TXD | `gtatools.import_txd` | Extract textures and assign to materials |
 | Export TXD | `gtatools.export_txd` | Compile textures into .txd archive |
 
-**Compression backend:** pure-numpy DXT encoder bundled with the addon (`core/dxt.py`) — vectorized BC1/BC3, ~7× faster than NVTT cluster-fit on the textures vanilla SA actually ships. No external binaries needed. An experimental `bpy.gpu` compute-shader path is selectable in Scene properties (`gtatools_dxt_backend`).
+**Compression backend:** pure-numpy DXT encoder bundled with the addon (`core/dxt.py`) — vectorized BC1/BC3, ~7× faster than the old cluster-fit path on the textures vanilla SA actually ships. No external binaries needed. An experimental `bpy.gpu` compute-shader path is selectable in Scene properties (`gtatools_dxt_backend`).
 
 **Supported formats:** DXT1 (opaque), DXT3 (sharp alpha), DXT5 (smooth alpha). Auto-detected based on alpha channel.
 
@@ -2601,7 +2601,7 @@ INU_tools/
 │   ├── col.py                   # COL1/2/3/4 collision format
 │   ├── txd.py                   # TXD texture dictionary (DXT1/3/5, RASTER_*, PAL8)
 │   ├── txd_mobile.py            # Mobile (iOS/Android) 4-file TXD container detection
-│   ├── dxt.py                   # Pure-numpy DXT1/BC3 encoder (replaces NVTT subprocess)
+│   ├── dxt.py                   # Pure-numpy DXT1/BC3 encoder (no external binaries)
 │   ├── dxt_gpu.py               # Optional GPU compute-shader DXT path
 │   ├── ide.py                   # IDE definition file I/O
 │   ├── ide_flag_translate.py    # Per-game IDE flag bit translation (III/VC/SA)
@@ -2731,7 +2731,7 @@ Reads/writes RenderWare binary streams. Supports: Clump, Frame List, Geometry Li
 Supports COL1, COL2, COL3 (GTA SA default), COL4. Reads/writes: mesh faces, vertices, face groups, **spheres**, **boxes** (with `display_type='CUBE'` empties), surface properties (material, flags, brightness, day/night light nibbles).
 
 #### txd.py + dxt.py — Texture Dictionary
-Pure-numpy DXT1/BC3 encoder/decoder (~7× faster than NVTT). Handles DXT1, DXT3, DXT5, RASTER_8888, RASTER_888 (32-bit BGRX), RASTER_565, RASTER_1555, RASTER_4444, PAL8 (paletted). Platform: D3D8/D3D9. Optional `dxt_gpu.py` for compute-shader path.
+Pure-numpy DXT1/BC3 encoder/decoder (~7× faster than the old cluster-fit path). Handles DXT1, DXT3, DXT5, RASTER_8888, RASTER_888 (32-bit BGRX), RASTER_565, RASTER_1555, RASTER_4444, PAL8 (paletted). Platform: D3D8/D3D9. Optional `dxt_gpu.py` for compute-shader path.
 
 #### txd_mobile.py — Mobile TXD container
 Detects the 4-file mobile container (`.pvr` / `.etc` / `.dxt` + `.txt` / `.toc` / `.dat` / `.tmb`). Pixel decode delegated to TxdGen (no in-tree PVRTC/ETC1 codec).

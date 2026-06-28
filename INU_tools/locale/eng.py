@@ -259,8 +259,8 @@ LANG = {
     "None — без pipeline\nVehicle — машины (отражения кузова, env map)\nBuilding DN — здания с day/night vertex colors\nBuilding — обычные здания":
         "None — no pipeline\nVehicle — cars (body reflections, env map)\nBuilding DN — buildings with day/night vertex colors\nBuilding — plain buildings",
 
-    "DFF — модель (меш, материалы, UV)\nCOL — коллизия\nTXD — текстуры\nCheck vertex — висящие вершины и рёбра\nCheck N-gon — полигоны с 5+ вершинами\nCheck Material — лимит 50 материалов\nGPU (NVTT) — сжатие текстур на видеокарте":
-        "DFF — model (mesh, materials, UV)\nCOL — collision\nTXD — textures\nCheck vertex — loose vertex and edges\nCheck N-gon — polygons with 5+ vertex\nCheck Material — 50 material limit\nGPU (NVTT) — texture compression on GPU",
+    "DFF — модель (меш, материалы, UV)\nCOL — коллизия\nTXD — текстуры\nCheck vertex — висящие вершины и рёбра\nCheck N-gon — полигоны с 5+ вершинами\nCheck Material — лимит 50 материалов\nGPU — сжатие текстур на видеокарте":
+        "DFF — model (mesh, materials, UV)\nCOL — collision\nTXD — textures\nCheck vertex — loose vertex and edges\nCheck N-gon — polygons with 5+ vertex\nCheck Material — 50 material limit\nGPU — texture compression on GPU",
 
     "DFF — импорт модели с мешем и материалами\nCOL — импорт коллизии\nTXD — импорт текстур\nImport TXD — автоимпорт текстур при импорте DFF":
         "DFF — import model with mesh and materials\nCOL — import collision\nTXD — import textures\nImport TXD — auto-import textures when importing DFF",
@@ -1512,8 +1512,6 @@ LANG = {
     "<Game Root не задан>": "<Game Root not set>",
     "<effects.fxp не найден>": "<effects.fxp not found>",
     "<нет эффектов>": "<no effects>",
-    "nvcompress.exe не найден в указанной папке":
-        "nvcompress.exe not found in the given folder",
 
     # ── Report messages (FXP editor, misc) ──────────────────────────────
     "Имя пустое": "Name is empty",
@@ -3416,8 +3414,8 @@ LANG = {
         'Currently hiding COL meshes via the «Check» toggle',
     'Currently hiding shadow meshes via the «Проверка» toggle':
         'Currently hiding shadow meshes via the «Check» toggle',
-    'Бэкенд сжатия DXT-текстур.\nPure numpy, без NVTT и внешних бинарей — соответствует требованиям\nextensions.blender.org. Поверх любого бэкенда работает кэш по\nsession_uid: повторный экспорт без правок текстур почти мгновенный.':
-        'DXT texture compression backend.\nPure numpy, no NVTT or external binaries — meets the\nextensions.blender.org requirements. A session_uid cache sits on top of\nany backend: re-export without texture edits is near-instant.',
+    'Бэкенд сжатия DXT-текстур.\nPure numpy, без внешних бинарей — соответствует требованиям\nextensions.blender.org. Поверх любого бэкенда работает кэш по\nsession_uid: повторный экспорт без правок текстур почти мгновенный.':
+        'DXT texture compression backend.\nPure numpy, no external binaries — meets the\nextensions.blender.org requirements. A session_uid cache sits on top of\nany backend: re-export without texture edits is near-instant.',
     'Куда привесить выбранный пипеткой меш:\n  Новый pivot — анимированная часть (своя ось/скорость)\n  К существующему pivot — на тот же pivot что и предыдущая\n  К root — статичная часть без анимации':
         'Where to attach the eyedropper-picked mesh:\n  New pivot — animated part (own axis/speed)\n  To existing pivot — same pivot as the previous one\n  To root — static part without animation',
     "Кликни на пипетку и выбери меш в сцене или 3D-окне. Если rig'а ещё нет — он создастся автоматически. После пика поле очищается — можно сразу подбирать следующий":
@@ -3936,7 +3934,7 @@ LANG = {
     "Прячем все INFO-уровни. Для легаси-проектов где informational шум перевешивает сигнал": "Hide all INFO levels. For legacy projects where informational noise outweighs the signal",
     "Радиус зоны света (метры) — задаёт размер круга. 0 — взять Custom Distance лампы, если включён": "Light zone radius (meters) — sets the circle size. 0 — use the lamp's Custom Distance, if enabled",
     "Радиус скругления для Bevel-карты (в единицах сцены)": "Rounding radius for the Bevel map (in scene units)",
-    "Рекомендуемый режим для финального экспорта в IMG.\nRange-fit на mip 0 (главный уровень детализации) + bbox-int\nна меньших мипах. Лучшее качество — на уровне NVTT2 «fast».\nСкорость: ~0.5с на 54 текстурах (1024²). В ~7× быстрее старого\nNVTT-пути. Бери его, если не уверен какой выбрать": "Recommended mode for the final export to IMG.\nRange-fit on mip 0 (main level of detail) + bbox-int\non the smaller mips. Best quality — on par with NVTT2 \"fast\".\nSpeed: ~0.5s on 54 textures (1024²). ~7× faster than the old\nNVTT path. Pick it if you're unsure which to choose",
+    "Рекомендуемый режим для финального экспорта в IMG.\nRange-fit на mip 0 (главный уровень детализации) + bbox-int\nна меньших мипах. Лучшее качество без внешних бинарей.\nСкорость: ~0.5с на 54 текстурах (1024²).\nБери его, если не уверен какой выбрать": "Recommended mode for the final export to IMG.\nRange-fit on mip 0 (main level of detail) + bbox-int\non the smaller mips. Best quality, no external binaries.\nSpeed: ~0.5s on 54 textures (1024²).\nPick it if you're unsure which to choose",
     "Ручной список IDE и IPL файлов": "Manual list of IDE and IPL files",
     "Рядом с .blend": "Next to the .blend",
     "С какой стороны смотрит ортокамера": "Which side the ortho camera looks from",

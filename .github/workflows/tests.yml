@@ -26,10 +26,9 @@ jobs:
       - name: Run core + compliance tests
         run: pytest -q dev/tests/ --ignore=dev/tests/test_packaging.py --ignore=dev/tests/e2e
 
-  # Lane 2: build the FULL zip and validate it.
-  # full-build branch ships the GitHub-release variant with NVTT and
-  # full parallelism. There's no store matrix here -- store builds
-  # come from main, this branch is FULL only.
+  # Lane 2: build the extension zip on a real Blender and validate it.
+  # The same single zip serves both the GitHub release and
+  # extensions.blender.org (no store/full split).
   build-full:
     runs-on: ubuntu-latest
 
@@ -61,28 +60,24 @@ jobs:
           curl -fsSL "$url" -o /tmp/blender.tar.xz
           tar -xf /tmp/blender.tar.xz -C ~/blender --strip-components=1
 
-      - name: Build FULL release zip
+      - name: Build extension zip
         run: |
           set -e
           "$HOME/blender/blender" --command extension build \
             --source-dir INU_tools \
             --output-dir .
-          # Rename to make the FULL flavour obvious in the artifact list.
-          built=$(ls inu_tools_gta_sa-*.zip | grep -v '\-full\.zip$' | head -n 1)
-          full_name="${built%.zip}-full.zip"
-          mv "$built" "$full_name"
-          ls -la inu_tools_gta_sa-*-full.zip
+          ls -la inu_tools_gta_sa-*.zip
 
-      - name: Validate FULL zip
+      - name: Validate zip
         run: |
           export BLENDER="$HOME/blender/blender"
-          full_zip=$(ls inu_tools_gta_sa-*-full.zip | head -n 1)
-          "$BLENDER" --command extension validate "$full_zip"
+          zip=$(ls inu_tools_gta_sa-*.zip | head -n 1)
+          "$BLENDER" --command extension validate "$zip"
 
-      - name: Upload FULL zip
+      - name: Upload zip
         uses: actions/upload-artifact@v4
         with:
-          name: inu-tools-full
-          path: inu_tools_gta_sa-*-full.zip
+          name: inu-tools
+          path: inu_tools_gta_sa-*.zip
           if-no-files-found: error
           retention-days: 30
