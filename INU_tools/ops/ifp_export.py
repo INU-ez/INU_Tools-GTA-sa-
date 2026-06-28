@@ -191,6 +191,16 @@ def _build_animation_from_ik_samples(action, armature,
             or abs(loc.z) > 1e-5
             for _f, loc, _q in sample_list
         )
+        # Same root-only translation rule as the fcurve path: SA peds animate
+        # translation on the root frame only, so a non-root location channel
+        # (e.g. a retarget leak) must be dropped or the engine snaps that joint
+        # to the parent (arm into the torso). Animated map objects keep it.
+        if loc_active:
+            db = armature.data.bones.get(bone_name) if armature else None
+            is_root = ((db is not None and db.parent is None)
+                       or bone_name.strip() in ('Root', 'Normal', 'Bip01'))
+            if not is_root and not bool(armature and armature.get('inu_animobj')):
+                loc_active = False
         if not (rot_active or loc_active):
             continue
 
@@ -279,28 +289,32 @@ def _build_animation(action, armature, fps: float) -> Animation:
         has_euler = 'rotation_euler' in props and not has_rot
         has_loc = 'location' in props
 
-        # Strip the translation channel for bones that never actually
-        # move. Blender's "Whole Character" / "Location & Rotation"
-        # keying sets insert a location keyframe on EVERY selected pose
-        # bone, even if the user only rotated it. SA's ped IFPs only
-        # ever store translation on the root (Normal/Bip01) — every
-        # other bone takes its rest_head from the skeleton DFF. If we
-        # write zero translation on Jaw, finger tips, breasts, etc. the
-        # engine reads "put this bone at parent's origin" instead of
-        # "leave at rest", and the joints collapse into the parent —
-        # character compresses into a small blob. So drop the location
-        # channel when every value across the action is ~0.
+        # Strip the translation channel from every NON-root bone. SA ped IFPs
+        # only ever animate translation on the root (Normal/Bip01); every other
+        # bone takes its rest_head from the skeleton DFF. The engine reads a
+        # non-root location channel as "put this bone at the offset relative to
+        # its parent", so:
+        #   • Blender's keying sets add an all-zero location to every selected
+        #     bone → would collapse joints into the parent ("blob");
+        #   • a retarget/transfer can LEAK a tiny (sub-cm) non-zero location
+        #     onto a limb → the engine snaps that joint to the offset, e.g. an
+        #     arm pulled into the torso (this is real — found in the wild).
+        # The old `|v| > 1e-5` test only caught the all-zero case and let the
+        # tiny-but-nonzero retarget leak through. So drop location on any
+        # non-root bone outright. Armature-based animated map objects
+        # (inu_animobj) DO translate a non-root bone, so they keep it.
         if has_loc:
-            loc_active = False
-            for fc in props['location']:
-                for kp in fc.keyframe_points:
-                    if abs(kp.co[1]) > 1e-5:
-                        loc_active = True
-                        break
-                if loc_active:
-                    break
+            db = armature.data.bones.get(bone_name) if armature else None
+            is_root = ((db is not None and db.parent is None)
+                       or bone_name.strip() in ('Root', 'Normal', 'Bip01'))
+            is_animobj = bool(armature and armature.get('inu_animobj'))
+            loc_active = any(abs(kp.co[1]) > 1e-5
+                             for fc in props['location']
+                             for kp in fc.keyframe_points)
             if not loc_active:
-                has_loc = False
+                has_loc = False           # empty channel from a keying set
+            elif not is_root and not is_animobj:
+                has_loc = False           # retarget/transfer leak on a ped limb
 
         # Same logic for rotation: if every keyframe's bl_quat is
         # essentially identity (or its sign-flipped twin -identity),
