@@ -26,6 +26,9 @@ LANG = {
     "Сброс": "Reset",
     "Копировать на выделенные": "Copy to selected",
     "Имя": "Name",
+    "Только активную анимацию": "Active animation only",
+    "Экспортировать ТОЛЬКО активную Action арматуры — одну анимацию, а не весь пак. По умолчанию экспорт собирает все импортированные (ifp_source) Actions + активную; с этой галкой — ровно одну активную, будь она своя новая ИЛИ существующая из импортнутого ped.ifp.": "Export ONLY the armature's active Action — a single animation, not the whole pack. By default export gathers every imported (ifp_source) Action plus the active one; with this on, exactly the active one, whether it's your new Action OR an existing one from an imported ped.ifp.",
+    "Нет активной анимации на арматуре": "No active animation on the armature",
 
     # Property descriptions
     "Выделить найденные проблемные элементы": "Select found problem elements",

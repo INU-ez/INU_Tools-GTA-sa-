@@ -74,6 +74,16 @@ class GTATOOLS_OT_export_ifp(bpy.types.Operator):
         default=1e-3, min=0.0, soft_min=1e-4, soft_max=1e-1,
         precision=5,
     )
+    active_only: BoolProperty(
+        name=T("Только активную анимацию"),
+        description=T(
+            "Экспортировать ТОЛЬКО активную Action арматуры — одну анимацию, а "
+            "не весь пак. По умолчанию экспорт собирает все импортированные "
+            "(ifp_source) Actions + активную; с этой галкой — ровно одну "
+            "активную, будь она своя новая ИЛИ существующая из импортнутого "
+            "ped.ifp."),
+        default=False,
+    )
 
     def invoke(self, context, event):
         if not self.filepath:
@@ -91,6 +101,7 @@ class GTATOOLS_OT_export_ifp(bpy.types.Operator):
     def draw(self, context):
         layout = self.layout
         layout.prop(self, "package_name")
+        layout.prop(self, "active_only")
         layout.prop(self, "ifp_format")
         layout.prop(self, "decimate")
         if self.decimate:
@@ -124,8 +135,21 @@ class GTATOOLS_OT_export_ifp(bpy.types.Operator):
         from ..core.ifp import write_ifp, decimate_ifp
 
         try:
+            # active_only → export exactly the armature's active Action (one
+            # animation), bypassing the ifp_source pack collection. Works for a
+            # freshly-made Action or one of the imported ped.ifp Actions alike.
+            actions = None
+            if self.active_only:
+                if not (armature and armature.animation_data
+                        and armature.animation_data.action):
+                    self.report({'WARNING'},
+                                T("Нет активной анимации на арматуре"))
+                    return {'CANCELLED'}
+                actions = [armature.animation_data.action]
+
             ifp = build_ifp_from_actions(
-                armature=armature, package_name=self.package_name)
+                actions=actions, armature=armature,
+                package_name=self.package_name)
             if not ifp.animations:
                 self.report({'WARNING'}, T("Нет анимаций для экспорта"))
                 return {'CANCELLED'}
