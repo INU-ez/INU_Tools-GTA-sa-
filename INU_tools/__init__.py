@@ -28,7 +28,7 @@
 bl_info = {
     "name": "INU_tools(gta_sa)",
     "author": "INU",
-    "version": (2, 1, 0),
+    "version": (2, 1, 1),
     # Минимум 2.83 LTS — поддержка через tools/compat.py:
     # • bake / preview / DFF I/O работают через legacy mesh.vertex_colors
     # • prelight preview shader использует ShaderNodeMixRGB на ≤3.3
@@ -560,6 +560,7 @@ from .tools.map_export import (
 )
 from .tools.gta_material_panel import (
     GTATOOLS_OT_material_preset,
+    GTATOOLS_OT_copy_material_settings,
 )
 
 addon_keymaps = []
@@ -2021,10 +2022,10 @@ class INUMaterialProps(bpy.types.PropertyGroup):
     material_tab : EnumProperty(
         name="Material Tab",
         items=[
-            ('SURFACE',  "Surface",  T("COL Surface Type — тип физической поверхности и Day/Night Light")),
             ('EFFECTS',  "Effects",  T("RW-эффекты материала: env map, bump, specular, reflection, dual texture, UV anim + пресеты")),
+            ('SURFACE',  T("Материал коллизии"),  T("COL Surface Type — тип физической поверхности и Day/Night Light")),
         ],
-        default='SURFACE',
+        default='EFFECTS',
     )
 
     ambient : FloatProperty(name="Ambient Shading", default=1.0)
@@ -2130,6 +2131,51 @@ class INUMaterialProps(bpy.types.PropertyGroup):
         default='6',
     )
     dual_tex_texture : StringProperty(name="Dual Texture")
+
+    # Texture filtering / addressing (the RW texture filterAddressing word).
+    # Low byte = filter mode; nibbles 2-3 = U/V addressing. tex_filter_hi keeps
+    # the high 16 bits (vanilla GTA sets 0x0001) so the word round-trips exactly.
+    tex_filter : EnumProperty(
+        name="Filtering",
+        items=[
+            ('0', "None", ""),
+            ('1', "Nearest", ""),
+            ('2', "Linear", ""),
+            ('3', "Mip Nearest", ""),
+            ('4', "Mip Linear", ""),
+            ('5', "Linear Mip Nearest", ""),
+            ('6', "Linear Mip Linear", ""),
+        ],
+        default='2',
+    )
+    tex_addr_u : EnumProperty(
+        name="Address U",
+        items=[
+            ('0', "None", ""),
+            ('1', "Wrap", ""),
+            ('2', "Mirror", ""),
+            ('3', "Clamp", ""),
+            ('4', "Border", ""),
+        ],
+        default='1',
+    )
+    tex_addr_v : EnumProperty(
+        name="Address V",
+        items=[
+            ('0', "None", ""),
+            ('1', "Wrap", ""),
+            ('2', "Mirror", ""),
+            ('3', "Clamp", ""),
+            ('4', "Border", ""),
+        ],
+        default='1',
+    )
+    tex_filter_hi : IntProperty(default=0x1)  # high 16 bits of filterAddressing
+    mask_texture : StringProperty(name="Mask Texture")
+    # Authoritative GTA texture name. Set on import; when non-empty the exporter
+    # uses it verbatim (top priority over the Blender image/node name, which can
+    # carry .001 suffixes), so the user can rename/fix it directly.
+    texture_name : StringProperty(name="Texture Name")
 
     # UV Animation
     export_animation : BoolProperty(name="UV Animation")
@@ -3059,12 +3105,68 @@ from .ops.viewport_floater import (
     GTATOOLS_OT_floater_modal,
     GTATOOLS_OT_floater_toggle,
 )
+
+
+# ── Legacy data migration — manual, on-demand ────────────────────────
+# These conversions used to run on every file load (load_post), forcing
+# every user through one-off calculations even on brand-new scenes.
+# Per extensions.blender.org review feedback they're now a single button
+# in the addon preferences. The per-conversion functions still live near
+# the bottom of this module (``_on_file_load_migrate_*``); this operator
+# just drives them on the current file.
+class GTATOOLS_OT_run_legacy_migrations(bpy.types.Operator):
+    """Однократно мигрировать данные из старых версий аддона.
+
+    Конвертирует текущий .blend: старые дефолты Modulate Color, тяжёлый
+    граф превью прилайта → минимальный, кастом-свойства 2DFX-размеров →
+    поля PropertyGroup, Scene-свойства pre-Step-9 → scene.inu_settings.
+    Запускать только если открыли старый проект — на новых сценах не
+    нужно."""
+    bl_idname = "gtatools.run_legacy_migrations"
+    bl_label = "INU: Run Legacy Migrations"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        # Same order the old load_post chain used: modulate/prelight read
+        # scene-level props, so run them before scene_settings moves those
+        # props into inu_settings.
+        for fn in (_on_file_load_migrate_modulate,
+                   _on_file_load_migrate_prelight_nodes,
+                   _on_file_load_migrate_2dfx_size,
+                   _on_file_load_migrate_scene_settings):
+            try:
+                fn(None)
+            except Exception as e:
+                print(f"[INU] migration {getattr(fn, '__name__', '?')} "
+                      f"failed: {e}")
+        self.report({'INFO'}, T("Миграция старых данных завершена"))
+        return {'FINISHED'}
+
+
+class INUAddonPreferences(bpy.types.AddonPreferences):
+    bl_idname = __package__
+
+    def draw(self, context):
+        layout = self.layout
+        col = layout.column()
+        col.label(text=T("Совместимость со старыми версиями"))
+        box = col.box()
+        box.label(
+            text=T("Миграция данных из старых .blend (по требованию):"),
+            icon='INFO')
+        box.label(text=T("дефолты Modulate Color, граф превью прилайта,"))
+        box.label(text=T("2DFX-размеры, Scene-свойства pre-Step-9."))
+        box.operator("gtatools.run_legacy_migrations", icon='FILE_REFRESH')
+
+
 # =============================================================================
 # =============================================================================
 # REGISTRATION
 # =============================================================================
 
 classes = (
+    INUAddonPreferences,
+    GTATOOLS_OT_run_legacy_migrations,
     INUParticleKeyframe,
     INUObjectProps,
     INUMaterialProps,
@@ -3390,6 +3492,7 @@ classes = (
     GTATOOLS_OT_path_node_flag,
     GTATOOLS_OT_map_export,
     GTATOOLS_OT_material_preset,
+    GTATOOLS_OT_copy_material_settings,
     GTATOOLS_OT_import_cst,
     GTATOOLS_OT_export_cst,
     GTATOOLS_OT_validate_paintjobs,
@@ -4138,24 +4241,11 @@ def register():
     # 2DFX billboard rotation timer — start now and restart on file load
     from .ops.fx_preview import start_billboard_timer
     start_billboard_timer()
-    bpy.app.handlers.load_post.append(_on_file_load_restart_timer)
-    bpy.app.handlers.load_post.append(_on_file_load_restore_paths)
-    bpy.app.handlers.load_post.append(_on_file_load_resume_toggles)
-    bpy.app.handlers.load_post.append(_on_file_load_migrate_modulate)
-    bpy.app.handlers.load_post.append(_on_file_load_migrate_prelight_nodes)
-    bpy.app.handlers.load_post.append(_on_file_load_migrate_2dfx_size)
-    bpy.app.handlers.load_post.append(_on_file_load_migrate_scene_settings)
-    bpy.app.handlers.load_post.append(_on_file_load_sync_pipeline_prev)
-    bpy.app.handlers.load_post.append(_on_file_load_floater)
-    # Run migration once at register too — для уже открытой сцены.
-    try:
-        _on_file_load_migrate_modulate(None)
-    except Exception:
-        pass
-    try:
-        _on_file_load_migrate_prelight_nodes(None)
-    except Exception:
-        pass
+    # Single consolidated load_post handler — see _on_file_load. Legacy
+    # data migrations are NOT auto-run on file load anymore; they're a
+    # manual operator in the addon preferences
+    # (gtatools.run_legacy_migrations).
+    bpy.app.handlers.load_post.append(_on_file_load)
 
     # One-time migration of user data from the legacy <addons>/INU_Preset/
     # location to bpy.utils.extension_path_user. Idempotent — drops a
@@ -4468,6 +4558,33 @@ def _on_file_load_floater(dummy):
     bpy.app.timers.register(_delayed, first_interval=0.5)
 
 
+@persistent
+def _on_file_load(dummy):
+    """Single consolidated load_post handler.
+
+    Restores only the runtime state Blender doesn't persist across
+    .blend loads — saved paths, panel toggles, the export-pipeline
+    snapshot tracker, the 2DFX billboard timer, the viewport floater,
+    and the IK follow-handler. Legacy *data migrations* are
+    deliberately NOT run here: they live as a manual operator in the
+    addon preferences (``gtatools.run_legacy_migrations``) so opening a
+    file never forces every user through one-off conversion passes.
+    One handler instead of nine also keeps registration fast and the
+    app-handler list clean (extensions.blender.org review feedback).
+    """
+    for fn in (_on_file_load_restore_paths,
+               _on_file_load_resume_toggles,
+               _on_file_load_sync_pipeline_prev,
+               _on_file_load_restart_timer,
+               _on_file_load_floater,
+               _ik_on_file_load):
+        try:
+            fn(dummy)
+        except Exception as e:
+            print(f"[INU] load handler {getattr(fn, '__name__', '?')} "
+                  f"failed: {e}")
+
+
 def _bake_defensive_sweep():
     """Удалить осколки bake-подсистемы после hard-crash (finally не
     срабатывает при сегфолте): неиспользуемые INU_Bevel_Mat /
@@ -4532,25 +4649,9 @@ def unregister():
     except Exception:
         pass
 
-    # 2DFX handlers
-    if _on_file_load_restart_timer in bpy.app.handlers.load_post:
-        bpy.app.handlers.load_post.remove(_on_file_load_restart_timer)
-    if _on_file_load_restore_paths in bpy.app.handlers.load_post:
-        bpy.app.handlers.load_post.remove(_on_file_load_restore_paths)
-    if _on_file_load_resume_toggles in bpy.app.handlers.load_post:
-        bpy.app.handlers.load_post.remove(_on_file_load_resume_toggles)
-    if _on_file_load_migrate_modulate in bpy.app.handlers.load_post:
-        bpy.app.handlers.load_post.remove(_on_file_load_migrate_modulate)
-    if _on_file_load_migrate_prelight_nodes in bpy.app.handlers.load_post:
-        bpy.app.handlers.load_post.remove(_on_file_load_migrate_prelight_nodes)
-    if _on_file_load_migrate_2dfx_size in bpy.app.handlers.load_post:
-        bpy.app.handlers.load_post.remove(_on_file_load_migrate_2dfx_size)
-    if _on_file_load_migrate_scene_settings in bpy.app.handlers.load_post:
-        bpy.app.handlers.load_post.remove(_on_file_load_migrate_scene_settings)
-    if _on_file_load_sync_pipeline_prev in bpy.app.handlers.load_post:
-        bpy.app.handlers.load_post.remove(_on_file_load_sync_pipeline_prev)
-    if _on_file_load_floater in bpy.app.handlers.load_post:
-        bpy.app.handlers.load_post.remove(_on_file_load_floater)
+    # Consolidated load_post handler (replaces the former nine).
+    if _on_file_load in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_on_file_load)
 
     # File > Export / Import menus
     bpy.types.TOPBAR_MT_file_export.remove(menu_func_export)
@@ -4649,14 +4750,11 @@ def unregister():
     except Exception:
         pass
 
-    # IK Rig — drop both runtime handler and load_post hook.
+    # IK Rig — drop the lazy depsgraph/frame_change follow handler. The
+    # load_post hook is wired into the consolidated _on_file_load handler
+    # removed above, so there's no separate load_post entry to detach.
     try:
         _ik_unregister_follow_handler()
-    except Exception:
-        pass
-    try:
-        if _ik_on_file_load in bpy.app.handlers.load_post:
-            bpy.app.handlers.load_post.remove(_ik_on_file_load)
     except Exception:
         pass
 

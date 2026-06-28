@@ -1,76 +1,35 @@
 # INU_tools.ops.build_library_ops — Asset Library Builder operator.
 #
-# Spawns a headless Blender subprocess (`blender --background --python
-# scripts/build_library_worker.py`) that drains the
-# `build_library_iter` generator end-to-end without UI yields. This is
-# 2-5× faster than the previous in-process modal-pump approach because
-# the worker has no viewport, no depsgraph propagation per asset, and
-# no per-tick UI redraws. The user's main Blender stays responsive
-# during the build (can keep modeling, etc.).
+# Drives the `build_library_iter` generator IN-PROCESS via a modal timer
+# pump: each TIMER tick advances the generator for a short time-slice,
+# repaints the progress bar / status text, then yields control back to
+# Blender so the UI stays responsive. There is NO background Blender
+# subprocess and NO reader thread — extensions.blender.org does not
+# accept addons that spawn looping OS threads or force-enable the addon
+# in / manipulate the python path of another Blender process.
 #
-# The worker emits `__INU_JSON__{...}` lines on stdout after every
-# unit of work; this operator's modal reads them via a background
-# reader thread + queue and updates the progress bar / status text.
+# The build is DESTRUCTIVE to the current session: `build_library_iter`
+# wipes scene data (`reset_blend_state`) and `save_as_mainfile`s each
+# category .blend out. So this operator:
+#   • requires the asset-builder opt-in toggle (off by default),
+#   • requires the scene already saved AND with no unsaved changes,
+#   • reloads the user's original .blend when the build finishes (or is
+#     cancelled / errors) so they get their scene back.
 #
 # Pre-requisites checked at invoke():
-#   • Scene saved (cache_dir lives next to .blend — see _get_cache_dir).
+#   • Scene saved + clean (cache_dir lives next to the .blend).
 #   • Game Root set in INU settings.
 #   • Output Path set in INU settings.
-#   • At least one .dff exists in the cache (Extract Resources must
-#     have run first, otherwise the operator has nothing to classify).
+#   • At least one .dff exists in the cache (Extract Resources must have
+#     run first, otherwise there's nothing to classify).
 
-import json
 import os
-import queue
-import subprocess
-import threading
 import time
-from typing import List, Optional, Tuple
 
 import bpy
-from bpy.props import StringProperty
 
 from .. import T
 from ..tools import compat
-
-
-# Magic prefix the worker uses to emit JSON-progress lines. Anything
-# else on stdout is treated as a plain log line (kept in a small ring
-# buffer so we can dump it when the subprocess fails, without flooding
-# the console on success).
-_JSON_PREFIX = '__INU_JSON__'
-
-
-def _start_worker(args: List[str]) -> Tuple[subprocess.Popen, queue.Queue]:
-    """Spawn the headless Blender + worker script and return
-    (Popen, stdout_queue). The reader thread pushes lines into the
-    queue; main thread polls it from `modal()`. Sentinel `None` is
-    pushed when the subprocess closes its stdout (process exited)."""
-    proc = subprocess.Popen(
-        args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,  # line-buffered
-        # CREATE_NO_WINDOW so we don't open a console window on Windows;
-        # ignored on Linux/Mac (kwarg unsupported).
-        creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
-    )
-    out_queue: queue.Queue = queue.Queue()
-
-    def _reader():
-        try:
-            assert proc.stdout is not None
-            for raw in proc.stdout:
-                out_queue.put(raw.rstrip('\n'))
-        except Exception:
-            pass
-        finally:
-            out_queue.put(None)  # sentinel
-
-    t = threading.Thread(target=_reader, daemon=True, name='inu-worker-reader')
-    t.start()
-    return proc, out_queue
 
 
 class GTATOOLS_OT_build_asset_library(bpy.types.Operator):
@@ -88,11 +47,10 @@ class GTATOOLS_OT_build_asset_library(bpy.types.Operator):
     bl_options = {'REGISTER'}
 
     _timer = None
-    _proc = None  # Optional[subprocess.Popen], типизация в виде комментария
-    _queue = None  # Optional[queue.Queue]
+    _gen = None
     _status: dict = {}
-    _log_buffer: List[str] = []
     _t_start = 0.0
+    _orig_filepath = ""
 
     # Asset Library + custom-preview (ed.lib_id_load_custom_preview через
     # temp_override) требуют Blender 3.2+. На 2.83-3.1 кнопка неактивна.
@@ -106,18 +64,31 @@ class GTATOOLS_OT_build_asset_library(bpy.types.Operator):
         scene = context.scene
         settings = scene.inu_settings
 
-        # Gate: this feature spawns a background Blender process. Off by
-        # default — the user must opt in (see gtatools_enable_asset_builder).
+        # Gate: the build rebuilds the current session (imports thousands
+        # of models and resets scene data). Off by default — the user
+        # must opt in (see gtatools_enable_asset_builder).
         if not getattr(settings, 'gtatools_enable_asset_builder', False):
             self.report({'ERROR'}, T(
-                "Сборка Asset Library запускает фоновый процесс Blender. "
+                "Сборка Asset Library пересобирает текущую сцену "
+                "(импортирует тысячи моделей и очищает данные сцены). "
                 "Включи галочку «Разрешить сборку Asset Library» в настройках."))
             return {'CANCELLED'}
 
         if not bpy.data.filepath:
             self.report({'ERROR'}, T(
-                "Сначала сохраните сцену (.blend) — кеш создаётся "
-                "рядом с ней"))
+                "Сначала сохраните сцену (.blend) — кеш создаётся рядом "
+                "с ней, и после сборки файл будет открыт заново"))
+            return {'CANCELLED'}
+
+        # The build wipes scene data (reset_blend_state) and save_as_-
+        # mainfile's category files over the current session, so any
+        # unsaved work would be lost. Refuse rather than risk it; the
+        # original file is reopened once the build finishes.
+        if bpy.data.is_dirty:
+            self.report({'ERROR'}, T(
+                "Сохрани изменения — сборка очищает текущую сцену и "
+                "потеряет несохранённую работу (после сборки твой файл "
+                "будет открыт заново)"))
             return {'CANCELLED'}
 
         game_root = bpy.path.abspath(settings.gtatools_game_root)
@@ -173,125 +144,92 @@ class GTATOOLS_OT_build_asset_library(bpy.types.Operator):
         # к региону — добавляются опциональными чекбоксами в Library
         # панели (gtatools_library_include_*).
         region = getattr(settings, 'gtatools_map_region', 'ALL')
-        categories_filter = ''
+        categories = None
         if region and region != 'ALL':
-            cats = [
+            cats = {
                 f'mapobjects_{region.upper()}',
                 'mapobjects_GENERIC',
                 'lod',
-            ]
+            }
             if getattr(settings, 'gtatools_library_include_vehicles', False):
-                cats.append('vehicles')
+                cats.add('vehicles')
             if getattr(settings, 'gtatools_library_include_peds', False):
-                cats.append('peds')
+                cats.add('peds')
             if getattr(settings, 'gtatools_library_include_weapons', False):
-                cats.append('weapons')
+                cats.add('weapons')
             if getattr(settings, 'gtatools_library_include_interiors', False):
-                cats.append('mapobjects_INTERIORS')
-            categories_filter = ','.join(cats)
+                cats.add('mapobjects_INTERIORS')
+            categories = cats
 
-        # Worker script ships inside the addon so it survives whatever
-        # location the user installed the addon to (no `dev/` folder in
-        # the distributed zip).
-        worker = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            'scripts', 'build_library_worker.py')
-        if not os.path.isfile(worker):
-            self.report({'ERROR'},
-                        f"Worker script not found: {worker}")
-            return {'CANCELLED'}
-
-        # Re-use the SAME Blender executable that's running this operator
-        # — guarantees the addon is registered there too (same install).
-        blender_exe = bpy.app.binary_path
-        if not blender_exe or not os.path.isfile(blender_exe):
-            self.report({'ERROR'},
-                        T("Не найден исполняемый файл Blender'а"))
-            return {'CANCELLED'}
-
-        # Полное имя модуля аддона. Legacy install → 'INU_tools',
-        # extension install (4.2+) → 'bl_ext.<repo>.<addon>'. Worker
-        # сам не знает — передаём своё __package__ minus '.ops'.
-        addon_module = __package__.rsplit('.', 1)[0] if __package__ else 'INU_tools'
-
-        # Scene's active game drives which .dat manifest the worker
-        # parses (gta.dat / gta_vc.dat / gta3.dat). Reader logic is
-        # game-agnostic per Phase 5/18/19; this just selects entry
-        # points.
+        # Scene's active game drives which .dat manifest is parsed
+        # (gta.dat / gta_vc.dat / gta3.dat). Reader logic is game-agnostic
+        # per Phase 5/18/19; this just selects entry points.
         from ..core import game_versions as _gv
         target_game = _gv.game_of_scene(context.scene)
 
-        cmd = [
-            blender_exe, '--background',
-            '--python', worker, '--',
-            '--cache', cache_dir,
-            '--game-root', game_root,
-            '--output', output_dir,
-            '--preview-size', str(preview_size),
-            '--addon-module', addon_module,
-            '--game', target_game,
-        ]
-        if no_preview:
-            cmd.append('--no-preview')
-        if skip_existing:
-            cmd.append('--skip-existing')
-        if delete_cache:
-            cmd.append('--delete-cache')
-        if categories_filter:
-            cmd.extend(['--categories', categories_filter])
+        from ..tools.build_library import build_library_iter
 
+        self._orig_filepath = bpy.data.filepath
+        self._status = {}
         try:
-            self._proc, self._queue = _start_worker(cmd)
-        except OSError as e:
-            self.report({'ERROR'}, f"Failed to spawn subprocess: {e}")
+            self._gen = build_library_iter(
+                cache_dir=cache_dir,
+                game_root=game_root,
+                output_dir=output_dir,
+                status=self._status,
+                no_preview=no_preview,
+                preview_size=preview_size,
+                categories=categories,
+                skip_existing=skip_existing,
+                delete_cache_after=delete_cache,
+                game=target_game,
+            )
+        except FileNotFoundError as e:
+            self.report({'ERROR'}, str(e))
             return {'CANCELLED'}
 
-        self._status = {}
-        self._log_buffer = []
         self._t_start = time.perf_counter()
 
         wm = context.window_manager
         wm.progress_begin(0, 100)
         self._timer = wm.event_timer_add(0.1, window=context.window)
         wm.modal_handler_add(self)
-        context.workspace.status_text_set(T("Сборка библиотеки (headless)…"))
+        context.workspace.status_text_set(T("Сборка библиотеки…"))
         return {'RUNNING_MODAL'}
 
     def modal(self, context, event):
         if event.type == 'ESC':
-            self._terminate_proc()
             self._cleanup(context)
-            self.report({'WARNING'}, T("Отменено"))
+            self._schedule_restore()
+            self.report({'WARNING'}, T("Отменено — сцена будет перезагружена"))
             return {'CANCELLED'}
 
         if event.type != 'TIMER':
             return {'PASS_THROUGH'}
 
-        # Drain whatever the worker pushed since the last tick. Stop on
-        # sentinel (None) which means stdout closed = process exited.
-        proc_done = False
-        try:
-            while True:
-                line = self._queue.get_nowait()
-                if line is None:
-                    proc_done = True
-                    break
-                if line.startswith(_JSON_PREFIX):
-                    try:
-                        update = json.loads(line[len(_JSON_PREFIX):])
-                    except json.JSONDecodeError:
-                        continue
-                    if isinstance(update, dict):
-                        self._status.update(update)
-                else:
-                    # Plain log line — keep last ~200 lines for error
-                    # diagnostics, but don't echo them to the Blender
-                    # console (would spam on a 13K-model build).
-                    self._log_buffer.append(line)
-                    if len(self._log_buffer) > 200:
-                        self._log_buffer = self._log_buffer[-200:]
-        except queue.Empty:
-            pass
+        # Advance the build generator for a short slice so a single tick
+        # never blocks the UI for long. StopIteration = build finished.
+        deadline = time.monotonic() + 0.1
+        while time.monotonic() < deadline:
+            try:
+                next(self._gen)
+            except StopIteration:
+                elapsed = time.perf_counter() - self._t_start
+                classified = self._status.get('classified', 0)
+                cat_done = self._status.get('cat_done', 0)
+                self._cleanup(context)
+                self._schedule_restore()
+                self.report({'INFO'},
+                            f"{T('Библиотека собрана за')} {elapsed:.0f}s "
+                            f"({classified or cat_done} {T('моделей')})")
+                return {'FINISHED'}
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                self._cleanup(context)
+                self._schedule_restore()
+                self.report({'ERROR'}, f"Build error: {e}")
+                return {'CANCELLED'}
 
         # Update progress display from status dict.
         wm = context.window_manager
@@ -302,8 +240,7 @@ class GTATOOLS_OT_build_asset_library(bpy.types.Operator):
             cat = st.get('category', '?')
             cat_done = st.get('cat_done', 0)
             cat_total = max(st.get('cat_total', 1), 1)
-            pct = int(100 * cat_done / cat_total)
-            wm.progress_update(pct)
+            wm.progress_update(int(100 * cat_done / cat_total))
             cur = st.get('current_asset', '')
             context.workspace.status_text_set(
                 f"[{cat}] {cat_done}/{cat_total} {cur}")
@@ -321,61 +258,36 @@ class GTATOOLS_OT_build_asset_library(bpy.types.Operator):
             context.workspace.status_text_set(
                 f"{T('Библиотека:')} {phase_label}")
 
-        if proc_done:
-            return self._finish(context)
-
         return {'RUNNING_MODAL'}
 
-    def _finish(self, context):
-        rc = self._proc.poll() if self._proc else None
-        if rc is None:
-            # Reader saw EOF but process still running — wait briefly.
-            try:
-                rc = self._proc.wait(timeout=2.0)
-            except subprocess.TimeoutExpired:
-                self._terminate_proc()
-                rc = -1
-
-        elapsed = time.perf_counter() - self._t_start
-        success = (rc == 0)
-
-        self._cleanup(context)
-
-        if success:
-            classified = self._status.get('classified', 0)
-            cat_done = self._status.get('cat_done', 0)
-            self.report({'INFO'},
-                        f"{T('Библиотека собрана за')} {elapsed:.0f}s "
-                        f"({classified or cat_done} {T('моделей')})")
-            return {'FINISHED'}
-        else:
-            # Dump the last log lines so the user has something useful
-            # in the console when the subprocess died.
-            print("─── Build Library worker tail ─────────────────────")
-            for ln in self._log_buffer[-40:]:
-                print(ln)
-            print("───────────────────────────────────────────────────")
-            self.report({'ERROR'},
-                        f"Worker exited with code {rc} — see console for log tail")
-            return {'CANCELLED'}
-
-    def _terminate_proc(self):
-        proc = self._proc
-        if proc is None:
+    def _schedule_restore(self):
+        """Reopen the user's original .blend after the build wiped the
+        session. Done from a timer (not inline) so open_mainfile runs
+        once this operator has fully exited."""
+        orig = self._orig_filepath
+        if not orig:
             return
-        try:
-            proc.terminate()
+
+        def _do():
             try:
-                proc.wait(timeout=3.0)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait(timeout=3.0)
+                bpy.ops.wm.open_mainfile(filepath=orig)
+            except Exception as e:
+                print(f"[Build Library] could not reload original file: {e}")
+            return None
+
+        try:
+            bpy.app.timers.register(_do, first_interval=0.1)
         except Exception:
             pass
 
     def _cleanup(self, context):
-        self._proc = None
-        self._queue = None
+        gen = getattr(self, '_gen', None)
+        if gen is not None:
+            try:
+                gen.close()
+            except Exception:
+                pass
+            self._gen = None
         if self._timer:
             context.window_manager.event_timer_remove(self._timer)
             self._timer = None
@@ -417,11 +329,12 @@ class GTATOOLS_OT_regenerate_previews(bpy.types.Operator):
         scene = context.scene
         settings = scene.inu_settings
 
-        # Gate: spawns a background Blender process; off by default.
+        # Gate: opens library .blend files in this session; off by default.
         if not getattr(settings, 'gtatools_enable_asset_builder', False):
             self.report({'ERROR'}, T(
-                "Регенерация превью запускает фоновый процесс Blender. "
-                "Включи галочку «Разрешить сборку Asset Library» в настройках."))
+                "Регенерация превью открывает .blend файлы библиотеки в "
+                "этом окне Blender. Включи галочку «Разрешить сборку "
+                "Asset Library» в настройках."))
             return {'CANCELLED'}
 
         # Opening other .blend files in this Blender session would

@@ -89,7 +89,58 @@ def _draw_material_effects(layout, mat):
     reflection, dual texture, UV anim) + ambient + vehicle color slot."""
     inu = mat.inu
 
-    layout.prop(inu, "ambient", text=T("Фоновое затенение"))
+    # RW surface lighting coefficients (Ambient / Specular / Diffuse). They
+    # scale how the material is lit — diffuse 0.5 instead of 1.0 renders the
+    # model at half brightness — so they belong in the UI, not just silently
+    # round-tripped. (DragonFF shows the same three under "Material settings".)
+    col = layout.column(align=True)
+    col.label(text=T("RW-затенение:"), **inu_icon(safe_icon('SHADING_RENDERED')))
+    col.prop(inu, "ambient", text=T("Фоновое (ambient)"))
+    col.prop(inu, "surf_specular", text=T("Зеркальное (specular)"))
+    col.prop(inu, "surf_diffuse", text=T("Рассеянное (diffuse)"))
+
+    # Цвет материала + прозрачность (нативный Blender — экспорт берёт цвет из
+    # diffuse_color, а альфа из его 4-го канала). Свотч RGBA даёт и цвет, и альфу.
+    col = layout.column(align=True)
+    col.label(text=T("Цвет / прозрачность:"), **inu_icon(safe_icon('COLOR')))
+    col.prop(mat, "diffuse_color", text=T("Цвет (RGBA)"))
+    if hasattr(mat, "blend_method"):
+        col.prop(mat, "blend_method", text=T("Режим прозрачности"))
+
+    # Текстура: имя (только чтение) + фильтрация/адресация + маска. Фильтр и
+    # адресация теперь round-trip'ятся (раньше экспорт писал дефолт и терял их).
+    tbox = layout.box().column(align=True)
+    tbox.label(text=T("Текстура:"), **inu_icon(safe_icon('TEXTURE')))
+    # Превью + выбор картинки (первая Image-нода материала).
+    _img_node = None
+    if mat.use_nodes and mat.node_tree:
+        for _n in mat.node_tree.nodes:
+            if _n.type == 'TEX_IMAGE':
+                _img_node = _n
+                break
+    if _img_node:
+        tbox.template_ID_preview(_img_node, "image", rows=2, cols=4,
+                                 open="image.open")
+    # Имя текстуры — редактируемое (авторитетно для экспорта).
+    tbox.prop(inu, "texture_name", text=T("Имя"))
+    tbox.prop(inu, "tex_filter", text=T("Фильтрация"))
+    row = tbox.row(align=True)
+    row.prop(inu, "tex_addr_u", text=T("Адресация U"))
+    row.prop(inu, "tex_addr_v", text="V")
+    tbox.prop(inu, "mask_texture", text=T("Маска"))
+
+    # Быстрые пресеты — один клик для частых случаев материала.
+    layout.label(text=T("Быстрые пресеты:"), **inu_icon(safe_icon('PRESET')))
+    qrow = layout.row(align=True)
+    qrow.operator("gtatools.material_preset", text=T("Стекло")).preset = 'VEHICLE_GLASS'
+    qrow.operator("gtatools.material_preset", text="Хром").preset = 'CHROME'
+    qrow.operator("gtatools.material_preset", text=T("Краска")).preset = 'VEHICLE'
+    qrow.operator("gtatools.material_preset", text=T("Сброс")).preset = 'GENERIC'
+
+    # Скопировать настройки этого материала на материалы выделенных объектов.
+    layout.operator("gtatools.copy_material_settings",
+                    text=T("Копировать на выделенные"),
+                    **inu_icon(safe_icon('COPYDOWN')))
 
     box = layout.box()
     row = box.row()
@@ -120,23 +171,26 @@ def _draw_material_effects(layout, mat):
 
     layout.separator()
 
-    box = layout.box()
-    row = box.row()
-    row.prop(inu, "export_env_map", text=T("Карта окружения"))
+    # All effect toggles glued into ONE fused block: an outer column(align=True)
+    # sticks the boxes together (1px shared border, no default inter-box gap),
+    # and each box's own column(align=True) tightens its rows. Reads as a single
+    # panel instead of a stack of disconnected grey boxes.
+    outer = layout.column(align=True)
+
+    box = outer.box().column(align=True)
+    box.prop(inu, "export_env_map", text=T("Карта окружения"))
     if inu.export_env_map:
         box.prop(inu, "env_map_tex", text=T("Текстура"))
         box.prop(inu, "env_map_coef", text=T("Коэффициент"))
         box.prop(inu, "env_map_fb_alpha", text=T("Использовать FB Alpha"))
 
-    box = layout.box()
-    row = box.row()
-    row.prop(inu, "export_bump_map", text=T("Карта высот"))
+    box = outer.box().column(align=True)
+    box.prop(inu, "export_bump_map", text=T("Карта высот"))
     if inu.export_bump_map:
         box.prop(inu, "bump_map_tex", text=T("Текстура карты высот"))
 
-    box = layout.box()
-    row = box.row()
-    row.prop(inu, "export_reflection", text=T("Отражение материала"))
+    box = outer.box().column(align=True)
+    box.prop(inu, "export_reflection", text=T("Отражение материала"))
     if inu.export_reflection:
         row = box.row(align=True)
         row.prop(inu, "reflection_scale_x", text=T("Масштаб X"))
@@ -146,16 +200,14 @@ def _draw_material_effects(layout, mat):
         row.prop(inu, "reflection_offset_y", text="Y")
         box.prop(inu, "reflection_intensity", text=T("Интенсивность"))
 
-    box = layout.box()
-    row = box.row()
-    row.prop(inu, "export_specular", text=T("Зеркальный материал"))
+    box = outer.box().column(align=True)
+    box.prop(inu, "export_specular", text=T("Зеркальный материал"))
     if inu.export_specular:
         box.prop(inu, "specular_level", text=T("Уровень зеркальности"))
         box.prop(inu, "specular_texture", text=T("Текстура"))
 
-    box = layout.box()
-    row = box.row()
-    row.prop(inu, "export_dual_tex", text="Blend Mode (Src/Dst)")
+    box = outer.box().column(align=True)
+    box.prop(inu, "export_dual_tex", text="Blend Mode (Src/Dst)")
     if inu.export_dual_tex:
         box.prop(inu, "dual_tex_src_blend", text="Src")
         box.prop(inu, "dual_tex_dst_blend", text="Dst")
@@ -163,11 +215,9 @@ def _draw_material_effects(layout, mat):
 
     # UV-анимация — единый блок. Тумблер пишет `uv_anim_write` (именно его
     # проверяет экспортёр), а «Имя анимации» (animation_name) идёт сюда же, т.к.
-    # экспорт UVAnim берёт имя из него. Старый отдельный флаг `export_animation`
-    # был вестигиальным (в DFF ничего не писал) и из UI убран.
-    box = layout.box()
-    row = box.row(align=True)
-    row.prop(inu, "uv_anim_write", text=T("UV Анимация"))
+    # экспорт UVAnim берёт имя из него.
+    box = outer.box().column(align=True)
+    box.prop(inu, "uv_anim_write", text=T("UV Анимация"))
     if inu.uv_anim_write:
         box.prop(inu, "animation_name", text=T("Имя анимации"))
         box.prop(inu, "uv_anim_mode", expand=True)

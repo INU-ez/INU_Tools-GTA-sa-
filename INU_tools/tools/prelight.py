@@ -117,9 +117,9 @@ class GTASAPrelight:
             if start_face.index in processed:
                 continue
             group = []
-            queue = [start_face]
-            while queue:
-                face = queue.pop(0)
+            frontier = [start_face]
+            while frontier:
+                face = frontier.pop(0)
                 if face.index in processed:
                     continue
                 processed.add(face.index)
@@ -130,7 +130,7 @@ class GTASAPrelight:
                             continue
                         dot = abs(face.normal.dot(linked_face.normal))
                         if dot > (1.0 - normal_threshold):
-                            queue.append(linked_face)
+                            frontier.append(linked_face)
             if group:
                 avg_normal = Vector((0, 0, 0))
                 for face_idx in group:
@@ -233,9 +233,9 @@ def average_colors_on_coplanar_faces(obj, normal_threshold=0.01):
         if start_face.index in processed:
             continue
         group = []
-        queue = [start_face]
-        while queue:
-            face = queue.pop(0)
+        frontier = [start_face]
+        while frontier:
+            face = frontier.pop(0)
             if face.index in processed:
                 continue
             processed.add(face.index)
@@ -246,7 +246,7 @@ def average_colors_on_coplanar_faces(obj, normal_threshold=0.01):
                         continue
                     dot = abs(face.normal.dot(linked_face.normal))
                     if dot > (1.0 - normal_threshold):
-                        queue.append(linked_face)
+                        frontier.append(linked_face)
         if group:
             face_groups.append(group)
 

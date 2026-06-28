@@ -7,6 +7,26 @@ LANG = {
     "Набор инструментов для работы с GTA SA моделями. Requires DragonFF addon":
         "Toolset for GTA SA models. Requires DragonFF addon",
 
+    # Material panel
+    "Материал коллизии": "Collision Material",
+    "RW-затенение:": "RW shading:",
+    "Фоновое (ambient)": "Ambient",
+    "Зеркальное (specular)": "Specular",
+    "Рассеянное (diffuse)": "Diffuse",
+    "Цвет / прозрачность:": "Color / transparency:",
+    "Цвет (RGBA)": "Color (RGBA)",
+    "Режим прозрачности": "Blend mode",
+    "Текстура:": "Texture:",
+    "Фильтрация": "Filtering",
+    "Адресация U": "Address U",
+    "Маска": "Mask",
+    "Быстрые пресеты:": "Quick presets:",
+    "Стекло": "Glass",
+    "Краска": "Paint",
+    "Сброс": "Reset",
+    "Копировать на выделенные": "Copy to selected",
+    "Имя": "Name",
+
     # Property descriptions
     "Выделить найденные проблемные элементы": "Select found problem elements",
     "Количество колонок в сетке текстуры": "Number of columns in texture grid",

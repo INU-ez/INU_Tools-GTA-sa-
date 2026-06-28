@@ -1624,9 +1624,10 @@ def _on_file_load_ik(_dummy):
         _register_follow_handler()
 
 
-# Register only the lightweight load_post hook at module import. The
-# heavy depsgraph + frame_change follow-handler is attached lazily —
-# by ``GTATOOLS_OT_add_ik_rig`` on first rig setup this session, or by
-# ``_on_file_load_ik`` when opening a .blend that already has rigs.
-if _on_file_load_ik not in bpy.app.handlers.load_post:
-    bpy.app.handlers.load_post.append(_on_file_load_ik)
+# NOTE: handlers must only be touched from the addon's register()/
+# unregister() — never at module import. ``_on_file_load_ik`` is wired
+# into the consolidated ``_on_file_load`` load_post handler in the
+# package ``__init__.py``. The heavy depsgraph + frame_change follow-
+# handler stays lazy — attached by ``GTATOOLS_OT_add_ik_rig`` on first
+# rig setup this session, or by ``_on_file_load_ik`` when opening a
+# .blend that already has rigs.

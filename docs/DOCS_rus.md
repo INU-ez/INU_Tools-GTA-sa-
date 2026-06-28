@@ -2949,13 +2949,10 @@ INU_tools/
 │   ├── presets/                 # Bundled prelight + paintjob JSON-пресеты
 │   └── models/                  # Bundled DFF'ы (Army.dff, Admiral.dff для Shift+A меню)
 │
-├── locale/
-│   ├── __init__.py              # T() функция + active language picker
-│   ├── eng.py                   # Английские переводы (2049 ключей)
-│   └── spa.py                   # Испанские переводы (2370 ключей)
-│
-└── scripts/
-    └── build_library_worker.py  # Subprocess для Asset Library build (background Blender)
+└── locale/
+    ├── __init__.py              # T() функция + active language picker
+    ├── eng.py                   # Английские переводы (2049 ключей)
+    └── spa.py                   # Испанские переводы (2370 ключей)
 ```
 
 ### Модули ядра

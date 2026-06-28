@@ -195,6 +195,13 @@ def _create_blender_material(dff_mat: DffMaterial, index: int,
     c = dff_mat.color
     bsdf.inputs['Base Color'].default_value = (c.r / 255.0, c.g / 255.0, c.b / 255.0, 1.0)
 
+    # Solid-mode viewport colour (DragonFF-style). Base Color above only shows
+    # in Material Preview / Rendered; Solid shading reads mat.diffuse_color, so
+    # without this every part is the same default grey and the model "blends
+    # together". Carry the DFF alpha too so glass shows through in Solid view
+    # (Viewport Shading → Color → Material).
+    mat.diffuse_color = (c.r / 255.0, c.g / 255.0, c.b / 255.0, c.a / 255.0)
+
     # Connect texture if available
     tex_node = None
     if tex_name:
@@ -237,6 +244,19 @@ def _create_blender_material(dff_mat: DffMaterial, index: int,
         mat.inu.surf_diffuse = dff_mat.surface.diffuse
     else:
         mat.inu.ambient = 1.0
+
+    # Texture filtering / addressing + mask → INU props (round-trip). Decode the
+    # RW filterAddressing word: low byte = filter, nibbles 2-3 = U/V addressing,
+    # high 16 bits kept verbatim. Guard out-of-range values to the defaults so a
+    # malformed word can't raise on the enum assignment.
+    if dff_mat.texture:
+        _f = dff_mat.texture.filters
+        mat.inu.tex_filter = str(_f & 0xFF) if (_f & 0xFF) <= 6 else '2'
+        mat.inu.tex_addr_u = str((_f >> 8) & 0xF) if ((_f >> 8) & 0xF) <= 4 else '1'
+        mat.inu.tex_addr_v = str((_f >> 12) & 0xF) if ((_f >> 12) & 0xF) <= 4 else '1'
+        mat.inu.tex_filter_hi = (_f >> 16) & 0xFFFF
+        mat.inu.mask_texture = dff_mat.texture.mask or ""
+        mat.inu.texture_name = dff_mat.texture.name or ""
 
     # Material effects → INU свойства
     if dff_mat.env_map:

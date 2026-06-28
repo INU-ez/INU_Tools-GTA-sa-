@@ -17,22 +17,15 @@ import os
 import re
 import shutil
 
-# Presets live in the addon's user data directory:
+# Presets live in the addon's USER data directory — never inside the
+# addon directory itself, which installs read-only and must not be
+# written to (extensions.blender.org rule):
 #     <user data>/id_presets/<name>.txt   (see tools/user_data.py)
 #
-# Two legacy layouts are auto-migrated on first access:
-#   * INU_tools/data/model_ids.txt        — single-file store from the
-#     very first preset release (→ id_presets/default.txt)
-#   * INU_tools/data/id_presets/*.txt     — intermediate layout that
-#     lived inside the addon folder
-# The newer ``<addons>/INU_Preset/id_presets/`` layout is migrated by
-# ``tools/user_data.migrate_legacy_inu_preset()`` at register time.
+# The legacy ``<addons>/INU_Preset/id_presets/`` layout is migrated into
+# this location by ``tools/user_data.migrate_legacy_inu_preset()`` at
+# register time — this module no longer reads or writes the addon folder.
 from ..tools.user_data import get_user_data_dir
-
-_DATA_DIR = os.path.dirname(__file__)              # .../INU_tools/data/
-
-_LEGACY_FILE = os.path.join(_DATA_DIR, 'model_ids.txt')
-_LEGACY_PRESETS_DIR = os.path.join(_DATA_DIR, 'id_presets')
 
 
 def _presets_dir() -> str:
@@ -52,43 +45,14 @@ def _sanitize(name: str) -> str:
 
 
 def _ensure_presets_dir():
-    """Create the presets directory and migrate legacy locations.
+    """Guarantee the user-data presets directory exists.
 
-    Legacy layouts auto-imported on first access:
-
-    * ``INU_tools/data/model_ids.txt`` → ``<user data>/id_presets/default.txt``
-      (single-file store from the very first preset release)
-    * ``INU_tools/data/id_presets/*.txt`` → ``<user data>/id_presets/*.txt``
-      (intermediate layout that lived inside the addon folder)
-
-    The newer ``<addons>/INU_Preset/id_presets/`` layout is migrated by
-    ``tools/user_data.migrate_legacy_inu_preset()`` at register time.
+    The legacy ``<addons>/INU_Preset/id_presets/`` layout is migrated to
+    this location by ``tools/user_data.migrate_legacy_inu_preset()`` at
+    register time. This helper never touches the addon directory itself —
+    extensions install read-only and writing there can break them.
     """
-    presets_dir = _presets_dir()  # always created by helper
-
-    # Migration 1: bring presets from the intermediate data/id_presets/
-    if os.path.isdir(_LEGACY_PRESETS_DIR):
-        try:
-            for fn in os.listdir(_LEGACY_PRESETS_DIR):
-                if not fn.lower().endswith('.txt'):
-                    continue
-                src = os.path.join(_LEGACY_PRESETS_DIR, fn)
-                dst = os.path.join(presets_dir, fn)
-                if os.path.isfile(src) and not os.path.isfile(dst):
-                    try:
-                        shutil.copy2(src, dst)
-                    except Exception:
-                        pass
-        except Exception:
-            pass
-
-    # Migration 2: original single-file model_ids.txt → default.txt
-    default_path = os.path.join(presets_dir, _DEFAULT_PRESET + '.txt')
-    if os.path.isfile(_LEGACY_FILE) and not os.path.isfile(default_path):
-        try:
-            shutil.copy2(_LEGACY_FILE, default_path)
-        except Exception:
-            pass
+    _presets_dir()  # get_user_data_dir() creates the directory
 
 
 def set_active_preset(name: str) -> None:

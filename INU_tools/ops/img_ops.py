@@ -324,10 +324,11 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
         self._tex_count = 0
         self._skipped = 0
         self._txd_progress = 0
-        # Per-reason skip counters — updated from worker threads, gated
-        # by ``counters_lock`` in _work. Final report shows the breakdown
-        # so the user can see WHY textures are missing (region filter vs
-        # parse error vs degenerate header vs already-extracted-larger).
+        # Per-reason skip counters — folded in on the main thread by
+        # _work's drain loop (workers only return results). Final report
+        # shows the breakdown so the user can see WHY textures are missing
+        # (region filter vs parse error vs degenerate header vs
+        # already-extracted-larger).
         self._skip_reasons = {
             'archive_filtered': 0,  # TXD archive didn't match region IPL
             'parse_error': 0,       # read_txd raised on the archive
@@ -356,18 +357,12 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
         from ..core.img import ImgReader, safe_filename
         from ..core.txd import read_txd
         from .. import _write_png
-        import threading
 
         cache_dir = self._cache_dir
         tex_dir = self._tex_dir
         needed_txds = self._needed_txds
         prof = self._profiler
 
-        # Counters lock protects self._tex_count / self._skipped updates
-        # from worker threads. errors_lock serializes appends to the shared
-        # error/skip logs so concurrent failures don't interleave mid-line.
-        counters_lock = threading.Lock()
-        errors_lock = threading.Lock()
         err_log_path = os.path.join(cache_dir, '_txd_errors.log')
         skip_log_path = os.path.join(cache_dir, '_extract_skipped.log')
 
@@ -379,39 +374,48 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
         except Exception:
             pass
 
+        # Counter updates + log writes run ONLY on the main (generator)
+        # thread: worker threads return their results and the drain loop
+        # aggregates them here. Exactly one writer → no locks needed.
+        # (extensions.blender.org rejects `threading`; the numpy/zlib work
+        # still parallelises through the ThreadPoolExecutor below, which
+        # never touches this shared state.)
         def _log_err(msg):
             try:
-                with errors_lock, open(err_log_path, 'a', encoding='utf-8') as lf:
+                with open(err_log_path, 'a', encoding='utf-8') as lf:
                     lf.write(msg + '\n')
             except Exception:
                 pass
 
         def _log_skip(reason: str, tex_name: str, source: str, extra: str = ""):
             """Increment counter + record one line per skipped texture."""
-            with counters_lock:
-                self._skip_reasons[reason] = self._skip_reasons.get(reason, 0) + 1
-                self._skipped += 1
+            self._skip_reasons[reason] = self._skip_reasons.get(reason, 0) + 1
+            self._skipped += 1
             try:
-                with errors_lock, open(skip_log_path, 'a', encoding='utf-8') as lf:
+                with open(skip_log_path, 'a', encoding='utf-8') as lf:
                     lf.write(f"{reason:18s} | {tex_name[:40]:40s} | "
                              f"{source[:30]:30s} | {extra}\n")
             except Exception:
                 pass
 
         def _process_txd(entry_name: str, txd_data: bytes):
-            """Worker: parse TXD bytes and write PNG for each texture.
+            """Worker thread: parse TXD bytes and write a PNG per texture.
 
+            PURE with respect to shared state — returns a result dict
+            (``tex_count`` / ``skips`` / ``errors``); the main thread
+            folds it into the counters and logs (see ``_aggregate``).
             numpy DXT decompress (in read_txd) and zlib.compress (in
             _write_png) both release the GIL — so N workers do real
             parallel work on multi-core CPUs.
             """
+            result = {'tex_count': 0, 'skips': [], 'errors': []}
             try:
                 with prof.stage('read_txd (numpy DXT)', note=entry_name):
                     textures = read_txd(txd_data)
             except Exception as e:
-                _log_err(f"{entry_name}: {e}")
-                _log_skip('parse_error', '*', entry_name, str(e))
-                return
+                result['errors'].append(f"{entry_name}: {e}")
+                result['skips'].append(('parse_error', '*', entry_name, str(e)))
+                return result
 
             for tex in textures:
                 raw_name = (tex.name or '').rstrip('\x00')
@@ -421,15 +425,16 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
                 # so corrupt archives don't crash the writer on Windows.
                 name = safe_filename(raw_name)
                 if not name:
-                    _log_skip('no_name', raw_name or '<empty>', entry_name)
+                    result['skips'].append(
+                        ('no_name', raw_name or '<empty>', entry_name, ''))
                     continue
                 if tex.width == 0 or tex.height == 0:
-                    _log_skip('zero_dims', name, entry_name,
-                              f"{tex.width}x{tex.height}")
+                    result['skips'].append(
+                        ('zero_dims', name, entry_name, f"{tex.width}x{tex.height}"))
                     continue
                 if not tex.pixels:
-                    _log_skip('no_pixels', name, entry_name,
-                              f"{tex.width}x{tex.height}")
+                    result['skips'].append(
+                        ('no_pixels', name, entry_name, f"{tex.width}x{tex.height}"))
                     continue
 
                 png_path = os.path.join(tex_dir, name + '.png')
@@ -443,18 +448,35 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
                 if os.path.isfile(png_path):
                     ew, eh = _read_png_dimensions(png_path)
                     if ew >= tex.width and eh >= tex.height:
-                        _log_skip('dedup', name, entry_name,
-                                  f"existing {ew}x{eh} >= new {tex.width}x{tex.height}")
+                        result['skips'].append(
+                            ('dedup', name, entry_name,
+                             f"existing {ew}x{eh} >= new {tex.width}x{tex.height}"))
                         continue
 
                 try:
                     with prof.stage('_write_png'):
                         _write_png(png_path, tex.pixels, tex.width, tex.height)
-                    with counters_lock:
-                        self._tex_count += 1
+                    result['tex_count'] += 1
                 except Exception as e:
-                    _log_err(f"{entry_name}/{name}: {e}")
-                    _log_skip('write_error', name, entry_name, str(e))
+                    result['errors'].append(f"{entry_name}/{name}: {e}")
+                    result['skips'].append(
+                        ('write_error', name, entry_name, str(e)))
+            return result
+
+        def _aggregate(fut):
+            """Main thread: fold one finished future's result into the
+            shared counters / logs. Surfaces a worker crash to the error
+            log instead of silently dropping it."""
+            try:
+                res = fut.result()
+            except Exception as e:
+                _log_err(f"worker crashed: {e}")
+                return
+            self._tex_count += res['tex_count']
+            for msg in res['errors']:
+                _log_err(msg)
+            for skip in res['skips']:
+                _log_skip(*skip)
 
         # Worker count — start conservative (4). Bumping to 8 is safe too
         # but diminishing returns above that since IMG reads are serial.
@@ -472,26 +494,20 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
                     self._col_count += counts['col']
                     self._skipped += counts['skipped']
 
-                    # TXD processing — main thread reads bytes, pool crunches.
-                    # ThreadPoolExecutor's __exit__ would block the generator
-                    # until every worker finishes which freezes the UI; manage
-                    # the pool manually and yield during drain so modal ticks
-                    # fire and the progress bar keeps updating.
-                    done_count = [0]
-                    done_lock = threading.Lock()
-
-                    def _on_done(_fut, _d=done_count, _l=done_lock,
-                                 _self=self):
-                        with _l:
-                            _d[0] += 1
-                            _self._txd_progress += 1
-
+                    # TXD processing — main thread reads bytes, the pool
+                    # crunches numpy/zlib. ThreadPoolExecutor's __exit__
+                    # would block the generator until every worker finishes
+                    # (freezes the UI); manage the pool manually and yield
+                    # during drain so modal ticks fire and progress updates.
+                    # Results are aggregated on THIS thread (see _aggregate)
+                    # — no shared-state locks, no `threading` import.
+                    import time as _t
                     pool = ThreadPoolExecutor(max_workers=workers)
                     # Track on self so _cleanup() can tear it down on ESC
                     # — otherwise worker threads would keep churning after
                     # the operator returns CANCELLED.
                     self._pool = pool
-                    submitted = 0
+                    pending = []
                     try:
                         for entry in img.entries:
                             low = entry.name.lower()
@@ -512,20 +528,25 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
                                           "empty read")
                                 continue
 
-                            fut = pool.submit(_process_txd, entry.name, txd_data)
-                            fut.add_done_callback(_on_done)
-                            submitted += 1
+                            pending.append(
+                                pool.submit(_process_txd, entry.name, txd_data))
                             yield  # let modal tick between submits
 
-                        # Drain — wait for every submitted future while
-                        # yielding so UI keeps updating every ~50 ms.
-                        import time as _t
-                        while True:
-                            with done_lock:
-                                done = done_count[0]
-                            if done >= submitted:
-                                break
-                            _t.sleep(0.01)
+                        # Drain — aggregate each future as it completes,
+                        # yielding so the UI keeps updating every ~50 ms.
+                        # Progress advances as the main thread observes each
+                        # finished future (replaces the old done-callback).
+                        while pending:
+                            still = []
+                            for fut in pending:
+                                if fut.done():
+                                    _aggregate(fut)
+                                    self._txd_progress += 1
+                                else:
+                                    still.append(fut)
+                            pending = still
+                            if pending:
+                                _t.sleep(0.01)
                             yield
                     finally:
                         pool.shutdown(wait=False)

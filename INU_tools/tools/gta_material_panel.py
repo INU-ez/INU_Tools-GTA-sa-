@@ -24,6 +24,7 @@ PRESETS = (
     ('ENV',      "Env Mapped",    "Environment map only, no specular/reflection"),
     ('DUAL',     "Dual Texture",  "Blend with a second texture (decal/detail)"),
     ('SPECULAR', "Specular",      "Plain specular highlight from a mask texture"),
+    ('CHROME',   "Chrome",        "Strong environment reflection + specular (bumpers/trim)"),
 )
 
 
@@ -94,6 +95,16 @@ def apply_preset(mat, preset: str):
         inu.specular_level = 1.0
         return "Specular — level 1.0"
 
+    if preset == 'CHROME':
+        inu.export_env_map = True
+        inu.env_map_tex = 'xvehicleenv128'
+        inu.env_map_coef = 0.85          # strong, near-mirror reflection
+        inu.env_map_fb_alpha = False
+        inu.export_specular = True
+        inu.specular_level = 1.0
+        inu.specular_texture = 'vehiclespecdot64'
+        return "Chrome — strong env reflection + specular"
+
     return f"unknown preset {preset}"
 
 
@@ -157,6 +168,68 @@ class GTATOOLS_OT_material_preset(bpy.types.Operator):
             msg = apply_preset(mat, self.preset)
             self.report({'INFO'}, msg)
 
+        return {'FINISHED'}
+
+
+# Material settings copied by GTATOOLS_OT_copy_material_settings. Curated to the
+# RW/material knobs — deliberately EXCLUDES collision (col_*), the vehicle colour
+# slot (has a side-effecting update), and UI state (material_tab).
+_COPY_PROPS = (
+    'ambient', 'surf_specular', 'surf_diffuse',
+    'tex_filter', 'tex_addr_u', 'tex_addr_v', 'tex_filter_hi', 'mask_texture',
+    'export_env_map', 'env_map_tex', 'env_map_coef', 'env_map_fb_alpha',
+    'export_bump_map', 'bump_map_tex',
+    'export_reflection', 'reflection_scale_x', 'reflection_scale_y',
+    'reflection_offset_x', 'reflection_offset_y', 'reflection_intensity',
+    'export_specular', 'specular_level', 'specular_texture',
+    'export_dual_tex', 'dual_tex_src_blend', 'dual_tex_dst_blend',
+    'dual_tex_texture',
+    'uv_anim_write', 'animation_name', 'uv_anim_mode',
+)
+
+
+class GTATOOLS_OT_copy_material_settings(bpy.types.Operator):
+    """Скопировать GTA-настройки активного материала на материалы всех
+    выделенных объектов (эффекты, фильтр текстуры, RW-затенение, цвет)."""
+    bl_idname = "gtatools.copy_material_settings"
+    bl_label = "INU: Copy Material Settings to Selected"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return (context.material is not None
+                and len(context.selected_objects) > 0)
+
+    def execute(self, context):
+        src = context.material
+        src_inu = getattr(src, 'inu', None)
+        if not src_inu:
+            self.report({'ERROR'}, "no inu props")
+            return {'CANCELLED'}
+        done = set()
+        n = 0
+        for obj in context.selected_objects:
+            if obj.type != 'MESH':
+                continue
+            for slot in obj.material_slots:
+                mat = slot.material
+                if (not mat or mat == src or mat.name in done
+                        or not getattr(mat, 'inu', None)):
+                    continue
+                for pid in _COPY_PROPS:
+                    try:
+                        setattr(mat.inu, pid, getattr(src_inu, pid))
+                    except Exception:
+                        pass
+                try:
+                    mat.diffuse_color = src.diffuse_color
+                    if hasattr(mat, 'blend_method'):
+                        mat.blend_method = src.blend_method
+                except Exception:
+                    pass
+                done.add(mat.name)
+                n += 1
+        self.report({'INFO'}, f"copied to {n} material(s)")
         return {'FINISHED'}
 
 

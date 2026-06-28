@@ -125,6 +125,14 @@ def _read_texture(mat) -> DffTexture:
     от кейса, когда TXD не был загружен и image=None на Texture-ноде, но имя
     текстуры всё равно известно из DFF.
     """
+    # Explicit GTA texture name from INU props wins — lets the user rename/fix
+    # the name directly, independent of the Blender image/node name.
+    _inu = getattr(mat, 'inu', None)
+    if _inu and getattr(_inu, 'texture_name', '').strip():
+        _flt, _msk = _tex_filters_and_mask(mat)
+        return DffTexture(name=_strip_ext(_inu.texture_name.strip()),
+                          mask=_msk, filters=_flt)
+
     # Как в DragonFF: имя текстуры берём из НОДЫ (её label), а НЕ из имени
     # картинки. Так пользователь задаёт имя текстуры в DFF через ноду, и
     # .001-суффиксы Blender / расширения файла не попадают в файл. Нода
@@ -171,13 +179,34 @@ def _read_texture(mat) -> DffTexture:
                     name = node_label
                 name = _strip_ext(name)
                 if name:
-                    return DffTexture(name=name, mask="")
+                    _flt, _msk = _tex_filters_and_mask(mat)
+                    return DffTexture(name=name, mask=_msk, filters=_flt)
 
     # Запасной вариант: имя, сохранённое при импорте DFF
     dff_tex_name = mat.get('dff_texture_name')
     if dff_tex_name:
-        return DffTexture(name=_strip_ext(dff_tex_name), mask="")
+        _flt, _msk = _tex_filters_and_mask(mat)
+        return DffTexture(name=_strip_ext(dff_tex_name), mask=_msk, filters=_flt)
     return None
+
+
+def _tex_filters_and_mask(mat):
+    """RW filterAddressing word + mask string from INU material props.
+
+    Rebuilds the 32-bit word: filter mode | addrU<<8 | addrV<<12 | hi<<16, so
+    the texture's filtering/addressing round-trips instead of falling back to a
+    hard-coded default (which silently dropped the high bit on every export)."""
+    inu = getattr(mat, 'inu', None)
+    if not inu:
+        return 0x11106, ""
+    try:
+        filt = (int(inu.tex_filter)
+                | (int(inu.tex_addr_u) << 8)
+                | (int(inu.tex_addr_v) << 12)
+                | (int(inu.tex_filter_hi) << 16))
+    except (ValueError, AttributeError):
+        filt = 0x11106
+    return filt, (getattr(inu, 'mask_texture', '') or "")
 
 
 def _read_surface(mat) -> SurfaceProperties:

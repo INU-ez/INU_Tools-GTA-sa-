@@ -2716,13 +2716,10 @@ INU_tools/
 │   ├── presets/                 # Bundled prelight + paintjob JSON presets
 │   └── models/                  # Bundled DFFs (Army.dff, Admiral.dff for Shift+A menu)
 │
-├── locale/
-│   ├── __init__.py              # T() function + active language picker
-│   ├── eng.py                   # English translations (2049 keys)
-│   └── spa.py                   # Spanish translations (2370 keys)
-│
-└── scripts/
-    └── build_library_worker.py  # Subprocess for Asset Library build (background Blender)
+└── locale/
+    ├── __init__.py              # T() function + active language picker
+    ├── eng.py                   # English translations (2049 keys)
+    └── spa.py                   # Spanish translations (2370 keys)
 ```
 
 ### Core Modules

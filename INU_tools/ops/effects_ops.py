@@ -501,6 +501,9 @@ class GTATOOLS_OT_particle_effect_new(bpy.types.Operator):
         obj['2dfx_effect_name'] = name
         obj.inu.particle_emitter_index = 0
         try:
+            # Lazy import — defined in package __init__; module-level import
+            # would be circular (effects_ops is imported from __init__).
+            from .. import _populate_particle_props_from_fxp
             _populate_particle_props_from_fxp(obj, name, 0)
         except Exception as e:
             print(f"[2DFX Particle] populate failed: {e}")
@@ -816,6 +819,7 @@ class GTATOOLS_OT_particle_curve_write(bpy.types.Operator):
 
         # Refresh the scalar fields from the updated FXP and rebuild preview
         try:
+            from .. import _populate_particle_props_from_fxp
             _populate_particle_props_from_fxp(obj, effect_name, em_idx)
         except Exception:
             pass
@@ -851,6 +855,9 @@ class GTATOOLS_OT_particle_emitter_switch(bpy.types.Operator):
         if not name:
             self.report({'WARNING'}, T("Эффект не выбран"))
             return {'CANCELLED'}
+        # Lazy import — both helpers live in the package __init__.
+        from .. import (_get_effect_emitter_count,
+                        _populate_particle_props_from_fxp)
         total = _get_effect_emitter_count(name)
         if total <= 1:
             self.report({'INFO'}, T("У эффекта один эмиттер"))

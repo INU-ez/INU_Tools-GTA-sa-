@@ -1,7 +1,7 @@
 # INU_tools.tools.profiler
 #
-# Lightweight profiler for long-running operator work. Use via the
-# `Profiler.stage(name)` context manager — it records wall time and
+# Lightweight aggregate profiler for long-running operator work. Use via
+# the `Profiler.stage(name)` context manager — it records wall time and
 # per-stage call count.
 #
 # Example:
@@ -16,22 +16,29 @@
 # The profiler is a no-op when disabled (`enabled=False`) — stage() just
 # runs the wrapped block without any timing overhead. Keep it off by
 # default and only flip on when diagnosing performance problems.
+#
+# Thread-safety: `stage()` may be called concurrently from a
+# ThreadPoolExecutor (e.g. TXD extract). It deliberately uses NO locks —
+# the addon avoids the `threading` module per extensions.blender.org
+# review. Under CPython's GIL each dict/list operation is atomic; the
+# per-stage totals can at worst lose the rare concurrent increment, which
+# is perfectly acceptable for a diagnostics-only tool that ships disabled
+# by default. We don't need exact accounting here.
 
 from __future__ import annotations
 
-import threading
 import time
 from collections import defaultdict
 from contextlib import contextmanager
 
 
 class Profiler:
-    """Multi-thread session profiler for one long-running task.
+    """Aggregate session profiler for one long-running task.
 
     ``stage()`` is callable from any thread (TXD extract uses a
-    ThreadPoolExecutor that hits ``stage()`` concurrently from up to
-    4 workers). The internal lock prevents races on the stage dicts —
-    cheap, Python's GIL makes contention low.
+    ThreadPoolExecutor that hits ``stage()`` concurrently from a few
+    workers). No lock is taken — see the thread-safety note at the top
+    of the module.
     """
 
     def __init__(self, title: str, enabled: bool = True):
@@ -40,13 +47,17 @@ class Profiler:
         self._start = time.perf_counter() if enabled else 0.0
         # {stage_name: {'time': total_seconds, 'count': call_count}}
         self._stages: dict[str, dict] = defaultdict(lambda: {'time': 0.0, 'count': 0})
-        # {stage_name: {thread_id: [total_seconds, call_count]}}
-        self._per_thread: dict[str, dict] = defaultdict(
-            lambda: defaultdict(lambda: [0.0, 0]))
         # Up to N slowest individual stage calls: list of (seconds, stage, note)
         self._slow: list = []
         self._slow_max = 20
-        self._lock = threading.Lock()
+
+    def _record_slow(self, dt: float, name: str, note: str) -> None:
+        if len(self._slow) < self._slow_max:
+            self._slow.append((dt, name, note))
+            self._slow.sort(reverse=True)
+        elif dt > self._slow[-1][0]:
+            self._slow[-1] = (dt, name, note)
+            self._slow.sort(reverse=True)
 
     @contextmanager
     def stage(self, name: str, note: str = ""):
@@ -59,41 +70,21 @@ class Profiler:
             yield
         finally:
             dt = time.perf_counter() - t0
-            tid = threading.get_ident()
-            with self._lock:
-                s = self._stages[name]
-                s['time'] += dt
-                s['count'] += 1
-                pt = self._per_thread[name][tid]
-                pt[0] += dt
-                pt[1] += 1
-                # Track slowest individual invocations for hotspot hunting.
-                if len(self._slow) < self._slow_max:
-                    self._slow.append((dt, name, note))
-                    self._slow.sort(reverse=True)
-                elif dt > self._slow[-1][0]:
-                    self._slow[-1] = (dt, name, note)
-                    self._slow.sort(reverse=True)
+            s = self._stages[name]
+            s['time'] += dt
+            s['count'] += 1
+            # Track slowest individual invocations for hotspot hunting.
+            self._record_slow(dt, name, note)
 
     def add(self, name: str, seconds: float, count: int = 1, note: str = ""):
         """Manually add a timing entry — useful when the work happened
         inside a C library call you can't easily wrap in a `with` block."""
         if not self.enabled:
             return
-        tid = threading.get_ident()
-        with self._lock:
-            s = self._stages[name]
-            s['time'] += seconds
-            s['count'] += count
-            pt = self._per_thread[name][tid]
-            pt[0] += seconds
-            pt[1] += count
-            if len(self._slow) < self._slow_max:
-                self._slow.append((seconds, name, note))
-                self._slow.sort(reverse=True)
-            elif seconds > self._slow[-1][0]:
-                self._slow[-1] = (seconds, name, note)
-                self._slow.sort(reverse=True)
+        s = self._stages[name]
+        s['time'] += seconds
+        s['count'] += count
+        self._record_slow(seconds, name, note)
 
     def wall(self) -> float:
         """Elapsed seconds since profiler creation."""
@@ -102,7 +93,7 @@ class Profiler:
         return time.perf_counter() - self._start
 
     def format_report(self) -> str:
-        """Render a readable summary — stages, parallelism, hotspots."""
+        """Render a readable summary — stages and hotspots."""
         if not self.enabled:
             return f"[profiler disabled: {self.title}]"
         wall = self.wall()
@@ -114,38 +105,18 @@ class Profiler:
         lines.append(f"{'Stage':<32} {'Time':>10} {'Count':>8} {'% wall':>8}")
         lines.append("-" * 64)
 
-        with self._lock:
-            rows = sorted(self._stages.items(),
-                          key=lambda kv: -kv[1]['time'])
-            for name, st in rows:
-                pct = (st['time'] / wall * 100.0) if wall > 0 else 0.0
-                lines.append(
-                    f"{name:<32} {st['time']:>8.2f} s {st['count']:>8d} {pct:>6.1f}%")
+        rows = sorted(self._stages.items(), key=lambda kv: -kv[1]['time'])
+        for name, st in rows:
+            pct = (st['time'] / wall * 100.0) if wall > 0 else 0.0
+            lines.append(
+                f"{name:<32} {st['time']:>8.2f} s {st['count']:>8d} {pct:>6.1f}%")
 
-            # Per-thread breakdown only where it matters — stages that
-            # were hit by more than one thread (otherwise noise).
-            multi_thread_stages = [
-                name for name, threads in self._per_thread.items()
-                if len(threads) > 1
-            ]
-            if multi_thread_stages:
-                lines.append("")
-                lines.append("Thread parallelism (stages seen from >1 thread):")
-                for name in multi_thread_stages:
-                    lines.append(f"  [{name}]")
-                    threads = self._per_thread[name]
-                    for tid, (t, n) in sorted(threads.items(),
-                                              key=lambda kv: -kv[1][0]):
-                        short = tid & 0xFFFF
-                        lines.append(
-                            f"    thread {short:>5}: {t:>6.2f} s  ({n} calls)")
-
-            if self._slow:
-                lines.append("")
-                lines.append(f"Slowest {len(self._slow)} individual calls:")
-                for dt, name, note in self._slow:
-                    tail = f"  — {note}" if note else ""
-                    lines.append(f"  {dt*1000:>7.1f} ms  [{name}]{tail}")
+        if self._slow:
+            lines.append("")
+            lines.append(f"Slowest {len(self._slow)} individual calls:")
+            for dt, name, note in self._slow:
+                tail = f"  — {note}" if note else ""
+                lines.append(f"  {dt*1000:>7.1f} ms  [{name}]{tail}")
 
         lines.append("=" * 64)
         return "\n".join(lines)

@@ -248,10 +248,10 @@ def find_connected_face_groups(faces, uv_layer):
 
         # BFS to find all connected faces (by mesh edges OR UV overlap)
         group = []
-        queue = [face]
+        frontier = [face]
 
-        while queue:
-            current = queue.pop(0)
+        while frontier:
+            current = frontier.pop(0)
             if current in visited:
                 continue
 
@@ -263,13 +263,13 @@ def find_connected_face_groups(faces, uv_layer):
             for edge in current.edges:
                 for linked_face in edge.link_faces:
                     if linked_face not in visited and linked_face in face_set:
-                        queue.append(linked_face)
+                        frontier.append(linked_face)
 
             # Method 2: Find faces with overlapping UV bounds
             for other_face in faces:
                 if other_face not in visited and other_face in face_set:
                     if bounds_overlap(current_bounds, face_bounds[other_face]):
-                        queue.append(other_face)
+                        frontier.append(other_face)
 
         if group:
             groups.append(group)
