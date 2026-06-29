@@ -1354,19 +1354,53 @@ class GTATOOLS_OT_inu_export(bpy.types.Operator, ExportHelper):
         if self.export_ipl:
             if self.ide_ipl_upsert and self.ipl_upsert_path:
                 try:
-                    from ..core.ipl import upsert_ipl
-                    entries = []
+                    from ..core.ipl import read_ipl, write_ipl, IplFile
+                    from .. import _ipl_entry_from_obj
+                    from .ide_ipl import _get_scene_game
+                    ipl_path = bpy.path.abspath(self.ipl_upsert_path)
+                    ipl = (read_ipl(ipl_path) if os.path.isfile(ipl_path)
+                           else IplFile())
+
+                    def _place(inst):
+                        # Update the inst at the same id+name+pos, else append.
+                        # Returns (final_line_index, is_new). The index is the
+                        # position in ipl.instances, which write_ipl emits in
+                        # order — i.e. the SA `lod_index` cross-reference.
+                        for k, ex in enumerate(ipl.instances):
+                            if (ex.model_id == inst.model_id
+                                    and ex.model_name.lower() == inst.model_name.lower()
+                                    and abs(ex.pos_x - inst.pos_x) < 0.001
+                                    and abs(ex.pos_y - inst.pos_y) < 0.001
+                                    and abs(ex.pos_z - inst.pos_z) < 0.001):
+                                ipl.instances[k] = inst
+                                return k, False
+                        ipl.instances.append(inst)
+                        return len(ipl.instances) - 1, True
+
+                    n_upd = n_add = 0
                     for base_name, models in groups.items():
-                        if models['DFF']:
-                            from .. import _ipl_entry_from_obj
-                            entries.append(_ipl_entry_from_obj(models['DFF']))
+                        # LOD first so its line index is known before we stamp
+                        # the DFF's lod_index — this linking was missing here,
+                        # so LOD never swapped in-game.
+                        lod_idx = -1
                         if models['LOD']:
                             lod_entry = _ipl_entry_from_obj(models['LOD'])
                             lod_entry.model_name = "LOD" + base_name
-                            entries.append(lod_entry)
-                    ipl_path = bpy.path.abspath(self.ipl_upsert_path)
-                    updated, added = upsert_ipl(ipl_path, entries)
-                    all_exported.append(f"IPL: +{added} ~{updated}")
+                            lod_entry.lod_index = -1
+                            lod_idx, is_new = _place(lod_entry)
+                            n_add += int(is_new)
+                            n_upd += int(not is_new)
+                        if models['DFF']:
+                            dff_entry = _ipl_entry_from_obj(models['DFF'])
+                            if models['LOD']:
+                                dff_entry.lod_index = lod_idx
+                                if getattr(models['DFF'], 'inu', None):
+                                    models['DFF'].inu.lod_index = lod_idx
+                            _, is_new = _place(dff_entry)
+                            n_add += int(is_new)
+                            n_upd += int(not is_new)
+                    write_ipl(ipl_path, ipl, game=_get_scene_game(context))
+                    all_exported.append(f"IPL: +{n_add} ~{n_upd}")
                 except Exception as e:
                     all_errors.append(f"IPL upsert: {e}")
             else:

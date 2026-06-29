@@ -48,11 +48,20 @@ class GTATOOLS_OT_upsert_ide(bpy.types.Operator):
             self.report({'ERROR'}, T("Выделите меш объекты"))
             return {'CANCELLED'}
         groups = {}
+        redirected = 0
         for o in objs:
             inu = getattr(o, 'inu', None)
             tgt = (bpy.path.abspath(inu.ide_target_file)
                    if (inu and inu.ide_linked and inu.ide_target_file) else '')
-            key = tgt if (tgt and os.path.isfile(tgt)) else single
+            if single:
+                # Chosen IDE wins (see upsert_ipl note) — no silent routing to
+                # a previously-linked file.
+                key = single
+                if (tgt and os.path.isfile(tgt)
+                        and os.path.normcase(tgt) != os.path.normcase(single)):
+                    redirected += 1
+            else:
+                key = tgt if (tgt and os.path.isfile(tgt)) else ''
             if key:
                 groups.setdefault(key, []).append(o)
         if not groups:
@@ -64,8 +73,8 @@ class GTATOOLS_OT_upsert_ide(bpy.types.Operator):
             total_u += u
             total_a += a
         msg = f"IDE: {T('обновлено')} {total_u}, {T('добавлено')} {total_a}"
-        if len(groups) > 1:
-            msg += " — " + T("записи разнесены по {0} IDE-файлам").format(len(groups))
+        if redirected:
+            msg += " — " + T("{0} были в другом IDE (проверь дубли)").format(redirected)
         _pub(self, 'INFO', msg)
         return {'FINISHED'}
 
@@ -171,10 +180,22 @@ class GTATOOLS_OT_upsert_ipl(bpy.types.Operator):
             self.report({'ERROR'}, T("Выделите меш объекты"))
             return {'CANCELLED'}
         groups = {}
+        redirected = 0
         for o in objs:
             tgt = (bpy.path.abspath(o.inu.ipl_target_file)
                    if o.inu.ipl_target_file else '')
-            key = tgt if (tgt and os.path.isfile(tgt)) else single
+            if single:
+                # The explicitly chosen IPL wins. Routing each object back to
+                # its remembered `ipl_target_file` silently «wrote to other
+                # files» AND split a DFF from its LOD across files, which broke
+                # LOD linking. Per-object routing now only kicks in when no
+                # file is picked.
+                key = single
+                if (tgt and os.path.isfile(tgt)
+                        and os.path.normcase(tgt) != os.path.normcase(single)):
+                    redirected += 1
+            else:
+                key = tgt if (tgt and os.path.isfile(tgt)) else ''
             if key:
                 groups.setdefault(key, []).append(o)
         if not groups:
@@ -185,6 +206,11 @@ class GTATOOLS_OT_upsert_ipl(bpy.types.Operator):
             u, a = self._upsert_into(context, _fp, _grp)
             total_u += u
             total_a += a
+        if redirected:
+            self.report({'WARNING'},
+                        T("{0} объектов были привязаны к другому IPL — записаны "
+                          "в выбранный (проверь дубли в старом файле)").format(
+                              redirected))
         zero_ids = sum(1 for o in objs if getattr(o.inu, 'model_id', 0) == 0)
         if zero_ids:
             self.report({'WARNING'},

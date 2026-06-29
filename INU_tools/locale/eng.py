@@ -37,6 +37,8 @@ LANG = {
     "Пропускать занятые ID": "Skip occupied IDs",
     "Вкл — пропускать уже занятые ID (как авто-назначение). Выкл — строго по порядку от стартового, даже если занято": "On — skip already-occupied IDs (like auto-assign). Off — strictly sequential from the start ID, even if occupied",
     "конфликтов с занятыми:": "conflicts with occupied:",
+    "{0} объектов были привязаны к другому IPL — записаны в выбранный (проверь дубли в старом файле)": "{0} objects were linked to a different IPL — written to the selected one (check the old file for duplicates)",
+    "{0} были в другом IDE (проверь дубли)": "{0} were in a different IDE (check for duplicates)",
     "Настройки 2DFX применены к {0}": "2DFX settings applied to {0}",
 
     # Property descriptions
