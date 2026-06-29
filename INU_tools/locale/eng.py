@@ -29,6 +29,15 @@ LANG = {
     "Только активную анимацию": "Active animation only",
     "Экспортировать ТОЛЬКО активную Action арматуры — одну анимацию, а не весь пак. По умолчанию экспорт собирает все импортированные (ifp_source) Actions + активную; с этой галкой — ровно одну активную, будь она своя новая ИЛИ существующая из импортнутого ped.ifp.": "Export ONLY the armature's active Action — a single animation, not the whole pack. By default export gathers every imported (ifp_source) Action plus the active one; with this on, exactly the active one, whether it's your new Action OR an existing one from an imported ped.ifp.",
     "Нет активной анимации на арматуре": "No active animation on the armature",
+    "Выдели целевые пустышки (Shift+клик), источник — активным": "Select target empties (Shift+click); keep the source active",
+    "Выдели меш вместе с 2DFX": "Select a mesh together with the 2DFX",
+    "Нет выделенных 2DFX": "No 2DFX selected",
+    "Привязано 2DFX: {0} → '{1}'": "Attached 2DFX: {0} → '{1}'",
+    "Выдели меш + 2DFX (можно несколько), затем нажмите": "Select a mesh + 2DFX (several allowed), then click",
+    "Пропускать занятые ID": "Skip occupied IDs",
+    "Вкл — пропускать уже занятые ID (как авто-назначение). Выкл — строго по порядку от стартового, даже если занято": "On — skip already-occupied IDs (like auto-assign). Off — strictly sequential from the start ID, even if occupied",
+    "конфликтов с занятыми:": "conflicts with occupied:",
+    "Настройки 2DFX применены к {0}": "2DFX settings applied to {0}",
 
     # Property descriptions
     "Выделить найденные проблемные элементы": "Select found problem elements",

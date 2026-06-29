@@ -138,6 +138,87 @@ class GTATOOLS_OT_create_2dfx(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class GTATOOLS_OT_apply_2dfx_to_selected(bpy.types.Operator):
+    """Навесить настройки активного 2DFX на все ОСТАЛЬНЫЕ выделенные Empty.
+
+    Удобный поток: надублируй пустышки (Shift+D) по нужным местам → выдели
+    их ВСЕ + активный настроенный 2DFX (он — активный объект) → жми. Каждая
+    пустышка получает все настройки + превью, ОСТАВАЯСЬ НА СВОЁМ МЕСТЕ.
+
+    Так же = мульти-редактирование: правишь один 2DFX, выделяешь группу,
+    применяешь — настройки уходят на всех разом."""
+    bl_idname = "gtatools.apply_2dfx_to_selected"
+    bl_label = "INU: Apply 2DFX to Selected"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        # Enabled whenever the active object is a configured 2DFX. We do NOT
+        # gate on selection count here — a greyed button with no explanation
+        # just reads as "broken". The target check lives in execute() with a
+        # clear message instead.
+        obj = context.active_object
+        inu = getattr(obj, 'inu', None)
+        return bool(obj and obj.type == 'EMPTY' and inu
+                    and getattr(inu, 'type', '') == '2DFX')
+
+    def execute(self, context):
+        from .fx_preview import (create_light_preview, create_particle_preview,
+                                 remove_preview_children)
+        src = context.active_object
+        src_inu = src.inu
+        targets = [o for o in context.selected_objects
+                   if o != src and o.type == 'EMPTY']
+        if not targets:
+            self.report({'WARNING'},
+                        T("Выдели целевые пустышки (Shift+клик), источник — активным"))
+            return {'CANCELLED'}
+        n = 0
+        for tgt in targets:
+            tgt.inu.type = '2DFX'
+            # inu PropertyGroup fields (colour, corona/shadow sizes, show-mode…)
+            for p in src_inu.bl_rna.properties:
+                if p.is_readonly or p.identifier == 'rna_type':
+                    continue
+                try:
+                    setattr(tgt.inu, p.identifier, getattr(src_inu, p.identifier))
+                except Exception:
+                    pass
+
+            # 2dfx_* custom IDProps — clear stale, then copy the source's.
+            for key in list(tgt.keys()):
+                if key.startswith('2dfx_'):
+                    del tgt[key]
+            for key in list(src.keys()):
+                if key.startswith('2dfx_'):
+                    tgt[key] = src[key]
+                    if hasattr(tgt, 'id_properties_ui') and isinstance(src[key], float):
+                        try:
+                            tgt.id_properties_ui(key).update(
+                                **{k: v for k, v in
+                                   src.id_properties_ui(key).as_dict().items()
+                                   if k in ('precision', 'description')})
+                        except Exception:
+                            pass
+
+            tgt.empty_display_type = src.empty_display_type
+            tgt.empty_display_size = src.empty_display_size
+
+            # Rebuild the preview (position is left untouched — stays put).
+            try:
+                remove_preview_children(tgt)
+                if tgt.inu.effect_2dfx == 'LIGHT':
+                    create_light_preview(tgt)
+                elif tgt.inu.effect_2dfx == 'PARTICLE':
+                    create_particle_preview(tgt)
+            except Exception as e:
+                print(f"[INU] apply-2dfx preview skipped: {e}")
+            n += 1
+
+        self.report({'INFO'}, T("Настройки 2DFX применены к {0}").format(n))
+        return {'FINISHED'}
+
+
 class GTATOOLS_OT_load_fx_textures(bpy.types.Operator):
     """Загрузить текстуры эффектов (короны/тени/вода) из указанного .txd.
 
@@ -1420,20 +1501,28 @@ class GTATOOLS_OT_attach_2dfx(bpy.types.Operator):
                 and obj.inu.type == '2DFX')
 
     def execute(self, context):
-        fx_obj = context.active_object
-        # Find a selected mesh to attach to
-        mesh_obj = None
-        for obj in context.selected_objects:
-            if obj.type == 'MESH' and obj != fx_obj:
-                mesh_obj = obj
-                break
+        # Attach EVERY selected 2DFX empty to the one selected mesh — not just
+        # the active one, so a whole batch of lights parents in a single click.
+        mesh_obj = next((o for o in context.selected_objects
+                         if o.type == 'MESH'), None)
         if not mesh_obj:
-            self.report({'WARNING'}, "Select a mesh object together with the 2DFX")
+            self.report({'WARNING'}, T("Выдели меш вместе с 2DFX"))
             return {'CANCELLED'}
-        # Keep world position when parenting
-        fx_obj.parent = mesh_obj
-        fx_obj.matrix_parent_inverse = mesh_obj.matrix_world.inverted()
-        self.report({'INFO'}, f"2DFX attached to '{mesh_obj.name}'")
+        fx_objs = [o for o in context.selected_objects
+                   if o.type == 'EMPTY' and getattr(o, 'inu', None)
+                   and o.inu.type == '2DFX']
+        if not fx_objs:
+            self.report({'WARNING'}, T("Нет выделенных 2DFX"))
+            return {'CANCELLED'}
+        # Keep world position when parenting (same inverse for every child of
+        # this mesh).
+        inv = mesh_obj.matrix_world.inverted()
+        for fx_obj in fx_objs:
+            fx_obj.parent = mesh_obj
+            fx_obj.matrix_parent_inverse = inv.copy()
+        self.report({'INFO'},
+                    T("Привязано 2DFX: {0} → '{1}'").format(
+                        len(fx_objs), mesh_obj.name))
         return {'FINISHED'}
 
 

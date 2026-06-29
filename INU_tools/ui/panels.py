@@ -1957,6 +1957,39 @@ class GTATOOLS_PT_frame_hierarchy(bpy.types.Panel):
             shown += 1
 
 
+class GTATOOLS_UL_2dfx(bpy.types.UIList):
+    """Scrollable, fixed-height list of the 2DFX effects attached to the active
+    mesh. Filters bpy.data.objects down to that mesh's 2DFX-empty children, so
+    a model with dozens of lights shows a compact scroll box, not a wall of
+    rows."""
+
+    def draw_item(self, context, layout, data, item, icon,
+                  active_data, active_property, index):
+        inu = getattr(item, 'inu', None)
+        eff = getattr(inu, 'effect_2dfx', '') if inu else ''
+        ic = {'LIGHT': 'LIGHT', 'PARTICLE': 'PARTICLES',
+              'PED_ATTRACTOR': 'COMMUNITY', 'SUN_GLARE': 'LIGHT_SUN'}.get(
+            eff, 'EMPTY_AXIS')
+        row = layout.row(align=True)
+        row.label(text=item.name, **inu_icon(safe_icon(ic)))
+        row.operator("gtatools.detach_2dfx", text="",
+                     **inu_icon(safe_icon('X'))).fx_name = item.name
+
+    def filter_items(self, context, data, propname):
+        objs = getattr(data, propname)
+        mesh = context.active_object
+        flt = [0] * len(objs)
+        show = self.bitflag_filter_item
+        search = (self.filter_name or "").lower()
+        for i, o in enumerate(objs):
+            inu = getattr(o, 'inu', None)
+            if (o.type == 'EMPTY' and o.parent == mesh and inu
+                    and getattr(inu, 'type', '') == '2DFX'
+                    and (not search or search in o.name.lower())):
+                flt[i] = show
+        return flt, []
+
+
 @apply_order
 class GTATOOLS_PT_2dfx_panel(bpy.types.Panel):
     """2DFX Effects Properties"""
@@ -2017,12 +2050,15 @@ class GTATOOLS_PT_2dfx_panel(bpy.types.Panel):
             if attached:
                 box = layout.box()
                 box.label(text=f"{T('Привязанные 2DFX:')} {len(attached)}", **inu_icon(safe_icon('LINKED')))
-                for fx in attached:
-                    row = box.row(align=True)
-                    row.label(text=fx.name, **inu_icon(safe_icon('LIGHT') if fx.inu.effect_2dfx == 'LIGHT' else 'PARTICLES'))
-                    op = row.operator("gtatools.detach_2dfx", text="", **inu_icon('X'))
-                    op.fx_name = fx.name
-                layout.operator("gtatools.detach_all_2dfx", text=T("Отвязать все"), **inu_icon(safe_icon('UNLINKED')))
+                # Fixed-height scroll box instead of one row per effect — a
+                # mosque with dozens of lights no longer fills the whole panel.
+                box.template_list("GTATOOLS_UL_2dfx", "",
+                                  bpy.data, "objects",
+                                  context.window_manager, "inu_2dfx_idx",
+                                  rows=5, maxrows=8)
+                box.operator("gtatools.detach_all_2dfx",
+                             text=T("Отвязать все"),
+                             **inu_icon(safe_icon('UNLINKED')))
                 layout.separator()
             layout.label(text=T("Выберите 2DFX Empty для редактирования"), **inu_icon(safe_icon('RESTRICT_SELECT_ON')))
             return
@@ -2049,6 +2085,12 @@ class GTATOOLS_PT_2dfx_panel(bpy.types.Panel):
         }.get(settings.effect_2dfx, compat.ICON_CHECK)
         header_row = main_box.row()
         header_row.label(text=f"Active: {obj.name}", **inu_icon(_type_icon))
+        # Push these settings onto every OTHER selected empty: turn duplicated
+        # blanks into configured 2DFX, or edit a whole group at once. Active
+        # 2DFX = the source.
+        main_box.operator("gtatools.apply_2dfx_to_selected",
+                          text=T("Применить к выделенным"),
+                          **inu_icon(safe_icon('PASTEDOWN')))
 
         # Attach/Detach buttons
         attach_box = main_box.box()
@@ -2058,7 +2100,7 @@ class GTATOOLS_PT_2dfx_panel(bpy.types.Panel):
             row_a.operator("gtatools.detach_2dfx", text="", **inu_icon('X'))
         else:
             attach_box.operator("gtatools.attach_2dfx", text=T("Привязать к модели"), **inu_icon(safe_icon('LINK_BLEND')))
-            attach_box.label(text=T("Выделите меш + 2DFX, затем нажмите"), **inu_icon(safe_icon('INFO')))
+            attach_box.label(text=T("Выдели меш + 2DFX (можно несколько), затем нажмите"), **inu_icon(safe_icon('INFO')))
 
         effect = settings.effect_2dfx
 

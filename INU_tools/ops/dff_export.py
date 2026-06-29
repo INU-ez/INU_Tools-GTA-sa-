@@ -1276,12 +1276,14 @@ def _collect_2dfx(objects) -> Extension2dfx:
     """Collect 2DFX effect entries from Empty objects with inu.type == '2DFX'."""
     ext = Extension2dfx()
 
-    # Find mesh origin to make 2DFX coordinates relative to the model
-    mesh_origin = None
-    for obj in objects:
-        if obj.type == 'MESH':
-            mesh_origin = obj.location.copy()
-            break
+    # 2DFX coords must be in the MESH's LOCAL space (= the DFF geometry space,
+    # same space the verts are written in). We use the full world-matrix
+    # transform below — NOT `obj.location - mesh.location`. That naive
+    # subtraction ignores the mesh's rotation/scale and the parent relationship
+    # (2DFX empties are children of the mesh), so it shifted every effect the
+    # moment the model was rotated or placed off-origin in the scene.
+    mesh_obj = next((o for o in objects if o.type == 'MESH'), None)
+    mesh_inv = mesh_obj.matrix_world.inverted() if mesh_obj else None
 
     for obj in objects:
         if obj.type != 'EMPTY':
@@ -1291,13 +1293,12 @@ def _collect_2dfx(objects) -> Extension2dfx:
             continue
 
         effect_type = getattr(inu, 'effect_2dfx', '')
-        # 2DFX position relative to mesh origin
-        if mesh_origin:
-            loc = (obj.location.x - mesh_origin.x,
-                   obj.location.y - mesh_origin.y,
-                   obj.location.z - mesh_origin.z)
-        else:
-            loc = (obj.location.x, obj.location.y, obj.location.z)
+        # 2DFX position in the mesh's local space (proper world-matrix
+        # transform — robust to model rotation/scale and to the empty being a
+        # child of the mesh).
+        _wp = obj.matrix_world.translation
+        _lp = (mesh_inv @ _wp) if mesh_inv is not None else _wp
+        loc = (_lp.x, _lp.y, _lp.z)
 
         if effect_type == 'LIGHT':
             light = Light2dfx(loc=loc)

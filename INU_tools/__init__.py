@@ -449,6 +449,7 @@ from .ui.panels import (  # noqa: E501
     GTATOOLS_UL_bake_layers,
     GTATOOLS_PT_bake_panel,
     GTATOOLS_PT_bake_advanced,
+    GTATOOLS_UL_2dfx,
     GTATOOLS_PT_2dfx_panel,
     GTATOOLS_PT_object_ide_ipl_panel,
     GTATOOLS_PT_object_inu_tools,
@@ -2733,6 +2734,7 @@ _PRESET_MAP = {
 from .ops.effects_ops import (
     GTATOOLS_OT_apply_2dfx_preset,
     GTATOOLS_OT_create_2dfx,
+    GTATOOLS_OT_apply_2dfx_to_selected,
     GTATOOLS_OT_toggle_2dfx_flag_bit,
     GTATOOLS_OT_load_fx_textures,
     GTATOOLS_OT_pick_fx_txd,
@@ -3406,6 +3408,7 @@ classes = (
     GTATOOLS_PT_frame_hierarchy,
     GTATOOLS_OT_apply_2dfx_preset,
     GTATOOLS_OT_create_2dfx,
+    GTATOOLS_OT_apply_2dfx_to_selected,
     GTATOOLS_OT_toggle_2dfx_flag_bit,
     GTATOOLS_OT_attach_2dfx,
     GTATOOLS_OT_detach_2dfx,
@@ -3455,6 +3458,7 @@ classes = (
     GTATOOLS_OT_bake_col_light,
     GTATOOLS_OT_clear_col_light_mats,
     GTATOOLS_PT_prelight_col_panel,
+    GTATOOLS_UL_2dfx,
     GTATOOLS_PT_2dfx_panel,
     GTATOOLS_PT_vertex_paint_panel,
     GTATOOLS_PT_lightmap_panel,
@@ -4214,6 +4218,8 @@ def register():
         type=GTATOOLS_TextureBrowserItem)
     bpy.types.WindowManager.gtatools_texture_browser_results_index = IntProperty(
         default=0, update=_tb_idx_update)
+    # Active-row index for the attached-2DFX template_list (scrollable list).
+    bpy.types.WindowManager.inu_2dfx_idx = IntProperty(default=0)
 
     # Keymap: Shift+T — toggle UV Editor
     wm = bpy.context.window_manager
@@ -4725,6 +4731,10 @@ def unregister():
         del bpy.types.WindowManager.gtatools_map_analyzer_results
         del bpy.types.WindowManager.gtatools_map_analyzer_results_index
         del bpy.types.WindowManager.gtatools_map_analyzer_stats_summary
+    except Exception:
+        pass
+    try:
+        del bpy.types.WindowManager.inu_2dfx_idx
     except Exception:
         pass
     try:

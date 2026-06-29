@@ -144,6 +144,12 @@ class GTATOOLS_OT_id_manager_assign_from(bpy.types.Operator):
         min=1,
         description=T("Начальный ID для назначения"),
     )
+    skip_occupied: BoolProperty(
+        name=T("Пропускать занятые ID"),
+        default=False,
+        description=T("Вкл — пропускать уже занятые ID (как авто-назначение). "
+                      "Выкл — строго по порядку от стартового, даже если занято"),
+    )
 
     def invoke(self, context, event):
         return context.window_manager.invoke_props_dialog(self)
@@ -153,41 +159,52 @@ class GTATOOLS_OT_id_manager_assign_from(bpy.types.Operator):
         _id_preset_sync(context)
         from ..data.id_manager import get_used_ids, reserve_id
 
-        objs = [o for o in context.selected_objects if o.type == 'MESH']
+        objs = [o for o in context.selected_objects
+                if o.type == 'MESH' and hasattr(o, 'inu')]
         if not objs:
             self.report({'ERROR'}, T("Выделите меш объекты"))
             return {'CANCELLED'}
 
-        # Collision avoidance reads scene IDs directly (loop below) — we
-        # deliberately do NOT pull the whole scene into the preset here.
-        # Doing so flooded the manager's "used" list with map-imported
-        # IDs the user never assigned (the «From ID 80000 shows other
-        # ids I don't want» report). Only the IDs we hand out below get
-        # reserved in the preset.
+        # We deliberately do NOT pull the whole scene into the preset here —
+        # doing so flooded the manager's "used" list with map-imported IDs the
+        # user never assigned (the «From ID 80000 shows other ids I don't want»
+        # report). Only the IDs we hand out below get reserved in the preset.
         used = set(get_used_ids().keys())
-        # IDs already on scene objects are skipped so we never clash
-        # with a model that's already placed on the map.
+        # IDs on OTHER scene objects (not the current selection) — the selected
+        # objects are being re-numbered, so their own current IDs must not
+        # count as "occupied" or re-running «from X» on the same group would
+        # drift off the requested start.
+        sel_set = set(objs)
         for o in bpy.data.objects:
-            if o.type == 'MESH' and hasattr(o, 'inu') and o.inu.model_id > 0:
+            if (o.type == 'MESH' and o not in sel_set
+                    and hasattr(o, 'inu') and o.inu.model_id > 0):
                 used.add(o.inu.model_id)
+        for o in sel_set:                       # free the selection's own IDs
+            used.discard(o.inu.model_id)
 
         current_id = self.start_id
         assigned = 0
+        clashes = 0
         for obj in objs:
-            if hasattr(obj, 'inu'):
-                # Skip occupied IDs
+            if self.skip_occupied:
                 while current_id in used:
                     current_id += 1
-                obj.inu.model_id = current_id
-                # Reserve in preset too — otherwise the preset would
-                # keep showing these IDs as free and the next Auto
-                # Assign run would clash.
-                reserve_id(current_id, obj.name)
-                used.add(current_id)
-                current_id += 1
-                assigned += 1
+            elif current_id in used:
+                # Honour the requested start exactly, but flag the overlap so
+                # the user knows two objects now share this ID.
+                clashes += 1
+            obj.inu.model_id = current_id
+            # Reserve in preset too — otherwise the preset would keep showing
+            # these IDs as free and the next Auto Assign run would clash.
+            reserve_id(current_id, obj.name)
+            used.add(current_id)
+            current_id += 1
+            assigned += 1
 
-        self.report({'INFO'}, f"{T('Назначено ID:')} {assigned} ({self.start_id}+)")
+        msg = f"{T('Назначено ID:')} {assigned} ({self.start_id}+)"
+        if clashes:
+            msg += f" — {T('конфликтов с занятыми:')} {clashes}"
+        self.report({'WARNING' if clashes else 'INFO'}, msg)
         return {'FINISHED'}
 
 
