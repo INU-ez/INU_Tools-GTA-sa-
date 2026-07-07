@@ -33,37 +33,5 @@ def export_cst(filepath: str, objects, version: int = 3,
     return model
 
 
-class GTATOOLS_OT_export_cst(bpy.types.Operator):
-    """Экспорт выделения в текстовый файл Steve's COL Editor (.cst)"""
-    bl_idname = "gtatools.export_cst"
-    bl_label = "INU: Export CST (.cst)"
-    bl_options = {'REGISTER'}
-
-    filepath: bpy.props.StringProperty(subtype='FILE_PATH')
-    filter_glob: bpy.props.StringProperty(default="*.cst", options={'HIDDEN'})
-
-    def invoke(self, context, event):
-        if not self.filepath:
-            self.filepath = "model.cst"
-        context.window_manager.fileselect_add(self)
-        return {'RUNNING_MODAL'}
-
-    def draw(self, context):
-        from .col_export import _draw_col_auto_light
-        _draw_col_auto_light(self.layout, context)
-
-    def execute(self, context):
-        objs = [o for o in context.selected_objects
-                if o.type in ('MESH', 'EMPTY')]
-        if not objs:
-            self.report({'ERROR'}, "Select COL meshes or empties")
-            return {'CANCELLED'}
-        try:
-            export_cst(self.filepath, objs)
-            self.report({'INFO'}, f"Exported CST: {self.filepath}")
-            return {'FINISHED'}
-        except Exception as e:
-            self.report({'ERROR'}, f"CST export: {e}")
-            return {'CANCELLED'}
 
 

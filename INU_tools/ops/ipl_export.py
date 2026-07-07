@@ -41,13 +41,21 @@ def export_ipl(filepath: str, objects: list, *, binary: bool = False,
     ipl = IplFile()
     obj_per_inst: list = []
 
+    from ..tools.model_utils import get_model_type
     for obj in objects:
         if obj.type != 'MESH':
             continue
 
+        mt, base = get_model_type(obj)
+        # Collision is never placed in the IPL — bound to its DFF by name.
+        if mt == 'COL':
+            continue
+
         inu = getattr(obj, 'inu', None)
 
-        model_name = _clean_model_name(obj.name)
+        # LOD keeps its LOD<base> name so its placement references the LOD
+        # model, not the DFF.
+        model_name = ("LOD" + base) if mt == 'LOD' else _clean_model_name(obj.name)
         model_id = getattr(inu, 'model_id', 0) if inu else 0
         interior = getattr(inu, 'interior_id', 0) if inu else 0
         real_interior = getattr(inu, 'real_interior', 0) if inu else 0

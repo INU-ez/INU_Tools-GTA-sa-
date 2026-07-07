@@ -309,6 +309,30 @@ _bbox_last_selection = set()
 _bbox_near_set = set()
 
 
+def _bbox_meshes():
+    """Every mesh object BBox mode manages. Scans ALL meshes in the file, not
+    just the `Map_*` collections — Group-by-IPL trees and IMG-import put
+    objects in differently-named collections, so the old prefix filter left
+    them untouched and BBox mode «did nothing».
+
+    Хелперы НЕ трогаем: превью-объекты (inu.type='NON' — 2DFX короны и т.п.)
+    и меши с намеренно нестандартным display_type (WIRE-кубы секций IPL,
+    INU_LightCutter, SOLID-прокси) — иначе toggle-off сбрасывал бы их в
+    TEXTURED, затирая задуманный режим отрисовки. Управляем только
+    TEXTURED↔BOUNDS."""
+    out = []
+    for o in bpy.data.objects:
+        if o.type != 'MESH':
+            continue
+        inu = getattr(o, 'inu', None)
+        if inu is not None and getattr(inu, 'type', 'OBJ') == 'NON':
+            continue
+        if o.display_type not in ('TEXTURED', 'BOUNDS'):
+            continue
+        out.append(o)
+    return out
+
+
 @bpy.app.handlers.persistent
 def _bbox_selection_handler(scene, depsgraph):
     """Keep selected + nearby (300m) objects as TEXTURED, rest as BOUNDS.
@@ -321,6 +345,12 @@ def _bbox_selection_handler(scene, depsgraph):
     """
     global _bbox_last_selection, _bbox_near_set
     if not _bbox_mode_active:
+        return
+    # Only recompute in OBJECT mode. In Edit/Sculpt/Paint the object-level
+    # selection can't change anyway, and running this on EVERY mesh-edit
+    # depsgraph tick — each call builds `context.selected_objects`, which is
+    # O(number of objects) — is what made Edit Mode lag on big maps.
+    if getattr(bpy.context, 'mode', 'OBJECT') != 'OBJECT':
         return
 
     try:
@@ -340,16 +370,11 @@ def _bbox_selection_handler(scene, depsgraph):
     new_near = set()
     radius = 300.0
 
-    for col in bpy.data.collections:
-        if not col.name.startswith('Map_'):
-            continue
-        for obj in col.objects:
-            if obj.type != 'MESH':
-                continue
-            if obj.name in selected:
-                new_near.add(obj.name)
-            elif sel_positions and any((obj.location - sp).length <= radius for sp in sel_positions):
-                new_near.add(obj.name)
+    for obj in _bbox_meshes():
+        if obj.name in selected:
+            new_near.add(obj.name)
+        elif sel_positions and any((obj.location - sp).length <= radius for sp in sel_positions):
+            new_near.add(obj.name)
 
     # Objects that left the near zone → BOUNDS
     for name in _bbox_near_set - new_near:
@@ -505,17 +530,13 @@ class GTATOOLS_OT_toggle_bbox(bpy.types.Operator):
             radius = 300.0
             count = 0
             near = set()
-            for col in bpy.data.collections:
-                if not col.name.startswith('Map_'):
-                    continue
-                for obj in col.objects:
-                    if obj.type == 'MESH':
-                        is_near = (obj.name in selected or
-                                   (sel_positions and any((obj.location - sp).length <= radius for sp in sel_positions)))
-                        obj.display_type = 'TEXTURED' if is_near else 'BOUNDS'
-                        if is_near:
-                            near.add(obj.name)
-                        count += 1
+            for obj in _bbox_meshes():
+                is_near = (obj.name in selected or
+                           (sel_positions and any((obj.location - sp).length <= radius for sp in sel_positions)))
+                obj.display_type = 'TEXTURED' if is_near else 'BOUNDS'
+                if is_near:
+                    near.add(obj.name)
+                count += 1
 
             _bbox_last_selection = selected
             _bbox_near_set = near
@@ -523,13 +544,9 @@ class GTATOOLS_OT_toggle_bbox(bpy.types.Operator):
                 bpy.app.handlers.depsgraph_update_post.append(_bbox_selection_handler)
         else:
             count = 0
-            for col in bpy.data.collections:
-                if not col.name.startswith('Map_'):
-                    continue
-                for obj in col.objects:
-                    if obj.type == 'MESH':
-                        obj.display_type = 'TEXTURED'
-                        count += 1
+            for obj in _bbox_meshes():
+                obj.display_type = 'TEXTURED'
+                count += 1
 
             _bbox_last_selection = set()
             _bbox_near_set = set()

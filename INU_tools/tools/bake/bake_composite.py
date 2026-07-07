@@ -56,6 +56,97 @@ def _hsv_to_rgb(h, s, v):
     return np.stack([r, g, b], axis=-1)
 
 
+# ── Гауссово размытие (сепарабельное, чистый numpy) ──────────────────
+# Пост-обработка LightMap: смягчает блочность/остаточный шум на низком
+# разрешении (аналог OpenCV-фильтра The_Lightmapper), без внешних
+# зависимостей (cv2/scipy) — согласуется с политикой «single in-process
+# path». Сепарабельный проход по строкам и столбцам, края — clamp (edge).
+
+def _gauss_kernel_1d(radius):
+    """Нормированное 1D-гауссово ядро для радиуса `radius` (px). Полуширина
+    ≈3σ; σ=radius. Возвращает (2r+1,) float32."""
+    sigma = max(float(radius), 1e-3)
+    r = max(1, int(round(sigma * 3.0)))
+    x = np.arange(-r, r + 1, dtype=np.float32)
+    k = np.exp(-(x * x) / (2.0 * sigma * sigma))
+    k /= k.sum()
+    return k
+
+
+def _convolve1d_edge(a, k, axis):
+    """Свёртка `a` ядром `k` вдоль `axis` с edge-clamp по краям."""
+    r = len(k) // 2
+    pad = [(0, 0)] * a.ndim
+    pad[axis] = (r, r)
+    padded = np.pad(a, pad, mode='edge')
+    out = np.zeros_like(a)
+    n = a.shape[axis]
+    for i, w in enumerate(k):
+        sl = [slice(None)] * a.ndim
+        sl[axis] = slice(i, i + n)
+        out += w * padded[tuple(sl)]
+    return out
+
+
+def gaussian_blur(arr, radius):
+    """Гауссово размытие (h,w,ch) float-массива радиусом `radius` px. Размывает
+    только RGB (первые 3 канала); alpha (если есть) остаётся как есть —
+    силуэт/маска не должны замыливаться. radius<=0 → массив без изменений.
+    Возвращает НОВЫЙ массив (вход не мутируется)."""
+    if radius is None or radius <= 0:
+        return arr
+    k = _gauss_kernel_1d(radius)
+    ch = arr.shape[2]
+    n = min(3, ch)
+    rgb = arr[:, :, :n].astype(np.float32, copy=False)
+    rgb = _convolve1d_edge(rgb, k, 0)
+    rgb = _convolve1d_edge(rgb, k, 1)
+    out = arr.copy()
+    out[:, :, :n] = rgb
+    return out
+
+
+# ── Bilateral denoise (краесохраняющий, чистый numpy) ────────────────
+# Шумоподавление LightMap без зависимостей и без компоузера (в Blender 5.x
+# компоузер стал node-группой, и OIDN-нода через рендер-readback недоступна).
+# Bilateral сглаживает шум, сохраняя края: вес соседа = пространственный
+# гаусс × дальностный гаусс по разнице RGB. Alpha не трогаем.
+
+def _shift_clamp(a, dy, dx):
+    """a[clamp(y+dy), clamp(x+dx)] — сдвиг с edge-clamp по краям."""
+    h, w = a.shape[:2]
+    ys = np.clip(np.arange(h) + dy, 0, h - 1)
+    xs = np.clip(np.arange(w) + dx, 0, w - 1)
+    return a[ys][:, xs]
+
+
+def bilateral_denoise(arr, radius=3, sigma_space=3.0, sigma_range=0.12):
+    """Bilateral-денойз (h,w,ch) float-массива. Сглаживает шум, сохраняя
+    края. Размывает только RGB (первые 3 канала); alpha остаётся. radius=0
+    → без изменений. Возвращает НОВЫЙ массив (вход не мутируется)."""
+    if radius is None or radius <= 0:
+        return arr
+    ch = arr.shape[2]
+    n = min(3, ch)
+    rgb = arr[:, :, :n].astype(np.float32, copy=False)
+    inv_s2 = 1.0 / (2.0 * sigma_space * sigma_space)
+    inv_r2 = 1.0 / (2.0 * sigma_range * sigma_range)
+    acc = np.zeros_like(rgb)
+    wsum = np.zeros(rgb.shape[:2] + (1,), np.float32)
+    for dy in range(-radius, radius + 1):
+        for dx in range(-radius, radius + 1):
+            shifted = _shift_clamp(rgb, dy, dx)
+            spatial = float(np.exp(-(dx * dx + dy * dy) * inv_s2))
+            diff = shifted - rgb
+            rng = np.exp(-np.sum(diff * diff, axis=2, keepdims=True) * inv_r2)
+            wgt = spatial * rng
+            acc += shifted * wgt
+            wsum += wgt
+    out = arr.copy()
+    out[:, :, :n] = acc / np.maximum(wsum, 1e-8)
+    return out
+
+
 # ── Blend-функции ────────────────────────────────────────────────────
 # Каждая: (acc_rgb=низ, top_rgb=верх) -> blended_rgb, всё (h,w,3).
 # Это значение режима при полной непрозрачности (fac=1) — смешивание по
@@ -189,6 +280,17 @@ def linear_to_srgb(c):
                     1.055 * np.power(c, 1.0 / 2.4) - 0.055)
 
 
+def srgb_to_linear(c):
+    """sRGB → scene-linear (обратно linear_to_srgb). Нужно, чтобы numpy-
+    композит считался в ЛИНЕЙНОМ пространстве — как нодовый превью (там
+    Image Texture sRGB→linear, cg/blend в линейном). Иначе контраст/гамма и
+    блендинг в over-base/«Сохранить как» расходились с живым превью."""
+    c = np.clip(c, 0.0, 1.0)
+    return np.where(c <= 0.04045,
+                    c / 12.92,
+                    np.power((c + 0.055) / 1.055, 2.4))
+
+
 def apply_contrast_gamma(rgb, contrast=1.0, gamma=1.0):
     """Per-layer контраст/гамма. При (1.0, 1.0) — тождество (FUTURE-хук:
     движок уже зовёт это каждый прогон, включение = только UI)."""
@@ -242,15 +344,19 @@ def composite_layers(layer_pixels, layers, w, h, *, srgb=True):
                + 0.0722 * rgb[..., 2])
         return np.repeat(lum[..., None], 3, axis=-1)
 
+    # Композитим в ЛИНЕЙНОМ пространстве (как нодовый превью): картинки —
+    # sRGB-байт, переводим srgb→linear на входе, linear→srgb на выходе.
+    # Так контраст/гамма и блендинг совпадают с живым превью и с игрой.
     base = _resample_to(layer_pixels[enabled[0].map_id], w, h)
-    acc = base[..., :3].astype(np.float32)
+    acc = srgb_to_linear(base[..., :3].astype(np.float32))
     if getattr(enabled[0], 'desaturate', False):
         acc = _desat(acc)
     acc = apply_contrast_gamma(acc, enabled[0].contrast, enabled[0].gamma)
     base_alpha = base[..., 3].astype(np.float32)
 
     for L in enabled[1:]:
-        top = _resample_to(layer_pixels[L.map_id], w, h)[..., :3].astype(np.float32)
+        top = srgb_to_linear(
+            _resample_to(layer_pixels[L.map_id], w, h)[..., :3].astype(np.float32))
         if getattr(L, 'desaturate', False):
             top = _desat(top)
         top = apply_contrast_gamma(top, L.contrast, L.gamma)

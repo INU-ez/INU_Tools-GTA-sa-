@@ -21,6 +21,7 @@ from .bake_core import (
     run_cycles_bake,
     read_image_to_numpy,
     write_numpy_to_image,
+    denoise_image,
 )
 from .bake_maps import (
     BakeMapDef,
@@ -37,12 +38,20 @@ from .bake_camera import (
     plane_normal_world,
     reproject_billboard_uv,
 )
+from .bake_uv import (
+    ensure_lightmap_uv,
+    sample_image_uv,
+    sample_image_uv_batch,
+    LIGHTMAP_UV_NAME,
+)
 from .bake_composite import (
     LayerSpec,
     BLEND_MODES,
     composite_layers,
     linear_to_srgb,
     apply_contrast_gamma,
+    gaussian_blur,
+    bilateral_denoise,
 )
 
 __all__ = [
@@ -55,6 +64,7 @@ __all__ = [
     'run_cycles_bake',
     'read_image_to_numpy',
     'write_numpy_to_image',
+    'denoise_image',
     # bake_maps
     'BakeMapDef',
     'BAKE_MAPS',
@@ -68,10 +78,17 @@ __all__ = [
     'render_one_map_camera',
     'plane_normal_world',
     'reproject_billboard_uv',
+    # bake_uv
+    'ensure_lightmap_uv',
+    'sample_image_uv',
+    'sample_image_uv_batch',
+    'LIGHTMAP_UV_NAME',
     # bake_composite
     'LayerSpec',
     'BLEND_MODES',
     'composite_layers',
     'linear_to_srgb',
     'apply_contrast_gamma',
+    'gaussian_blur',
+    'bilateral_denoise',
 ]

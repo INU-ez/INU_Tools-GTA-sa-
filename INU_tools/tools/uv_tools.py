@@ -553,12 +553,16 @@ class GTATOOLS_OT_set_uv_align(bpy.types.Operator):
 
 
 class GTATOOLS_PT_uv_tools_panel(bpy.types.Panel):
-    """Панель UV инструментов GTA Tools"""
-    bl_label = "GTA Tools"
+    """Панель UV инструментов GTA Tools (вкладка «GTA Tools» UV-редактора).
+    Названа «UV Editor» — вкладка = GTA Tools, а панели внутри:
+    Texture Bake / UV Editor / UV Анимация."""
+    bl_label = "UV Editor"
     bl_idname = "GTATOOLS_PT_uv_tools_panel"
     bl_space_type = 'IMAGE_EDITOR'
     bl_region_type = 'UI'
     bl_category = 'GTA Tools'
+    bl_parent_id = "GTATOOLS_PT_uv_root"
+    bl_order = 20                      # между Texture Bake (10) и UV Анимация (50)
 
     def draw(self, context):
         layout = self.layout
@@ -681,6 +685,7 @@ class GTATOOLS_PT_uv_anim_panel(bpy.types.Panel):
     bl_space_type = 'IMAGE_EDITOR'
     bl_region_type = 'UI'
     bl_category = 'GTA Tools'
+    bl_parent_id = "GTATOOLS_PT_uv_root"
     bl_order = 50                      # после Bake и Рандомизатора
 
     def draw_header(self, context):

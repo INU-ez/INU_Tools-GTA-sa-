@@ -3,6 +3,29 @@
 # Values are English translations.
 
 LANG = {
+    # --- v2.2.0: added missing translations ---
+    "2DFX-размеры, Scene-свойства pre-Step-9.": "2DFX sizes, Scene props pre-Step-9.",
+    "IDE/IPL: файлы не выбраны в панели — пропущено": "IDE/IPL: no files picked in the panel — skipped",
+    "IMG перестроен: {0} записей, освобождено {1:.1f} МБ": "IMG rebuilt: {0} entries, {1:.1f} MB freed",
+    "LOD занимает уже занятый ID: ": "LOD uses an already-occupied ID: ",
+    "LOD-связь потеряна (lod_index = -1) у: {0}. Выдели DFF и его LOD вместе, или держи их в одном IPL.": "LOD link lost (lod_index = -1) for: {0}. Select the DFF and its LOD together, or keep them in one IPL.",
+    "Model ID = 0 у: {0}. Назначь ID (ID Manager → Auto-Assign) перед добавлением.": "Model ID = 0 for: {0}. Assign an ID (ID Manager → Auto-Assign) before adding.",
+    "Миграция данных из старых .blend (по требованию):": "Data migration from old .blend files (on demand):",
+    "Миграция старых данных завершена": "Legacy data migration complete",
+    "Нет запечённых карт": "No baked maps",
+    "Отменено — сцена будет перезагружена": "Cancelled — the scene will be reloaded",
+    "Пересобрать IMG (компакт)": "Rebuild IMG (compact)",
+    "Показ поверх UV1 выключен": "Show over UV1 turned off",
+    "После экспорта также дописать модели в IDE и IPL, выбранные в панели IDE / IPL / IMG (id, имя, TXD, дальность + расстановка и lod_index). Пути берутся из полей IDE / IPL панели": "After export, also append models to the IDE and IPL files picked in the IDE / IPL / IMG panel (id, name, TXD, draw distance + placement and lod_index). Paths are taken from the panel's IDE / IPL fields",
+    "Регенерация превью открывает .blend файлы библиотеки в этом окне Blender. Включи галочку «Разрешить сборку Asset Library» в настройках.": "Regenerating previews opens the library .blend files in this Blender window. Enable the “Allow Asset Library build” checkbox in settings.",
+    "Сборка Asset Library пересобирает текущую сцену (импортирует тысячи моделей и очищает данные сцены). Включи галочку «Разрешить сборку Asset Library» в настройках.": "Building the Asset Library rebuilds the current scene (imports thousands of models and clears scene data). Enable the “Allow Asset Library build” checkbox in settings.",
+    "Сборка библиотеки…": "Building library…",
+    "Сначала сохраните сцену (.blend) — кеш создаётся рядом с ней, и после сборки файл будет открыт заново": "Save the scene first (.blend) — the cache is created next to it, and the file is reopened after the build",
+    "Совместимость со старыми версиями": "Legacy compatibility",
+    "Сохрани изменения — сборка очищает текущую сцену и потеряет несохранённую работу (после сборки твой файл будет открыт заново)": "Save your changes — the build clears the current scene and will lose unsaved work (your file is reopened after the build)",
+    "Также в IDE / IPL (пути из панели)": "Also to IDE / IPL (paths from panel)",
+    "Укажите существующий .img файл": "Specify an existing .img file",
+    "дефолты Modulate Color, граф превью прилайта,": "Modulate Color defaults, prelight preview graph,",
     # bl_info
     "Набор инструментов для работы с GTA SA моделями. Requires DragonFF addon":
         "Toolset for GTA SA models. Requires DragonFF addon",
@@ -1107,6 +1130,9 @@ LANG = {
     # v1.6.3 — Copy color attributes
     "Day → Night": "Day → Night",
     "Night → Day": "Night → Day",
+    "Альфа вершин перенесена": "Vertex alpha transferred",
+    "Активным должен быть атрибут Day или Night":
+        "The active attribute must be Day or Night",
     "объектов": "objects",
 
     # v1.6.4 — Experimental features
@@ -1592,6 +1618,25 @@ LANG = {
     "Включите хотя бы одну галочку": "Enable at least one checkbox",
     "Изменено:": "Modified:",
     "Применить к выделенным": "Apply to selected",
+    "Применить настройки": "Apply settings",
+    "Убрать из модели": "Remove from model",
+    "Настройки — в свойствах пустышки": "Settings — in the empty's properties",
+    "Связи (пунктир)": "Relationship lines",
+    "Путь IDE — не .ide файл, проверь бокс IDE": "IDE path is not a .ide file — check the IDE box",
+    "Путь IPL — не .ipl файл, проверь бокс IPL": "IPL path is not a .ipl file — check the IPL box",
+    "Синхронизация с файлами": "Sync with files",
+    "Обновление сцены из файлов, отвязка, проверка": "Refresh scene from files, unlink, verify",
+    "Дополнительно (IPL)": "Advanced (IPL)",
+    "Секции IPL (cull/пути/гаражи) и замена Empty-заглушек": "IPL sections (cull/paths/garages) and replacing Empty placeholders",
+    "Обновить": "Refresh",
+    "Отвязать": "Unlink",
+    "Проверить": "Verify",
+    "Секции IPL (cull, пути, гаражи…):": "IPL sections (cull, paths, garages…):",
+    "Заменить Empty на модели": "Replace Empty with models",
+    "Присвоить выделенным:": "Assign to selected:",
+    "Очистить выделенные": "Clear selected",
+    "База ID и сервис": "ID database & service",
+    "Управление пресетом ID: sync, из игры, GC, лимит FLA": "Manage the ID preset: sync, from-game, GC, FLA limit",
 
     # ── Export-to-IMG TXD plan dialog ───────────────────────────────────
     "Экспортировать DFF + TXD + COL прямо в .img архив.\n\n    Перед записью открывается диалог со списком моделей и их TXD именами —\n    можно переключить режим на один общий TXD, отключить отдельные модели,\n    или отредактировать имя архива для каждой (модели с одинаковым TXD\n    именем попадут в один .txd с объединёнными текстурами)":
@@ -1668,6 +1713,7 @@ LANG = {
     "Day/Night показывают композит — рисуй на слое": "Day/Night show the composite — paint on a layer",
     "BETA": "BETA",
     "IMG: нет результатов экспорта": "IMG: no export results",
+    "Файл .img занят — закрой игру перед экспортом: {0}": "The .img file is locked — close the game before exporting: {0}",
     "Будут перекрашены": "Will be recoloured",
     "Перекрасить выделенные…": "Recolor Selected…",
     "Цвет": "Color",
@@ -2073,7 +2119,6 @@ LANG = {
     "COL Import: подготовка...": "COL Import: preparing...",
     "Fastman92 Limit Adjuster: 12-я колонка `realInterior` в IPL inst. Обычная SA читает только 11 колонок — это поле игнорируется без FLA. Пусто (0) = не использовать. Включить запись 12-й колонки можно в Map Export → FLA Extended IPL":
         "Fastman92 Limit Adjuster: 12th `realInterior` column in IPL inst. Vanilla SA reads only 11 columns — this field is ignored without FLA. Empty (0) = not used. Enable 12th column writing in Map Export → FLA Extended IPL",
-    "Modulate Color снят": "Modulate Color disabled",
     "Rebuild Archive в IMG-туле — иначе игра подтянет старую запись":
         "Rebuild Archive in IMG tool — otherwise game keeps the old entry",
     "Имя Action содержит спецсимволы — IDE entry может не сработать":
@@ -2140,8 +2185,18 @@ LANG = {
         "only Paintjob 2 filled — both required",
     "заполнен только Paintjob 1 — нужны оба":
         "only Paintjob 1 filled — both required",
-    "Modulate Color на меше с vertex colors — может flicker":
-        "Modulate Color on mesh with vertex colors — may flicker",
+    "Night ломает UV-анимацию в retail SA":
+        "Night vcols break UV animation in retail SA",
+    "Сними Night (ночные vcol) на UV-аним модели":
+        "Disable Night (night vcols) on UV-anim models",
+    "Ночные vertex colors (Night) отключают UV-анимацию в retail SA — сними Night на этой модели":
+        "Night vertex colors disable UV animation in retail SA — clear Night on this model",
+    "Меш без текстур определён как COL — он не попадёт в DFF/IDE/IPL экспорт. Добавь текстуру или пометь тип COL явно":
+        "Untextured mesh classified as COL — it will be skipped by DFF/IDE/IPL export. Add a texture or tag it COL explicitly",
+    "Имя для IMG длиннее 23 символов — обрежется и не совпадёт с IDE/IPL: {0}. Укороти имя модели.":
+        "IMG entry name longer than 23 characters — it will be truncated and won't match IDE/IPL: {0}. Shorten the model name.",
+    "IPL: пропущены строки с model_id 0 (задай ID): ":
+        "IPL: rows with model_id 0 skipped (assign an ID): ",
     "LOD без main DFF — engine не сможет переключиться между ближним и дальним LOD":
         "LOD without a main DFF — the engine can't switch between near/far LODs",
     "COL без main DFF — коллизия не привязана к модели":
@@ -2795,8 +2850,6 @@ LANG = {
         'Normalise every quaternion key in the specified Action.\n    Identical to what the IFP exporter does on the fly, but writes the\n    fix back into the Action — next export has nothing left to normalise.',
     "Переименовать объект, заменив неправильный разделитель в\n    суффиксе на тот, что задан в настройках суффиксов сцены.\n\n    Применимо только к мисматчу типа «.DFF при настройке _DFF» —\n    т.е. имя оканчивается на конфигурированный bare-token, но через\n    другой разделитель. Двойной суффикс (body_LOD_DFF) не трогаем —\n    там нет однозначного автоматического fix'а.":
         "Rename the object, replacing the wrong separator in the\n    suffix with the one set in scene suffix preferences.\n\n    Applies only to mismatches like «.DFF when configured as _DFF» —\n    i.e. the name ends with the configured bare-token but via\n    a different separator. A double suffix (body_LOD_DFF) is left\n    alone — there's no unambiguous automatic fix.",
-    'Снять флаг Modulate Color у указанного объекта — устраняет\n    flicker на прилайтных мешах.':
-        'Clear the Modulate Color flag on the specified object —\n    fixes flicker on prelit meshes.',
     "Временно слить co-located вершины для редактирования весов.\n\n    Backup'ит mesh datablock, усредняет веса между cluster-mate'ами,\n    делает bmesh remove_doubles. В Outliner'е остаётся один объект.":
         'Temporarily merge co-located vertices for weight editing.\n\n    Backs up the mesh datablock, averages weights between cluster-mates,\n    runs bmesh remove_doubles. A single object remains in the Outliner.',
     "Применить покрашенные веса обратно на оригинальную split-геометрию.\n\n    Считывает веса с merged-меша, swap'ает mesh datablock обратно на\n    backup (со split-вершинами), распределяет веса по cluster-mate'ам\n    через position-match.":
@@ -3855,6 +3908,73 @@ LANG = {
     "В IDE, разошлись": "In IDE, drifted",
     "В IPL, разошлись": "In IPL, drifted",
     "Листва / Дерево": "Foliage / Tree",
+
+    # -- LightMap bake (GI from real scene light) --
+    "Денойз": "Denoise",
+    "Шумоподавление": "Noise reduction",
+    "Шумоподавление запечённого LightMap встроенным OIDN (нода Denoise компоузера). GI-запечка шумная — денойз почти обязателен для чистого результата": "Denoise the baked LightMap with the built-in OIDN (compositor Denoise node). GI baking is noisy — denoising is almost mandatory for a clean result",
+    "Шумоподавление шумных карт (AO / Shadow / Diffuse Lit / Emission GI / LightMap). Их запечка светозависимая/GI и шумит — денойз чистит. К плоским картам не применяется": "Denoise the noisy maps (AO / Shadow / Diffuse Lit / Emission GI / LightMap). Their bake is light-dependent / GI and grainy — denoise cleans it. Not applied to flat maps",
+    "Сэмплы LightMap": "LightMap samples",
+    "Сэмплы Cycles для карты LightMap. GI шумнее AO — нужно больше. С денойзом можно ниже": "Cycles samples for the LightMap. GI is noisier than AO — needs more. With denoising you can go lower",
+    "Применить как": "Apply as",
+    "Слой в стеке": "Layer in stack",
+    "Оставить MULTIPLY-слоем в стеке — сведёте/сохраните сами, как остальные карты": "Keep it as a MULTIPLY layer in the stack — flatten/save yourself, like the other maps",
+    "Впечь в диффуз": "Bake into diffuse",
+    "Умножить LightMap × диффуз-текстуру → одна готовая текстура. Работает в ванильной GTA SA без шейдеров": "Multiply LightMap × diffuse texture → one ready texture. Works in vanilla GTA SA without shaders",
+    "В vertex prelight": "To vertex prelight",
+    "Сэмплировать LightMap по вершинам в prelight-цвета «Day» — нативное статическое освещение GTA SA": "Sample the LightMap per-vertex into the \"Day\" prelight colors — native GTA SA static lighting",
+    "Отдельная текстура + 2 UV": "Separate texture + 2 UV",
+    "Сохранить как LP_-текстуру и повесить через 2-й UV-канал Multiply-шейдером (нужен MTA). Макс. качество": "Save as an LP_ texture and attach via a 2nd UV channel with a Multiply shader (needs MTA). Max quality",
+    "Как использовать запечённый LightMap в GTA SA": "How to use the baked LightMap in GTA SA",
+    "Авто lightmap-UV": "Auto lightmap UV",
+    "Качество": "Quality",
+    "Пресет сэмплов LightMap (как в The_Lightmapper). «Своё» — использовать ползунок «Сэмплы LightMap»": "LightMap sample preset (like The_Lightmapper). \"Custom\" — use the \"LightMap samples\" slider",
+    "Своё": "Custom",
+    "Из ползунка «Сэмплы LightMap»": "From the \"LightMap samples\" slider",
+    "Черновик": "Preview",
+    "32 сэмпла — быстро, для превью": "32 samples — fast, for preview",
+    "Средне": "Medium",
+    "128 сэмплов": "128 samples",
+    "Высоко": "High",
+    "512 сэмплов": "512 samples",
+    "Продакшн": "Production",
+    "1024 сэмпла — чисто, медленно": "1024 samples — clean, slow",
+    "Режим света": "Light mode",
+    "Какой свет запекать в LightMap": "Which light to bake into the LightMap",
+    "Полный (прямой+отражённый)": "Full (direct + indirect)",
+    "Прямой свет + глобальное освещение (GI). Обычный выбор": "Direct light + global illumination (GI). The usual choice",
+    "Только отражённый (GI)": "Indirect only (GI)",
+    "Только непрямой отскок света — прямой оставить динамическим/в prelight": "Only the indirect bounce — leave direct light dynamic / in prelight",
+    "Только прямой": "Direct only",
+    "Только прямой свет и тени, без отскока": "Only direct light and shadows, no bounce",
+    "Денойз по albedo/normal": "Denoise with albedo/normal",
+    "Скормить денойзеру запечённые Diffuse (albedo) и Normal как доп-пассы — чище результат на краях. Работает, если эти карты запечены в том же размере": "Feed the baked Diffuse (albedo) and Normal to the denoiser as extra passes — cleaner edges. Works if those maps are baked at the same size",
+    "Интенсивность": "Intensity",
+    "Яркость запечённого LightMap. Меняется без пере-запекания — кнопкой «Обновить лайтмап» ниже": "Brightness of the baked LightMap. Change without re-baking via the \"Update lightmap\" button below",
+    "Смягчение": "Softening",
+    "Размытие LightMap — сглаживает зерно/блочность. 0 = выкл. Меняется без пере-запекания — кнопкой «Обновить лайтмап» ниже": "Blur of the LightMap — smooths grain / blockiness. 0 = off. Change without re-baking via the \"Update lightmap\" button below",
+    "Обновить лайтмап": "Update lightmap",
+    "Применить Интенсивность и Смягчение к запечённому LightMap — быстро, без повторной запечки. Крутишь ползунки → жмёшь → результат обновился.": "Apply Intensity and Softening to the baked LightMap — fast, without re-baking. Drag the sliders → click → the result updates.",
+    "Лайтмап обновлён": "Lightmap updated",
+    "LightMap запечён — превью на модели": "LightMap baked — preview on model",
+    "Показать поверх базы (UV2)": "Show over base (UV2)",
+    "Показать поверх UV1": "Show over UV1",
+    "Объединить и сохранить": "Merge and save",
+    "Показано: база(UV1) × запечённое(UV2), UV2: ": "Shown: base(UV1) × baked(UV2), UV2: ",
+    "Создать отдельный непересекающийся UV-канал «LightMap» авто-развёрткой (для режима «Отдельная текстура + 2 UV»)": "Create a separate non-overlapping \"LightMap\" UV channel by auto-unwrap (for the \"Separate texture + 2 UV\" mode)",
+    "Применить LightMap": "Apply LightMap",
+    "Сначала запеките слой LightMap": "Bake the LightMap layer first",
+    "LightMap — слой в стеке. Сведите «Сохранить как»": "LightMap is a layer in the stack. Flatten with \"Save as\"",
+    "Нет запечённого Diffuse — добавьте слой Diffuse и запеките": "No baked Diffuse — add a Diffuse layer and bake",
+    "Размеры Diffuse и LightMap не совпадают — печатайте в одном размере": "Diffuse and LightMap sizes differ — bake them at the same size",
+    "LightMap впечён в диффуз: ": "LightMap baked into diffuse: ",
+    "У объекта нет UV для сэмплинга LightMap": "The object has no UV to sample the LightMap",
+    "Не удалось создать prelight-атрибут «Day»": "Could not create the \"Day\" prelight attribute",
+    "LightMap записан в prelight «Day»": "LightMap written into the \"Day\" prelight",
+    "LightMap записан в prelight «Day» — превью прилайта включено": "LightMap written into the \"Day\" prelight — prelight preview enabled",
+    "Нет материалов с Principled BSDF для lightmap-UV2": "No Principled BSDF materials for the lightmap UV2",
+    "LightMap как LP_-текстура на ": "LightMap as an LP_ texture on ",
+    " материал(ов), UV2: ": " material(s), UV2: ",
 
     # -- v2.1.0 scene_settings localisation --
     "3D-расстояние от центра кроны — для округлых крон": "3D distance from the crown center — for rounded crowns",

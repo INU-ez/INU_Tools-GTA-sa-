@@ -582,3 +582,42 @@ def list_files(img_path: str) -> list[str]:
     return [e.name for e in read_directory(img_path)]
 
 
+def rebuild_img(filepath: str) -> dict:
+    """Compact an IMG archive — drop the dead sectors left behind when an
+    entry was replaced with larger data and appended instead of overwritten
+    in place (``ImgWriter.add`` repoints the directory but never reclaims the
+    old slot, so repeated re-exports bloat the file).
+
+    Reads every live directory entry, writes a fresh archive with sequential
+    offsets, then atomically replaces the original (and its sibling ``.dir``
+    for VER1). Returns ``{'entries', 'old_size', 'new_size', 'saved'}`` (bytes).
+    """
+    version = detect_img_version(filepath)
+    old_size = os.path.getsize(filepath)
+
+    # 1. Read every live entry's (sector-aligned) data.
+    with ImgReader(filepath) as r:
+        blobs = [(e.name, r.read(e.name)) for e in r.entries]
+
+    # 2. Write a fresh, compacted archive beside the original.
+    tmp = filepath + '.rebuild_tmp'
+    tmp_dir = _sibling_dir_path(tmp)
+    for _p in (tmp, tmp_dir):
+        if os.path.exists(_p):
+            os.remove(_p)
+    create_img(tmp, version=version)
+    with ImgWriter(tmp, version=version) as w:
+        for name, data in blobs:
+            if data:
+                w.add(name, data)
+
+    # 3. Atomically swap in the rebuilt archive (+ sibling .dir for VER1).
+    os.replace(tmp, filepath)
+    if version == IMG_VERSION_1 and os.path.exists(tmp_dir):
+        os.replace(tmp_dir, _sibling_dir_path(filepath))
+
+    new_size = os.path.getsize(filepath)
+    return {'entries': len(blobs), 'old_size': old_size,
+            'new_size': new_size, 'saved': max(0, old_size - new_size)}
+
+

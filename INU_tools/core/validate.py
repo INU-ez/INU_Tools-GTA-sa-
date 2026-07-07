@@ -128,25 +128,32 @@ def check_quaternions(actions, eps=1e-3):
     return out
 
 
-def check_modulate_color(meshes):
-    """MESH objects with `inu.modulate_color = True` AND vertex colors.
+def check_uv_anim_night_vcols(meshes):
+    """MESH objects that carry BOTH a UV-animated material AND night
+    vertex colors (Night flag on, or a Night colour attribute).
 
-    Combination flickers in-game on prelit DFFs (а DFF выглядит
-    «как прилайт» с включённым флагом).
+    Night vertex colors silently disable UV animation in retail
+    gtasa.exe — confirmed in-game and documented in the ponz2009 SA
+    tips. librw/euryopa ignore night vcols so the anim plays there,
+    which makes it look like a DFF-format bug when it isn't. Dropping
+    the night layer (or the Night flag) restores the animation.
 
     Args:
         meshes: iterable of dicts with keys
-            name (str), modulate_color (bool), has_vcol (bool)
+            name (str), has_uv_anim (bool),
+            night_flag (bool), has_night_vcol (bool)
     """
     out = []
     for m in meshes:
-        if m['modulate_color'] and m['has_vcol']:
-            out.append(_issue(
-                'WARNING', 'ModulateColor',
-                'Modulate Color на меше с vertex colors — может flicker',
-                'OBJECT', m['name'],
-                fix_op_id='gtatools.validate_fix_modulate_color',
-                fix_arg=m['name']))
+        if not m.get('has_uv_anim'):
+            continue
+        if not (m.get('night_flag') or m.get('has_night_vcol')):
+            continue
+        out.append(_issue(
+            'WARNING', 'UVAnimNightVcol',
+            'Ночные vertex colors (Night) отключают UV-анимацию в '
+            'retail SA — сними Night на этой модели',
+            'OBJECT', m['name']))
     return out
 
 
@@ -180,6 +187,29 @@ def check_orphan_models(models):
                 'WARNING', 'OrphanModel',
                 'COL без main DFF — коллизия не привязана к модели',
                 'OBJECT', by_type['COL']))
+    return out
+
+
+def check_untextured_col(models):
+    """Warn about meshes classified COL ONLY by the no-texture heuristic
+    (no ``inu.type`` tag, no name marker). Plain-coloured models are legal
+    in GTA SA, but a heuristic-COL mesh silently skips DFF/IDE/IPL export —
+    the model vanishes from the game with no error. The user should either
+    add a texture (making it a DFF) or tag it COL explicitly.
+
+    Args:
+        models: iterable of dicts as in check_orphan_models, plus the
+            optional key ``heuristic_col`` (bool) set by the gatherer.
+    """
+    out = []
+    for m in models:
+        if m.get('heuristic_col'):
+            out.append(_issue(
+                'WARNING', 'UntexturedModel',
+                'Меш без текстур определён как COL — он не попадёт в '
+                'DFF/IDE/IPL экспорт. Добавь текстуру или пометь тип '
+                'COL явно',
+                'OBJECT', m['name']))
     return out
 
 

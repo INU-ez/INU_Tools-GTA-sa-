@@ -258,6 +258,10 @@ class UVAnim:
     в GTA SA)."""
     name: str = ""
     type_id: int = 0x1C1            # Kam: 449 = 0x1C1 (НЕ 0x1C0!)
+    # nodeToUV: в стоке SA тут мусорные указатели (игра заполняет в рантайме) —
+    # наши нули ОК, формат сверен байт-в-байт со стоковыми UV-аним моделями.
+    # Пробовали (1,0,…) чтобы оживить анимацию в retail gtasa.exe — НЕ помогло
+    # (там дело в движке/сетапе, не в DFF; euryopa/librw играет и с нулями).
     node_to_uv: tuple = (0, 0, 0, 0, 0, 0, 0, 0)
     duration: float = 1.0
     keyframes: list = field(default_factory=list)   # list[UVAnimKeyframe]

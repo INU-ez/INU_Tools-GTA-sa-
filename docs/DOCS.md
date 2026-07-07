@@ -24,17 +24,15 @@
   - [IMG Archive](#img-archive)
   - [Preset / data folder](#preset--data-folder)
   - [BBox Mode](#bbox-mode)
-  - [Suffixes / Prefixes](#suffixes--prefixes)
+  - [Model type detection (DFF / LOD / COL)](#model-type-detection-dff--lod--col)
   - [LOD Detection](#lod-detection)
   - [Model ID Manager](#model-id-manager)
 - [Materials](#materials)
-  - [GTA SA Material Effects](#gta-sa-material-effects)
+  - [GTA Material](#gta-material)
   - [COL Surface Types](#col-surface-types)
   - [Textures](#textures)
 - [Prelight (Vertex Colors)](#prelight-vertex-colors)
   - [Baking](#baking)
-  - [Fill Colors](#fill-colors)
-  - [Scatter Light](#scatter-light)
   - [Scatter Color](#scatter-color)
   - [Post-Processing](#post-processing)
   - [COL Light](#col-light)
@@ -100,7 +98,7 @@
 
 ### Export a model to GTA SA
 
-1. Name objects with suffixes: `mybuilding_DFF`, `mybuilding_COL`, `mybuilding_LOD`
+1. Name objects so types are auto-detected — put `LOD` in LOD names (`LODmybuilding`), and use `_DFF` / `_COL` when a model and its collision share a base name (see [Model type detection](#model-type-detection-dff--lod--col))
 2. Set **Model ID**, **TXD Name**, **Draw Distance** in object properties (`obj.inu`)
 3. Select all, click **Export All** → choose folder
 4. Output: `mybuilding.dff`, `mybuilding.col`, `LODmybuilding.dff`, `mybuilding.txd`
@@ -126,7 +124,7 @@ Five free-floating GPU-rendered windows give one-click access to the most-used o
 |---|---|---|
 | **Info** | Active object readout (vert/face/material counts, format-limit warnings), IDE flag checkboxes, DFF/LOD/COL triplet jumps | Click 🪟 in any N-panel's `Object IDE / IPL` header |
 | **Import / Export** | Selection diagnostic, Import / Export menus, Auto TXD + DXT backend, Pipeline picker (Vehicle/D/N/Building/Ped), DFF Flags collapsible | Click 🪟 in **Export** panel header |
-| **Validation** | Pre-export sweep results (quaternions, paintjob, modulate color, _ok/_dam pairs) with one-click fixes | Click 🪟 in **Check** panel header |
+| **Validation** | Pre-export sweep results (quaternions, paintjob, UV-anim × night vcols, _ok/_dam pairs) with one-click fixes | Click 🪟 in **Check** panel header |
 | **Lighting** | Prelight preset picker, 8-lamps toggle, Day/Night vcol controls, bake, copy, LightMap row | Click 🪟 in **Prelight** panel header |
 | **IDE / IPL / IMG** | Fused 2×2 Add/Del/Import/Export per format, IPL Sections row, Replace Empty, IMG header with toggles | Click 🪟 in **IDE / IPL / IMG** panel header |
 
@@ -287,7 +285,7 @@ Split the mesh or simplify (Decimate).
 |--------|----------|-------------|
 | Export All (To Folder) | `gtatools.export_all` | Batch export DFF+COL+LOD+TXD |
 
-Select objects with suffixes (`_DFF`, `_LOD`, `_COL`), click Export All, choose output folder.
+Select your model + its LOD + collision (types are auto-detected — `LOD` in the name marks a LOD, `_DFF`/`_COL` separate a model from its collision), click Export All, choose output folder.
 
 **Toggles:** DFF / COL / LOD / TXD — enable/disable each format.
 
@@ -393,6 +391,8 @@ The mirror of multi-select import: select several models and get **one `.dff` pe
 
 Conditional options appear when their format is on: a **COL Library** package toggle (all collisions into one multi-entry `.col`), shared-TXD packaging, and the collision auto-light block (shared by COL and CST).
 
+**Также в IDE / IPL** *(Also to IDE / IPL — paths from the panel)*: when ticked, after the models are written the exporter also appends each one to the **IDE** and **IPL** files currently picked in the **IDE / IPL / IMG** panel (id, name, TXD, draw distance + placement, and the recomputed `lod_index`).
+
 **All → IMG:** at the bottom of the dialog, the **All → IMG** toggle redirects the whole export straight into the `.img` archive whose path is set in the addon preferences — the chosen folder is ignored. If no `.img` path is configured the dialog shows an error and the export is blocked.
 
 **Pipeline (to a folder):**
@@ -414,6 +414,43 @@ Conditional options appear when their format is on: a **COL Library** package to
 
 **Panel:** View3D → Sidebar (N) → GTA Tools → IDE / IPL / IMG
 **Settings:** Properties → Scene → INU Tools → Import Map
+
+### Adding models to the game — full pipeline
+
+The end-to-end flow for putting one or more models (with or without LOD) into GTA SA. Example: four models, each with a main model, collision, textures and a LOD:
+
+```
+base   →  base.dff   base.col   base.txd   LODbase.dff
+base1  →  base1.dff  base1.col  base1.txd  LODbase1.dff
+base2  →  base2.dff  base2.col  base2.txd  LODbase2.dff
+base3  →  base3.dff  base3.col  base3.txd  LODbase3.dff
+```
+*(A LOD normally reuses the main model's TXD — no separate `LODbase.txd` is needed, it shares `base.txd`.)*
+
+**What each piece is:** **DFF** = the model itself · **COL** = collision · **TXD** = texture container · **LOD** = the low-detail model shown at distance · **IMG** = the game's big archive of .dff/.txd/.col · **IDE** = the model's "passport" (ID, name, TXD, draw distance, flags) · **IPL** = placement in the world (coordinates, rotation, and the main↔LOD link).
+
+**Order that won't break: ID → IMG → IDE → IPL → Rebuild IMG.**
+
+**1. Name objects correctly.** Main model → `base`; LOD → `LODbase` (the `LOD` marker tags it); collision → set its type to COL (or leave it untextured). The addon groups everything by base name: `base` + `LODbase` + collision = one model. Explicit suffixes also work as a manual override (`_DFF`/`_dff`, `_LOD`/`_lod`, `_COL`/`_col`, case-insensitive).
+
+**2. Assign Model IDs FIRST.** The game references models by a numeric ID. ID Manager → Auto-Assign gives each model and each LOD a free ID, e.g. `base`=18000, `LODbase`=18001, `base1`=18002 … **If an ID is still 0, Add-to-IDE/IPL refuses with an error** — a row with ID 0 corrupts the game (0 = the player model). Always assign IDs before adding.
+
+**3. Pack into the IMG.** Pick your `.img`, Export to IMG. It builds and stores `base.dff`, `LODbase.dff`, `base.col`, `base.txd` (× all models). **Name limit: each entry name is ≤ 24 chars incl. extension.** The longest is the LOD (`LOD`+base+`.dff`), so if `base` is too long the export **blocks and asks you to shorten** — a truncated name wouldn't match the IDE/IPL and the model would be invisible. (Collision note: `base.col` goes into the IMG; make sure your setup actually loads collision from there, or embed it in the DFF.)
+
+**4. Add to IDE (define the models).** Pick your `.ide`, Add to IDE. One line per model + one per LOD:
+```
+18000, base,    base,  299, flags
+18001, LODbase, base,  999, flags     ← LOD: own ID, same TXD, far draw distance
+18002, base1,   base1, 299, flags
+...
+```
+Rows go to the **picked file** (the chosen file always wins — no silent split). Flags imported from another game (VC/III) are auto-translated to SA.
+
+**5. Add to IPL (place in the world).** Pick your `.ipl`, position the objects, Add to IPL. Each row: ID, name, interior, X/Y/Z, rotation, and **lod_index** — a pointer to the LOD's row in the same IPL. **Select the main model AND its LOD together** so the LOD lands in the same file and the link is set. Adding them separately / to different files loses the link — the addon now tries to recover it from the file and warns if it can't. Coordinates/rotation come from the object's real world transform (parenting and rotation included).
+
+**6. Rebuild IMG (compact).** After exports — especially re-exports — use Rebuild IMG to reclaim dead space (each replace appends new data and leaks the old block). It rewrites the archive cleanly via an atomic file swap.
+
+**In game:** IPL says "model 18000 stands at X" → IDE says ID 18000 is `base`, TXD `base`, draw 299 → the streamer loads `base.dff`/`base.txd`/collision from the IMG → at distance it swaps to `LODbase.dff` (18001). Same in parallel for `base1`/`base2`/`base3`.
 
 ### Import Map Workflow
 
@@ -602,51 +639,62 @@ When enabled, all Map_ collection objects switch to `BOUNDS` display. Objects wi
 
 > 💡 **Example:** imported the LA map (5000+ objects), Blender struggles with viewport rendering. Toggle **BBox: ON** → distant buildings become wireframe boxes, objects within 300m of your selected one stay fully textured. Viewport flies.
 
-### Suffixes / Prefixes
+### Model type detection (DFF / LOD / COL)
 
-**Panel:** N-sidebar (`N`) → GTA Tools → **Export / Import** → ▸ Suffixes / Prefixes *(collapsible section, same style as DFF Flags)*
+The addon detects a mesh's model type **automatically** — no need to rename the
+scene. The old editable "Suffixes / Prefixes" section was removed; the suffixes
+remain as a manual **override**.
 
-Determine how the addon recognizes model type by object name in Blender.
+Detection order (top to bottom — first match wins):
 
-**Suffixes** (end of name):
-- DFF: `_DFF` → `mybuilding_DFF` recognized as DFF model
-- LOD: `_LOD` → `mybuilding_LOD` recognized as LOD model
-- COL: `_COL` → `mybuilding_COL` recognized as collision
+1. **Explicit marker on the name** — suffix `_DFF` / `_LOD` / `_COL` / `_SHA`
+   (or a prefix) → that type. Use it to force a type by hand.
+2. **Object tag `inu.type = COL/SHA`** (stamped by the COL importer and the
+   Batch Set Type button) → **COL**. Reliable for anything imported as `.col`;
+   checked before the LOD rule so a collision with an accidental `lod` in its
+   name isn't read as a LOD.
+3. **A `lod` token** anywhere in the name (**case-insensitive** — the same rule
+   the map importer uses) → **LOD**. `LODfunc_detail`, `func_LOD`, vanilla
+   lowercase `lodxxx` → LOD; the base name is taken without `lod` (so it pairs
+   with the HD model).
+4. **Texture heuristic** — a material with an image → **DFF**; no materials, or
+   materials with no texture → **COL**.
 
-**Prefixes** (start of name):
-- LOD: `LOD` → `LODmybuilding` recognized as LOD model
+> 💡 Addon-imported meshes already carry the type tag; external meshes (map
+> converters, e.g. `func_detail` / `LODfunc_detail`) are classified by name and
+> textures with no renaming.
 
-You can use **either suffix or prefix** for each type — not both. When entering one, the other is automatically cleared. If neither is set — the model is treated as DFF.
+> ⚠️ An **untextured visible DFF** (vertex-colour / flat-colour, no image) lands
+> in COL via rule 4. If such a model must be a DFF, add a `_DFF` suffix.
 
-When exporting IDE/IPL, LOD models are always written with `LOD` prefix (GTA SA format).
+**Why the suffixes stayed (override):** Blender can't hold two objects with the
+same name, so a DFF and its COL sharing one base name can't coexist — you'll use
+`_DFF` / `_COL` for the pair. The suffix also sets the base name used to pair
+models on export.
 
-> 💡 **Example — switch project convention:** your old project uses suffixes `_DFF`/`_LOD`/`_COL`, but a new teammate works with `LOD` prefix and no DFF suffix. Open Suffixes/Prefixes in the Export panel → clear `Suffix DFF` and `Suffix LOD` → type `LOD` into **Prefix LOD**. All scene objects are now recognized by the new convention without renaming (verify via Object Properties → INU Tools: Model → "By name: ...").
+When exporting IDE/IPL, LOD models are always written with the `LOD` prefix
+(GTA SA format).
 
 ### LOD Detection
 
-Vanilla GTA SA and Rockstar's own tools ship LOD models with several naming conventions — not only the standard `LOD<name>` prefix. When importing maps, INU Tools detects LODs with a two-layer strategy:
+When importing maps, INU Tools decides which models are LODs in two layers:
 
-**Layer 1 (authoritative) — IPL cross-reference.** Every IPL `inst` line has a `lod_index` field pointing to the LOD companion's line number in the same file. Any instance another line references is marked as LOD regardless of its filename. This is 100% reliable for properly authored maps.
+**Layer 1 (authoritative) — IPL cross-reference.** Every IPL `inst` line has a `lod_index` field pointing to its LOD companion's line in the same file. Any instance another line references is a LOD regardless of its name. 100% reliable for properly authored maps.
 
-**Layer 2 (fallback) — name heuristic.** For loose imports, broken IPLs, or scene operations where no IPL context is available, the addon recognises these patterns:
+**Layer 2 (fallback) — name.** When no IPL context is available, a name is a LOD if it **contains `lod` anywhere (case-insensitive)** — prefix `LODfoo` / `lodfoo`, suffix `foo_LOD`, or embedded `des_damlodbit04`. For real GTA map names `lod` reliably means a LOD; the rare English words that contain it (`lodge`, `explode`) don't occur as model names. This is the same `is_lod_name` rule the **type detector** (above) uses, so import and export agree.
 
-| Name | Treated as LOD? | Stripped to | Why |
-|---|---|---|---|
-| `LOD_foo` | ✅ | `foo` | prefix + trailing `_` consumed |
-| `LODfoo`, `lodfoo` | ✅ | `foo` | prefix without separator |
-| `foo_LOD`, `foo_lod` | ✅ | `foo` | suffix `_LOD` consumed whole |
-| `tatar_str_1LOD` | ✅ | `tatar_str_1` | bare suffix adjacent to digit |
-| **`modeLODlaett`** | ✅ | `modelaett` | embedded uppercase `LOD` with lowercase neighbor (legacy Rockstar splice) |
-| **`foo_LOD_bar`** | ❌ | — | `LOD` surrounded by `_` on both sides → treated as a literal token in the middle |
-| **`bar_LOD_baz_LOD_qux`** | ❌ | — | same — every occurrence is between separators |
-| `CLOD`, `FLOOD` | ❌ | — | all-uppercase, no lowercase neighbour |
-| `explode`, `clodmock` | ❌ | — | no uppercase `LOD` (case-sensitive check) |
+**Base-name stripping** (`strip_lod_marker`) removes the marker to recover the base name for COL/DFF/LOD pairing:
 
-**Embedded rule in detail.** The detector looks for a case-sensitive uppercase `LOD` substring. It only flags a match if at least one directly-adjacent character is lowercase — so `modeLODlaett` (neighbours `e`/`l` are lowercase) is recognised as LOD, but `foo_LOD_bar` (both neighbours are `_`) is not. This matches Rockstar's legacy pattern where `LOD` was spliced into the middle of a base name (e.g. base `modelaett` → LOD `modeLODlaett`) while avoiding false positives on names that use `_LOD_` as a literal token.
+| Name | Stripped to |
+|---|---|
+| `LODbush2b`, `lod_tree` | `bush2b`, `tree` |
+| `bush1b_LOD`, `tatar_str_1LOD` | `bush1b`, `tatar_str_1` |
+| `modeLODlaett` (embedded) | `modelaett` |
+| `barrier1` (no `lod`) | `barrier1` (unchanged) |
 
-**When it matters.** The strip logic is used during map import renaming, `Replace IPL Placeholders`, collection sorting, and COL/DFF pair matching. Getting the base name right is what lets the importer send the model to `Map_LOD` instead of `Map_DFF_*` collections and lets the paired-object utilities find the HD twin.
+**When it matters.** Used for map-import renaming, `Replace IPL Placeholders`, collection sorting, and COL/DFF pairing — getting the base name right sends a model to `Map_LOD` instead of `Map_DFF_*` and lets paired-object utilities find the HD twin.
 
-> Implementation: `is_lod_name()` and `strip_lod_marker()` in [core/ipl.py](INU_tools/core/ipl.py).
+> Implementation: `is_lod_name()` and `strip_lod_marker()` in [core/ipl.py](INU_tools/core/ipl.py); reused by `classify_model()` in [core/model_classify.py](INU_tools/core/model_classify.py).
 
 ### Model ID Manager
 
@@ -655,7 +703,7 @@ Vanilla GTA SA and Rockstar's own tools ship LOD models with several naming conv
 - Shows free/used ID count
 - **Next free ID** displayed
 - **Auto Assign** — assigns next free ID to selected objects
-- **Assign from ID...** — assign IDs starting from a specific number, skipping occupied
+- **Assign from ID...** — assign sequential IDs starting from a specific number. By default it honours the exact start (321, 322, 323…); tick **Skip occupied IDs** to jump over numbers already in use (and it warns if the range overlaps other objects)
 - **Release** — marks ID as free
 - **Extend IDs (FLA)** — add IDs beyond 19999 for Fastman Limit Adjuster
 - IDs stored in `model_ids.txt` in INU_Preset folder
@@ -690,18 +738,20 @@ The alarming "nothing matched" warning fires **only** when truly zero objects li
 
 > 💡 **Example — sync Los Santos after Map Import:** you imported the LS district and have ~2000 fresh objects with no IPL links yet. Open **Sync несколько IPL** → **Добавить** → Ctrl-select `LAn.ipl`, `LAs.ipl`, `LAe.ipl`, `LAw.ipl`, `LAhills.ipl` → the row now reads `Sync multiple IPL (5)`. Deselect everything (Sync then sweeps every mesh in the scene) → **Sync**. Each object is matched against whichever of the 5 files holds its placement, and you get `Sync IPL: updated 0, new links 1980, skipped 20 (5 IPL)` — the 20 skips are props you added by hand that aren't in any vanilla IPL.
 
-### Per-object IDE/IPL routing (2.1.0)
+### IDE/IPL routing on Add + LOD indexing
 
 **Panel:** View3D → Sidebar (N) → GTA Tools → IDE / IPL / IMG → IDE / IPL boxes → **Add**
 
-**Add** (`gtatools.upsert_ide` / `gtatools.upsert_ipl`) no longer dumps every selected object into the single path you picked. Now each object is routed to **its own** file:
+**Add** (`gtatools.upsert_ide` / `gtatools.upsert_ipl`) writes to the file you **pick** in the IDE/IPL box — the explicit pick always wins:
 
-- An object that is **already linked** to a file (it was imported from, or previously added to, a specific IDE/IPL) is written back to **that** file — even if a different path is currently selected in the box.
-- An object with **no** link yet goes to the path chosen in the IDE/IPL box.
+- **A path is picked** → every selected object is written to **that** file. If an object was previously linked to a *different* file, it is still written to the picked one and you get a warning (*N objects were linked to another IPL — check the old file for duplicates*). This is what keeps a DFF and its `LOD…` companion in the **same** file, which the LOD cross-reference needs (see below) — splitting them across files silently breaks LOD.
+- **The box is empty** → each object falls back to **its own** remembered file (the one it was imported from or last added to), grouped one write per file. Use this to update objects spread across several districts in one click.
 
-Objects are grouped by destination file and one write is performed per file. This means a single **Add** click can touch several files at once when your selection spans more than one district. The active object's box also shows where it lives — **В IDE ({file})** / **В IPL ({file})** *(In IDE/IPL (file))* with a checkmark, or **…параметры разошлись / координаты разошлись** when the object has drifted from what was last written (re-**Add** to push the new state).
+The active object's box shows where it lives — **В IDE ({file})** / **В IPL ({file})** *(In IDE/IPL (file))* with a checkmark, or **…параметры / координаты разошлись** when it has drifted from what was last written (re-**Add** to push the new state).
 
-> 💡 **Example — fix two buildings from different files:** you imported a mixed scene; `bank01` came from `LAn.ipl` and `tower05` from `LAs.ipl`. You nudge both in the viewport. Select both → IPL box → **Add**. Each is written back to its origin file automatically, and the report reads `IPL: updated 2, added 0 — spread across 2 IPL files`. You never had to switch the IPL path between the two.
+**LOD `lod_index` is written automatically.** The SA IPL `lod_index` field is the **line number** of the LOD's `inst` row in the *same* file (`-1` = no LOD). When you select a DFF together with its `LOD…` companion and Add to IPL, the addon upserts the LOD row first, then stores that row's line number in the DFF's `lod_index` — the cross-reference that makes the LOD actually swap in-game. The same linking now runs in the **INU Export** IPL-upsert path (it previously wrote `-1`, so LODs never swapped). Deleting a middle row via **Remove** renumbers everyone else's `lod_index` so the references stay valid.
+
+> 💡 **Example — update two buildings in their own files:** `bank01` came from `LAn.ipl`, `tower05` from `LAs.ipl`. Nudge both, leave the IPL box **empty**, select both → **Add**. Each is written back to its origin file (`IPL: updated 2, added 0`). Pick a specific IPL instead and both would go there — with a duplicate warning for the one that lived elsewhere.
 
 ### Inline path pickers for IDE / IPL / IMG (2.1.0)
 
@@ -723,9 +773,9 @@ When you import a single region (Map Region ≠ ALL), the old folder rule only l
 
 ## Materials
 
-### GTA SA Material Effects
+### GTA Material
 
-**Panel:** Properties → Material → GTA SA Material Effects
+**Panel:** Properties → Material → GTA Material
 
 | Property | Description |
 |----------|-------------|
@@ -740,82 +790,28 @@ When you import a single region (Map Region ≠ ALL), the old folder rule only l
 
 ### GTA Material Presets
 
-**Panel:** Properties → Material → **GTA Material** → Preset
+**Panel:** View3D → Sidebar (N) → GTA Tools → **GTA Material** → **EFFECTS** tab → **Быстрые пресеты** (Quick presets)
 
-Quickly apply common material configurations with one click. Instead of hand-tuning 25+ `mat.inu.*` fields (env map, specular, reflection, dual texture, etc.) — pick from dropdown, click ✓ Apply.
+Four one-click buttons write a full GTA effect setup onto the active material in a single click — no dropdown, no save dialog. The button labels appear in the UI in Russian:
 
-#### Built-in presets (shipped with the addon)
-
-| Preset | What it sets |
-|---|---|
-| **Generic** | Clears all effects — plain textured material |
-| **Vehicle Body** | Car body: env map (`xvehicleenv128`, coef 0.2) + specular (`vehiclespecdot64`) + reflection 0.05 |
-| **Vehicle Glass** | Car glass: env map with FB alpha, coef 0.4 |
-| **Ped / Skinned** | Plain skinned material (for characters) |
-| **Env Mapped** | Env map only (`xenvmap`, coef 0.5), no specular/reflection |
-| **Dual Texture** | Enables second texture with alpha blend (src/dst = SRCALPHA / INVSRCALPHA) |
-| **Specular** | Basic specular with level 1.0 |
-
-These are always in the dropdown, cannot be deleted.
-
-#### User presets
-
-Stored **outside the addon** — in `<blender addons dir>/INU_Preset/material_presets/*.json`. They survive addon updates and reinstalls. Sits next to `INU_Preset/id_presets/` (same root folder as the ID Manager presets).
+| Button (RU / EN) | Preset | What it sets |
+|---|---|---|
+| **Стекло** (Glass) | `VEHICLE_GLASS` | Car glass: env map with framebuffer alpha |
+| **Хром** (Chrome) | `CHROME` | Strong environment reflection + specular (bumpers, trim) |
+| **Краска** (Paint) | `VEHICLE` | Car body: `xvehicleenv128` env map + `vehiclespecdot64` specular + reflection |
+| **Сброс** (Reset) | `GENERIC` | Clears every effect flag — plain textured material |
 
 #### Example — modeling a car
 
-Say you're building a car with 15 materials: body, glass, chrome, headlights, tires, interior. Hand-tuning each = 7 fields × 15 = 105 clicks.
+Say you're building a car with body, glass and chrome-trim materials.
 
-**Step 1.** Select the car-body material in the object's material stack.
+**Step 1.** Select the car-body material in the object's material stack → click **Краска** (Paint). Env map, specular and reflection are all set at once.
 
-**Step 2.** Properties → Material → **GTA Material** → Preset → pick `Vehicle Body` → click ✓ (Apply). All fields get set: env map, specular, reflection.
+**Step 2.** Switch to the glass material → **Стекло** (Glass). Done.
 
-**Step 3.** Switch to the glass material → `Vehicle Glass` → ✓. Done.
+**Step 3.** Select the bumper/trim material → **Хром** (Chrome). Made a mistake → **Сброс** (Reset) clears it back to a plain textured material.
 
-**Step 4.** Suppose you've dialed in your favorite "retro San Andreas body" mix — matter specular. Select that material → Preset → **Save as…** → name: `car_retro_matte`, description: `matte body for older cars`. Save.
-
-Now `<addons>/INU_Preset/material_presets/car_retro_matte.json` appears:
-```json
-{
-  "name": "car_retro_matte",
-  "description": "matte body for older cars",
-  "mat_inu": {
-    "ambient": 1.0,
-    "export_env_map": true,
-    "env_map_tex": "xvehicleenv128",
-    "env_map_coef": 0.15,
-    "export_specular": true,
-    "specular_level": 0.4,
-    "specular_texture": "vehiclespecdot64",
-    "export_reflection": true,
-    "reflection_intensity": 0.02
-  }
-}
-```
-
-**Step 5.** No reload needed — the preset shows up in the dropdown immediately. Open another material → your `car_retro_matte` is there. Applies in one click.
-
-**Step 6 (bonus).** Copy the JSON file to a teammate → they drop it into their `<addons>/INU_Preset/material_presets/` → same preset instantly available. Easy sharing across a modding team.
-
-#### What a preset stores
-
-25 fields from `INUMaterialProps`:
-- **Ambient:** `ambient`
-- **Env Map:** `export_env_map`, `env_map_tex`, `env_map_coef`, `env_map_fb_alpha`
-- **Bump:** `export_bump_map`, `bump_map_tex`
-- **Reflection:** `export_reflection` + 5 fields (scale X/Y, offset X/Y, intensity)
-- **Specular:** `export_specular`, `specular_level`, `specular_texture`
-- **Dual Texture:** `export_dual_tex`, `dual_tex_src_blend`, `dual_tex_dst_blend`, `dual_tex_texture`
-- **UV Animation:** `export_animation`, `animation_name`
-
-**Not stored** (per-instance data, not portable):
-- `vehicle_color_slot` — per-instance carcols tag
-- `col_*` — collision surface (separate COL Surface Type panel)
-- `uv_anim_*` runtime params (speed_u/v, duration)
-
-#### Deleting a preset
-
-Select a user preset in the dropdown → the **Delete** button becomes active → Delete. File removed. Built-in presets (Generic/Vehicle/…) can't be deleted — button disables.
+> 💡 Use **Копировать на выделенные** (Copy to Selected) below the buttons to push the active material's GTA settings onto the materials of every other selected object in one go.
 
 ### COL Surface Types
 
@@ -862,19 +858,6 @@ Select a user preset in the dropdown → the **Delete** button becomes active �
 - Shadows toggle
 
 > 💡 **Example — prelight a building for your map:** select the building mesh → Prelight → **Create Day/Night** → **Create 8 Lights** (8 point lights auto-placed around the object) → toggle ☑ Shadows → **Bake with Shadows**. The `Day` attribute gets filled with soft-shadowed lighting. Then same for Night (usually drop Intensity to 0.3 and switch light color to blueish) — switch to the Night attribute before Bake.
-
-### Fill Colors
-
-Paint selected faces with a chosen color. Supports levels (layers of fill) and undo/restore.
-
-> 💡 **Example:** want to tint the roof of a building brighter than the walls. Enter Edit Mode → select the roof faces → Prelight → **Fill Color** → color = RGB(1,1,0.9) → Apply. The walls stay as they were, the roof gets a yellow tint. Not happy with it — **Undo fill** brings back the previous level.
-
-### Scatter Light
-
-Distribute light from selected faces outward. Parameters:
-- Intensity, Falloff, Radius, Iterations
-
-> 💡 **Example — glowing neon:** select the neon sign faces → Fill Color pink → **Scatter from selected** (Intensity 0.8, Radius 2m, Iterations 3) → neighboring faces around the sign pick up a pinkish hue, mimicking the neon glow spilling onto the building wall.
 
 ### Scatter Color
 
@@ -1197,6 +1180,12 @@ Create and configure 2DFX effects that export into DFF files.
 **Detach All from Mesh:** batch detach all 2DFX from selected mesh. The mesh's UI shows a list of all attached 2DFX with individual detach buttons.
 
 **Preview:** real-time corona/shadow visualization in viewport. Billboard tracking implemented via **draw handler** *(1.6.3)* — works reliably across scene switches.
+
+**Применить настройки** (Apply Settings): copies the active 2DFX's settings — its `inu.*` props plus the raw `2dfx_*` custom properties — onto every other selected 2DFX Empty at once. Select the targets, keep the source active, click the button; the affected previews rebuild automatically afterwards.
+
+**Связи (пунктир)** (Relationship lines): a checkbox that toggles the dashed parent→child relationship-line overlay drawn from each mesh to its attached 2DFX Empties.
+
+**Preview auto-rebuild:** duplicating or copying a 2DFX Empty (Shift+D, or Ctrl+C / Ctrl+V) automatically regenerates its preview — a background timer detects the fresh copy and rebuilds the missing corona/shadow rig, so native Blender duplication just works without pressing any button.
 
 > 💡 **Example — street lamp:** select the lamp post mesh → 2DFX → **Create Light** → an Empty with default lamp appears. Move the Empty to the top of the post → pick preset **Lamp Post** → ✓ Apply (sets yellow color, coronastar texture, 200m draw distance). Parenting to the mesh is automatic → Empty.parent = post. On DFF export, 2DFX coordinates are written relative to the mesh.
 
@@ -2044,6 +2033,38 @@ The stack reads like Photoshop: the **bottom** layer is the base, layers above b
 | **Normal Map** | Normal | Tangent-space normals. Added with Desaturate on. |
 | **Emission** | Normal | The material's own emissive output. |
 | **Emission Light (GI)** | Add | Indirect bounce light *from* emissive faces onto neighbours. Noisy → uses Samples. |
+| **LightMap** | Multiply | Full GI from the **real scene light** (lamps, sun, world + bounce). Unlike Shadow / Diffuse Lit it does **not** use an internal rig and does **not** isolate the scene — it bakes your actual lights. Very noisy → high Samples + optional OIDN denoise. See below. |
+
+### LightMap — GI from the real scene light
+
+Unlike Shadow / Diffuse Lit (internal light rig, scene isolated), **LightMap** bakes the
+**actual lights, sun and world** of your scene with global illumination (direct + indirect,
+no albedo → a clean lighting multiplier). Move a lamp and the bake changes — it's your real
+lighting, à la *The Lightmapper*.
+
+- **Denoise** (Дополнительно → **Денойз**): cleans the noise of *any* light-dependent map
+  (AO / Shadow / Diffuse Lit / Emission GI / LightMap), not just the LightMap. Uses Blender's
+  built-in **OIDN** (compositor Denoise node — no external binary) on Blender 4.x, and falls back
+  to a **numpy bilateral filter** on Blender 5.x / headless. Clean maps (Diffuse / Normal /
+  Emission / Bevel) don't get it. On by default.
+- **LightMap samples** (Дополнительно → **Сэмплы LightMap**): separate, higher sample budget
+  (GI is noisier than AO).
+- **Apply as** (Дополнительно → **Применить как**) + the **Применить LightMap** button pick how
+  the baked LightMap is used in GTA SA (SA has no native lightmap-UV):
+
+| Apply mode | What it does | GTA SA target |
+|---|---|---|
+| **Слой в стеке** (Layer in stack) | Leaves it as a MULTIPLY layer — flatten/save yourself | Any (manual) |
+| **Впечь в диффуз** (Bake into diffuse) | `LightMap × <base>_DIFFUSE` → one texture (needs a baked Diffuse layer) | Vanilla, no shader |
+| **В vertex prelight** (To vertex prelight) | Samples the LightMap per-loop into the **Day** prelight color attribute | Vanilla static lighting |
+| **Отдельная текстура + 2 UV** (Separate texture + 2 UV) | Saves an `LP_<base>` texture and wires it via a 2nd UV channel Multiply shader (auto-unwraps a non-overlapping **LightMap** UV when **Авто lightmap-UV** is on) | MTA custom shader |
+
+> 💡 **Example — bake a scene-lit LightMap into vertex prelight:**
+> 1. Light your scene (sun + lamps + a world/sky). Select the building mesh.
+> 2. **Texture Bake** → **Добавить слой** → **LightMap** → **Добавить**.
+> 3. **Дополнительно** → keep **Денойз** on, set **Применить как** → **В vertex prelight**.
+> 4. Press **Bake** (the map captures your real lights + bounce, denoised).
+> 5. Press **Применить LightMap** → the lighting lands in the **Day** vcol; export the DFF as usual.
 
 ### Blend modes (18)
 
@@ -2056,7 +2077,10 @@ Normal, Darken, Multiply, Color Burn, Lighten, Screen, Color Dodge, Add, Overlay
 - **Samples** — Cycles samples for noisy maps (AO / lit / GI).
 - **Свет (экспозиция)** (Light exposure) — energy multiplier for the internal light rig (Shadow / Diffuse Lit).
 - **Bevel радиус** / **Bevel samples** — only for the Bevel map.
+- **LightMap** map only (see the LightMap section): **Качество** (sample preset Preview→Production, or Custom→**Сэмплы LightMap**), **Режим света** (Combined / Indirect only / Direct only), **Денойз** + **Денойз по albedo/normal** (feature-guided), **Интенсивность** (exposure) + **Смягчение** (Gaussian blur), **Применить как**, **Авто lightmap-UV**. Intensity/Softening re-apply without re-baking via the **Пост-обработка** button.
 - **Cage** / **Max Ray** — only in **Hi → Low** mode (Max Ray 0 = auto).
+
+> **Baking quality (2.1.x):** compositing and the **Сохранить как** flatten now run in **linear space**, so the saved texture matches the live preview and the in-game look. **Adaptive sampling is disabled** during bakes, so the **Samples** slider actually controls the result (higher = cleaner — no early-out cutting it short).
 
 ### Previewing and saving
 
@@ -2066,6 +2090,7 @@ After baking, two actions appear at the bottom of the panel:
 |---|---|
 | **Показать текстуру** / **Скрыть текстуру** (Show / Hide texture) | Toggles a flat-emission preview of the baked result directly on the model (visible under any lighting). For a layer stack it shows the live node composite — editing opacity/blend/contrast/gamma updates it instantly. Click again to restore your original materials and render UV. |
 | **Сохранить как** (Save as) | Flattens the enabled layers into one texture (numpy composite, sRGB) and saves it to a file, with a **Размер** downscale option: `Оригинал` / `½` / `¼` / `⅛` (proper box-averaging — cleaner than baking small directly). |
+| **Показать поверх базы (UV2)** (Show over base) | Final two-UV look: builds a node material where the model's **base texture (via its own UV1)** is multiplied by the **baked stack composite (via the bake UV / UV2)** — i.e. `TexUV1 × TexUV2`. Use when you bake AO/LightMap into a separate UV2 and want to see them over the existing diffuse. Per-material (each slot keeps its own base). Click **Скрыть текстуру** to restore. |
 
 > 💡 **Example — bake AO + Diffuse and flatten to a TXD texture:**
 > 1. Select the building mesh; make sure the working texture UV is the render UV (📷). Open **Texture Bake**, set **Размер** 1024, **АА** `2×`, **Режим** → **UV → UV**.
@@ -2359,7 +2384,7 @@ Source: [`core/ipl.py`](INU_tools/core/ipl.py) → `_write_binary_ipl`, `write_b
 
 GTA SA UV animation (chunks `0x2B` UV-anim dict + `0x135` material PLG, Kam's `UVanim_tool` layout) is authored on the **material** and previewed live in the viewport. v2.1.0 splits it into two modes — a constant **Scroll** and per-frame **Keyframes** authored on a Mapping node — plus a Spacebar live preview.
 
-**Material panel:** Properties → Material → *GTA SA Material Effects* → block **UV Анимация** (UV Animation).
+**Material panel:** Properties → Material → *GTA Material* → block **UV Анимация** (UV Animation).
 
 **Pipeline (common setup):**
 1. Build a material with an **Image Texture** node feeding the BSDF *Base Color* (tileable texture for scrolls).
@@ -2371,7 +2396,7 @@ GTA SA UV animation (chunks `0x2B` UV-anim dict + `0x135` material PLG, Kam's `U
 
 #### Scroll mode (constant speed)
 
-**Material panel:** *GTA SA Material Effects* → **UV Анимация** → **Прокрутка** (Scroll).
+**Material panel:** *GTA Material* → **UV Анимация** → **Прокрутка** (Scroll).
 
 A constant linear scroll. The preview hangs drivers on the Mapping node's *Location* (`speed × frame / fps`) so the viewport scrolls at exactly the speed that exports.
 
@@ -2395,7 +2420,7 @@ On export this writes two keyframes: t=0 identity, and t=Duration with translati
 
 #### Keyframe mode (author your own keys) `(2.1.0)`
 
-**Material panel:** *GTA SA Material Effects* → **UV Анимация** → **Ключевые кадры** (Keyframes).
+**Material panel:** *GTA Material* → **UV Анимация** → **Ключевые кадры** (Keyframes).
 **UV Editor → N → GTA Tools → UV Анимация:** insert/clear keys here.
 
 Instead of a fixed scroll you author keys directly on the preview Mapping node's **Location** (UV shift) and **Scale**. The exporter reads those keys back and writes them as real UVAnim frames — multiple steps, holds, jumps, scale pulses. No drivers are placed in this mode, so your keys are free to set.
@@ -2422,7 +2447,11 @@ In **Keyframe** mode the material panel just points you to the UV editor. Open t
 
 Any DFF export path (single DFF, Export All, Export to IMG) picks up the material's **UV Анимация** flag automatically and writes the `0x2B` dict + `0x135` material PLG — no IDE flag needed. After replacing the DFF in an IMG, **Rebuild Archive** so the game drops its cached copy.
 
-**Engine caveat:** retail single-player GTA SA's renderer is selective about UV anim — many object types simply don't play it in the vanilla game engine. **librw-based viewers** (modern map viewers / RW tools) and **MTA:SA with a shader** (see the bundled MTA shader workflow) do animate it correctly. If the motion doesn't show in single-player, that's the engine, not the export — verify by re-importing the DFF (the round-trip re-populates Scroll mode's **Speed U/V + Duration**) or by loading it in a librw viewer.
+> ⚠️ **The #1 reason "the animation doesn't play in single-player" is night vertex colors.** If the model has night vertex colors (the **Night** flag in DFF Flags, or the **Day/Night** pipeline, which writes `extra_colors` into the DFF), retail GTA SA's engine **will not play** the UV animation: the colour shows up but nothing moves. This is confirmed in-game and documented in SA modding tutorials. **librw-based viewers** and **euryopa** ignore night vcols, so the animation runs there — which makes it look like an export/DFF bug when it isn't. **Fix:** clear the **Night** flag / drop the night layer on the animated model (you can keep the day prelight so the model isn't black). The addon flags this conflict for you — the **Night** row in DFF Flags turns red, and the pre-export **Validate Scene** sweep warns when a mesh has both a UV-anim material and night colors.
+
+Two more conditions from the tutorials: the animated **material must not be shared** with other parts of the model (sharing the texture is fine); UV anim does **not** show on **skins or vehicles** in single-player — only on static map models (**Breakable** is compatible).
+
+**Other engine notes:** beyond night vcols, the retail renderer is generally selective about UV anim. **librw-based viewers** and **MTA:SA with a shader** (see the bundled MTA shader workflow) animate it correctly. If motion still doesn't show and the model definitely has no night colors, verify by re-importing the DFF (the round-trip re-populates Scroll mode's **Speed U/V + Duration**) or by loading it in a librw viewer.
 
 ### Breakable Objects
 
@@ -2452,18 +2481,17 @@ Source: [`ops/ifp_import.py`](INU_tools/ops/ifp_import.py) → `enumerate_animat
 
 ### GTA Material Panel
 
-A condensed material UI with a preset dropdown that writes GTA-specific properties in one click.
+A condensed material UI that writes GTA-specific properties in one click.
 
-**Location:** Properties → Material → *GTA Material* panel.
+**Location:** Properties → Material → *GTA Material* panel → **EFFECTS** tab.
 
-**Presets:**
-- **Generic** — clears all effect flags (plain textured material)
-- **Vehicle Body** — `xvehicleenv128` env map + `vehiclespecdot64` specular + reflection blend 0.05
-- **Vehicle Glass** — `xvehicleenv128` env map with framebuffer alpha
-- **Ped / Skinned** — plain skinned material
-- **Env Mapped** — plain env map only
-- **Dual Texture** — src=SRCALPHA, dst=INVSRCALPHA
-- **Specular** — plain specular level 1.0
+**Quick presets** (four buttons under *Быстрые пресеты* — UI labels are in Russian):
+- **Стекло** (Glass) — `xvehicleenv128` env map with framebuffer alpha (VEHICLE_GLASS)
+- **Хром** (Chrome) — strong env reflection + specular (CHROME)
+- **Краска** (Paint) — `xvehicleenv128` env + `vehiclespecdot64` specular + reflection blend (VEHICLE)
+- **Сброс** (Reset) — clears every effect flag back to a plain textured material (GENERIC)
+
+Each button one-shot-applies its effect configuration to `mat.inu.*` (round-trips through the DFF writer). The operator `gtatools.material_preset` also accepts the extra built-in ids `PED` / `ENV` / `DUAL` / `SPECULAR` via scripting/F3.
 
 Plus the **Vehicle Color Slot** dropdown (Primary / Secondary / Third / Fourth / Headlights / Taillights) — writes the carcols magic tag into the material's base RGB.
 
@@ -2487,7 +2515,7 @@ Source: [`tools/bitmaps_manager.py`](INU_tools/tools/bitmaps_manager.py).
 
 Text serialisation of COL collision data, compatible in spirit with Steve's COL Editor. Alternative to the binary `.col` format for hand-editing or diffing.
 
-**Location:** Operators `gtatools.import_cst` / `gtatools.export_cst`.
+**Where:** CST is handled entirely through the **CST** checkbox in the Import / Export dialogs (Export All writes `<name>.cst` next to the `.col`), and by **drag & dropping** a `.cst` file into the viewport to import it. There are no standalone CST operators.
 
 **Format:** line-based, one directive per structure. Multiple MODEL blocks per file supported.
 ```
@@ -2777,7 +2805,7 @@ Pure-logic naming and composite math (Photoshop-style layers). `recompose_stack(
 Low-level utilities used by dff/txd/col writers: chunk header pack/unpack, alignment, RW version encoding.
 
 #### validate.py — Pre-export Sanity Checks
-Quaternion normalisation, paintjob `_ok ↔ _dam` pair checks, modulate-color sanity, duplicate model_id detection.
+Quaternion normalisation, paintjob `_ok ↔ _dam` pair checks, UV-anim × night-vcol conflict (night vcols disable UV animation in retail SA), duplicate model_id detection.
 
 ### File Formats
 

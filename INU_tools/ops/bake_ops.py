@@ -132,7 +132,13 @@ def _restore_materials(obj):
         for u in me.uv_layers:
             u.active_render = (u.name == ruv)
     obj["inu_bake_preview_on"] = 0
-    for nm in ("INU_BakePreview", "INU_BakeComposite"):
+    obj["inu_bake_overbase_on"] = 0        # over-base снят (см. show_over_base)
+    # Подчистить осиротевшие preview-материалы (в т.ч. per-слот overlay
+    # INU_BakeOver_N от «Показать поверх базы»).
+    dead = ["INU_BakePreview", "INU_BakeComposite"]
+    dead += [m.name for m in bpy.data.materials
+             if m.name.startswith("INU_BakeOver_")]
+    for nm in dead:
         m = bpy.data.materials.get(nm)
         if m is not None and m.users == 0:
             try:
@@ -274,7 +280,13 @@ def _layer_specs(s):
 
 def _apply_result_material(obj):
     """Показать результат на модели: композит → живой нодовый стек, per-map →
-    одиночная картинка. Возвращает материал (или None, если нечего показать)."""
+    одиночная картинка. Возвращает материал (или None, если нечего показать).
+
+    Учитывает inu_bake_preview_kind: если последним показывали ЛАЙТМАП
+    (авто-превью), повторное «Показать текстуру» тоже показывает лайтмап БЕЗ
+    ×prelight — иначе toggle делал его темнее (лайтмап × Day-vcol)."""
+    if obj.get("inu_bake_preview_kind", "") == "lightmap":
+        return _apply_lightmap_preview(obj)
     s = bpy.context.scene.inu_settings
     base = obj.get("inu_bake_base", "")
     uv = obj.get("inu_bake_uv", "")
@@ -283,26 +295,165 @@ def _apply_result_material(obj):
         from ..tools.bake import bake_nodes
         mat = bake_nodes.build_composite_material(
             _layer_specs(s), base, uv, _prelight_attr_name(obj))
+        obj["inu_bake_preview_kind"] = "composite"
     else:
         img = bpy.data.images.get(obj.get("inu_bake_image", ""))
         if img is None:
             return None
         mat = _build_single_image_mat(img, uv, _prelight_attr_name(obj))
+        obj["inu_bake_preview_kind"] = "single"
     _assign_material(obj, mat, uv)
     return mat
 
 
+def _apply_lightmap_preview(obj):
+    """Превью LightMap на модели — ЖИВОЙ нодовый композит стека, но БЕЗ
+    ×prelight (лайтмап уже и есть освещение; умножение на Day-vcol его бы
+    затемнило). mode_live=1 → контраст/гамма/прозрачность слоёв правятся
+    вживую (rebuild_live_composite). Сэмплится через UV запекания лайтмапа.
+    Возвращает материал или None."""
+    base = obj.get("inu_bake_base", "")
+    if bpy.data.images.get(f"{base}_LIGHTMAP") is None:
+        return None
+    s = bpy.context.scene.inu_settings
+    uv = obj.get("inu_bake_lm_uv", "") or obj.get("inu_bake_uv", "")
+    _snapshot_materials(obj)
+    from ..tools.bake import bake_nodes
+    mat = bake_nodes.build_composite_material(_layer_specs(s), base, uv, None)
+    _assign_material(obj, mat, uv)
+    obj["inu_bake_mode_live"] = 1
+    obj["inu_bake_image"] = ""
+    obj["inu_bake_preview_kind"] = "lightmap"
+    return mat
+
+
+def _composite_stack_image(s, base, out_name):
+    """Свести включённые карты стека (<base>_<map>) numpy-композитом в одну
+    картинку `out_name`. Возвращает image или None (нет запечённых карт).
+    Единый движок сведения — используется и «Сохранить как», и overlay-превью."""
+    from ..tools import bake as B
+    pixels = {}
+    for L in s.gtatools_bake_layers:
+        if not L.enabled or L.map_id in pixels:
+            continue
+        img = bpy.data.images.get(f"{base}_{L.map_id}")
+        if img is not None:
+            pixels[L.map_id] = B.read_image_to_numpy(img)
+    if not pixels:
+        return None
+    first = bpy.data.images.get(f"{base}_{next(iter(pixels))}")
+    w, h = first.size
+    specs = [B.LayerSpec(
+        map_id=L.map_id, enabled=L.enabled, blend_mode=L.blend_mode,
+        opacity=L.opacity, contrast=L.contrast, gamma=L.gamma,
+        influence_target=L.influence_target,
+        influence_amount=L.influence_amount) for L in s.gtatools_bake_layers]
+    # srgb=True: композит считается в линейном, на выходе кодируется в sRGB
+    # для sRGB-байтовой картинки (совпадает с нодовым превью и с игрой).
+    arr = B.composite_layers(pixels, specs, w, h, srgb=True)
+    out = B.setup_target_image(out_name, w, h, transient=False)
+    B.write_numpy_to_image(out, arr, pack=True)
+    return out
+
+
+def _find_base_tex(mat):
+    """(image, uv_name) базовой Image Texture материала — для показа
+    «база × запечённое». Идёт от Base Color (через Prelight_Mix.A, если есть),
+    иначе первая image-нода. uv_name — из связанной UVMap-ноды (иначе '')."""
+    if not mat or not mat.use_nodes:
+        return None, ''
+    from ..tools import compat
+    nodes = mat.node_tree.nodes
+    tex = None
+    bsdf = next((n for n in nodes if n.type == 'BSDF_PRINCIPLED'), None)
+    if bsdf is not None and bsdf.inputs['Base Color'].links:
+        src = bsdf.inputs['Base Color'].links[0].from_node
+        if src is not None and src.name == 'Prelight_Mix':
+            a = compat.mix_input_a(src)
+            if a is not None and a.is_linked:
+                src = a.links[0].from_node
+        if src is not None and src.type == 'TEX_IMAGE':
+            tex = src
+    if tex is None:
+        tex = next((n for n in nodes
+                    if n.type == 'TEX_IMAGE' and getattr(n, 'image', None)), None)
+    if tex is None:
+        return None, ''
+    uv = ''
+    if tex.inputs['Vector'].links:
+        vn = tex.inputs['Vector'].links[0].from_node
+        if vn is not None and vn.type == 'UVMAP':
+            uv = vn.uv_map
+    return tex.image, uv
+
+
+def _build_overlay_preview_mat(base_img, base_uv, comp_img, over_uv, key):
+    """Preview-материал: flat-эмиссия (базовая текстура через её UV) × (запечённый
+    композит через UV2). Отдельный материал на слот (`key`) — у каждого своя
+    база. Без базовой текстуры → показываем только композит."""
+    from ..tools import compat
+    name = f"INU_BakeOver_{key}"
+    m = bpy.data.materials.get(name) or bpy.data.materials.new(name)
+    m.use_nodes = True
+    m.use_fake_user = False
+    nt = m.node_tree
+    nt.nodes.clear()
+    out = nt.nodes.new('ShaderNodeOutputMaterial')
+    emit = nt.nodes.new('ShaderNodeEmission')
+
+    base_out = None
+    if base_img is not None:
+        bt = nt.nodes.new('ShaderNodeTexImage')
+        bt.image = base_img
+        if base_uv:
+            bu = nt.nodes.new('ShaderNodeUVMap')
+            bu.uv_map = base_uv
+            nt.links.new(bu.outputs['UV'], bt.inputs['Vector'])
+        base_out = bt.outputs['Color']
+
+    ct = nt.nodes.new('ShaderNodeTexImage')
+    ct.image = comp_img
+    if over_uv:
+        cu = nt.nodes.new('ShaderNodeUVMap')
+        cu.uv_map = over_uv
+        nt.links.new(cu.outputs['UV'], ct.inputs['Vector'])
+
+    if base_out is not None:
+        mix = compat.make_mix_rgba(nt.nodes, blend='MULTIPLY', label='bake_over')
+        mix.factor.default_value = 1.0
+        nt.links.new(base_out, mix.a)
+        nt.links.new(ct.outputs['Color'], mix.b)
+        color_out = mix.result
+    else:
+        color_out = ct.outputs['Color']
+    nt.links.new(color_out, emit.inputs['Color'])
+    nt.links.new(emit.outputs['Emission'], out.inputs['Surface'])
+    return m
+
+
 def rebuild_live_composite(obj):
-    """Пересобрать живой нодовый материал при правке слоёв (мгновенное
-    обновление). Только если композит-превью сейчас на модели."""
-    if not (obj and obj.get("inu_bake_preview_on", 0)
-            and obj.get("inu_bake_mode_live", 0)):
+    """Пересобрать живое превью при правке слоёв (контраст/гамма/opacity/
+    blend) — мгновенное обновление. Работает для трёх видов превью:
+      * over-base — пересчитываем композит-картинку <base>_OVER (per-слот
+        overlay-материалы ссылаются на неё → обновляются сами);
+      * lightmap — живой композит БЕЗ prelight, через lm-UV;
+      * обычный композит — живой композит с prelight."""
+    if not (obj and obj.get("inu_bake_preview_on", 0)):
+        return
+    s = bpy.context.scene.inu_settings
+    base = obj.get("inu_bake_base", "")
+    # over-base: пересчёт свёрнутого композита (numpy применяет cg/opacity).
+    if obj.get("inu_bake_overbase_on", 0):
+        _composite_stack_image(s, base, f"{base}_OVER")
+        return
+    if not obj.get("inu_bake_mode_live", 0):
         return
     from ..tools.bake import bake_nodes
-    s = bpy.context.scene.inu_settings
-    bake_nodes.build_composite_material(
-        _layer_specs(s), obj.get("inu_bake_base", ""),
-        obj.get("inu_bake_uv", ""), _prelight_attr_name(obj))
+    is_lm = obj.get("inu_bake_preview_kind", "") == "lightmap"
+    vcol = None if is_lm else _prelight_attr_name(obj)
+    uv = ((obj.get("inu_bake_lm_uv", "") or obj.get("inu_bake_uv", ""))
+          if is_lm else obj.get("inu_bake_uv", ""))
+    bake_nodes.build_composite_material(_layer_specs(s), base, uv, vcol)
 
 
 class GTATOOLS_OT_bake_run(bpy.types.Operator):
@@ -427,6 +578,7 @@ class GTATOOLS_OT_bake_run(bpy.types.Operator):
             bake_obj = obj
             # Цель = ВЫДЕЛЕННАЯ UV (uv_layers.active); источник = рендер-UV
             # (active_render) — определяется автоматически в bake_one_map.
+            # Все карты (вкл. LightMap) печём в эту одну UV.
             target_uv = (obj.data.uv_layers.active.name
                          if obj.data.uv_layers.active else None)
             for o in context.view_layer.objects:
@@ -452,7 +604,16 @@ class GTATOOLS_OT_bake_run(bpy.types.Operator):
             self.report({'ERROR'}, T("Нет валидных карт"))
             return {'CANCELLED'}
 
+        _LM_QUALITY_SAMPLES = {'PREVIEW': 32, 'MEDIUM': 128,
+                               'HIGH': 512, 'PRODUCTION': 1024}
+
         def _samples_for(md):
+            # LightMap — пресет качества (или свой ползунок при 'CUSTOM').
+            if md.id == 'LIGHTMAP':
+                q = s.gtatools_bake_lightmap_quality
+                base = _LM_QUALITY_SAMPLES.get(
+                    q, int(s.gtatools_bake_lightmap_samples))
+                return max(1, base // (aa * aa))
             # AO / светозависимые / непрямой GI (свет излучения) — шумные,
             # берут сэмплы из настроек. Остальные (плоский color/normal) — 1.
             if (md.bake_type == 'AO' or md.needs_light
@@ -511,11 +672,20 @@ class GTATOOLS_OT_bake_run(bpy.types.Operator):
                             frame_obj=(bake_obj if cam_orient_normal is not None
                                        else None))
                     else:
+                        # Режим света LightMap: Combined / только Indirect /
+                        # только Direct → переопределяем пассы (color всегда
+                        # off — карта это множитель освещения без альбедо).
+                        _pass = None
+                        if mid == 'LIGHTMAP':
+                            _lm = s.gtatools_bake_lightmap_light_mode
+                            _pass = {'INDIRECT': (False, True, False),
+                                     'DIRECT': (True, False, False)}.get(
+                                         _lm, (True, True, False))
                         B.bake_one_map(context, md, bake_obj, img, margin=margin * aa,
                                        params=params, samples=_samples_for(md),
                                        target_uv=target_uv, selected_to_active=s2a,
                                        cage_extrusion=cage, max_ray=mray,
-                                       keep_visible=keep)
+                                       keep_visible=keep, pass_overrides=_pass)
                     # Ужать супер-разрешение до целевого (фильтрованное
                     # уменьшение Blender) — это и даёт сглаживание.
                     if aa > 1:
@@ -523,6 +693,26 @@ class GTATOOLS_OT_bake_run(bpy.types.Operator):
                             img.scale(res_x, res_y)
                         except Exception:
                             pass
+                    # Денойз ЛЮБОЙ шумной карты (AO / Shadow / Diffuse Lit /
+                    # Emission GI / LightMap) на финальном размере.
+                    # denoise_image по контракту не бросает (graceful False).
+                    # Feature-пассы (albedo/normal) — только для LightMap.
+                    _noisy = (md.bake_type == 'AO' or md.needs_light
+                              or getattr(md, 'pass_indirect', False))
+                    if _noisy and s.gtatools_bake_denoise:
+                        _alb = _nrm = None
+                        if (mid == 'LIGHTMAP'
+                                and s.gtatools_bake_lightmap_denoise_passes):
+                            _alb = bpy.data.images.get(f"{result_name}_DIFFUSE")
+                            _nrm = bpy.data.images.get(f"{result_name}_NORMAL")
+                        B.denoise_image(img, context, albedo=_alb, normal=_nrm)
+                    # LightMap: сохранить сырой результат (post-denoise) в
+                    # <base>_LIGHTMAP_raw и применить пост-обработку (интенсивность
+                    # + смягчение) → <base>_LIGHTMAP. Raw нужен, чтобы менять
+                    # интенсивность/фильтр БЕЗ пере-GI (кнопка «Пост-обработка»).
+                    if mid == 'LIGHTMAP':
+                        _stash_lightmap_raw(result_name, img)
+                        _apply_lightmap_postprocess(s, result_name, img)
                     # Normal с включённым «Обесцветить» — сводим запечённую
                     # карту в серое сразу (как при сведении нормал-мапы в
                     # Фотошопе), убирая синий tangent-space оттенок.
@@ -562,6 +752,15 @@ class GTATOOLS_OT_bake_run(bpy.types.Operator):
                                  if bake_obj.data.uv_layers.active else "")
         bake_obj["inu_bake_base"] = result_name
         bake_obj["inu_bake_uv"] = baked_uv
+        # UV, в которую запечён LIGHTMAP (= общая цель) — для «Применить»
+        # (сэмплинг в prelight) и превью.
+        if 'LIGHTMAP' in unique:
+            bake_obj["inu_bake_lm_uv"] = baked_uv
+
+        # Сброс вида превью — иначе _apply_result_material после прошлой
+        # lightmap-запечки ошибочно показал бы старый лайтмап. Нужный вид
+        # выставит соответствующая ветка ниже.
+        bake_obj["inu_bake_preview_kind"] = ""
 
         if is_camera:
             # Billboard: финальный СТАНДАРТНЫЙ материал — Principled +
@@ -571,6 +770,11 @@ class GTATOOLS_OT_bake_run(bpy.types.Operator):
             bake_obj["inu_bake_image"] = result_img.name if result_img else ""
             _apply_standard_material(bake_obj, result_img, baked_uv)
             msg = T("Запечено камерой (стандартный материал)")
+        elif 'LIGHTMAP' in unique:
+            # LightMap всегда сразу показываем на модели (живой композит без
+            # prelight) — без кнопки. Не нужно — снять «Скрыть текстуру».
+            _apply_lightmap_preview(bake_obj)
+            msg = T("LightMap запечён — превью на модели")
         elif composite:
             bake_obj["inu_bake_mode_live"] = 1
             bake_obj["inu_bake_image"] = ""
@@ -580,17 +784,7 @@ class GTATOOLS_OT_bake_run(bpy.types.Operator):
         else:
             # Показать diffuse-карту в Image-редакторе.
             if result_img is not None:
-                try:
-                    sp = getattr(context, 'space_data', None)
-                    if sp is not None and getattr(sp, 'type', '') == 'IMAGE_EDITOR':
-                        sp.image = result_img
-                    else:
-                        for area in context.screen.areas:
-                            if area.type == 'IMAGE_EDITOR':
-                                area.spaces.active.image = result_img
-                                break
-                except Exception:
-                    pass
+                _show_image(context, result_img)
             if was_preview:           # вернуть превью с обновлённой картинкой
                 _apply_result_material(bake_obj)
             msg = T("Запечено карт: ") + str(baked)
@@ -759,43 +953,12 @@ class GTATOOLS_OT_bake_flatten(bpy.types.Operator):
 
     def _flatten(self, context):
         """Свести стек в одну картинку <base>. Возвращает image или None."""
-        from ..tools import bake as B
         obj = context.active_object
         s = context.scene.inu_settings
         base = obj.get("inu_bake_base", "")
-
-        pixels = {}
-        for L in s.gtatools_bake_layers:
-            if not L.enabled or L.map_id in pixels:
-                continue
-            img = bpy.data.images.get(f"{base}_{L.map_id}")
-            if img is not None:
-                pixels[L.map_id] = B.read_image_to_numpy(img)
-        if not pixels:
-            return None
-
-        first = bpy.data.images.get(f"{base}_{next(iter(pixels))}")
-        w, h = first.size
-        specs = [B.LayerSpec(
-            map_id=L.map_id, enabled=L.enabled, blend_mode=L.blend_mode,
-            opacity=L.opacity, contrast=L.contrast, gamma=L.gamma,
-            influence_target=L.influence_target,
-            influence_amount=L.influence_amount) for L in s.gtatools_bake_layers]
-        arr = B.composite_layers(pixels, specs, w, h, srgb=False)
-        final = B.setup_target_image(base, w, h, transient=False)
-        B.write_numpy_to_image(final, arr, pack=True)
-
-        try:
-            sp = getattr(context, 'space_data', None)
-            if sp is not None and getattr(sp, 'type', '') == 'IMAGE_EDITOR':
-                sp.image = final
-            else:
-                for area in context.screen.areas:
-                    if area.type == 'IMAGE_EDITOR':
-                        area.spaces.active.image = final
-                        break
-        except Exception:
-            pass
+        final = _composite_stack_image(s, base, base)
+        if final is not None:
+            _show_image(context, final)
         return final
 
     def invoke(self, context, event):
@@ -913,4 +1076,298 @@ class GTATOOLS_OT_bake_save_map(bpy.types.Operator):
             self.report({'ERROR'}, T("Не удалось сохранить: ") + str(e))
             return {'CANCELLED'}
         self.report({'INFO'}, T("Сохранено: ") + self.filepath)
+        return {'FINISHED'}
+
+
+def _show_image(context, img):
+    """Показать `img` в Image-редакторе (если есть)."""
+    try:
+        sp = getattr(context, 'space_data', None)
+        if sp is not None and getattr(sp, 'type', '') == 'IMAGE_EDITOR':
+            sp.image = img
+            return
+        for area in context.screen.areas:
+            if area.type == 'IMAGE_EDITOR':
+                area.spaces.active.image = img
+                return
+    except Exception:
+        pass
+
+
+def _stash_lightmap_raw(base, img):
+    """Сохранить сырой (post-denoise, ДО пост-обработки) LightMap в
+    <base>_LIGHTMAP_raw — источник для пере-применения интенсивности/фильтра
+    без пере-GI (кнопка «Пост-обработка»)."""
+    from ..tools import bake as B
+    w, h = img.size
+    raw = B.setup_target_image(f"{base}_LIGHTMAP_raw", w, h, transient=False)
+    try:
+        B.write_numpy_to_image(raw, B.read_image_to_numpy(img), pack=True)
+    except Exception:
+        pass
+
+
+def _apply_lightmap_postprocess(s, base, target_img):
+    """raw → смягчение (Gaussian) × интенсивность → target_img
+    (<base>_LIGHTMAP). Источник — <base>_LIGHTMAP_raw (или сам target, если
+    raw нет). Значения клампятся в [0,1] — GTA-текстуры LDR."""
+    import numpy as np
+    from ..tools import bake as B
+    intensity = float(getattr(s, 'gtatools_bake_lightmap_intensity', 1.0))
+    radius = float(getattr(s, 'gtatools_bake_lightmap_filter', 0.0))
+    raw = bpy.data.images.get(f"{base}_LIGHTMAP_raw")
+    src = raw if raw is not None else target_img
+    try:
+        arr = B.read_image_to_numpy(src)     # приватный свежий буфер
+    except Exception:
+        return
+    if radius > 0:
+        arr = B.gaussian_blur(arr, radius)   # новый приватный массив
+    if intensity != 1.0:
+        ch = min(3, arr.shape[2])
+        arr[..., :ch] = np.clip(arr[..., :ch] * intensity, 0.0, 1.0)
+    if tuple(target_img.size) != (arr.shape[1], arr.shape[0]):
+        try:
+            target_img.scale(arr.shape[1], arr.shape[0])
+        except Exception:
+            pass
+    B.write_numpy_to_image(target_img, arr, pack=True)
+    target_img.update()
+
+
+class GTATOOLS_OT_bake_lightmap_apply(bpy.types.Operator):
+    """Применить запечённый LightMap выбранным способом
+    (gtatools_bake_lightmap_apply): оставить слоем / впечь в диффуз /
+    записать в vertex prelight «Day»."""
+    bl_idname = "gtatools.bake_lightmap_apply"
+    bl_label = "Применить LightMap"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        if obj is None or obj.type != 'MESH':
+            return False
+        base = obj.get("inu_bake_base", "")
+        return bool(base) and bpy.data.images.get(f"{base}_LIGHTMAP") is not None
+
+    def execute(self, context):
+        s = context.scene.inu_settings
+        obj = context.active_object
+        base = obj.get("inu_bake_base", "")
+        lm = bpy.data.images.get(f"{base}_LIGHTMAP")
+        if lm is None:
+            self.report({'ERROR'}, T("Сначала запеките слой LightMap"))
+            return {'CANCELLED'}
+        mode = s.gtatools_bake_lightmap_apply
+        if mode == 'STACK':
+            self.report({'INFO'},
+                        T("LightMap — слой в стеке. Сведите «Сохранить как»"))
+            return {'FINISHED'}
+        if mode == 'DIFFUSE':
+            return self._apply_diffuse(context, obj, base, lm)
+        if mode == 'PRELIGHT':
+            return self._apply_prelight(context, obj, base, lm)
+        return {'CANCELLED'}
+
+    # ── режим: впечь в diffuse ──
+    def _apply_diffuse(self, context, obj, base, lm):
+        from ..tools import bake as B
+        diff = bpy.data.images.get(f"{base}_DIFFUSE")
+        if diff is None:
+            self.report({'ERROR'},
+                        T("Нет запечённого Diffuse — добавьте слой Diffuse и запеките"))
+            return {'CANCELLED'}
+        d = B.read_image_to_numpy(diff)
+        l = B.read_image_to_numpy(lm)
+        if d.shape[:2] != l.shape[:2]:
+            self.report({'ERROR'},
+                        T("Размеры Diffuse и LightMap не совпадают — печатайте в одном размере"))
+            return {'CANCELLED'}
+        # In-place: d — приватный свежий буфер из read_image_to_numpy,
+        # альфа не трогается (лишняя полная копия — до 256 МБ на 4096²).
+        ch = min(3, d.shape[2], l.shape[2])
+        d[..., :ch] *= l[..., :ch]                     # diffuse × освещение
+        w, h = diff.size
+        final = B.setup_target_image(base, w, h, transient=False)
+        B.write_numpy_to_image(final, d, pack=True)
+        _show_image(context, final)
+        self.report({'INFO'}, T("LightMap впечён в диффуз: ") + final.name)
+        return {'FINISHED'}
+
+    # ── режим: в vertex prelight ──
+    def _apply_prelight(self, context, obj, base, lm):
+        import numpy as np
+        from ..tools import bake as B
+        from ..tools import vc_layers, compat
+        me = obj.data
+        # Сэмплим по UV, в которую запечён lightmap.
+        uv_name = obj.get("inu_bake_lm_uv", "") or obj.get("inu_bake_uv", "")
+        uvs = me.uv_layers
+        uv = (uvs.get(uv_name) if uv_name else None) or uvs.active or (
+            uvs[0] if len(uvs) else None)
+        if uv is None:
+            self.report({'ERROR'}, T("У объекта нет UV для сэмплинга LightMap"))
+            return {'CANCELLED'}
+        arr = B.read_image_to_numpy(lm)
+        n = len(me.loops)
+        uv_co = np.empty(n * 2, dtype=np.float32)
+        uv.data.foreach_get('uv', uv_co)
+        sampled = B.sample_image_uv_batch(arr, uv_co.reshape(n, 2))
+        rgba = np.ones((n, 4), dtype=np.float32)
+        c = min(3, sampled.shape[1])
+        rgba[:, :c] = np.clip(sampled[:, :c], 0.0, 1.0)
+        # Пишем в prelight-атрибут «Day» (CORNER / FLOAT_COLOR). Если он есть,
+        # но не CORNER-домена — пересоздаём (наш массив пер-лупный).
+        attr = me.color_attributes.get(vc_layers.BASE_DAY_NAME)
+        if attr is not None and getattr(attr, 'domain', 'CORNER') != 'CORNER':
+            try:
+                me.color_attributes.remove(attr)
+            except Exception:
+                pass
+            attr = None
+        if attr is None:
+            attr = compat.vcol_new(me, vc_layers.BASE_DAY_NAME,
+                                   domain='CORNER', dtype='FLOAT_COLOR')
+        if attr is None:
+            self.report({'ERROR'}, T("Не удалось создать prelight-атрибут «Day»"))
+            return {'CANCELLED'}
+        vc_layers._write_array_to_color_attr(attr, rgba)
+        # «Day» сделать активным цветовым атрибутом — чтобы превью прилайта и
+        # экспорт брали именно его.
+        try:
+            me.color_attributes.active_color = attr
+        except Exception:
+            pass
+        # VC-Layers: при включённом Live Preview «Day» — сводка стека
+        # (backup + слои), и следующий recompose/экспорт затёр бы записанный
+        # lightmap восстановлением из старого backup. Делаем lightmap НОВОЙ
+        # базой: обновляем backup-снапшот и пересобираем стек (слои лягут
+        # поверх). Без LP запись в Day — уже база, трогать нечего.
+        try:
+            if vc_layers._is_live_preview_on(me):
+                vc_layers._backup_base_attr(
+                    me, vc_layers.BASE_DAY_NAME,
+                    vc_layers._backup_prop_for_scope('DAY'))
+                vc_layers.recompose_stack(me, 'DAY')
+        except Exception:
+            pass
+        me.update()
+        # Показать результат: снять bake-эмиссия-превью (иначе оно перекрывает
+        # модель) и включить превью прилайта — тогда записанный «Day» виден.
+        if obj.get("inu_bake_preview_on", 0):
+            _restore_materials(obj)
+        try:
+            from ..tools.prelight import setup_prelight_preview
+            setup_prelight_preview(obj, enable=True)
+        except Exception:
+            pass
+        self.report({'INFO'},
+                    T("LightMap записан в prelight «Day» — превью прилайта включено"))
+        return {'FINISHED'}
+
+class GTATOOLS_OT_bake_lightmap_postprocess(bpy.types.Operator):
+    """Применить Интенсивность и Смягчение к запечённому LightMap — быстро,
+    без повторной запечки. Крутишь ползунки → жмёшь → результат обновился."""
+    bl_idname = "gtatools.bake_lightmap_postprocess"
+    bl_label = "Обновить лайтмап"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        if obj is None or obj.type != 'MESH':
+            return False
+        base = obj.get("inu_bake_base", "")
+        return bool(base) and bpy.data.images.get(f"{base}_LIGHTMAP") is not None
+
+    def execute(self, context):
+        s = context.scene.inu_settings
+        obj = context.active_object
+        base = obj.get("inu_bake_base", "")
+        target = bpy.data.images.get(f"{base}_LIGHTMAP")
+        if target is None:
+            self.report({'ERROR'}, T("Сначала запеките слой LightMap"))
+            return {'CANCELLED'}
+        _apply_lightmap_postprocess(s, base, target)
+        # Обновить активное превью: обычный/лайтмап-композит подхватит новую
+        # картинку сам (тот же датаблок), а over-base показывает отдельную
+        # свёрнутую <base>_OVER — её надо пересчитать.
+        rebuild_live_composite(obj)
+        self.report({'INFO'}, T("Лайтмап обновлён"))
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_bake_show_over_base(bpy.types.Operator):
+    """Показать финальный вид на модели: базовая текстура (через свою UV1) ×
+    запечённый композит стека (через UV запекания, UV2). Как в игре с двумя
+    UV-каналами.
+
+    Строит per-слот preview-материал: TexUV1 (база) × TexUV2 (композит) →
+    эмиссия. Композит запечённых карт сводится в <base>_OVER. Базовая
+    текстура и её UV берутся из ИСХОДНОГО материала каждого слота. Снять —
+    кнопкой «Скрыть текстуру» (возврат исходных материалов)."""
+    bl_idname = "gtatools.bake_show_over_base"
+    bl_label = "Показать поверх базы (UV2)"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj is not None and obj.type == 'MESH'
+                and bool(obj.get("inu_bake_base")))
+
+    def execute(self, context):
+        s = context.scene.inu_settings
+        obj = context.active_object
+        base = obj.get("inu_bake_base", "")
+        # ТОГГЛ: если over-base уже показан — выключаем, но возвращаемся к
+        # ОБЫЧНОМУ превью (композит/лайтмап), а не к голым материалам —
+        # «Показать текстуру» остаётся включённым.
+        if (obj.get("inu_bake_preview_on", 0)
+                and obj.get("inu_bake_overbase_on", 0)):
+            obj["inu_bake_overbase_on"] = 0
+            if _apply_result_material(obj) is None:
+                _restore_materials(obj)          # нет результата — просто снять
+            else:
+                # подчистить осиротевшие per-слот over-base материалы
+                for _m in [mm for mm in bpy.data.materials
+                           if mm.name.startswith("INU_BakeOver_")
+                           and mm.users == 0]:
+                    try:
+                        bpy.data.materials.remove(_m)
+                    except Exception:
+                        pass
+            self.report({'INFO'}, T("Показ поверх UV1 выключен"))
+            return {'FINISHED'}
+        # UV2 = UV, в которую запечён стек (inu_bake_uv). fallback — 2-й/1-й слой.
+        over_uv = obj.get("inu_bake_uv", "")
+        uvs = getattr(obj.data, 'uv_layers', None)
+        if not over_uv and uvs and len(uvs):
+            over_uv = (uvs[1].name if len(uvs) >= 2 else uvs[0].name)
+        # Свести стек в один композит (UV2-раскладка).
+        comp = _composite_stack_image(s, base, f"{base}_OVER")
+        if comp is None:
+            self.report({'ERROR'}, T("Нет запечённых карт"))
+            return {'CANCELLED'}
+        # Исходные материалы должны быть в слотах (для чтения базовой текстуры):
+        # если сейчас превью — сначала вернём оригиналы.
+        if obj.get("inu_bake_preview_on", 0):
+            _restore_materials(obj)
+        slot_bases = [_find_base_tex(sl.material) for sl in obj.material_slots]
+        _snapshot_materials(obj)
+        uv1_fallback = uvs[0].name if (uvs and len(uvs)) else ''
+        for i, sl in enumerate(obj.material_slots):
+            b_img, b_uv = slot_bases[i] if i < len(slot_bases) else (None, '')
+            if not b_uv:
+                b_uv = uv1_fallback
+            sl.material = _build_overlay_preview_mat(b_img, b_uv, comp, over_uv, i)
+        # Отдельный флаг over-base: НЕ трогаем inu_bake_mode_live/preview_kind
+        # (это состояние «обычного» результата) — иначе после выключения
+        # over-base «Показать текстуру» терял бы, что показывать.
+        obj["inu_bake_preview_on"] = 1
+        obj["inu_bake_overbase_on"] = 1
+        self.report({'INFO'},
+                    T("Показано: база(UV1) × запечённое(UV2), UV2: ")
+                    + (over_uv or "?"))
         return {'FINISHED'}

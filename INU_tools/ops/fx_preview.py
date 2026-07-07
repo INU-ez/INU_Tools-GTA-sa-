@@ -128,6 +128,11 @@ def _lock_child(obj, lock_rotation=True):
     if hasattr(obj, 'inu'):
         obj.inu.type = 'NON'
 
+    # Rename-safe маркер превью-детей: детект/удаление по нему, а не по
+    # подстроке имени родителя (после переименования Empty подстрока не
+    # совпадает → таймер строил ДУБЛЬ рига, а старый становился сиротой).
+    obj["inu_2dfx_preview"] = 1
+
     # Non-selectable in viewport
     obj.hide_select = True
 
@@ -288,6 +293,8 @@ def create_light_preview(parent_obj):
     - A Point Light (color, range)
     - A billboard plane with corona texture (vertical, facing Y)
     """
+    # Явная сборка снимает подавление авто-таймера (см. rebuild_missing_previews).
+    parent_obj.pop("inu_2dfx_no_preview", None)
     inu = getattr(parent_obj, 'inu', None)
     if inu and hasattr(inu, 'color_2dfx'):
         c = inu.color_2dfx
@@ -573,6 +580,8 @@ def create_particle_preview(parent_obj):
     COLOUR/SIZE/TEXTURE, and builds a single camera-facing plane. No simulation.
     Also ensures particle textures are auto-loaded from gta3.img on first use.
     """
+    # Явная сборка снимает подавление авто-таймера (см. rebuild_missing_previews).
+    parent_obj.pop("inu_2dfx_no_preview", None)
     _ensure_particle_txd_loaded()
 
     effect_name = parent_obj.get('2dfx_effect_name', '') or ''
@@ -649,12 +658,21 @@ def create_shadow_preview(parent_obj):
     return shadow_plane
 
 
+def _is_preview_child(child, parent_obj):
+    """True для превью-ребёнка 2DFX Empty: rename-safe маркер
+    inu_2dfx_preview (новые риги) ИЛИ легаси-критерий по имени (риги,
+    построенные до маркера)."""
+    if child.get("inu_2dfx_preview"):
+        return True
+    inu = getattr(child, 'inu', None)
+    return bool(inu and inu.type == 'NON' and parent_obj.name in child.name)
+
+
 def remove_preview_children(parent_obj):
     """Remove all preview children (lights, billboards, shadows)."""
     children_to_remove = []
     for child in parent_obj.children:
-        inu = getattr(child, 'inu', None)
-        if inu and inu.type == 'NON' and parent_obj.name in child.name:
+        if _is_preview_child(child, parent_obj):
             children_to_remove.append(child)
 
     for child in children_to_remove:
@@ -943,3 +961,78 @@ def stop_billboard_timer():
             pass
         _billboard_draw_handler = None
     _billboards.clear()
+
+
+# ── 2DFX preview auto-rebuild ────────────────────────────────────────
+# A 2DFX is a single Empty that holds ALL the effect data (inu props +
+# 2dfx_* custom props). Its corona / light children are a *derived* visual
+# preview, regenerable from that data. When the user duplicates / copies /
+# appends a 2DFX Empty, Blender copies the data but NOT the preview
+# children — so a light polling timer rebuilds the preview for any 2DFX
+# Empty that's missing it. Result: native Shift+D / Ctrl+C+V just work,
+# and the outliner rig no longer has to be hand-copied.
+
+_PREVIEW_AUTOBUILD_INTERVAL = 0.6
+
+
+def _has_preview_children(obj):
+    """True if the 2DFX Empty already carries its preview rig — same
+    rename-safe criterion (_is_preview_child) that removal uses."""
+    return any(_is_preview_child(c, obj) for c in obj.children)
+
+
+def rebuild_missing_previews():
+    """Rebuild the preview for every 2DFX Empty that lost it. Returns the
+    count rebuilt. Only LIGHT / PARTICLE effects have a preview rig; other
+    effect types are skipped (no rig to rebuild). Empties, у которых
+    пользователь явно удалил превью (флаг inu_2dfx_no_preview из
+    gtatools.remove_2dfx_preview), НЕ пересобираются — иначе удаление
+    было бы невозможно (таймер воскрешал бы риг за один тик)."""
+    rebuilt = 0
+    for obj in bpy.data.objects:
+        if obj.type != 'EMPTY':
+            continue
+        inu = getattr(obj, 'inu', None)
+        if not inu or getattr(inu, 'type', '') != '2DFX':
+            continue
+        eff = getattr(inu, 'effect_2dfx', '')
+        if eff not in ('LIGHT', 'PARTICLE'):
+            continue
+        if obj.get("inu_2dfx_no_preview"):
+            continue
+        if _has_preview_children(obj):
+            continue
+        try:
+            if eff == 'LIGHT':
+                create_light_preview(obj)
+            else:
+                create_particle_preview(obj)
+            rebuilt += 1
+        except Exception as e:
+            print(f"[2DFX] preview rebuild for {obj.name} failed: {e}")
+    return rebuilt
+
+
+def _preview_autobuild_tick():
+    try:
+        rebuild_missing_previews()
+    except Exception as e:
+        print(f"[2DFX] preview autobuild tick: {e}")
+    return _PREVIEW_AUTOBUILD_INTERVAL
+
+
+def start_preview_autobuild():
+    """Register the polling timer that keeps every 2DFX Empty's preview in
+    sync after a duplicate / copy / append (bpy.app.timers — main-thread,
+    the sanctioned place to create data)."""
+    if not bpy.app.timers.is_registered(_preview_autobuild_tick):
+        bpy.app.timers.register(_preview_autobuild_tick,
+                                first_interval=1.0, persistent=True)
+
+
+def stop_preview_autobuild():
+    if bpy.app.timers.is_registered(_preview_autobuild_tick):
+        try:
+            bpy.app.timers.unregister(_preview_autobuild_tick)
+        except Exception:
+            pass

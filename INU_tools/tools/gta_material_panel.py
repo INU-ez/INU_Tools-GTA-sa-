@@ -2,9 +2,8 @@
 #
 # Condensed "GTA Material" panel for the material Properties tab. It
 # surfaces the most common GTA SA modding knobs in one place:
-#   • preset dropdown (built-ins + user-saved presets from INU_Preset)
+#   • one-click quick presets (Glass / Chrome / Paint / Reset)
 #   • vehicle color slot (Primary/Secondary/Headlight/…)
-#   • one-click "apply preset" + Save / Delete
 #
 # Underlying state is still stored in `mat.inu.*` custom properties so
 # it round-trips through the existing DFF writer — this file only adds
@@ -13,7 +12,6 @@
 import bpy
 
 from .. import T
-from ..data import material_presets as _mp
 from .compat import safe_icon, inu_icon
 # Built-in presets — shipped with the addon, always available.
 PRESETS = (
@@ -108,32 +106,6 @@ def apply_preset(mat, preset: str):
     return f"unknown preset {preset}"
 
 
-# ── Dynamic preset dropdown ─────────────────────────────────────────
-
-# Cache invalidated by Save/Delete operators. Items must be kept alive
-# (returning a fresh list every call triggers Blender's Python GC on
-# the strings and breaks the dropdown — see bpy.props docs).
-_items_cache: list = []
-
-
-def invalidate_cache():
-    global _items_cache
-    _items_cache = []
-
-
-def preset_items(self, context):
-    """Enum items callback: built-ins + user presets from INU_Preset."""
-    items = [(p_id, p_name, p_desc) for p_id, p_name, p_desc in PRESETS]
-    user = _mp.list_presets()
-    for name in user:
-        # 'USER:<name>' encoded id, actual name shown in the label
-        items.append((f'USER:{name}', name, f'Пользовательский пресет: {name}'))
-
-    global _items_cache
-    _items_cache = items
-    return _items_cache
-
-
 # ──────────────────────────── operators ──────────────────────────────
 
 class GTATOOLS_OT_material_preset(bpy.types.Operator):
@@ -155,19 +127,8 @@ class GTATOOLS_OT_material_preset(bpy.types.Operator):
             self.report({'ERROR'}, "no inu props")
             return {'CANCELLED'}
 
-        if self.preset.startswith('USER:'):
-            user_name = self.preset[5:]
-            _reset_effects(inu)
-            data = _mp.load_preset(user_name)
-            if not data:
-                self.report({'ERROR'}, f"preset not found: {user_name}")
-                return {'CANCELLED'}
-            count = _mp.apply_to_inu(inu, data)
-            self.report({'INFO'}, f"{user_name}: applied {count} fields")
-        else:
-            msg = apply_preset(mat, self.preset)
-            self.report({'INFO'}, msg)
-
+        msg = apply_preset(mat, self.preset)
+        self.report({'INFO'}, msg)
         return {'FINISHED'}
 
 

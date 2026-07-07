@@ -896,8 +896,16 @@ class GTATOOLS_OT_import_from_img(bpy.types.Operator):
                                 obj.name = _pfx_lod + base
                         else:
                             if _sfx_dff:
+                                # Don't double the suffix when the source name
+                                # already carries it (e.g. re-imported from an
+                                # IMG whose DFF was stored as «name_DFF.dff») —
+                                # that produced «name_DFF_DFF».
+                                if base.upper().endswith(_sfx_dff.upper()):
+                                    base = base[:-len(_sfx_dff)]
                                 obj.name = base + _sfx_dff
                             elif _pfx_dff:
+                                if base.upper().startswith(_pfx_dff.upper()):
+                                    base = base[len(_pfx_dff):]
                                 obj.name = _pfx_dff + base
 
                 pos = (inst.pos_x, inst.pos_y, inst.pos_z)
@@ -982,6 +990,42 @@ class GTATOOLS_OT_remove_from_img(bpy.types.Operator):
                 T("Rebuild Archive в IMG-туле — иначе игра подтянет старую запись"))
         else:
             self.report({'WARNING'}, T("Файлы не найдены в IMG"))
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_rebuild_img(bpy.types.Operator):
+    """Перестроить (компактировать) IMG-архив: убрать мёртвое место,
+    оставшееся от перезаписей моделей (replace добавляет данные в конец,
+    старый блок не освобождается). Файл заменяется атомарно."""
+    bl_idname = "gtatools.rebuild_img"
+    bl_label = "INU: Rebuild IMG"
+    bl_options = {'REGISTER'}
+
+    @classmethod
+    def poll(cls, context):
+        s = getattr(context.scene, 'inu_settings', None)
+        return bool(getattr(s, 'gtatools_img_path', '') if s else '')
+
+    def execute(self, context):
+        s = context.scene.inu_settings
+        img_path = bpy.path.abspath(getattr(s, 'gtatools_img_path', '') or '')
+        if not img_path or not os.path.isfile(img_path):
+            self.report({'ERROR'}, T("Укажите существующий .img файл"))
+            return {'CANCELLED'}
+        try:
+            from ..core.img import rebuild_img
+            stats = rebuild_img(img_path)
+        except Exception as e:
+            self.report({'ERROR'}, f"Rebuild error: {e}")
+            return {'CANCELLED'}
+        saved_mb = stats['saved'] / (1024.0 * 1024.0)
+        self.report({'INFO'}, T(
+            "IMG перестроен: {0} записей, освобождено {1:.1f} МБ").format(
+                stats['entries'], saved_mb))
+        try:
+            bpy.ops.gtatools.refresh_img_list()
+        except Exception:
+            pass
         return {'FINISHED'}
 
 
@@ -1211,6 +1255,37 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
         _img_version = gv.profile_for(
             gv.game_of_scene(context.scene)).img_version
 
+        # #3: GTA SA IMG directory name field is 24 bytes, but the game reads
+        # it as a C-string and force-terminates name[23]='\0' (CdDirectory) —
+        # so the USABLE max is 23 chars: exactly-24 loses its last char (.dff
+        # → .df) and no longer matches the IDE/IPL reference → invisible
+        # model. Note the LOD name is 'LOD'+base+'.dff' (= base + 7 chars),
+        # so it overflows first. Validate up front and refuse rather than
+        # write a broken archive. (Same 23+NUL pattern as map_lint.py.)
+        _NAME_MAX = 23
+        _too_long = []
+        for _bn, _models in model_groups.items():
+            if not _is_included(_bn):
+                continue
+            _names = []
+            if export_dff_flag and _models['DFF']:
+                _names.append(_bn + '.dff')
+            if export_lod_flag and _models['LOD']:
+                _names.append('LOD' + _bn + '.dff')
+            if write_col_per_group and (_models['COL'] or empty_col_flag):
+                _names.append(_bn + '.col')
+            if export_txd_flag and (_models['DFF'] or _models['LOD']):
+                _names.append(_txd_for(_bn) + '.txd')
+            for _nm in _names:
+                if len(_nm.encode('ascii', errors='replace')) > _NAME_MAX:
+                    _too_long.append(_nm)
+        if _too_long:
+            self.report({'ERROR'}, T(
+                "Имя для IMG длиннее 23 символов — обрежется и не совпадёт "
+                "с IDE/IPL: {0}. Укороти имя модели.").format(
+                    ", ".join(_too_long[:5]) + ("…" if len(_too_long) > 5 else "")))
+            return {'CANCELLED'}
+
         try:
             with tempfile.TemporaryDirectory() as tmpdir, ImgWriter(img_path, version=_img_version) as writer:
                 # Bucket DFF/LOD objects by their resolved TXD name so every
@@ -1256,7 +1331,13 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
                     if write_col_per_group and (models['COL'] or empty_col_flag):
                         try:
                             col_src = [models['COL']] if models['COL'] else []
-                            col_model = build_col_model(col_src, version=col_version, model_name=base_name, empty=empty_col_flag)
+                            # Empty COL → measure bounds off the visual model so
+                            # GTA doesn't cull it (zero sphere = disappears).
+                            _bref = None
+                            if empty_col_flag:
+                                _vis = models['DFF'] or models['LOD']
+                                _bref = [_vis] if _vis else None
+                            col_model = build_col_model(col_src, version=col_version, model_name=base_name, empty=empty_col_flag, bounds_ref=_bref)
                             encode_jobs.append((base_name + '.col', (lambda m=col_model: write_col([m])), f"{base_name}.col"))
                         except Exception as e:
                             results.append(f"{base_name}.col error: {e}")
@@ -1329,6 +1410,14 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
                             if obj.name in original_locations:
                                 obj.location = original_locations[obj.name]
                     _tick(lib_filename)
+        except PermissionError:
+            # .img заблокирован (чаще всего запущена игра, которая держит
+            # архив открытым). Не роняем оператор трейсбеком — показываем
+            # понятное предупреждение внизу и мягко отменяем экспорт.
+            self.report({'WARNING'}, T(
+                "Файл .img занят — закрой игру перед экспортом: {0}").format(
+                    os.path.basename(img_path)))
+            return {'CANCELLED'}
         finally:
             # Always reset UI progress/status, even on unexpected error.
             wm.progress_end()

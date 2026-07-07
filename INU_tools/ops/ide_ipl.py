@@ -33,6 +33,85 @@ def _pub(op, level, msg):
         pass
 
 
+def _validate_model_ids(objs):
+    """Validate model IDs of a selection about to be written to IDE/IPL.
+
+    Returns ``(errors, warnings)`` — lists of human-readable strings.
+
+    * ``errors`` → HARD STOP: an object that would be written with
+      ``model_id == 0``. id 0 is the player model, so such a row corrupts the
+      game. A DFF needs its own id; a LOD may borrow ``dff_id + 1``, so a LOD
+      only errors when it has neither its own id nor a paired DFF with one.
+    * ``warnings`` → a LOD that would auto-take ``dff_id + 1`` where that id is
+      already owned by another mesh in the scene (silent clash, see #5).
+    """
+    from ..tools.model_utils import get_model_type
+
+    by_base = {}
+    for o in objs:
+        mt, base = get_model_type(o)
+        by_base.setdefault(base, {})[mt] = o
+
+    # model_id → owners, across the whole scene (for the LOD+1 clash check).
+    scene_ids = {}
+    for o in bpy.data.objects:
+        if o.type != 'MESH':
+            continue
+        mid = int(getattr(getattr(o, 'inu', None), 'model_id', 0) or 0)
+        if mid > 0:
+            scene_ids.setdefault(mid, []).append(o)
+
+    errors, warnings = [], []
+    for g in by_base.values():
+        dff = g.get('DFF')
+        lod = g.get('LOD')
+        dff_id = int(getattr(dff.inu, 'model_id', 0) or 0) if dff else 0
+        if dff is not None and dff_id == 0:
+            errors.append(dff.name)
+        if lod is not None:
+            lod_id = int(getattr(lod.inu, 'model_id', 0) or 0)
+            if lod_id == 0:
+                if dff_id <= 0:
+                    errors.append(lod.name)        # nothing to borrow id+1 from
+                else:
+                    owners = [o for o in scene_ids.get(dff_id + 1, [])
+                              if o is not lod and o is not dff]
+                    if owners:
+                        warnings.append(
+                            f"{lod.name} → id {dff_id + 1} "
+                            f"({owners[0].name})")
+    return errors, warnings
+
+
+def _report_id_validation(op, objs):
+    """Run :func:`_validate_model_ids` and report. Returns True if the caller
+    must abort (a blocking id-0 error was found)."""
+    errs, warns = _validate_model_ids(objs)
+    if errs:
+        op.report({'ERROR'}, T(
+            "Model ID = 0 у: {0}. Назначь ID "
+            "(ID Manager → Auto-Assign) перед "
+            "добавлением.").format(
+                ", ".join(errs[:6]) + ("…" if len(errs) > 6 else "")))
+        return True
+    for w in warns:
+        op.report({'WARNING'},
+                  T("LOD занимает уже "
+                    "занятый ID: ") + w)
+    return False
+
+
+def _find_inst_index_by_name(ipl, model_name):
+    """Index of the first IPL instance whose model_name matches (case-
+    insensitive), or -1. Used to recover a DFF's ``lod_index`` when its LOD
+    isn't part of the current selection (#2)."""
+    target = (model_name or '').lower()
+    for i, inst in enumerate(ipl.instances):
+        if (inst.model_name or '').lower() == target:
+            return i
+    return -1
+
+
 class GTATOOLS_OT_upsert_ide(bpy.types.Operator):
     """Добавить / обновить запись в существующем IDE файле (авто-LOD)"""
     bl_idname = "gtatools.upsert_ide"
@@ -43,9 +122,16 @@ class GTATOOLS_OT_upsert_ide(bpy.types.Operator):
         # Маршрутизация по объекту: уже связанную модель обновляем в ЕЁ IDE
         # (ide_target_file); новые — в выбранный gtatools_ide_path.
         single = bpy.path.abspath(context.scene.inu_settings.gtatools_ide_path) or ''
+        if single and not single.lower().endswith('.ide'):
+            self.report({'WARNING'},
+                        T("Путь IDE — не .ide файл, проверь бокс IDE"))
         objs = [o for o in context.selected_objects if o.type == 'MESH']
         if not objs:
             self.report({'ERROR'}, T("Выделите меш объекты"))
+            return {'CANCELLED'}
+        # #1/#5: block writing a model_id == 0 row (id 0 = player model →
+        # corrupts the game); warn on a LOD borrowing an already-owned id+1.
+        if _report_id_validation(self, objs):
             return {'CANCELLED'}
         groups = {}
         redirected = 0
@@ -131,10 +217,15 @@ class GTATOOLS_OT_upsert_ide(bpy.types.Operator):
                     dff_id = getattr(dff_obj.inu, 'model_id', 0)
                     if dff_id > 0:
                         lod_entry.model_id = dff_id + 1
-                # LOD draw distance from DFF's lod_draw_distance property
+                # LOD draw distance from DFF's lod_draw_distance property.
+                # For an unpaired LOD: only override to a LOD-typical far
+                # distance when the value is still the property DEFAULT (299)
+                # i.e. untouched — a deliberately set value (incl. 300) is
+                # respected. Previously both 299 AND 300 were treated as
+                # "unset", silently clobbering a user-chosen 300.
                 if dff_obj:
                     lod_entry.draw_distance = dff_obj.inu.lod_draw_distance
-                elif lod_obj.inu.draw_distance in (299.0, 300.0):
+                elif lod_obj.inu.draw_distance == 299.0:
                     lod_entry.draw_distance = 999.0
                 entries.append(lod_entry)
 
@@ -175,9 +266,16 @@ class GTATOOLS_OT_upsert_ipl(bpy.types.Operator):
         # даже если справа выбран другой IPL; новые (без файла) — в выбранный
         # gtatools_ipl_path. Группируем по файлу → один upsert на файл.
         single = bpy.path.abspath(context.scene.inu_settings.gtatools_ipl_path) or ''
+        if single and not single.lower().endswith('.ipl'):
+            self.report({'WARNING'},
+                        T("Путь IPL — не .ipl файл, проверь бокс IPL"))
         objs = [o for o in context.selected_objects if o.type == 'MESH']
         if not objs:
             self.report({'ERROR'}, T("Выделите меш объекты"))
+            return {'CANCELLED'}
+        # #1/#5: block writing a model_id == 0 row (id 0 = player model →
+        # corrupts the game); warn on a LOD borrowing an already-owned id+1.
+        if _report_id_validation(self, objs):
             return {'CANCELLED'}
         groups = {}
         redirected = 0
@@ -211,10 +309,8 @@ class GTATOOLS_OT_upsert_ipl(bpy.types.Operator):
                         T("{0} объектов были привязаны к другому IPL — записаны "
                           "в выбранный (проверь дубли в старом файле)").format(
                               redirected))
-        zero_ids = sum(1 for o in objs if getattr(o.inu, 'model_id', 0) == 0)
-        if zero_ids:
-            self.report({'WARNING'},
-                        f"{zero_ids} {T('объектов с Model ID = 0, задайте ID в свойствах')}")
+        # (model_id == 0 is now blocked up-front in execute() before any
+        # write — see _report_id_validation.)
         msg = f"IPL: {T('обновлено')} {total_u}, {T('добавлено')} {total_a}"
         if len(groups) > 1:
             msg += " — " + T("записи разнесены по {0} IPL-файлам").format(len(groups))
@@ -293,6 +389,11 @@ class GTATOOLS_OT_upsert_ipl(bpy.types.Operator):
             mt, base = get_model_type(obj)
             if mt == 'LOD':
                 lod_per_base[base] = obj
+            elif mt == 'COL':
+                # Collision is bound to its DFF by name — it is NEVER placed
+                # in the IPL inst section. (Previously COL fell through to
+                # dff_objs and got its own placement line.)
+                continue
             else:
                 dff_objs.append((obj, base))
 
@@ -301,6 +402,7 @@ class GTATOOLS_OT_upsert_ipl(bpy.types.Operator):
         # its DFF siblings.  We upsert LODs with the same uuid-track
         # logic.
         lod_idx_per_base = {}
+        lost_lod_links = []   # DFFs whose LOD link couldn't be resolved (#2)
         updated = 0
         added = 0
 
@@ -358,7 +460,7 @@ class GTATOOLS_OT_upsert_ipl(bpy.types.Operator):
             obj.inu.ipl_last_model_id = entry.model_id
             obj.inu.ipl_target_file = filepath
 
-        # Build LOD entries first.
+        # LOD builder: keep "LOD<base>" name + auto model_id (DFF id + 1).
         def _lod_builder(lod_obj):
             mt, base = get_model_type(lod_obj)
             e = _ipl_entry_from_obj(lod_obj)
@@ -374,29 +476,71 @@ class GTATOOLS_OT_upsert_ipl(bpy.types.Operator):
                             break
             return e
 
+        # (#2) When the LOD isn't in THIS selection (separate click / not
+        # selected), don't silently wipe the link to -1: recover it from an
+        # existing "LOD<base>" row in the same file, else keep the DFF's
+        # previously stored valid index.
+        def _resolve_lod_index(o, base):
+            li = lod_idx_per_base.get(base, -1)
+            if li >= 0:
+                return li
+            li = _find_inst_index_by_name(existing_ipl, "LOD" + base)
+            if li >= 0:
+                return li
+            prev = int(getattr(o.inu, 'lod_index', -1) or -1)
+            if 0 <= prev < len(existing_ipl.instances):
+                return prev
+            return -1
+
+        def _dff_builder(o):
+            e = _ipl_entry_from_obj(o)
+            _, base = get_model_type(o)
+            e.lod_index = _resolve_lod_index(o, base)
+            return e
+
+        # Place the MAIN (DFF) rows FIRST, then the LODs — so in the file the
+        # main model's inst line comes BEFORE its LOD's, matching the IDE order
+        # (was reversed: LOD first). The main's lod_index is a forward
+        # reference to the LOD line, back-filled once the LOD row exists.
+        dff_placed = []   # (dff_obj, base, dff_idx, had_lod)
+        for dff_obj, base in dff_objs:
+            had_lod = int(getattr(dff_obj.inu, 'lod_index', -1) or -1) >= 0
+            dff_idx = _upsert_entry(dff_obj, _dff_builder)
+            dff_placed.append((dff_obj, base, dff_idx, had_lod))
+
         for base, lod_obj in lod_per_base.items():
             lod_idx = _upsert_entry(lod_obj, _lod_builder)
             lod_idx_per_base[base] = lod_idx
 
-        # DFF entries — assign lod_index after both rows exist.
-        def _dff_builder(o):
-            e = _ipl_entry_from_obj(o)
-            _, base = get_model_type(o)
-            li = lod_idx_per_base.get(base, -1)
-            e.lod_index = li
-            return e
+        # Back-fill each DFF's lod_index now that both rows exist; mirror onto
+        # inu so the text-only IPL export path stays in sync.
+        for dff_obj, base, dff_idx, had_lod in dff_placed:
+            li = _resolve_lod_index(dff_obj, base)
+            if 0 <= dff_idx < len(existing_ipl.instances):
+                existing_ipl.instances[dff_idx].lod_index = li
+            dff_obj.inu.lod_index = li
+            if li < 0 and had_lod:
+                lost_lod_links.append(dff_obj.name)
 
-        for dff_obj, base in dff_objs:
-            dff_idx = _upsert_entry(dff_obj, _dff_builder)
-            # Mirror lod_index onto the object's inu prop so subsequent
-            # IPL exports (text-only path) stay in sync.
-            dff_obj.inu.lod_index = lod_idx_per_base.get(base, -1)
+        if lost_lod_links:
+            self.report({'WARNING'}, T(
+                "LOD-связь потеряна (lod_index = -1) у: {0}. Выдели DFF "
+                "и его LOD вместе, или держи их в одном IPL.").format(
+                    ", ".join(lost_lod_links[:5])))
+
+        # #7: emit the FLA 12th `realInterior` column when any object in this
+        # write actually uses it, OR the file already had it — otherwise stay
+        # vanilla 11-column. (vanilla SA ignores the extra column.)
+        fla = (any(int(getattr(o.inu, 'real_interior', 0) or 0) for o in objs)
+               or any(int(getattr(i, 'real_interior', 0) or 0)
+                      for i in existing_ipl.instances))
 
         # Write IPL + sidecar.
         try:
-            write_ipl(filepath, existing_ipl, game=_get_scene_game(context))
+            write_ipl(filepath, existing_ipl,
+                      game=_get_scene_game(context), fla_extended=fla)
         except TypeError:
-            # write_ipl signature without ``game`` kwarg — fall back.
+            # write_ipl signature without ``game``/``fla_extended`` — fall back.
             write_ipl(filepath, existing_ipl)
         file_links.ipl_hash = iplinks.hash_ipl_file(filepath)
         iplinks.save_sidecar(blend_path, sidecar)
@@ -416,7 +560,18 @@ class GTATOOLS_OT_pick_setting_path(bpy.types.Operator):
     filter_glob: StringProperty(
         default="*.ipl;*.IPL;*.ide;*.IDE;*.img;*.IMG", options={'HIDDEN'})
 
+    # Per-box extension filter so the IDE box shows only .ide, the IPL box only
+    # .ipl, etc. — otherwise it's easy to pick a .ipl for the IDE box and get
+    # IPL content written into the IDE file (a swap that bit users).
+    _SETTING_GLOB = {
+        "gtatools_ide_path": "*.ide;*.IDE",
+        "gtatools_ipl_path": "*.ipl;*.IPL",
+        "gtatools_img_path": "*.img;*.IMG",
+    }
+
     def invoke(self, context, event):
+        self.filter_glob = self._SETTING_GLOB.get(
+            self.setting, "*.ipl;*.IPL;*.ide;*.IDE;*.img;*.IMG")
         if self.setting:
             cur = getattr(context.scene.inu_settings, self.setting, '')
             if cur:

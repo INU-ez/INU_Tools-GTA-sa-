@@ -148,14 +148,25 @@ def export_ide(filepath: str, objects: list) -> None:
     # model_id of each Empty's parent without re-walking the mesh list.
     _model_id_by_obj_id: dict[int, int] = {}
 
+    from ..tools.model_utils import get_model_type
     for obj in objects:
         if obj.type != 'MESH':
             continue
 
+        mt, base = get_model_type(obj)
+        # Collision has NO objs entry — it's bound to its DFF by name.
+        if mt == 'COL':
+            continue
+
         inu = getattr(obj, 'inu', None)
 
-        # Model name: strip suffixes, use clean name
-        model_name = _clean_model_name(obj.name)
+        # Model name. A LOD keeps its LOD<base> marker (matching the exported
+        # LOD<base>.dff) so it gets its own entry instead of deduping with the
+        # DFF; everything else uses the clean base name.
+        if mt == 'LOD':
+            model_name = "LOD" + base
+        else:
+            model_name = _clean_model_name(obj.name)
 
         # Skip duplicate model names (instances like gta_bench.001, .002)
         if model_name in seen_models:
@@ -165,9 +176,16 @@ def export_ide(filepath: str, objects: list) -> None:
         model_id = getattr(inu, 'model_id', 0) if inu else 0
         txd_name = getattr(inu, 'txd_name', '') if inu else ''
         if not txd_name:
-            txd_name = model_name  # default: same as model name
+            if mt == 'LOD':
+                # LOD делит TXD с основной моделью: аддон пишет {base}.txd и
+                # никогда не создаёт LOD<base>.txd — fallback на имя модели
+                # дал бы несуществующий архив (LOD без текстур в игре).
+                # Add-to-IDE (ide_ipl.py) так же берёт TXD парного DFF.
+                txd_name = base
+            else:
+                txd_name = model_name  # default: same as model name
 
-        draw_distance = getattr(inu, 'draw_distance', 300.0) if inu else 300.0
+        draw_distance = getattr(inu, 'draw_distance', 299.0) if inu else 299.0
         flags = getattr(inu, 'ide_flags', 0) if inu else 0
 
         # Translate flags when the per-object source game differs from

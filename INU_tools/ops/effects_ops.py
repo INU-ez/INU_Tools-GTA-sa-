@@ -139,14 +139,15 @@ class GTATOOLS_OT_create_2dfx(bpy.types.Operator):
 
 
 class GTATOOLS_OT_apply_2dfx_to_selected(bpy.types.Operator):
-    """Навесить настройки активного 2DFX на все ОСТАЛЬНЫЕ выделенные Empty.
+    """Скопировать настройки активного 2DFX на все ОСТАЛЬНЫЕ выделенные пустышки.
 
-    Удобный поток: надублируй пустышки (Shift+D) по нужным местам → выдели
-    их ВСЕ + активный настроенный 2DFX (он — активный объект) → жми. Каждая
-    пустышка получает все настройки + превью, ОСТАВАЯСЬ НА СВОЁМ МЕСТЕ.
+    Мульти-редактирование: правишь один 2DFX (он — активный объект),
+    выделяешь группу целевых пустышек и применяешь — все настройки (цвет,
+    размеры короны/тени, текстуры, флаги) уходят на всех разом. Превью у
+    целей обновляется автоматически.
 
-    Так же = мульти-редактирование: правишь один 2DFX, выделяешь группу,
-    применяешь — настройки уходят на всех разом."""
+    Дублирование (Shift+D) больше не требует этой кнопки: копия 2DFX уже
+    несёт все настройки и сама получает превью."""
     bl_idname = "gtatools.apply_2dfx_to_selected"
     bl_label = "INU: Apply 2DFX to Selected"
     bl_options = {'REGISTER', 'UNDO'}
@@ -163,8 +164,7 @@ class GTATOOLS_OT_apply_2dfx_to_selected(bpy.types.Operator):
                     and getattr(inu, 'type', '') == '2DFX')
 
     def execute(self, context):
-        from .fx_preview import (create_light_preview, create_particle_preview,
-                                 remove_preview_children)
+        from .fx_preview import remove_preview_children
         src = context.active_object
         src_inu = src.inu
         targets = [o for o in context.selected_objects
@@ -204,15 +204,14 @@ class GTATOOLS_OT_apply_2dfx_to_selected(bpy.types.Operator):
             tgt.empty_display_type = src.empty_display_type
             tgt.empty_display_size = src.empty_display_size
 
-            # Rebuild the preview (position is left untouched — stays put).
+            # Drop the target's stale preview; the auto-rebuild timer
+            # recreates it from the freshly-copied settings within ~1s. The
+            # operator no longer builds the preview rig itself — that's the
+            # timer's job now. Position is left untouched (stays put).
             try:
                 remove_preview_children(tgt)
-                if tgt.inu.effect_2dfx == 'LIGHT':
-                    create_light_preview(tgt)
-                elif tgt.inu.effect_2dfx == 'PARTICLE':
-                    create_particle_preview(tgt)
             except Exception as e:
-                print(f"[INU] apply-2dfx preview skipped: {e}")
+                print(f"[INU] apply-2dfx preview clear skipped: {e}")
             n += 1
 
         self.report({'INFO'}, T("Настройки 2DFX применены к {0}").format(n))
@@ -321,7 +320,12 @@ class GTATOOLS_OT_remove_2dfx_preview(bpy.types.Operator):
 
     def execute(self, context):
         from .fx_preview import remove_preview_children
-        remove_preview_children(context.active_object)
+        obj = context.active_object
+        remove_preview_children(obj)
+        # Пользователь явно убрал превью — подавить авто-таймер (иначе
+        # rebuild_missing_previews воскресит риг за один тик). Явная
+        # пересборка (create_*_preview) флаг снимает.
+        obj["inu_2dfx_no_preview"] = 1
         self.report({'INFO'}, "2DFX preview removed")
         return {'FINISHED'}
 

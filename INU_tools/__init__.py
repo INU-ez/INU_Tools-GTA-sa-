@@ -28,7 +28,7 @@
 bl_info = {
     "name": "INU_tools(gta_sa)",
     "author": "INU",
-    "version": (2, 1, 1),
+    "version": (2, 2, 0),
     # Минимум 2.83 LTS — поддержка через tools/compat.py:
     # • bake / preview / DFF I/O работают через legacy mesh.vertex_colors
     # • prelight preview shader использует ShaderNodeMixRGB на ≤3.3
@@ -447,10 +447,11 @@ from .ui.panels import (  # noqa: E501
     GTATOOLS_PT_vehicle_panel,
     GTATOOLS_PT_frame_hierarchy,
     GTATOOLS_UL_bake_layers,
+    GTATOOLS_PT_uv_root,
     GTATOOLS_PT_bake_panel,
     GTATOOLS_PT_bake_advanced,
-    GTATOOLS_UL_2dfx,
     GTATOOLS_PT_2dfx_panel,
+    GTATOOLS_PT_2dfx_settings,
     GTATOOLS_PT_object_ide_ipl_panel,
     GTATOOLS_PT_object_inu_tools,
     GTATOOLS_PT_inu_tools_panel,
@@ -463,7 +464,6 @@ from .ui.panels import (  # noqa: E501
     GTATOOLS_PT_vc_postprocess_panel,
     GTATOOLS_PT_itera_panel,
     GTATOOLS_PT_prelight_col_panel,
-    GTATOOLS_PT_vertex_paint_panel,
     GTATOOLS_PT_lightmap_panel,
     GTATOOLS_PT_water_panel,
     GTATOOLS_PT_anim_panel,
@@ -482,6 +482,9 @@ from .ops.bake_ops import (
     GTATOOLS_OT_bake_preview,
     GTATOOLS_OT_bake_flatten,
     GTATOOLS_OT_bake_save_map,
+    GTATOOLS_OT_bake_lightmap_apply,
+    GTATOOLS_OT_bake_lightmap_postprocess,
+    GTATOOLS_OT_bake_show_over_base,
 )
 from .scene_settings import (
     INUSceneSettings,
@@ -500,8 +503,7 @@ from .ops.ifp_import import (
     GTATOOLS_OT_refresh_station_markers,
     GTATOOLS_OT_path_node_flag,
 )
-from .ops.cst_import import GTATOOLS_OT_import_cst
-from .ops.cst_export import GTATOOLS_OT_export_cst
+from .ops.cst_import import GTATOOLS_OT_drop_cst
 from .ops.paintjob_ops import GTATOOLS_OT_validate_paintjobs
 from .ops.onboarding_ops import (
     GTATOOLS_OT_open_docs,
@@ -515,7 +517,6 @@ from .ops.validate_scene import (
     GTATOOLS_OT_validate_goto,
     GTATOOLS_OT_validate_fix_quaternions,
     GTATOOLS_OT_validate_fix_suffix,
-    GTATOOLS_OT_validate_fix_modulate_color,
 )
 from .ops.frame_hierarchy import (
     GTATOOLS_OT_frame_select,
@@ -2272,6 +2273,7 @@ from .ops.img_ops import (
     GTATOOLS_OT_import_from_img,
     GTATOOLS_OT_remove_from_img,
     GTATOOLS_OT_export_to_img,
+    GTATOOLS_OT_rebuild_img,
 )
 
 # Asset Library Builder — turns .inu_cache contents into a portable
@@ -2330,6 +2332,7 @@ from .ops.col_import import (
 if hasattr(bpy.types, 'FileHandler'):
     from .ops.dff_import import GTATOOLS_FH_dff_drop
     from .ops.col_import import GTATOOLS_FH_col_drop
+    from .ops.cst_import import GTATOOLS_FH_cst_drop
 from .ops.txd_import import GTATOOLS_OT_import_txd
 
 
@@ -2362,8 +2365,24 @@ def _ide_entry_from_obj(obj, auto_id=False):
     txd_name = getattr(inu, 'txd_name', '') if inu else ''
     if not txd_name:
         txd_name = name
-    draw_dist = getattr(inu, 'draw_distance', 300.0) if inu else 300.0
+    draw_dist = getattr(inu, 'draw_distance', 299.0) if inu else 299.0
     flags = getattr(inu, 'ide_flags', 0) if inu else 0
+    # #9: translate flags when this object was imported tagged with a
+    # different source game than the scene's target (mirrors the full-export
+    # path in ide_export.py). Without this, Add-to-IDE writes raw bits that
+    # mean the wrong thing across games. Same-game / unknown source passes
+    # through unchanged.
+    if inu:
+        src_game = getattr(inu, 'ide_flags_source_game', '') or ''
+        if src_game:
+            try:
+                from .core import game_versions
+                tgt_game = game_versions.game_of_scene(bpy.context.scene)
+                if tgt_game and src_game != tgt_game:
+                    from .core.ide_flag_translate import translate_flags
+                    flags = translate_flags(flags, src_game, tgt_game)
+            except Exception:
+                pass
     return IdeObject(model_id=model_id, model_name=name,
                      txd_name=txd_name, draw_distance=draw_dist, flags=flags)
 
@@ -2569,6 +2588,7 @@ from .ops.light_ops import (
     GTATOOLS_OT_prelight_merge_paint,
     GTATOOLS_OT_prelight_split_paint,
     GTATOOLS_OT_copy_color_attr,
+    GTATOOLS_OT_copy_vertex_alpha,
     GTATOOLS_OT_prelight_preview,
     GTATOOLS_OT_alpha_preview,
     GTATOOLS_OT_alpha_cleanup,
@@ -2763,25 +2783,9 @@ from .ops.col_surface_ops import (
 # ============================================================================
 # Preferences & ID Manager — N-sidebar subpanels
 # ============================================================================
-
-def _draw_suffix_prefix(layout, scene):
-    for _label, _pfx, _sfx in [("DFF", "gtatools_prefix_dff", "gtatools_suffix_dff"),
-                                ("LOD", "gtatools_prefix_lod", "gtatools_suffix_lod"),
-                                ("COL", "gtatools_prefix_col", "gtatools_suffix_col")]:
-        row = layout.row(align=True)
-        pfx = row.row(align=True)
-        pfx.scale_x = 0.7
-        pfx.prop(scene.inu_settings, _pfx, text="")
-        sub_lbl = row.row(align=True)
-        sub_lbl.scale_x = 0.6
-        sub_lbl.label(text="Model")
-        sfx = row.row(align=True)
-        sfx.scale_x = 0.7
-        sfx.prop(scene.inu_settings, _sfx, text="")
-        pad = row.row(align=True)
-        pad.label(text=" ")
-        pad.label(text=" ")
-        pad.label(text=" ")
+# NOTE: _draw_suffix_prefix удалён вместе с UI настройки суффиксов — тип
+# модели определяется автоматически (core/model_classify); маркеры имени
+# _DFF/_LOD/_COL остаются фикс-переопределением без редактирования.
 
 
 def _draw_id_manager(layout, scene, context):
@@ -2901,37 +2905,50 @@ def _draw_id_manager(layout, scene, context):
             text += "..."
         sub.label(text=text)
 
-    # ── 3. All action buttons in one flat block ───────
-    # Earlier split into «Selection / Bulk / Service» (3 boxes with
-    # headers + collapsible service) ate too much vertical space.
-    # Single column with action buttons grouped by visual proximity
-    # is enough — the labels themselves communicate purpose.
-    col = layout.column(align=True)
-    row = col.row(align=True)
+    # ── 3. Actions: selection ops visible, preset/service collapsed ───
+    # Assigning / clearing the SELECTED objects' IDs is the common case →
+    # always shown. Preset-database + service ops (init, import-from-game, GC,
+    # FLA limit, open file…) are rare → behind ONE disclosure triangle. A
+    # single collapse SAVES space vs the old flat 6-row block AND groups the
+    # buttons by purpose so they no longer read as one jumble.
+    sel_box = layout.box().column(align=True)
+    sel_box.label(text=T("Присвоить выделенным:"),
+                  **inu_icon(safe_icon('RESTRICT_SELECT_OFF')))
+    row = sel_box.row(align=True)
     row.operator("gtatools.id_manager_auto_assign",
                  text=T("Назначить"), **inu_icon(safe_icon('ADD')))
     row.operator("gtatools.id_manager_assign_from",
                  text=T("С ID..."), **inu_icon(safe_icon('SEQUENCE')))
-    row = col.row(align=True)
-    row.operator("gtatools.id_manager_sync_scene",
-                 text=T("Sync"), **inu_icon(safe_icon('FILE_REFRESH')))
-    row.operator("gtatools.id_manager_clear_selected",
-                 text=T("Очистить"), **inu_icon(safe_icon('REMOVE')))
-    row = col.row(align=True)
-    row.operator("gtatools.id_manager_create",
-                 text=T("Создать ID"), **inu_icon(safe_icon('FILE_NEW')))
-    row.operator("gtatools.id_manager_clear",
-                 text=T("Очистить всё"), **inu_icon(safe_icon('TRASH')))
-    row = col.row(align=True)
-    row.operator("gtatools.id_manager_from_game",
-                 text=T("Из игры"), **inu_icon(safe_icon('IMPORT')))
-    row.operator("gtatools.id_manager_extend",
-                 text=T("Расширить FLA"), **inu_icon(safe_icon('ADD')))
-    col.operator("gtatools.id_manager_gc",
-                 text=T("Освободить фантомы"),
-                 **inu_icon(safe_icon('ORPHAN_DATA')))
-    col.operator("gtatools.id_manager_open_file",
-                 text=T("Открыть файл ID"), **inu_icon(safe_icon('FILE_TEXT')))
+    sel_box.operator("gtatools.id_manager_clear_selected",
+                     text=T("Очистить выделенные"),
+                     **inu_icon(safe_icon('REMOVE')))
+
+    svc_expanded = getattr(scene.inu_settings, 'gtatools_show_id_service', False)
+    svc_box = layout.box().column(align=True)
+    svc_box.prop(scene.inu_settings, "gtatools_show_id_service",
+                 **inu_icon(safe_icon('TRIA_DOWN' if svc_expanded
+                                      else 'TRIA_RIGHT')),
+                 text=T("База ID и сервис"), emboss=False)
+    if svc_expanded:
+        row = svc_box.row(align=True)
+        row.operator("gtatools.id_manager_sync_scene",
+                     text=T("Sync"), **inu_icon(safe_icon('FILE_REFRESH')))
+        row.operator("gtatools.id_manager_from_game",
+                     text=T("Из игры"), **inu_icon(safe_icon('IMPORT')))
+        row = svc_box.row(align=True)
+        row.operator("gtatools.id_manager_create",
+                     text=T("Создать ID"), **inu_icon(safe_icon('FILE_NEW')))
+        row.operator("gtatools.id_manager_extend",
+                     text=T("Расширить FLA"), **inu_icon(safe_icon('ADD')))
+        svc_box.operator("gtatools.id_manager_gc",
+                         text=T("Освободить фантомы"),
+                         **inu_icon(safe_icon('ORPHAN_DATA')))
+        row = svc_box.row(align=True)
+        row.operator("gtatools.id_manager_clear",
+                     text=T("Очистить всё"), **inu_icon(safe_icon('TRASH')))
+        row.operator("gtatools.id_manager_open_file",
+                     text=T("Открыть файл ID"),
+                     **inu_icon(safe_icon('FILE_TEXT')))
 
 
 # Operators moved to ops/id_manager_ops.py in Phase 3.
@@ -3198,6 +3215,7 @@ classes = (
     GTATOOLS_OT_sa_vehicle_preset,
     GTATOOLS_OT_export_txd,
     GTATOOLS_OT_copy_color_attr,
+    GTATOOLS_OT_copy_vertex_alpha,
     GTATOOLS_OT_export_dff,
     GTATOOLS_OT_export_col,
     GTATOOLS_OT_export_all,
@@ -3301,6 +3319,7 @@ classes = (
     GTATOOLS_OT_drop_dff,
     GTATOOLS_OT_import_col,
     GTATOOLS_OT_drop_col,
+    GTATOOLS_OT_drop_cst,
     GTATOOLS_OT_import_txd,
     GTATOOLS_OT_inu_import,
     GTATOOLS_OT_toggle_links,
@@ -3371,6 +3390,7 @@ classes = (
     GTATOOLS_OT_mark_station,
     GTATOOLS_OT_export_to_img,
     GTATOOLS_OT_remove_from_img,
+    GTATOOLS_OT_rebuild_img,
     GTATOOLS_OT_upsert_ide,
     GTATOOLS_OT_upsert_ipl,
     GTATOOLS_OT_pick_setting_path,
@@ -3444,7 +3464,11 @@ classes = (
     GTATOOLS_OT_bake_preview,
     GTATOOLS_OT_bake_flatten,
     GTATOOLS_OT_bake_save_map,
+    GTATOOLS_OT_bake_lightmap_apply,
+    GTATOOLS_OT_bake_lightmap_postprocess,
+    GTATOOLS_OT_bake_show_over_base,
     GTATOOLS_UL_bake_layers,
+    GTATOOLS_PT_uv_root,
     GTATOOLS_PT_bake_panel,
     GTATOOLS_PT_bake_advanced,
     GTATOOLS_PT_light_master,
@@ -3458,9 +3482,8 @@ classes = (
     GTATOOLS_OT_bake_col_light,
     GTATOOLS_OT_clear_col_light_mats,
     GTATOOLS_PT_prelight_col_panel,
-    GTATOOLS_UL_2dfx,
     GTATOOLS_PT_2dfx_panel,
-    GTATOOLS_PT_vertex_paint_panel,
+    GTATOOLS_PT_2dfx_settings,
     GTATOOLS_PT_lightmap_panel,
     GTATOOLS_PT_water_panel,
     GTATOOLS_PT_anim_panel,
@@ -3497,8 +3520,6 @@ classes = (
     GTATOOLS_OT_map_export,
     GTATOOLS_OT_material_preset,
     GTATOOLS_OT_copy_material_settings,
-    GTATOOLS_OT_import_cst,
-    GTATOOLS_OT_export_cst,
     GTATOOLS_OT_validate_paintjobs,
     GTATOOLS_OT_open_docs,
     GTATOOLS_OT_open_issues,
@@ -3512,7 +3533,6 @@ classes = (
     GTATOOLS_OT_validate_goto,
     GTATOOLS_OT_validate_fix_quaternions,
     GTATOOLS_OT_validate_fix_suffix,
-    GTATOOLS_OT_validate_fix_modulate_color,
     GTATOOLS_OT_frame_select,
     GTATOOLS_OT_frame_rename,
     GTATOOLS_OT_frame_set_parent,
@@ -3547,6 +3567,7 @@ if hasattr(bpy.types, 'FileHandler'):
     classes = classes + (
         GTATOOLS_FH_dff_drop,
         GTATOOLS_FH_col_drop,
+        GTATOOLS_FH_cst_drop,
         GTATOOLS_FH_texture_drop,
         GTATOOLS_FH_txd_drop,
     )
@@ -3680,7 +3701,7 @@ def _sort_map_objects(context, objects: list, ide_models: dict):
             obj.inu.draw_distance = ide_obj.draw_distance
             obj.inu.ide_flags = ide_obj.flags
 
-        dd = ide_obj.draw_distance if ide_obj else 300.0
+        dd = ide_obj.draw_distance if ide_obj else 299.0
         txd = ide_obj.txd_name if ide_obj else ""
 
         # Check LOD
@@ -4245,13 +4266,25 @@ def register():
                             first_interval=2.0)
 
     # 2DFX billboard rotation timer — start now and restart on file load
-    from .ops.fx_preview import start_billboard_timer
+    from .ops.fx_preview import start_billboard_timer, start_preview_autobuild
     start_billboard_timer()
+    # Keep every 2DFX Empty's preview rig in sync after duplicate/copy/append
+    # (persistent timer — survives file loads, no restart needed).
+    start_preview_autobuild()
     # Single consolidated load_post handler — see _on_file_load. Legacy
     # data migrations are NOT auto-run on file load anymore; they're a
     # manual operator in the addon preferences
     # (gtatools.run_legacy_migrations).
     bpy.app.handlers.load_post.append(_on_file_load)
+
+    # Drop the UI model-type cache on any depsgraph change (rename / retag /
+    # material edit) so panel draw() reads stay correct while idle redraws
+    # skip the per-object material scan. Cheap (clears a dict). Marked
+    # persistent HERE (not at module level — that would break bpy-less tests).
+    from .tools.model_utils import invalidate_model_type_cache
+    bpy.app.handlers.persistent(invalidate_model_type_cache)   # set _bpy_persistent
+    if invalidate_model_type_cache not in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.append(invalidate_model_type_cache)
 
     # One-time migration of user data from the legacy <addons>/INU_Preset/
     # location to bpy.utils.extension_path_user. Idempotent — drops a
@@ -4644,8 +4677,9 @@ def unregister():
         print(f"[INU] unregister_preset_path failed: {e}")
 
     # 2DFX billboard timer
-    from .ops.fx_preview import stop_billboard_timer
+    from .ops.fx_preview import stop_billboard_timer, stop_preview_autobuild
     stop_billboard_timer()
+    stop_preview_autobuild()
 
     # IFP live preview — unregister frame-change handler so reload
     # doesn't leave a stale callable pointing at the old module.
@@ -4658,6 +4692,14 @@ def unregister():
     # Consolidated load_post handler (replaces the former nine).
     if _on_file_load in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(_on_file_load)
+
+    # UI model-type cache invalidator.
+    try:
+        from .tools.model_utils import invalidate_model_type_cache
+        if invalidate_model_type_cache in bpy.app.handlers.depsgraph_update_post:
+            bpy.app.handlers.depsgraph_update_post.remove(invalidate_model_type_cache)
+    except Exception:
+        pass
 
     # File > Export / Import menus
     bpy.types.TOPBAR_MT_file_export.remove(menu_func_export)

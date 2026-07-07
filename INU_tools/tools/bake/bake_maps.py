@@ -327,7 +327,8 @@ def prepare_map(map_def, obj, context, params, keep_visible=()):
 
 def bake_one_map(context, map_def, obj, image, *, margin=8, params=None,
                  samples=None, target_uv=None, selected_to_active=False,
-                 cage_extrusion=0.0, max_ray=0.0, keep_visible=()):
+                 cage_extrusion=0.0, max_ray=0.0, keep_visible=(),
+                 pass_overrides=None):
     """Запечь одну карту `map_def` объекта `obj` в `image`.
 
     Предполагается, что вызывающий уже внутри bake_core.BakeStateGuard,
@@ -335,6 +336,10 @@ def bake_one_map(context, map_def, obj, image, *, margin=8, params=None,
 
     samples=None → берём map_def.samples; иначе override (оператор даёт
     его шумным картам — AO / свет).
+
+    pass_overrides=(direct, indirect, color) → переопределить пассы карты
+    (для LightMap: режим Combined / только Indirect / только Direct). None →
+    брать из map_def.
 
     target_uv (имя UV-карты) → печь в неё, а не в активную (UV→UV; нужно
     для trim-развёрток: рабочая UV с наложениями даёт кашу, печём в
@@ -366,6 +371,11 @@ def bake_one_map(context, map_def, obj, image, *, margin=8, params=None,
         if src_name and src_name != target_uv:
             pin_token = bake_core.pin_image_nodes_to_uv(obj, src_name)
         uv_token = bake_core.set_active_uv(obj, target_uv)
+    if pass_overrides is not None:
+        p_direct, p_indirect, p_color = pass_overrides
+    else:
+        p_direct, p_indirect, p_color = (
+            map_def.pass_direct, map_def.pass_indirect, map_def.pass_color)
     try:
         rec = bake_core.prepare_bake_targets(obj, image)
         try:
@@ -373,9 +383,9 @@ def bake_one_map(context, map_def, obj, image, *, margin=8, params=None,
                 map_def.bake_type,
                 margin=margin,
                 use_clear=True,
-                pass_direct=map_def.pass_direct,
-                pass_indirect=map_def.pass_indirect,
-                pass_color=map_def.pass_color,
+                pass_direct=p_direct,
+                pass_indirect=p_indirect,
+                pass_color=p_color,
                 samples=(samples if samples is not None else map_def.samples),
                 selected_to_active=selected_to_active,
                 cage_extrusion=cage_extrusion,
@@ -451,6 +461,22 @@ BAKE_MAPS = OrderedDict([
         samples=64, default_blend='ADD', default_opacity=1.0,
         default_contrast=1.0, default_gamma=1.0,
         pass_direct=False, pass_indirect=True, pass_color=False)),
+
+    # ── LightMap — полный GI от РЕАЛЬНОГО света сцены (аналог The_Lightmapper).
+    # В отличие от Shadow / Diffuse-Lit (внутренний свет-риг + изоляция сцены),
+    # LightMap НЕ строит риг и НЕ изолирует (needs_light=False) → печёт
+    # настоящие лампы/солнце/world сцены. Прямой + непрямой diffuse-свет БЕЗ
+    # альбедо (pass_color=False) = чистый множитель освещения поверх текстуры
+    # (тени, отражённый свет, небо). Складываем MULTIPLY. GI очень шумный →
+    # высокие сэмплы (128) + опциональный OIDN-денойз в операторе. Способ
+    # применения (в диффуз / в prelight / отдельная LP_-текстура+UV2 / слой)
+    # выбирается пользователем в gtatools_bake_lightmap_apply.
+    ('LIGHTMAP', BakeMapDef(
+        id='LIGHTMAP', label_key='LightMap', bake_type='DIFFUSE',
+        needs_light=False, rig_kind='NONE', node_group_builder=None,
+        samples=128, default_blend='MULTIPLY', default_opacity=1.0,
+        default_contrast=1.0, default_gamma=1.0,
+        pass_direct=True, pass_indirect=True, pass_color=False)),
 ])
 
 

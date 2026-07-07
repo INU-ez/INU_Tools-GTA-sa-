@@ -4,6 +4,7 @@
 from ..core.cst import read_cst
 from .col_import import _create_mesh_from_col
 import bpy
+import os
 
 
 def import_cst(filepath: str):
@@ -21,26 +22,52 @@ def import_cst(filepath: str):
     return created
 
 
-class GTATOOLS_OT_import_cst(bpy.types.Operator):
-    """Импорт текстового файла Steve's COL Editor (.cst)"""
-    bl_idname = "gtatools.import_cst"
-    bl_label = "INU: Import CST (.cst)"
+class GTATOOLS_OT_drop_cst(bpy.types.Operator):
+    """Импорт CST при перетаскивании во viewport (принимает несколько файлов)."""
+    bl_idname = "gtatools.drop_cst"
+    bl_label = "INU: Import CST (Drop)"
     bl_options = {'REGISTER', 'UNDO'}
 
     filepath: bpy.props.StringProperty(subtype='FILE_PATH')
-    filter_glob: bpy.props.StringProperty(default="*.cst", options={'HIDDEN'})
-
-    def invoke(self, context, event):
-        context.window_manager.fileselect_add(self)
-        return {'RUNNING_MODAL'}
+    files: bpy.props.CollectionProperty(type=bpy.types.OperatorFileListElement)
+    directory: bpy.props.StringProperty(subtype='DIR_PATH')
 
     def execute(self, context):
-        try:
-            created = import_cst(self.filepath)
-            self.report({'INFO'}, f"Imported {len(created)} object(s)")
-            return {'FINISHED'}
-        except Exception as e:
-            self.report({'ERROR'}, f"CST import: {e}")
+        paths = []
+        if self.files and self.directory:
+            for f in self.files:
+                p = os.path.join(self.directory, f.name)
+                if os.path.isfile(p) and p.lower().endswith('.cst'):
+                    paths.append(p)
+        elif self.filepath:
+            paths.append(self.filepath)
+        if not paths:
+            self.report({'WARNING'}, "Нет .cst файлов")
             return {'CANCELLED'}
+        total = 0
+        errors = 0
+        for p in paths:
+            try:
+                total += len(import_cst(p))
+            except Exception as e:
+                errors += 1
+                self.report({'ERROR'}, f"CST {os.path.basename(p)}: {e}")
+        self.report({'INFO'},
+                    f"CST: импортировано {total} объект(ов) из "
+                    f"{len(paths) - errors}/{len(paths)} файлов")
+        return {'FINISHED'}
+
+
+if hasattr(bpy.types, 'FileHandler'):
+    class GTATOOLS_FH_cst_drop(bpy.types.FileHandler):
+        """File Handler для перетаскивания CST во viewport."""
+        bl_idname = "GTATOOLS_FH_cst_drop"
+        bl_label = "GTA CST Drop"
+        bl_import_operator = "gtatools.drop_cst"
+        bl_file_extensions = ".cst"
+
+        @classmethod
+        def poll_drop(cls, context):
+            return context.area and context.area.type == 'VIEW_3D'
 
 

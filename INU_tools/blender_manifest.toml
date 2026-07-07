@@ -2,9 +2,9 @@ schema_version = "1.0.0"
 
 # Unique extension ID — reverse-DNS-style. Must not change between versions.
 id = "inu_tools_gta_sa"
-version = "2.1.1"
+version = "2.2.0"
 name = "INU Tools (GTA SA)"
-tagline = "Full-pipeline Blender addon for GTA San Andreas modding"
+tagline = "Full-pipeline toolkit for GTA San Andreas modding"
 maintainer = "INU <https://github.com/INU-ez/INU_Tools-GTA-sa->"
 
 # add-on / theme / asset-pack — INU is an addon

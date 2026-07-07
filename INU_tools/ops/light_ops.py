@@ -403,8 +403,12 @@ class GTATOOLS_OT_light_topo_cut(bpy.types.Operator):
         cutter = bpy.data.objects.get("INU_LightCutter")
         ao = context.active_object
         lamp_rgb = (1.0, 1.0, 1.0)
+        rot = None   # cutter orientation → tilted cut; None = vertical (legacy)
         if cutter is not None:
             center = cutter.matrix_world.translation.copy()
+            # Full orientation (rotation only, scale dropped) so a tilted
+            # cutter cuts a tilted pool instead of a straight-down projection.
+            rot = cutter.matrix_world.to_quaternion().to_matrix()
         elif ao is not None and ao.type == 'LIGHT':
             center = ao.matrix_world.translation.copy()
         else:
@@ -431,7 +435,7 @@ class GTATOOLS_OT_light_topo_cut(bpy.types.Operator):
                          T("Для реза в пол укажи «Геометрия»"))
                     return {'CANCELLED'}
                 n = self._knife_cut(context, target, center, R, segs,
-                                    ring_fracs, lamp_rgb)
+                                    ring_fracs, lamp_rgb, rot)
                 msg = f"Врезано в пол: {n} loops"
         except Exception as exc:
             _pub(self, {'ERROR'}, f"Резак: {exc}")
@@ -544,20 +548,22 @@ class GTATOOLS_OT_light_topo_cut(bpy.types.Operator):
     # ── врезка колец прямо в пол (knife-intersect, EXACT) ──
     @classmethod
     def _knife_cut(cls, context, ground, center, R, segs, ring_fracs,
-                   lamp_rgb):
+                   lamp_rgb, rot=None):
         import bmesh
         import math
         import numpy as np
+        from mathutils import Vector, Matrix
+        if rot is None:
+            rot = Matrix.Identity(3)   # vertical cut (straight down)
         me = ground.data
         wm = ground.matrix_world
         wm_inv = wm.inverted()
-        Cl = wm_inv @ center
-        sc = wm.to_scale()
-        avg = (abs(sc.x) + abs(sc.y) + abs(sc.z)) / 3.0 or 1.0
-        Rl = R / avg
-        zs = [c[2] for c in ground.bound_box]
-        top = max(zs) + Rl + 0.5
-        bot = min(zs) - Rl - 0.5
+        # Wall half-length along the cutter's axis — long enough to cross the
+        # whole ground even when tilted (world bbox diagonal is a safe bound).
+        world_bb = [wm @ Vector(c) for c in ground.bound_box]
+        diag = max((p - q).length for p in world_bb for q in world_bb) or 1.0
+        H = diag + R + 1.0
+        axis_w = rot @ Vector((0.0, 0.0, 1.0))   # cutter's local Z, in world
 
         cut_mat = bpy.data.materials.new("__INU_CUT__")
         me.materials.append(cut_mat)
@@ -566,16 +572,19 @@ class GTATOOLS_OT_light_topo_cut(bpy.types.Operator):
         bm = bmesh.new()
         bm.from_mesh(me)
         for f in ring_fracs:
-            r = f * Rl
+            r = f * R   # world-space radius
             if r <= 1.0e-4:
                 continue
             rt, rb = [], []
             for k in range(segs):
                 a = 2.0 * math.pi * k / segs
-                x = Cl.x + r * math.cos(a)
-                y = Cl.y + r * math.sin(a)
-                rt.append(bm.verts.new((x, y, top)))
-                rb.append(bm.verts.new((x, y, bot)))
+                # ring offset in the cutter's (possibly tilted) XY plane,
+                # walls run along the cutter's axis instead of straight down
+                off_w = rot @ Vector((r * math.cos(a), r * math.sin(a), 0.0))
+                p_top = center + off_w + axis_w * H
+                p_bot = center + off_w - axis_w * H
+                rt.append(bm.verts.new(wm_inv @ p_top))
+                rb.append(bm.verts.new(wm_inv @ p_bot))
             for k in range(segs):
                 nk = (k + 1) % segs
                 fc = bm.faces.new((rt[k], rt[nk], rb[nk], rb[k]))
@@ -639,16 +648,24 @@ class GTATOOLS_OT_light_topo_cut(bpy.types.Operator):
         me.vertices.foreach_get('co', co)
         co = co.reshape(nv, 3)
         lp = co[lv]
-        d = np.sqrt((lp[:, 0] - Cl.x) ** 2 + (lp[:, 1] - Cl.y) ** 2)
+        # Radius measured IN THE CUTTER'S PLANE: ground-local → world →
+        # cutter-local, then XY distance — so a tilted pool fades correctly
+        # along its own plane, not the world's.
+        Mw = np.array(wm, dtype=np.float32)
+        lp_h = np.column_stack([lp, np.ones(len(lp), dtype=np.float32)])
+        lp_world = (lp_h @ Mw.T)[:, :3]
+        rel = lp_world - np.array(center, dtype=np.float32)
+        cl = rel @ np.array(rot, dtype=np.float32)
+        d = np.sqrt(cl[:, 0] ** 2 + cl[:, 1] ** 2)
         n_poly = len(me.polygons)
         ls = np.empty(n_poly, dtype=np.int32)
         lt = np.empty(n_poly, dtype=np.int32)
         me.polygons.foreach_get('loop_start', ls)
         me.polygons.foreach_get('loop_total', lt)
-        ok = (d <= Rl).astype(np.int8)
+        ok = (d <= R).astype(np.int8)
         poly_in = np.minimum.reduceat(ok, ls) == 1
         within = np.repeat(poly_in, lt)
-        bright = np.clip(1.0 - d / max(Rl, 1e-6), 0.0, 1.0)
+        bright = np.clip(1.0 - d / max(R, 1e-6), 0.0, 1.0)
         flat = np.empty(n_loops * 4, dtype=np.float32)
         attr.data.foreach_get('color', flat)
         f4 = flat.reshape(n_loops, 4)
@@ -1235,6 +1252,97 @@ class GTATOOLS_OT_vc_smooth_between(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def wire_lightmap_material(mat, image, uv_name=None):
+    """Повесить lightmap-текстуру `image` в материал `mat`: UV-нода (2-й
+    канал) → Image Texture → Multiply поверх Base Color. ЕДИНАЯ точка
+    прошивки для «Load Lightmap» (LP_-файл с диска) и «Применить LightMap»
+    (запечённая bake-текстура); GTATOOLS_OT_remove_lightmap снимает ноды по
+    этим же именам (Lightmap_UV / Lightmap_Texture / Lightmap_Mix).
+
+    Идемпотентно: повторный вызов лишь обновляет картинку/UV существующих нод.
+
+    ВАЖНО: сокеты Mix-нод берём ТОЛЬКО через compat.mix_input_a/b /
+    mix_output_result — на 3.4+ `inputs['A']` по имени возвращает скрытый
+    Float-сокет (у ShaderNodeMix три пары A/B; см. compat.py), из-за чего
+    multiply не работал, а default_value падал с TypeError.
+
+    Prelight_Mix учитываем ТОЛЬКО когда он реально питает Base Color —
+    осиротевшая нода в старых сценах иначе утаскивала lightmap в висящую
+    ветку без видимого эффекта (успех рапортовался, картинка не менялась).
+
+    `uv_name` — имя UV-канала лайтмапа (пусто → активный UV меша).
+    Возвращает True, если материал прошит/обновлён."""
+    if not mat or not mat.use_nodes:
+        return False
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+    principled = next((n for n in nodes if n.type == 'BSDF_PRINCIPLED'), None)
+    if principled is None:
+        return False
+
+    existing = nodes.get("Lightmap_Texture")
+    if existing is not None:               # уже прошит — обновить картинку/UV
+        existing.image = image
+        uvn = nodes.get("Lightmap_UV")
+        if uvn is not None and uv_name:
+            uvn.uv_map = uv_name
+        return True
+
+    base_in = principled.inputs['Base Color']
+    prelight_mix = None
+    original_socket = None
+    if base_in.links:
+        src_node = base_in.links[0].from_node
+        original_socket = base_in.links[0].from_socket
+        if src_node is not None and src_node.name == "Prelight_Mix":
+            prelight_mix = src_node
+            a_in = compat.mix_input_a(prelight_mix)
+            original_socket = (a_in.links[0].from_socket
+                               if (a_in is not None and a_in.is_linked)
+                               else None)
+
+    uv_node = nodes.new('ShaderNodeUVMap')
+    uv_node.name = "Lightmap_UV"
+    uv_node.label = "UV2"
+    if uv_name:
+        uv_node.uv_map = uv_name
+
+    lm_tex = nodes.new('ShaderNodeTexImage')
+    lm_tex.name = "Lightmap_Texture"
+    lm_tex.label = "Lightmap"
+    lm_tex.image = image
+
+    mix_node = nodes.new(compat.MIX_NODE_TYPE)
+    compat.setup_mix_rgba_node(mix_node, blend='MULTIPLY')
+    compat.mix_input_factor(mix_node).default_value = 1.0
+    mix_node.name = "Lightmap_Mix"
+    mix_node.label = "Lightmap Mix"
+    in_a = compat.mix_input_a(mix_node)
+    in_b = compat.mix_input_b(mix_node)
+    out_r = compat.mix_output_result(mix_node)
+
+    anchor = original_socket.node if original_socket is not None else principled
+    uv_node.location = (anchor.location.x - 700, anchor.location.y - 300)
+    lm_tex.location = (anchor.location.x - 500, anchor.location.y - 300)
+    mix_node.location = (anchor.location.x - 200, anchor.location.y - 150)
+
+    links.new(uv_node.outputs['UV'], lm_tex.inputs['Vector'])
+    if original_socket is not None:
+        links.new(original_socket, in_a)
+    else:
+        in_a.default_value = (1.0, 1.0, 1.0, 1.0)
+    links.new(lm_tex.outputs['Color'], in_b)
+    if prelight_mix is not None:
+        pa = compat.mix_input_a(prelight_mix)
+        if pa is not None:
+            links.new(out_r, pa)
+        else:
+            links.new(out_r, base_in)
+    else:
+        links.new(out_r, base_in)
+    return True
+
+
 class GTATOOLS_OT_load_lightmap(bpy.types.Operator):
     """Загрузить Lightmap из папки с .blend файлом (текстуры с приставкой LP_)"""
     bl_idname = "gtatools.load_lightmap"
@@ -1275,110 +1383,17 @@ class GTATOOLS_OT_load_lightmap(bpy.types.Operator):
         # Загружаем текстуру
         lightmap_image = bpy.data.images.load(lightmap_path, check_existing=True)
 
-        # Применяем лайтмап ко всем материалам объекта
+        # Применяем лайтмап ко всем материалам объекта — общей прошивкой
+        # wire_lightmap_material (она же в «Применить LightMap» bake_ops).
+        # UV2: лайтмап ложится по второму UV-каналу (или единственному).
+        uvl = obj.data.uv_layers
+        uv_name = (uvl[1].name if len(uvl) >= 2
+                   else (uvl[0].name if len(uvl) == 1 else ""))
         applied_count = 0
         for mat_slot in obj.material_slots:
-            mat = mat_slot.material
-            if not mat or not mat.use_nodes:
-                continue
-
-            nodes = mat.node_tree.nodes
-            links = mat.node_tree.links
-
-            # Находим Principled BSDF
-            principled = None
-            for node in nodes:
-                if node.type == 'BSDF_PRINCIPLED':
-                    principled = node
-                    break
-
-            if not principled:
-                continue
-
-            # Проверяем есть ли уже лайтмап нода
-            existing_lm = nodes.get("Lightmap_Texture")
-            if existing_lm:
-                # Обновляем текстуру
-                existing_lm.image = lightmap_image
+            if wire_lightmap_material(mat_slot.material, lightmap_image,
+                                      uv_name):
                 applied_count += 1
-                continue
-
-            # Находим что подключено к Base Color
-            base_color_input = principled.inputs['Base Color']
-            original_link = None
-            original_node = None
-            prelight_mix = nodes.get("Prelight_Mix")
-
-            if base_color_input.links:
-                original_link = base_color_input.links[0]
-                original_node = original_link.from_node
-                original_socket = original_link.from_socket
-
-                # Если подключен Prelight_Mix - ищем оригинальную текстуру в его входе A
-                if original_node and original_node.name == "Prelight_Mix":
-                    prelight_mix = original_node
-                    prelight_a_input = prelight_mix.inputs.get('A')
-                    if prelight_a_input and prelight_a_input.is_linked:
-                        original_node = prelight_a_input.links[0].from_node
-                        original_socket = prelight_a_input.links[0].from_socket
-                    else:
-                        original_node = None
-                        original_socket = None
-
-            # Создаём ноду UV Map для UV2
-            uv_node = nodes.new('ShaderNodeUVMap')
-            uv_node.name = "Lightmap_UV"
-            uv_node.label = "UV2"
-            # Ищем второй UV слой
-            if len(obj.data.uv_layers) >= 2:
-                uv_node.uv_map = obj.data.uv_layers[1].name
-            elif len(obj.data.uv_layers) == 1:
-                # Если только один UV - используем его
-                uv_node.uv_map = obj.data.uv_layers[0].name
-
-            # Создаём ноду текстуры для лайтмапа
-            lm_tex = nodes.new('ShaderNodeTexImage')
-            lm_tex.name = "Lightmap_Texture"
-            lm_tex.label = "Lightmap"
-            lm_tex.image = lightmap_image
-
-            # Создаём ноду Mix (Multiply) через compat — на 3.4+ это
-            # ShaderNodeMix(RGBA), на 2.80-3.3 — ShaderNodeMixRGB.
-            mix_node = nodes.new(compat.MIX_NODE_TYPE)
-            compat.setup_mix_rgba_node(mix_node, blend='MULTIPLY')
-            compat.mix_input_factor(mix_node).default_value = 1.0
-            _mix_in1, _mix_in2, _mix_out = (
-                compat.MIX_INPUT_A, compat.MIX_INPUT_B, compat.MIX_OUTPUT_RESULT)
-            mix_node.name = "Lightmap_Mix"
-            mix_node.label = "Lightmap Mix"
-
-            # Позиционируем ноды
-            if original_node:
-                uv_node.location = (original_node.location.x - 200, original_node.location.y - 300)
-                lm_tex.location = (original_node.location.x, original_node.location.y - 300)
-                mix_node.location = (original_node.location.x + 300, original_node.location.y - 150)
-            else:
-                uv_node.location = (principled.location.x - 700, principled.location.y - 200)
-                lm_tex.location = (principled.location.x - 500, principled.location.y - 200)
-                mix_node.location = (principled.location.x - 200, principled.location.y)
-
-            # Подключаем UV2 к текстуре лайтмапа
-            links.new(uv_node.outputs['UV'], lm_tex.inputs['Vector'])
-
-            # Подключаем ноды
-            if original_node:
-                links.new(original_socket, mix_node.inputs[_mix_in1])
-            else:
-                mix_node.inputs[_mix_in1].default_value = (1, 1, 1, 1)
-
-            links.new(lm_tex.outputs['Color'], mix_node.inputs[_mix_in2])
-
-            if prelight_mix:
-                links.new(mix_node.outputs[_mix_out], prelight_mix.inputs['A'])
-            else:
-                links.new(mix_node.outputs[_mix_out], base_color_input)
-
-            applied_count += 1
 
         if applied_count > 0:
             _pub(self, {'INFO'}, f"Lightmap '{lightmap_filename}' applied to {applied_count} material(s)")
@@ -1847,6 +1862,66 @@ class GTATOOLS_OT_copy_color_attr(bpy.types.Operator):
             copied += 1
 
         _pub(self, {'INFO'}, f"{self.source} → {self.target}: {copied} {T('объектов')}")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_copy_vertex_alpha(bpy.types.Operator):
+    """Перенести АЛЬФУ вершин с активного цветового атрибута (Day/Night)
+    на второй, сохранив его RGB. Направление определяется тем, какой
+    атрибут сейчас выбран радиокнопкой: активный Day → льёт альфу в Night,
+    активный Night → в Day. Если атрибута-приёмника ещё нет — он создаётся
+    полной копией активного (RGB+альфа), чтобы не остался мусорный цвет.
+    Работает по всем выделенным мешам (у каждого свой активный атрибут)."""
+    bl_idname = "gtatools.copy_vertex_alpha"
+    bl_label = "INU: Copy Vertex Alpha to other layer"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        mesh_objects = [o for o in context.selected_objects if o.type == 'MESH']
+        if not mesh_objects:
+            obj = context.active_object
+            if obj and obj.type == 'MESH':
+                mesh_objects = [obj]
+        if not mesh_objects:
+            _pub(self, {'ERROR'}, T("Выберите меш объект!"))
+            return {'CANCELLED'}
+
+        pairs = {"Day": "Night", "Night": "Day"}
+        done = 0
+        for obj in mesh_objects:
+            mesh = obj.data
+            active_attr = compat.vcol_active(mesh)
+            if not active_attr or active_attr.name not in pairs:
+                continue
+            src_attr = compat.vcol_get(mesh, active_attr.name)
+            if not src_attr:
+                continue
+            tgt_name = pairs[active_attr.name]
+            tgt_attr = compat.vcol_get(mesh, tgt_name)
+            if not tgt_attr:
+                # Приёмника нет — создаём полной копией (RGB+альфа), иначе
+                # его RGB был бы неинициализированным мусором.
+                tgt_attr = compat.vcol_new(mesh, tgt_name)
+                n = min(len(src_attr.data), len(tgt_attr.data))
+                for i in range(n):
+                    c = src_attr.data[i].color
+                    tgt_attr.data[i].color = (c[0], c[1], c[2], c[3])
+                done += 1
+                continue
+            # Приёмник есть — переносим ТОЛЬКО альфу, RGB приёмника сохраняем.
+            n = min(len(src_attr.data), len(tgt_attr.data))
+            for i in range(n):
+                a = src_attr.data[i].color[3]
+                t = tgt_attr.data[i].color
+                tgt_attr.data[i].color = (t[0], t[1], t[2], a)
+            done += 1
+
+        if not done:
+            _pub(self, {'WARNING'},
+                 T("Активным должен быть атрибут Day или Night"))
+            return {'CANCELLED'}
+        _pub(self, {'INFO'}, f"{T('Альфа вершин перенесена')}: "
+                             f"{done} {T('объектов')}")
         return {'FINISHED'}
 
 

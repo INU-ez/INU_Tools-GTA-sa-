@@ -8,7 +8,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/Blender-2.83%E2%80%935.1-orange?logo=blender" alt="Blender">
-  <img src="https://img.shields.io/badge/Version-2.1.0-green" alt="Version">
+  <img src="https://img.shields.io/badge/Version-2.2.0-green" alt="Version">
   <img src="https://img.shields.io/badge/License-GPL--3.0-blue" alt="License">
 </p>
 
@@ -56,18 +56,18 @@ Ideas being considered. Not all of these will ship — some may turn out impract
 - 🎬 **IFP Library Viewer** — preview any of the 294 animations on a temporary armature without creating a ped
 - 🎆 **Auto-LOD generation** — when no paired `_L0` is found, Map Export auto-generates a decimated copy (EMAPTool-style)
 
-## 🆕 What's New in 2.1.0
+## 🆕 What's New in 2.2.0
 
-- 🧩 **TXD «Append to existing»** — add/update a model's textures into an existing `.txd` while every other model's textures in the file are kept byte-for-byte (no full re-encode)
-- 🎞️ **UV animation reworked** to Kam's UVanim_tool binary layout — fixes invisible models and animations that wouldn't play; plus a keyframe mode with live in-viewport preview
-- 🌿 **Prelight toolkit** — foliage/tree shading, **Light Cutter** (radial light pool baked into the floor under lamps), prelight sun, flat Day/Night fill, paint merge/split, and a scene-wide **vertex-alpha viewport preview**
-- 🔥 **Layered texture baking** — Photoshop-style layer stack with **18 blend modes** and **8 map types** (AO, Diffuse, Diffuse-Lit, Shadow, Bevel, Normal, Emission, Emission-GI), blended live on the model and flattened to one GTA-ready texture. **UV→UV / Hi→Low / Camera** modes (Camera = EEVEE-to-texture for billboard/impostor trees); built-in light rig (no scene lamps needed), AA + padding, per-layer preview & save
-- 📦 **Export upgrades** — Export DFF per model; Export All gains CST, empty-collision, TXD-merge, **All → IMG**, and export-name prefill from the selected model
-- ⏳ **Import All no longer freezes Blender** — cancellable modal with live progress; per-format filter checkboxes + CST import; multi-IPL sync list
-- 🧱 **Format correctness** — material-list reuse honoured on import (no more wrong textures on shared-material models, verified against the RenderWare 3.7 source); 16/32-bit sRGB textures no longer export too dark; faster DFF export (O(N²)→O(N))
-- 🧹 **Blender Extensions ready** — ships **no GTA assets**; effect-preview textures (coronas/shadows/water) now load from your own `particle.txd` / Game Root; manifest validates and builds clean with `blender --command extension validate/build`
+- 🔥 **LightMap bake** — bakes full GI straight from your scene's real lamps / sun / world (no internal light-rig) over diffuse. **Apply LightMap** in 3 modes: keep as a stack layer · bake into diffuse as one vanilla SA texture · write to the Day vertex prelight. Plus **Show over base (UV2)**, **denoise** for every noisy map (OIDN on Blender 4.x, numpy bilateral on 5.x), and linear-space compositing so **Save as** matches the game
+- 🗺️ **Smarter IDE/IPL** — **"Also to IDE/IPL"** export checkbox; automatic `lod_index`; **Model ID = 0 blocked**; IDE flag translation across games; FLA `realInterior` (12th column); the panel-picked file wins on Add
+- 📦 **Rebuild IMG (compact)** — reclaim dead space left by repeated exports; block on IMG entry names over 24 chars
+- 🔍 **Model type auto-detection** (DFF / LOD / COL, case-insensitive LOD) — the `_DFF/_LOD/_COL` suffixes are now a manual override only
+- ✨ **2DFX** — **"Apply settings to selected"** (one effect's settings onto a whole group of empties), attach several at once, relationship-line toggle, preview auto-rebuild on `Shift+D` / `Ctrl+C+V`; per-effect settings moved to the empty's Object Data
+- 🎞️ **UV animation × Night** — found why the animation won't play in retail single-player: **night vertex colors** disable UV anim. Now warned right in DFF Flags and the pre-export check
+- 🆔 **ID Manager** — **"Skip occupied IDs"** toggle (strict from the start number vs. skip occupied)
+- 🧹 **Cleanup + Blender Extensions ready** — dropped NVTT/nvcompress (pure numpy DXT) and dead code (broken JSON material presets, hidden panels); manifest updated for extensions.blender.org rules
 
-→ [Release notes 2.1.0](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v2.1.0) · [2.0.0](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v2.0.0) · [Version history](../../releases)
+→ [Release notes 2.2.0](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v2.2.0) · [2.1.0](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v2.1.0) · [2.0.0](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v2.0.0) · [Version history](../../releases)
 
 ## 🧰 Features
 
@@ -101,8 +101,8 @@ Ideas being considered. Not all of these will ship — some may turn out impract
 - 🔍 **File Scanner** — lint DFF/COL/TXD from a folder for crash-prone patterns (limit overruns, broken refs)
 - 🗺️ **X Radar Maker** — minimap tile generation (8×8 / menu / full radar) with TXD packing
 - 🧩 **Profile System** — custom N-sidebar layouts (panel visibility / order) saved as JSON, switch between tasks
-- 🚀 **Pipeline suffixes** — `_DFF` / `_LOD` / `_COL` → Export All / Export to IMG in one click
-- 📁 **Preset folder** — point all presets/data (profiles, material & ID presets, pipeline flag defaults) at any folder; existing presets are copied across on switch
+- 🔍 **Model type auto-detection** — DFF / LOD / COL are recognised automatically (LOD by a case-insensitive "lod" token, COL by tag/no-texture); the `_DFF/_LOD/_COL` suffixes work as a manual override
+- 📁 **Preset folder** — point all presets/data (profiles, ID presets, pipeline flag defaults) at any folder; existing presets are copied across on switch
 
 ## 🧭 UI Panels
 
@@ -110,7 +110,7 @@ Ideas being considered. Not all of these will ship — some may turn out impract
 |---|---|---|
 | `Properties > Scene` | **INU Tools** | IDE/IPL/IMG paths, textures, IMG files, preset folder |
 | `Properties > Object` | **INU Tools: Model** | Type (auto+manual), Model ID, TXD, Draw Dist, IDE Flags, DFF Flags, Pipeline, Breakable, 2DFX |
-| `Properties > Material` | **GTA Material** (3 tabs) | SURFACE — collision surface type · EFFECTS — Env Map, Bump, Reflection, Specular, UV Animation · PIPELINE |
+| `Properties > Material` | **GTA Material** (2 tabs) | SURFACE — collision surface type · EFFECTS — Env Map, Bump, Reflection, Specular, UV Animation + quick presets (Glass/Chrome/Paint/Reset) |
 | `View3D > Sidebar (N)` | **GTA Tools** | SETUP → MODEL → DATA → EXPORT pipeline (Export at top, ID Manager, Object IDE/IPL, all other sub-panels) |
 | `UV Editor > Sidebar (N)` | **GTA Tools** | UV tools |
 

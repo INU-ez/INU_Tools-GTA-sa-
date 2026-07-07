@@ -5,8 +5,8 @@
 #
 #   • Quaternion normalisation in armature Actions  (sometimes drifts
 #     after manual fcurve edits; in-game playback gets stepping)
-#   • Modulate Color on prelit meshes  (causes flicker — common pitfall
-#     from importing Kam's-style DFFs into the new Day/Night pipeline)
+#   • UV-anim × night vertex colors  (night vcols disable UV animation
+#     in retail SA)
 #   • _ok / _dam pair completeness  (engine silently skips orphans)
 #   • Paintjob slot completeness  (Pay'n'Spray fallback if half-filled)
 #
@@ -24,18 +24,18 @@ from bpy.props import StringProperty
 from typing import Dict
 
 from .. import T
-from ..tools import compat
 from ..core.validate import (
     check_paintjobs,
     check_quaternions,
-    check_modulate_color,
     check_damage_pairs,
     check_orphan_models,
+    check_untextured_col,
     check_orphan_2dfx,
     check_duplicate_model_ids,
     check_empty_meshes,
     check_large_meshes,
     check_materials_without_texture,
+    check_uv_anim_night_vcols,
     check_suffix_consistency,
     check_object_scale,
     check_light_beam_asi,
@@ -120,30 +120,55 @@ def _gather_action_quat_groups():
     return out
 
 
-def _gather_modulate_color_meshes():
+def _gather_mesh_names():
+    return [obj.name for obj in _scene_objects({'MESH'})]
+
+
+def _gather_uv_anim_night(meshes=None):
+    """Per-mesh data for the UV-anim × night-vcol conflict check.
+
+    Night vertex colors disable UV animation in retail SA, so flag any
+    mesh that has both a UV-animated material and night colors (Night
+    export flag on, or a Night colour attribute on the mesh data).
+    """
     out = []
     for obj in _scene_objects({'MESH'}):
         inu = getattr(obj, 'inu', None)
-        if inu is None:
-            continue
-        mod_col = bool(getattr(inu, 'modulate_color', True))
+
+        has_uv_anim = False
+        for slot in obj.material_slots:
+            mat = slot.material
+            if mat is None:
+                continue
+            m_inu = getattr(mat, 'inu', None)
+            if m_inu is not None and getattr(m_inu, 'uv_anim_write', False):
+                has_uv_anim = True
+                break
+
+        night_flag = bool(getattr(inu, 'night_cols', False)) if inu else False
+
+        has_night_vcol = False
         me = obj.data
-        has_vcol = bool(compat.vcol_list(me))
+        if me is not None:
+            for a in (getattr(me, 'color_attributes', None) or []):
+                if 'night' in a.name.lower():
+                    has_night_vcol = True
+                    break
+
         out.append(dict(name=obj.name,
-                        modulate_color=mod_col,
-                        has_vcol=has_vcol))
+                        has_uv_anim=has_uv_anim,
+                        night_flag=night_flag,
+                        has_night_vcol=has_night_vcol))
     return out
-
-
-def _gather_mesh_names():
-    return [obj.name for obj in _scene_objects({'MESH'})]
 
 
 def _gather_classified_models():
     """Build (name, type, base) tuples for every MESH in the scene
     using the same suffix/prefix recogniser the export pipeline uses.
     Anything without a recognised suffix/prefix falls through to 'DFF'."""
-    from ..tools.model_utils import get_model_type
+    from ..tools.model_utils import (get_model_type, _get_suffixes,
+                                     _get_prefixes, _strip_dup_suffix)
+    from ..core.model_classify import classify_model
 
     out = []
     for obj in _scene_objects({'MESH'}):
@@ -154,7 +179,25 @@ def _gather_classified_models():
         # the same lowercase-with-rstrip normalisation used by the
         # export grouping.
         base_clean = base.rstrip('_')
-        out.append(dict(name=obj.name, type=model_type, base=base_clean))
+        # COL «по эвристике текстур» (не тег и не маркер имени): такой меш
+        # ТИХО выпадает из DFF/IDE/IPL экспорта. Детект: если насильно
+        # считать модель текстурированной и класс меняется на DFF — значит
+        # COL дала именно текстурная эвристика → check_untextured_col.
+        heuristic_col = False
+        if model_type == 'COL':
+            inu = getattr(obj, 'inu', None)
+            kind = getattr(inu, 'type', 'OBJ') if inu is not None else 'OBJ'
+            if kind not in ('COL', 'SHA'):
+                try:
+                    forced, _fb = classify_model(
+                        _strip_dup_suffix(obj.name), has_texture=True,
+                        inu_type=kind, suffixes=_get_suffixes(),
+                        prefixes=_get_prefixes())
+                    heuristic_col = (forced == 'DFF')
+                except Exception:
+                    pass
+        out.append(dict(name=obj.name, type=model_type, base=base_clean,
+                        heuristic_col=heuristic_col))
     return out
 
 
@@ -395,9 +438,11 @@ def collect_all_issues():
     issues = []
     issues.extend(check_paintjobs(_gather_paintjob_materials()))
     issues.extend(check_quaternions(_gather_action_quat_groups()))
-    issues.extend(check_modulate_color(_gather_modulate_color_meshes()))
+    issues.extend(check_uv_anim_night_vcols(_gather_uv_anim_night()))
     issues.extend(check_damage_pairs(_gather_mesh_names()))
-    issues.extend(check_orphan_models(_gather_classified_models()))
+    classified = _gather_classified_models()
+    issues.extend(check_orphan_models(classified))
+    issues.extend(check_untextured_col(classified))
     issues.extend(check_orphan_2dfx(_gather_2dfx_empties()))
     # 7 new checks added with the second batch (А, B, D, E, F, H, I)
     issues.extend(check_duplicate_model_ids(_gather_objects_with_model_id()))
@@ -687,29 +732,5 @@ class GTATOOLS_OT_validate_fix_suffix(bpy.types.Operator):
         self.report({'WARNING'},
                     T("Не нашёл несоответствия суффикса для этого объекта"))
         return {'CANCELLED'}
-
-
-class GTATOOLS_OT_validate_fix_modulate_color(bpy.types.Operator):
-    """Снять флаг Modulate Color у указанного объекта — устраняет
-    flicker на прилайтных мешах."""
-    bl_idname = "gtatools.validate_fix_modulate_color"
-    bl_label = "INU: Disable Modulate Color"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    object_name: StringProperty()
-
-    def execute(self, context):
-        obj = bpy.data.objects.get(self.object_name)
-        if obj is None:
-            self.report({'ERROR'},
-                        f"{T('Объект не найден')}: {self.object_name}")
-            return {'CANCELLED'}
-        inu = getattr(obj, 'inu', None)
-        if inu is None:
-            return {'CANCELLED'}
-        inu.modulate_color = False
-        self.report({'INFO'},
-                    f"{T('Modulate Color снят')}: {obj.name}")
-        return {'FINISHED'}
 
 

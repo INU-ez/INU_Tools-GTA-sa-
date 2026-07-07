@@ -16,7 +16,7 @@ sys.path.insert(0, str(ROOT / "INU_tools"))
 from core.validate import (  # noqa: E402
     check_paintjobs,
     check_quaternions,
-    check_modulate_color,
+    check_uv_anim_night_vcols,
     check_damage_pairs,
     check_orphan_models,
     check_orphan_2dfx,
@@ -123,29 +123,38 @@ def test_quat_counts_bad_keys_in_message():
     assert issues[0]['message'].startswith('2 ')  # 2 bad out of 3
 
 
-# ── Modulate Color ──────────────────────────────────────────────────
+# ── UV-anim × night vcols ───────────────────────────────────────────
 
 
-def test_modulate_color_no_vcol_clean():
-    """No vertex colors → flag is harmless."""
-    meshes = [dict(name='cube', modulate_color=True, has_vcol=False)]
-    assert check_modulate_color(meshes) == []
+def test_uv_anim_no_night_clean():
+    """UV-anim material with day-only prelight → animation plays fine."""
+    meshes = [dict(name='sign', has_uv_anim=True,
+                   night_flag=False, has_night_vcol=False)]
+    assert check_uv_anim_night_vcols(meshes) == []
 
 
-def test_modulate_color_no_flag_clean():
-    """Vertex colors without the flag are fine — the flag is what
-    causes the flicker."""
-    meshes = [dict(name='cube', modulate_color=False, has_vcol=True)]
-    assert check_modulate_color(meshes) == []
+def test_night_without_uv_anim_clean():
+    """Night vcols are fine on their own — only the combo breaks."""
+    meshes = [dict(name='wall', has_uv_anim=False,
+                   night_flag=True, has_night_vcol=True)]
+    assert check_uv_anim_night_vcols(meshes) == []
 
 
-def test_modulate_color_combined_warns():
-    meshes = [dict(name='body', modulate_color=True, has_vcol=True)]
-    issues = check_modulate_color(meshes)
+def test_uv_anim_with_night_flag_warns():
+    meshes = [dict(name='sign', has_uv_anim=True,
+                   night_flag=True, has_night_vcol=False)]
+    issues = check_uv_anim_night_vcols(meshes)
     assert len(issues) == 1
+    assert issues[0]['severity'] == 'WARNING'
     assert issues[0]['target_kind'] == 'OBJECT'
-    assert issues[0]['target_name'] == 'body'
-    assert issues[0]['fix_op_id'] == 'gtatools.validate_fix_modulate_color'
+    assert issues[0]['target_name'] == 'sign'
+
+
+def test_uv_anim_with_night_vcol_attr_warns():
+    """Night detected via a colour attribute even if the flag is off."""
+    meshes = [dict(name='sign', has_uv_anim=True,
+                   night_flag=False, has_night_vcol=True)]
+    assert len(check_uv_anim_night_vcols(meshes)) == 1
 
 
 # ── _ok / _dam pairs ────────────────────────────────────────────────
@@ -555,8 +564,8 @@ def test_all_issues_have_required_fields():
     ])
     samples += check_quaternions([dict(name='a',
                                        quat_groups=[[2.0, 0.0, 0.0, 0.0]])])
-    samples += check_modulate_color([
-        dict(name='o', modulate_color=True, has_vcol=True)])
+    samples += check_uv_anim_night_vcols([
+        dict(name='o', has_uv_anim=True, night_flag=True, has_night_vcol=False)])
     samples += check_damage_pairs(['x_ok', 'y_dam'])
     samples += check_orphan_models([
         dict(name='lone_LOD', type='LOD', base='lone'),

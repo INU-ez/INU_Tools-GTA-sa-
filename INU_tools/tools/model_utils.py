@@ -35,47 +35,105 @@ def _get_prefixes():
     }
 
 
+def _mesh_has_textured_material(obj):
+    """True if any of OBJ's materials references an image texture.
+
+    The signal that tells a visible DFF (textured) from collision (no texture)
+    when nothing else does. Errs toward DFF — a non-mesh, or a material setup
+    we can't read, returns True so a real model is never shoved into collision.
+    No materials at all, or materials with no image, → False (collision)."""
+    if getattr(obj, 'type', None) != 'MESH':
+        return True
+    data = getattr(obj, 'data', None)
+    mats = [m for m in (getattr(data, 'materials', None) or []) if m is not None]
+    if not mats:
+        return False
+    for mat in mats:
+        # Round-trip texture name stamped by the DFF importer / material panel.
+        inu = getattr(mat, 'inu', None)
+        if inu is not None and (getattr(inu, 'texture_name', '') or '').strip():
+            return True
+        if getattr(mat, 'use_nodes', False) and mat.node_tree:
+            for node in mat.node_tree.nodes:
+                if node.type == 'TEX_IMAGE' and getattr(node, 'image', None):
+                    return True
+    return False
+
+
 def get_model_type(obj):
-    """Определить тип модели по суффиксу или префиксу"""
+    """Determine a mesh's model type — ``LOD`` / ``COL`` / ``DFF`` — plus its
+    base name (the name with the type marker stripped, for DFF↔LOD↔COL
+    pairing).
+
+    Detection is automatic and layered; the _DFF/_LOD/_COL suffixes survive
+    only as a manual OVERRIDE (their customisation UI was removed). The
+    authoritative tier order lives in core.model_classify.classify_model:
+
+      1. explicit ``_SHA`` / suffix / prefix marker on the name → that type;
+      2. ``inu.type`` of COL/SHA (stamped by the COL importer or Batch Set
+         Type) → COL — checked BEFORE the LOD rule, so a tagged collision
+         with an accidental «lod» in its name stays COL;
+      3. a «lod» token at a word edge or an uppercase ``LOD`` marker
+         (см. model_classify._is_scene_lod_name) → LOD;
+      4. otherwise textured material → DFF, no texture → COL.
+
+    Returns ``(model_type, base_name)``."""
     if obj is None:
         return None, None
-
-    # Strip Blender's `.001`/`.002`/… duplicate suffix before any
-    # suffix-based classification. Without this, copies of COL/LOD
-    # meshes get misclassified as DFF (e.g. `name_col.007` doesn't
-    # end with `_COL` literally).
+    from ..core.model_classify import classify_model
+    # Strip Blender's `.001`/`.002`/… duplicate suffix before classification.
     name = _strip_dup_suffix(obj.name)
-    name_upper = name.upper()
-    suffixes = _get_suffixes()
-    prefixes = _get_prefixes()
+    inu = getattr(obj, 'inu', None)
+    inu_type = getattr(inu, 'type', 'OBJ') if inu is not None else 'OBJ'
+    # has_texture is a lambda — the material scan only runs if classification
+    # actually falls through to the texture tier.
+    return classify_model(
+        name,
+        has_texture=lambda: _mesh_has_textured_material(obj),
+        inu_type=inu_type,
+        suffixes=_get_suffixes(),
+        prefixes=_get_prefixes(),
+    )
 
-    # Shadow mesh suffix (_SHA) — Rockstar/Kam's convention.
-    # Treated as COL so IMG export packs it into the .col file; the COL
-    # exporter's _is_shadow_mesh() then writes it into shadow mesh section
-    # (non-blocking collision, used for bounds and bullet tests only).
-    if name_upper.endswith('_SHA'):
-        return 'COL', name[:-4]
 
-    # Check suffixes first (higher priority)
-    for model_type in ('LOD', 'COL', 'DFF'):
-        sfx = suffixes[model_type]
-        sfx_upper = sfx.upper()
-        if sfx_upper and name_upper.endswith(sfx_upper):
-            return model_type, name[:-len(sfx)]
-        # Also check without separator (e.g. "modelLOD" if suffix is "_LOD")
-        bare = sfx_upper.lstrip('_. ')
-        if bare and sfx_upper != bare and name_upper.endswith(bare):
-            return model_type, name[:-len(bare)]
+# ── UI-only classification cache ──────────────────────────────────────
+# get_model_type falls through to _mesh_has_textured_material, which walks
+# each material's node tree for untagged meshes. It's called from several
+# panel draw() methods EVERY redraw — on a big scene (and worst of all when
+# nothing is selected, so the export panel scans the whole active
+# collection) that per-redraw scan is what makes the UI lag (e.g. a dropdown
+# feels like it "hangs" because opening it forces a repaint).
+#
+# This cache is for DRAW code ONLY. Export / validate keep calling
+# get_model_type directly so their routing is always freshly computed —
+# never trust the cache for anything that writes files. The cache is cleared
+# on every depsgraph update (any rename / retag / material edit fires one),
+# so idle redraws are free while the result stays correct.
+_MODEL_TYPE_CACHE = {}
 
-    # Check prefixes
-    for model_type in ('LOD', 'COL', 'DFF'):
-        pfx = prefixes[model_type]
-        pfx_upper = pfx.upper()
-        if pfx_upper and name_upper.startswith(pfx_upper):
-            return model_type, name[len(pfx):]
 
-    # Модель без суффикса/префикса - считается DFF
-    return 'DFF', name
+def invalidate_model_type_cache(*_args):
+    """Drop the UI classification cache (registered on depsgraph_update_post).
+
+    Marked persistent (survives .blend loads) in __init__.register() rather
+    than with a module-level @bpy.app.handlers.persistent decorator — the
+    latter runs at import and would break bpy-less unit tests (their stub
+    has no bpy.app)."""
+    _MODEL_TYPE_CACHE.clear()
+
+
+def get_model_type_cached(obj):
+    """Cached get_model_type for panel draw() — see _MODEL_TYPE_CACHE. Do NOT
+    use in export/validate paths (they must classify fresh)."""
+    if obj is None:
+        return None, None
+    key = obj.name
+    hit = _MODEL_TYPE_CACHE.get(key)
+    if hit is not None:
+        return hit
+    res = get_model_type(obj)
+    _MODEL_TYPE_CACHE[key] = res
+    return res
 
 
 def find_related_models(base_name):
@@ -111,8 +169,14 @@ def find_related_models(base_name):
     return models
 
 
-def find_selected_models():
-    """Найти модели DFF, LOD, COL только среди выделенных объектов"""
+def find_selected_models(classify=None):
+    """Найти модели DFF, LOD, COL только среди выделенных объектов.
+
+    `classify` — функция классификации (по умолчанию get_model_type). UI
+    передаёт get_model_type_cached, чтобы не сканировать материалы каждый
+    redraw; экспорт-операторы оставляют дефолт (всегда свежая классификация).
+    """
+    classify = classify or get_model_type
     models = {
         'DFF': None,
         'LOD': None,
@@ -123,7 +187,7 @@ def find_selected_models():
         if obj.type != 'MESH':
             continue
 
-        model_type, base_name = get_model_type(obj)
+        model_type, base_name = classify(obj)
 
         if model_type and models[model_type] is None:
             models[model_type] = obj
@@ -147,9 +211,14 @@ def _get_active_collection_objects():
     return objects
 
 
-def find_all_selected_model_groups():
+def find_all_selected_model_groups(classify=None):
     """Find all DFF/LOD/COL model groups among selected objects, grouped by base_name.
-    Falls back to active collection if nothing is selected."""
+    Falls back to active collection if nothing is selected.
+
+    `classify` — см. find_selected_models. UI передаёт кэш-версию (иначе на
+    большой сцене с пустым выделением скан всей активной коллекции гонится
+    каждый redraw → лаги); экспорт — дефолт (свежая классификация)."""
+    classify = classify or get_model_type
     groups = {}  # {base_name: {'DFF': obj, 'LOD': obj, 'COL': obj}}
 
     source = [o for o in bpy.context.selected_objects if o.type == 'MESH']
@@ -157,7 +226,7 @@ def find_all_selected_model_groups():
         source = _get_active_collection_objects()
 
     for obj in source:
-        model_type, base_name = get_model_type(obj)
+        model_type, base_name = classify(obj)
         if not base_name:
             continue
 

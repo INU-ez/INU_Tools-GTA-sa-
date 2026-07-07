@@ -1807,7 +1807,23 @@ def draw_dff_flags_block(layout, context):
     _flag("uv_map2", "UV2")
     _flag("day_cols", "Day")
     if _is_sa:
-        _flag("night_cols", "Night")
+        # Night vertex colors kill UV animation in retail SA — mirror the
+        # N-panel: red-alert the Night row and spell out why when the active
+        # mesh carries a UV-anim material (this warning was missing from the
+        # export dialog, only shown in the N-panel).
+        from ..ui.panels import _obj_has_uv_anim_material
+        _uv_anim = _obj_has_uv_anim_material(ao)
+        r = fc.row(align=True)
+        if 'night_cols' in _PIPE_FORBIDDEN or (_uv_anim and inu.night_cols):
+            r.alert = True
+        r.prop(inu, "night_cols", text="Night")
+        if _uv_anim and inu.night_cols:
+            warn = fc.column(align=True)
+            warn.alert = True
+            warn.label(text=T("Night ломает UV-анимацию в retail SA"),
+                       icon='ERROR')
+            warn.label(text=T("Сними Night (ночные vcol) на UV-аним модели"),
+                       icon='BLANK1')
 
 
 # ──────────────────── Blender operator wrapper ────────────────────────

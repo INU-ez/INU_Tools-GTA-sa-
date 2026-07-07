@@ -8,7 +8,6 @@ user-isolated directory via ``bpy.utils.extension_path_user``
 
 Subfolders used by INU Tools:
     profiles/           — N-sidebar layout profiles (tools/profiles.py)
-    material_presets/   — GTA Material panel JSON presets
     id_presets/         — Model ID Manager presets
     paths.json          — saved game paths (top-level file, no subfolder)
 

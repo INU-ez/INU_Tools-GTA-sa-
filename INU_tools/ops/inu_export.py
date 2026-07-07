@@ -333,7 +333,7 @@ class GTATOOLS_OT_inu_import(bpy.types.Operator, ImportHelper):
 
 def menu_func_import(self, context):
     self.layout.operator(GTATOOLS_OT_inu_import.bl_idname,
-                         text="INU Import (.dff/.col/.txd/.ide/.ipl)")
+                         text="INU Import (.dff/.col/.cst/.txd/.ide/.ipl)")
 
 
 # ──────────────────── Shared group-export engine ─────────────────────
@@ -421,12 +421,18 @@ def _export_model_group(context, directory, base_name, models,
             from .col_export import export_col as inu_export_col, _resolve_col_version
             if col_present and not empty_col:
                 col_obj.location = (0, 0, 0)
+            # Empty COL → bounds from the visual model so GTA doesn't cull it.
+            _bref = None
+            if empty_col:
+                _vis = models['DFF'] or models['LOD']
+                _bref = [_vis] if _vis else None
             inu_export_col(
                 filepath=col_path,
                 objects=[col_obj] if col_present else [],
                 version=_resolve_col_version(context),
                 model_name=base_name,
                 empty=empty_col,
+                bounds_ref=_bref,
             )
             exported.append(f"{base_name}.col")
         except Exception as e:
@@ -663,6 +669,120 @@ def _report_group_export(op, exported, errors, tri_warnings, num_groups):
     return {'FINISHED'}
 
 
+def _upsert_ide_for_groups(groups, ide_path):
+    """Build IDE objs/LOD entries for base→{DFF,LOD,COL} groups and upsert them
+    into ``ide_path``. Returns ``(updated, added)``. Shared by INU Export and
+    Export All so the LOD-id / entry logic lives in one place."""
+    from ..core.ide import upsert_ide
+    from .. import _ide_entry_from_obj, _clean_model_name_ide
+    entries = []
+    for base_name, models in groups.items():
+        if models['DFF']:
+            entries.append(_ide_entry_from_obj(models['DFF']))
+        if models['LOD']:
+            lod_entry = _ide_entry_from_obj(models['LOD'])
+            lod_entry.model_name = "LOD" + base_name
+            lod_entry.txd_name = _clean_model_name_ide(base_name)
+            # A LOD with no id of its own borrows dff_id+1 so it isn't written
+            # with id 0 (0 = player model → corrupts the game).
+            if lod_entry.model_id == 0 and models['DFF']:
+                _dff_id = getattr(models['DFF'].inu, 'model_id', 0)
+                if _dff_id > 0:
+                    lod_entry.model_id = _dff_id + 1
+            entries.append(lod_entry)
+    return upsert_ide(bpy.path.abspath(ide_path), entries)
+
+
+def _upsert_ipl_for_groups(groups, ipl_path, context):
+    """Place base→{DFF,LOD,COL} groups into ``ipl_path`` (update-in-place by
+    id+name+pos, else append). MAIN (DFF) is placed first, its LOD after —
+    the DFF's lod_index is back-filled once the LOD row exists (same order
+    as GTATOOLS_OT_upsert_ipl). Mirrors its safeguards: model_id ≤ 0 rows
+    are SKIPPED (id 0 = player model → corrupts the game), a LOD without
+    its own id borrows dff_id+1, an absent-from-selection LOD doesn't wipe
+    the existing lod_index, and the FLA ``realInterior`` column is
+    preserved. Returns ``(added, updated, skipped_names)``."""
+    from ..core.ipl import read_ipl, write_ipl, IplFile
+    from .. import _ipl_entry_from_obj
+    from .ide_ipl import _get_scene_game
+    ipl_path = bpy.path.abspath(ipl_path)
+    ipl = read_ipl(ipl_path) if os.path.isfile(ipl_path) else IplFile()
+
+    def _place(inst):
+        for k, ex in enumerate(ipl.instances):
+            if (ex.model_id == inst.model_id
+                    and ex.model_name.lower() == inst.model_name.lower()
+                    and abs(ex.pos_x - inst.pos_x) < 0.001
+                    and abs(ex.pos_y - inst.pos_y) < 0.001
+                    and abs(ex.pos_z - inst.pos_z) < 0.001):
+                ipl.instances[k] = inst
+                return k, False
+        ipl.instances.append(inst)
+        return len(ipl.instances) - 1, True
+
+    def _find_inst_by_name(name):
+        low = name.lower()
+        for k, ex in enumerate(ipl.instances):
+            if ex.model_name.lower() == low:
+                return k
+        return -1
+
+    n_upd = n_add = 0
+    skipped = []
+    for base_name, models in groups.items():
+        # MAIN (DFF) first, then its LOD — main's inst line precedes the LOD's
+        # (matching the IDE). _place stores the entry by reference, so setting
+        # dff_entry.lod_index after the LOD is placed back-fills the file row.
+        dff_entry = None
+        if models['DFF']:
+            dff_entry = _ipl_entry_from_obj(models['DFF'])
+            if dff_entry.model_id <= 0:
+                skipped.append(dff_entry.model_name or base_name)
+                dff_entry = None
+            else:
+                # LOD не в этой выборке → не затирать связь в -1: берём
+                # существующую строку "LOD<base>" в файле, иначе прежний
+                # валидный inu.lod_index (как _resolve_lod_index в ide_ipl).
+                li = _find_inst_by_name("LOD" + base_name)
+                if li < 0:
+                    prev = int(getattr(models['DFF'].inu, 'lod_index', -1) or -1)
+                    li = prev if 0 <= prev < len(ipl.instances) else -1
+                dff_entry.lod_index = li
+                _, is_new = _place(dff_entry)
+                n_add += int(is_new)
+                n_upd += int(not is_new)
+        if models['LOD']:
+            lod_entry = _ipl_entry_from_obj(models['LOD'])
+            lod_entry.model_name = "LOD" + base_name
+            lod_entry.lod_index = -1
+            # LOD без своего id заимствует dff_id+1 (как в IDE-путях) —
+            # иначе строка ушла бы с id 0.
+            if lod_entry.model_id <= 0 and models['DFF']:
+                _dff_id = int(getattr(models['DFF'].inu, 'model_id', 0) or 0)
+                if _dff_id > 0:
+                    lod_entry.model_id = _dff_id + 1
+            if lod_entry.model_id <= 0:
+                skipped.append(lod_entry.model_name)
+            else:
+                lod_idx, is_new = _place(lod_entry)
+                n_add += int(is_new)
+                n_upd += int(not is_new)
+                if dff_entry is not None:
+                    dff_entry.lod_index = lod_idx
+                    if getattr(models['DFF'], 'inu', None):
+                        models['DFF'].inu.lod_index = lod_idx
+    # FLA realInterior: сохраняем 12-колоночный формат, если он уже был в
+    # файле или нужен объектам (то же правило #7, что в ide_ipl).
+    fla = (any(int(getattr(i, 'real_interior', 0) or 0)
+               for i in ipl.instances))
+    try:
+        write_ipl(ipl_path, ipl, game=_get_scene_game(context),
+                  fla_extended=fla)
+    except TypeError:
+        write_ipl(ipl_path, ipl, game=_get_scene_game(context))
+    return n_add, n_upd, skipped
+
+
 class GTATOOLS_OT_export_all(bpy.types.Operator):
     """Экспорт всех выделенных моделей (DFF + COL + LOD + TXD)"""
     bl_idname = "gtatools.export_all"
@@ -731,6 +851,10 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
         row.prop(scn.inu_settings, "gtatools_export_all_lod", text="LOD")
         row.prop(scn.inu_settings, "gtatools_export_all_txd", text="TXD")
         row.prop(scn.inu_settings, "gtatools_export_all_cst", text="CST")
+        # Также дописать модели в IDE / IPL, выбранные в панели IDE/IPL/IMG
+        # (id, имя, TXD, дальность + расстановка и lod_index).
+        layout.prop(scn.inu_settings, "gtatools_export_all_ide_ipl",
+                    text=T("Также в IDE / IPL (пути из панели)"))
         # Один DFF (машина/пед): вся выделенная иерархия → один .dff, а не
         # разбивка по именам. CST/COL-library при этом не нужны.
         layout.prop(scn.inu_settings, "gtatools_export_all_single_dff",
@@ -958,11 +1082,14 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
                             T("Укажите путь к .img архиву в настройках аддона"))
                 return {'CANCELLED'}
             context.window_manager.gtatools_txd_export_plan.clear()
-            return bpy.ops.gtatools.export_to_img(
+            res = bpy.ops.gtatools.export_to_img(
                 'EXEC_DEFAULT',
                 shared_txd=bool(getattr(s, 'gtatools_export_all_txd_shared', False)),
                 shared_txd_name=(getattr(s, 'gtatools_export_all_txd_shared_name', '')
                                  or 'textures'))
+            if getattr(s, 'gtatools_export_all_ide_ipl', False):
+                self._also_upsert_ide_ipl(context)
+            return res
 
         # Клик по файлу в браузере → его имя (без расширения) становится
         # базовым именем экспорта для ОДНОЙ выделенной модели: DFF/COL/LOD/
@@ -999,7 +1126,47 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
             empty_col=bool(getattr(s, 'gtatools_export_all_col_empty', False)),
             txd_merge=bool(getattr(s, 'gtatools_export_all_txd_merge', False)),
             name_override=name_override)
+        if getattr(s, 'gtatools_export_all_ide_ipl', False):
+            self._also_upsert_ide_ipl(context)
         return _report_group_export(self, exported, errors, tri_warnings, num_groups)
+
+    def _also_upsert_ide_ipl(self, context):
+        """After export, upsert the selected models into the panel-picked
+        IDE/IPL files (gtatools_ide_path / gtatools_ipl_path). Same entry
+        logic as the IDE/IPL 'Add' buttons (LOD id+1, lod_index)."""
+        s = context.scene.inu_settings
+        ide_path = bpy.path.abspath(getattr(s, 'gtatools_ide_path', '') or '')
+        ipl_path = bpy.path.abspath(getattr(s, 'gtatools_ipl_path', '') or '')
+        if not ide_path and not ipl_path:
+            self.report({'WARNING'},
+                        T("IDE/IPL: файлы не выбраны в панели — пропущено"))
+            return
+        from ..tools.model_utils import find_all_selected_model_groups
+        try:
+            groups = find_all_selected_model_groups()
+        except Exception as e:
+            self.report({'WARNING'}, f"IDE/IPL groups: {e}")
+            return
+        parts = []
+        if ide_path:
+            try:
+                u, a = _upsert_ide_for_groups(groups, ide_path)
+                parts.append(f"IDE +{a} ~{u}")
+            except Exception as e:
+                parts.append(f"IDE err: {e}")
+        if ipl_path:
+            try:
+                na, nu, skipped = _upsert_ipl_for_groups(groups, ipl_path,
+                                                         context)
+                parts.append(f"IPL +{na} ~{nu}")
+                if skipped:
+                    self.report({'WARNING'}, T(
+                        "IPL: пропущены строки с model_id 0 (задай ID): ")
+                        + ", ".join(skipped[:5]))
+            except Exception as e:
+                parts.append(f"IPL err: {e}")
+        if parts:
+            self.report({'INFO'}, "  ".join(parts))
 
 
 class GTATOOLS_OT_quick_single_export(bpy.types.Operator):
@@ -1324,20 +1491,8 @@ class GTATOOLS_OT_inu_export(bpy.types.Operator, ExportHelper):
         if self.export_ide:
             if self.ide_ipl_upsert and self.ide_upsert_path:
                 try:
-                    from ..core.ide import upsert_ide
-                    entries = []
-                    for base_name, models in groups.items():
-                        if models['DFF']:
-                            from .. import _ide_entry_from_obj
-                            entries.append(_ide_entry_from_obj(models['DFF']))
-                        if models['LOD']:
-                            lod_entry = _ide_entry_from_obj(models['LOD'])
-                            lod_entry.model_name = "LOD" + base_name
-                            from .. import _clean_model_name_ide
-                            lod_entry.txd_name = _clean_model_name_ide(base_name)
-                            entries.append(lod_entry)
-                    ide_path = bpy.path.abspath(self.ide_upsert_path)
-                    updated, added = upsert_ide(ide_path, entries)
+                    updated, added = _upsert_ide_for_groups(
+                        groups, self.ide_upsert_path)
                     all_exported.append(f"IDE: +{added} ~{updated}")
                 except Exception as e:
                     all_errors.append(f"IDE upsert: {e}")
@@ -1354,53 +1509,13 @@ class GTATOOLS_OT_inu_export(bpy.types.Operator, ExportHelper):
         if self.export_ipl:
             if self.ide_ipl_upsert and self.ipl_upsert_path:
                 try:
-                    from ..core.ipl import read_ipl, write_ipl, IplFile
-                    from .. import _ipl_entry_from_obj
-                    from .ide_ipl import _get_scene_game
-                    ipl_path = bpy.path.abspath(self.ipl_upsert_path)
-                    ipl = (read_ipl(ipl_path) if os.path.isfile(ipl_path)
-                           else IplFile())
-
-                    def _place(inst):
-                        # Update the inst at the same id+name+pos, else append.
-                        # Returns (final_line_index, is_new). The index is the
-                        # position in ipl.instances, which write_ipl emits in
-                        # order — i.e. the SA `lod_index` cross-reference.
-                        for k, ex in enumerate(ipl.instances):
-                            if (ex.model_id == inst.model_id
-                                    and ex.model_name.lower() == inst.model_name.lower()
-                                    and abs(ex.pos_x - inst.pos_x) < 0.001
-                                    and abs(ex.pos_y - inst.pos_y) < 0.001
-                                    and abs(ex.pos_z - inst.pos_z) < 0.001):
-                                ipl.instances[k] = inst
-                                return k, False
-                        ipl.instances.append(inst)
-                        return len(ipl.instances) - 1, True
-
-                    n_upd = n_add = 0
-                    for base_name, models in groups.items():
-                        # LOD first so its line index is known before we stamp
-                        # the DFF's lod_index — this linking was missing here,
-                        # so LOD never swapped in-game.
-                        lod_idx = -1
-                        if models['LOD']:
-                            lod_entry = _ipl_entry_from_obj(models['LOD'])
-                            lod_entry.model_name = "LOD" + base_name
-                            lod_entry.lod_index = -1
-                            lod_idx, is_new = _place(lod_entry)
-                            n_add += int(is_new)
-                            n_upd += int(not is_new)
-                        if models['DFF']:
-                            dff_entry = _ipl_entry_from_obj(models['DFF'])
-                            if models['LOD']:
-                                dff_entry.lod_index = lod_idx
-                                if getattr(models['DFF'], 'inu', None):
-                                    models['DFF'].inu.lod_index = lod_idx
-                            _, is_new = _place(dff_entry)
-                            n_add += int(is_new)
-                            n_upd += int(not is_new)
-                    write_ipl(ipl_path, ipl, game=_get_scene_game(context))
+                    n_add, n_upd, skipped = _upsert_ipl_for_groups(
+                        groups, self.ipl_upsert_path, context)
                     all_exported.append(f"IPL: +{n_add} ~{n_upd}")
+                    if skipped:
+                        all_errors.append(
+                            T("IPL: пропущены строки с model_id 0 (задай ID): ")
+                            + ", ".join(skipped[:5]))
                 except Exception as e:
                     all_errors.append(f"IPL upsert: {e}")
             else:

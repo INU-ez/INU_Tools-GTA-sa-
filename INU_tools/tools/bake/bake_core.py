@@ -113,7 +113,12 @@ class BakeStateGuard:
         'normal_space',
     )
     # Атрибуты scene.cycles, которые подсистема может менять.
-    _CYCLES_ATTRS = ('samples', 'use_denoising', 'bake_type', 'device')
+    # use_adaptive_sampling — КРИТИЧНО: при нём cy.samples это лишь МАКСИМУМ,
+    # Cycles останавливается раньше по порогу шума → пресет «Качество» и
+    # ползунок сэмплов почти не влияют (Cycles сам решает, сколько считать).
+    # Отключаем → сэмплы детерминированы, качество реально меняет результат.
+    _CYCLES_ATTRS = ('samples', 'use_denoising', 'bake_type', 'device',
+                     'use_adaptive_sampling')
 
     def __init__(self, context):
         self.context = context
@@ -151,6 +156,9 @@ class BakeStateGuard:
             bake.target = 'IMAGE_TEXTURES'
         if cy is not None and hasattr(cy, 'use_denoising'):
             cy.use_denoising = False
+        # Точное число сэмплов (иначе adaptive sampling глушит эффект качества).
+        if cy is not None and hasattr(cy, 'use_adaptive_sampling'):
+            cy.use_adaptive_sampling = False
         # Авто-GPU: если в настройках Blender включена GPU-карта Cycles —
         # печём на ней (быстрее на AO/тенях/GI/AA). Иначе оставляем CPU.
         # Раньше device не трогали → запекание всегда шло как в сцене (CPU
@@ -493,6 +501,137 @@ def write_numpy_to_image(image, arr, *, pack=True):
         except Exception:
             pass
     image.update()
+
+
+# ── Denoise (OIDN via Compositor) ────────────────────────────────────
+# Имя временной сцены-денойзера (get-or-reuse под INU-неймспейсом).
+DENOISE_SCENE_NAME = 'INU_Denoise'
+
+
+def denoise_image(image, context=None, albedo=None, normal=None):
+    """Денойзить `image` ин-плейс. Два пути:
+
+    1. **OIDN-нода компоузера** (Blender 4.x, встроенный, feature-guided по
+       albedo/normal — лучше по качеству). Работает только там, где у сцены
+       есть встроенное `node_tree`.
+    2. **Bilateral (чистый numpy)** — фолбэк на Blender 5.x (компоузер стал
+       node-группой: `CompositorNodeComposite`/`Viewer` в группе не
+       существуют, readback невозможен) и при любом сбое пути 1. Работает
+       на любой версии без зависимостей.
+
+    Возвращает True при успехе, False — если не удалось ни то ни другое.
+    НИКОГДА не бросает — денойз не должен ронять запекание."""
+    if _denoise_compositor(image, context, albedo, normal):
+        return True
+    return _denoise_bilateral(image)
+
+
+def _denoise_bilateral(image):
+    """Фолбэк-денойз: bilateral на чистом numpy (см. bake_composite). Не
+    OIDN-качество, но краесохраняющее и версия-независимое. Ин-плейс."""
+    try:
+        from .bake_composite import bilateral_denoise
+        arr = read_image_to_numpy(image)
+        out = bilateral_denoise(arr)
+        write_numpy_to_image(image, np.ascontiguousarray(out), pack=True)
+        return True
+    except Exception as e:
+        print(f"[INU bake_core] bilateral denoise skipped: {e}")
+        return False
+
+
+def _denoise_compositor(image, context=None, albedo=None, normal=None):
+    """OIDN через компоузер (Blender 4.x). Временная сцена с графом
+    ``Image → Denoise → Composite/Viewer``, рендер под размер картинки,
+    результат из ``'Viewer Node'`` пишется обратно. На 5.x (нет
+    scene.node_tree) сразу False → вызывающий уйдёт в bilateral.
+
+    `context` — контекст вызывающего: сцену подменяем на ОКНЕ КОНТЕКСТА
+    (bpy.ops.render.render рендерит сцену контекста; со вторым окном подмена
+    на windows[0] отрендерила бы настоящую сцену пользователя)."""
+    tmp = None
+    try:
+        ctx = context if context is not None else bpy.context
+        win = getattr(ctx, 'window', None)
+        if win is None:
+            wm = getattr(ctx, 'window_manager', None)
+            win = wm.windows[0] if (wm and len(wm.windows)) else None
+        if win is None:                       # headless — рендер-op недоступен
+            return False
+        w, h = image.size
+        if w == 0 or h == 0:
+            return False
+
+        tmp = bpy.data.scenes.new(DENOISE_SCENE_NAME)
+        # Blender 5.x: scene.node_tree убран (компоузер — node-группа, где нет
+        # Composite/Viewer). Тогда компоузер-путь не годится → False (фолбэк).
+        if not hasattr(tmp, 'node_tree'):
+            return False
+        try:
+            tmp.render.engine = 'BLENDER_WORKBENCH'   # дёшево: 3D нам не нужен
+        except Exception:
+            pass
+        tmp.render.resolution_x = w
+        tmp.render.resolution_y = h
+        tmp.render.resolution_percentage = 100
+        tmp.render.use_compositing = True
+        tmp.render.use_sequencer = False
+        try:
+            tmp.use_nodes = True
+        except Exception:
+            pass
+        nt = getattr(tmp, 'node_tree', None)
+        if nt is None:
+            return False
+        nt.nodes.clear()
+        n_img = nt.nodes.new('CompositorNodeImage')
+        n_img.image = image
+        n_dn = nt.nodes.new('CompositorNodeDenoise')
+        n_out = nt.nodes.new('CompositorNodeComposite')
+        n_view = nt.nodes.new('CompositorNodeViewer')
+        nt.links.new(n_img.outputs['Image'], n_dn.inputs['Image'])
+        # Доп-пассы (feature-guided): albedo/normal того же размера → чище края.
+        for _feat, _sock in ((albedo, 'Albedo'), (normal, 'Normal')):
+            if (_feat is not None and _sock in n_dn.inputs
+                    and _feat.size[0] == w and _feat.size[1] == h):
+                fn = nt.nodes.new('CompositorNodeImage')
+                fn.image = _feat
+                nt.links.new(fn.outputs['Image'], n_dn.inputs[_sock])
+        nt.links.new(n_dn.outputs['Image'], n_out.inputs['Image'])
+        nt.links.new(n_dn.outputs['Image'], n_view.inputs['Image'])
+
+        prev_scene = win.scene
+        win.scene = tmp
+        try:
+            bpy.ops.render.render(write_still=False)
+        finally:
+            try:
+                win.scene = prev_scene
+            except Exception:
+                pass
+
+        viewer = bpy.data.images.get('Viewer Node')
+        if viewer is None or viewer.size[0] != w or viewer.size[1] != h:
+            return False
+        arr = read_image_to_numpy(viewer)
+        tgt_ch = image.channels
+        if arr.shape[2] != tgt_ch:
+            if arr.shape[2] > tgt_ch:
+                arr = arr[:, :, :tgt_ch]
+            else:
+                pad = np.ones((h, w, tgt_ch - arr.shape[2]), np.float32)
+                arr = np.concatenate([arr, pad], axis=2)
+        write_numpy_to_image(image, np.ascontiguousarray(arr), pack=True)
+        return True
+    except Exception as e:
+        print(f"[INU bake_core] compositor denoise skipped: {e}")
+        return False
+    finally:
+        if tmp is not None:
+            try:
+                bpy.data.scenes.remove(tmp)
+            except Exception:
+                pass
 
 
 # ── Smoke test ───────────────────────────────────────────────────────

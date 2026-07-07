@@ -275,11 +275,6 @@ def _bake_layer_index_update(self, context):
         pass
 
 
-def _mat_preset_items_proxy(self, context):
-    from .tools.gta_material_panel import preset_items
-    return preset_items(self, context)
-
-
 def _ik_empty_types_proxy(self, context):
     from .ops.ik_rig import EMPTY_TYPES
     return EMPTY_TYPES
@@ -571,6 +566,8 @@ class INUBakeLayer(bpy.types.PropertyGroup):
         items=_bake_map_enum_items_proxy, update=_bake_live_update,
         translation_context=_MAP_TR_CTX)        # пункты — английскими, без авто-перевода
     enabled: BoolProperty(name="", default=True, update=_bake_live_update)
+    # Развёрнута ли строка слоя в списке (показывать настройки инлайн).
+    expanded: BoolProperty(name="", default=False)
     blend_mode: EnumProperty(
         name=T("Режим"), description=T("Как смешивать с нижними слоями"),
         items=_BAKE_BLEND_ITEMS, default='MULTIPLY', update=_bake_live_update)
@@ -868,6 +865,18 @@ class INUSceneSettings(bpy.types.PropertyGroup):
     gtatools_show_ipl_sync_list: BoolProperty(
         name=T("Sync несколько IPL"),
         description=T("Показать список IPL для пакетной синхронизации"),
+        default=False)
+    gtatools_show_sync_group: BoolProperty(
+        name=T("Синхронизация с файлами"),
+        description=T("Обновление сцены из файлов, отвязка, проверка"),
+        default=False)
+    gtatools_show_ipl_extra: BoolProperty(
+        name=T("Дополнительно (IPL)"),
+        description=T("Секции IPL (cull/пути/гаражи) и замена Empty-заглушек"),
+        default=False)
+    gtatools_show_id_service: BoolProperty(
+        name=T("База ID и сервис"),
+        description=T("Управление пресетом ID: sync, из игры, GC, лимит FLA"),
         default=False)
 
     # ── TXD settings ────────────────────────────────────────────
@@ -1395,6 +1404,78 @@ class INUSceneSettings(bpy.types.PropertyGroup):
         name="Max Ray",
         description=T("Макс. дистанция луча (0 = авто)"),
         default=0.0, min=0.0, soft_max=1.0, precision=3)
+    # ── LightMap (карта GI от реального света сцены) ──────────────
+    # Денойз общий для всех ШУМНЫХ карт (AO / Shadow / Diffuse Lit /
+    # Emission GI / LightMap): OIDN-нода компоузера на Blender 4.x, bilateral
+    # (numpy) на 5.x. Чистые карты (Diffuse/Normal/Emission/Bevel) не шумят —
+    # к ним не применяется.
+    gtatools_bake_denoise: BoolProperty(
+        name=T("Шумоподавление"),
+        description=T("Шумоподавление шумных карт (AO / Shadow / Diffuse Lit / "
+                    "Emission GI / LightMap). Их запечка светозависимая/GI и "
+                    "шумит — денойз чистит. К плоским картам не применяется"),
+        default=True)
+    gtatools_bake_lightmap_samples: IntProperty(
+        name=T("Сэмплы LightMap"),
+        description=T("Сэмплы Cycles для карты LightMap. GI шумнее AO — "
+                    "нужно больше. С денойзом можно ниже"),
+        default=128, min=1, max=2048)
+    gtatools_bake_lightmap_apply: EnumProperty(
+        name=T("Применить как"),
+        description=T("Как использовать запечённый LightMap в GTA SA"),
+        items=[
+            ('STACK', T("Слой в стеке"),
+             T("Оставить MULTIPLY-слоем в стеке — сведёте/сохраните сами, "
+             "как остальные карты")),
+            ('DIFFUSE', T("Впечь в диффуз"),
+             T("Умножить LightMap × диффуз-текстуру → одна готовая текстура. "
+             "Работает в ванильной GTA SA без шейдеров")),
+            ('PRELIGHT', T("В vertex prelight"),
+             T("Сэмплировать LightMap по вершинам в prelight-цвета «Day» — "
+             "нативное статическое освещение GTA SA")),
+        ],
+        default='PRELIGHT')
+    gtatools_bake_lightmap_quality: EnumProperty(
+        name=T("Качество"),
+        description=T("Пресет сэмплов LightMap (как в The_Lightmapper). "
+                    "«Своё» — использовать ползунок «Сэмплы LightMap»"),
+        items=[
+            ('CUSTOM', T("Своё"), T("Из ползунка «Сэмплы LightMap»")),
+            ('PREVIEW', T("Черновик"), T("32 сэмпла — быстро, для превью")),
+            ('MEDIUM', T("Средне"), T("128 сэмплов")),
+            ('HIGH', T("Высоко"), T("512 сэмплов")),
+            ('PRODUCTION', T("Продакшн"), T("1024 сэмпла — чисто, медленно")),
+        ],
+        default='CUSTOM')
+    gtatools_bake_lightmap_light_mode: EnumProperty(
+        name=T("Режим света"),
+        description=T("Какой свет запекать в LightMap"),
+        items=[
+            ('COMBINED', T("Полный (прямой+отражённый)"),
+             T("Прямой свет + глобальное освещение (GI). Обычный выбор")),
+            ('INDIRECT', T("Только отражённый (GI)"),
+             T("Только непрямой отскок света — прямой оставить динамическим/в prelight")),
+            ('DIRECT', T("Только прямой"),
+             T("Только прямой свет и тени, без отскока")),
+        ],
+        default='COMBINED')
+    gtatools_bake_lightmap_denoise_passes: BoolProperty(
+        name=T("Денойз по albedo/normal"),
+        description=T("Скормить денойзеру запечённые Diffuse (albedo) и Normal "
+                    "как доп-пассы — чище результат на краях. Работает, если "
+                    "эти карты запечены в том же размере"),
+        default=True)
+    gtatools_bake_lightmap_intensity: FloatProperty(
+        name=T("Интенсивность"),
+        description=T("Яркость запечённого LightMap. Меняется без "
+                    "пере-запекания — кнопкой «Обновить лайтмап» ниже"),
+        default=1.0, min=0.0, soft_max=4.0)
+    gtatools_bake_lightmap_filter: FloatProperty(
+        name=T("Смягчение"),
+        description=T("Размытие LightMap — сглаживает зерно/блочность. 0 = "
+                    "выкл. Меняется без пере-запекания — кнопкой «Обновить "
+                    "лайтмап» ниже"),
+        default=0.0, min=0.0, soft_max=8.0)
     gtatools_bake_layers_index: IntProperty(
         default=0, update=_bake_layer_index_update)
     # Карта для формы «Добавить слой» (создание отделено от списка слоёв):
@@ -1714,9 +1795,6 @@ class INUSceneSettings(bpy.types.PropertyGroup):
             ('CONSTANT', T("Постоянная"), T("Ступенька — без интерполяции")),
         ],
         default='BEZIER')
-    gtatools_material_preset: EnumProperty(
-        items=_mat_preset_items_proxy,
-        name="GTA Material Preset")
 
     # ── Export All ──────────────────────────────────────────────
     gtatools_export_all_dff: BoolProperty(
@@ -1738,6 +1816,13 @@ class INUSceneSettings(bpy.types.PropertyGroup):
     gtatools_export_all_cst: BoolProperty(
         name="Export CST",
         description=T("Экспортировать коллизию в текстовый .cst (Collision File Editor II) при Export All"),
+        default=False)
+    gtatools_export_all_ide_ipl: BoolProperty(
+        name="IDE/IPL",
+        description=T("После экспорта также дописать модели в IDE и IPL, "
+                      "выбранные в панели IDE / IPL / IMG (id, имя, TXD, "
+                      "дальность + расстановка и lod_index). Пути берутся из "
+                      "полей IDE / IPL панели"),
         default=False)
     gtatools_export_all_col_empty: BoolProperty(
         name="Empty COL",

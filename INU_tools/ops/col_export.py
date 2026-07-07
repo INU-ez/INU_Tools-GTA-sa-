@@ -347,8 +347,23 @@ def _stored_bounds(objects):
     return None
 
 
+def _empty_col_bounds(ref, version: int, model_name: str) -> Bounds:
+    """Bounds for a geometry-less (EMPTY) COL, measured from the visual model
+    (``ref``) instead of left at zero.
+
+    GTA streams / culls a model by its COL's bounding sphere. A zero-radius
+    sphere at the origin makes the game never bring the model in — so it
+    «disappears». We reuse the normal collect+measure path (a throwaway model)
+    so the bounds land in exactly the same coordinate space a real COL would."""
+    tmp = ColModel(version=version, model_name=model_name)
+    for obj in (ref or []):
+        if getattr(obj, 'type', None) == 'MESH' and not _is_shadow_mesh(obj):
+            _collect_mesh(obj, tmp)
+    return _compute_bounds(tmp)
+
+
 def export_col(filepath: str, objects, version: int = 3, model_name: str = "",
-               empty: bool = False):
+               empty: bool = False, bounds_ref=None):
     """
     Export selected Blender objects as a COL file.
 
@@ -358,10 +373,11 @@ def export_col(filepath: str, objects, version: int = 3, model_name: str = "",
         version: COL version (1, 2, 3, or 4). Default 3 for GTA SA.
         model_name: Model name in COL header. If empty, derived from filename.
         empty: When True, write a geometry-less COL record (no faces/verts/
-            spheres/boxes, zero bounds) that still carries ``model_name``.
-            For models that must have a COL entry bound to them but no
-            actual collision — the game expects a matching COL or it
-            falls back to default bounds.
+            spheres/boxes) that still carries ``model_name`` AND a real
+            bounding sphere/box measured from the visual model — a zero sphere
+            makes GTA cull the model so it disappears.
+        bounds_ref: Objects to measure the empty-COL bounds from (the DFF/LOD).
+            Falls back to ``objects`` when omitted.
     """
     import os
 
@@ -380,18 +396,20 @@ def export_col(filepath: str, objects, version: int = 3, model_name: str = "",
 
             elif obj.type == 'EMPTY':
                 _collect_empty(obj, model)
-
-    model.bounds = _compute_bounds(model)
-    if not empty:
+        model.bounds = _compute_bounds(model)
         saved = _stored_bounds(objects)
         if saved is not None:
             model.bounds = saved
+    else:
+        # Empty COL still needs real bounds (from the visual model) or GTA
+        # culls the model → it disappears.
+        model.bounds = _empty_col_bounds(bounds_ref or objects, version, model_name)
     write_col_file(filepath, [model])
     return model
 
 
 def build_col_model(objects, version: int = 3, model_name: str = "",
-                    empty: bool = False) -> ColModel:
+                    empty: bool = False, bounds_ref=None) -> ColModel:
     """Build a ``ColModel`` from Blender objects (main thread).
 
     Split out so batch exporters can build models on the main thread
@@ -399,7 +417,8 @@ def build_col_model(objects, version: int = 3, model_name: str = "",
     bound ``write_col`` serialisation.
 
     ``empty=True`` skips geometry collection — the model carries only
-    ``model_name`` and a zero bounds (see ``export_col``).
+    ``model_name`` plus a bounding sphere/box measured from ``bounds_ref``
+    (the visual model), so GTA doesn't cull it (see ``export_col``).
     """
     model = ColModel(version=version, model_name=model_name)
 
@@ -413,12 +432,14 @@ def build_col_model(objects, version: int = 3, model_name: str = "",
 
             elif obj.type == 'EMPTY':
                 _collect_empty(obj, model)
-
-    model.bounds = _compute_bounds(model)
-    if not empty:
+        model.bounds = _compute_bounds(model)
         saved = _stored_bounds(objects)
         if saved is not None:
             model.bounds = saved
+    else:
+        # Empty COL: derive bounds from the visual model (bounds_ref, else the
+        # passed objects) so GTA's culling sphere isn't zero.
+        model.bounds = _empty_col_bounds(bounds_ref or objects, version, model_name)
     return model
 
 
@@ -504,7 +525,10 @@ def export_col_library(filepath: str, objects, version: int = 3,
                         _collect_mesh(obj, model)
                 elif obj.type == 'EMPTY':
                     _collect_empty(obj, model)
-        model.bounds = _compute_bounds(model)
+            model.bounds = _compute_bounds(model)
+        else:
+            # Empty COL: bounds from the group's meshes so GTA doesn't cull it.
+            model.bounds = _empty_col_bounds(objs, version, base_name)
         models.append(model)
 
     if models:

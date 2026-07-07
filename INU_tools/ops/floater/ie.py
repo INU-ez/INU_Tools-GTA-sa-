@@ -174,9 +174,10 @@ def _ie_selection_summary(context):
     try:
         from ...tools.model_utils import (
             find_selected_models, find_all_selected_model_groups,
+            get_model_type_cached,
         )
-        models = find_selected_models()
-        groups = find_all_selected_model_groups()
+        models = find_selected_models(classify=get_model_type_cached)
+        groups = find_all_selected_model_groups(classify=get_model_type_cached)
     except Exception:
         models = {'DFF': None, 'LOD': None, 'COL': None}
         groups = {}
@@ -555,8 +556,10 @@ class ImportExportFloater(B.Floater):
             if sec['expanded'] and sec['body_rect']:
                 bx, by, bw, bh = sec['body_rect']
                 if sid == 'suffix':
-                    # Placeholder until text-input widget exists.
-                    note = "Редактирование через N-панель"
+                    # Тип определяется автоматически (core/model_classify);
+                    # маркеры имени — фикс-переопределение. UI редактирования
+                    # суффиксов удалён из N-панели — не ссылаемся на него.
+                    note = "Авто-детект; маркеры: _DFF / _LOD / _COL"
                     nw, nh = TA._text_dims(note)
                     TA._text(int(bx + (bw - nw) / 2),
                           int(by + (bh - nh) / 2),

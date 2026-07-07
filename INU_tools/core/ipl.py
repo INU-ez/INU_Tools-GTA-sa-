@@ -1102,8 +1102,6 @@ def upsert_ipl(filepath: str, entries: list[IplInstance]) -> tuple[int, int]:
 
     return (updated, added)
 
-    return (updated, added)
-
 
 def remove_ipl(filepath: str, model_ids: set[int]) -> int:
     """Remove inst entries with given model_ids from IPL file.
