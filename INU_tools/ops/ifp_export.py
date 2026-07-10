@@ -668,7 +668,8 @@ def build_ifp_from_empty_rig(root_empty, action_name: str = "",
     else to *package_name*. One IFPFile per root rig — separate rigs
     each produce their own .ifp via separate calls.
     """
-    fps = bpy.context.scene.render.fps
+    fps = 30.0  # GTA/RenderWare IFP native rate — NOT scene fps, else the
+    # frame→time→frame round-trip drifts keyframes (root-bone jitter).
     frame_start = float(bpy.context.scene.frame_start)
     # ANP3 is the SA-native compressed IFP format — vanilla map object
     # IFPs (counxref.ifp / airport.ifp / derrick01) all use ANP3.
@@ -718,7 +719,8 @@ def build_ifp_from_actions(actions=None, armature=None,
         actions = _resolve_actions(actions, armature)
 
     ifp = IFPFile(name=package_name)
-    fps = bpy.context.scene.render.fps
+    fps = 30.0  # GTA/RenderWare IFP native rate — NOT scene fps, else the
+    # frame→time→frame round-trip drifts keyframes (root-bone jitter).
 
     for action in actions:
         ifp.animations.append(_build_animation(action, armature, fps))

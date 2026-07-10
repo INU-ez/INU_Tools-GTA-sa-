@@ -174,11 +174,15 @@ def apply_ifp_action(action_name: str, armature, context=None):
     except Exception as e:
         return False, f"Error creating fcurves: {e}"
 
-    # IFP keyframe times are seconds (canonical, for both ANP3 and
-    # ANPK after the reader normalises). Blender's fcurve x-axis is
-    # frames at scene fps, so we scale up. At default 30fps this is
-    # the identity for vanilla SA peds.ifp data.
-    fps = float(getattr(bpy.context.scene.render, 'fps', 30) or 30)
+    # IFP keyframe times are seconds. GTA/RenderWare animations run at a
+    # FIXED 30 fps — convert time↔frame with 30, NOT the scene fps. Using
+    # scene fps (default 24) made the round-trip 30→24→30 non-idempotent:
+    # individual keyframes drifted by a frame (e.g. WALK_civi frame 62→63),
+    # breaking the uniform 2-frame spacing → the root bone visibly jittered
+    # on re-export. 30 keeps keyframes on their exact original frames.
+    # (Preview plays at scene fps; set the scene to 30 fps for real-time
+    # speed — the exported timing is correct either way.)
+    fps = 30.0
 
     # Pre-build a bone_id → pose_bone map. Custom skins commonly rename
     # the root bone (vanilla 'Normal' becomes 'Root', 'Bip01', etc.) but
