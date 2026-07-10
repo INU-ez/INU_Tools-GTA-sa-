@@ -486,6 +486,12 @@ from .ops.bake_ops import (
     GTATOOLS_OT_bake_lightmap_postprocess,
     GTATOOLS_OT_bake_show_over_base,
 )
+from .ops.alpha_tools import (
+    GTATOOLS_OT_alpha_scan,
+    GTATOOLS_OT_alpha_apply_all,
+    GTATOOLS_OT_alpha_select_objects,
+    GTATOOLS_UL_alpha_mats,
+)
 from .scene_settings import (
     INUSceneSettings,
     INUValidateIssue,
@@ -494,6 +500,7 @@ from .scene_settings import (
     GTATOOLS_BinaryIplEntry,
     GTATOOLS_TextIplEntry,
     GTATOOLS_ImgFileEntry,
+    GTATOOLS_AlphaMatEntry,
     GTATOOLS_LintIssueItem,
     GTATOOLS_PathItem,
     GTATOOLS_TextureBrowserItem,
@@ -2026,6 +2033,7 @@ class INUMaterialProps(bpy.types.PropertyGroup):
         items=[
             ('EFFECTS',  "Effects",  T("RW-эффекты материала: env map, bump, specular, reflection, dual texture, UV anim + пресеты")),
             ('SURFACE',  T("Материал коллизии"),  T("COL Surface Type — тип физической поверхности и Day/Night Light")),
+            ('ALPHA',    T("Альфа"),  T("Массовая замена режима прозрачности у альфа-материалов сцены")),
         ],
         default='EFFECTS',
     )
@@ -3190,6 +3198,11 @@ classes = (
     INUObjectProps,
     INUMaterialProps,
     GTATOOLS_ImgFileEntry,
+    GTATOOLS_AlphaMatEntry,
+    GTATOOLS_OT_alpha_scan,
+    GTATOOLS_OT_alpha_apply_all,
+    GTATOOLS_OT_alpha_select_objects,
+    GTATOOLS_UL_alpha_mats,
     GTATOOLS_BinaryIplEntry,
     GTATOOLS_TextIplEntry,
     GTATOOLS_LintIssueItem,

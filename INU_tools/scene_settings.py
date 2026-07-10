@@ -498,6 +498,41 @@ class GTATOOLS_ImgFileEntry(bpy.types.PropertyGroup):
     name: StringProperty()
 
 
+# Shared 4-way blend-mode items for the alpha-materials tool (per-row +
+# bulk). Labels mirror Blender's native blend_method so it feels familiar.
+# Applied via ops.alpha_tools._apply_blend, which ALSO sets
+# surface_render_method — on EEVEE Next (4.2+) blend_method alone no
+# longer takes effect, so a plain blend_method dropdown "does nothing".
+_ALPHA_BLEND_ITEMS = [
+    ('OPAQUE', T("Непрозрачность"),   ""),
+    ('CLIP',   T("Альфа-усечение"),   ""),
+    ('HASHED', T("Альфа-хеш"),        ""),
+    ('BLEND',  T("Альфа-смешивание"), ""),
+]
+
+
+def _alpha_item_blend_update(self, context):
+    """Editing a row's mode applies it to the real material (both
+    blend_method and surface_render_method). Suppressed during scan
+    (see ops.alpha_tools._SUPPRESS_ITEM_UPDATE) so populating the list
+    doesn't mutate materials."""
+    from .ops import alpha_tools
+    if getattr(alpha_tools, '_SUPPRESS_ITEM_UPDATE', False):
+        return
+    mat = bpy.data.materials.get(self.name)
+    if mat is not None:
+        alpha_tools._apply_blend(mat, self.blend)
+
+
+class GTATOOLS_AlphaMatEntry(bpy.types.PropertyGroup):
+    """One scanned alpha material in the bulk blend-mode editor.
+    ``blend`` mirrors the material's transparency mode; editing it in the
+    list applies to the real material via _apply_blend."""
+    name: StringProperty()
+    blend: EnumProperty(items=_ALPHA_BLEND_ITEMS, default='CLIP',
+                        update=_alpha_item_blend_update)
+
+
 class GTATOOLS_BinaryIplEntry(bpy.types.PropertyGroup):
     """One binary IPL file found inside an IMG archive — user-selectable
     for inclusion in Build Map / Import Map."""
@@ -1795,6 +1830,47 @@ class INUSceneSettings(bpy.types.PropertyGroup):
             ('CONSTANT', T("Постоянная"), T("Ступенька — без интерполяции")),
         ],
         default='BEZIER')
+
+    # ── Alpha materials bulk blend-mode tool (ops/alpha_tools) ───
+    inu_alpha_mats: CollectionProperty(type=GTATOOLS_AlphaMatEntry)
+    inu_alpha_mat_idx: IntProperty(default=0)
+    gtatools_alpha_scope: EnumProperty(
+        name=T("Область"),
+        items=[
+            ('SCENE',    T("Вся сцена"),        T("Собирать по всей сцене")),
+            ('SELECTED', T("Только выделенные"), T("Только материалы выделенных объектов")),
+        ],
+        default='SCENE')
+    gtatools_alpha_filter_mode: EnumProperty(
+        name=T("Режим"),
+        items=[
+            ('NODE',        T("По ноде альфы"),   T("Альфа текстуры подключена ко входу Alpha шейдера")),
+            ('CHANNEL',     T("Есть альфа-канал"), T("У текстуры есть значимый альфа-канал")),
+            ('TRANSPARENT', T("Уже прозрачные"),  T("blend_method уже не Opaque")),
+            ('ALL',         T("Все"),             T("Любой из критериев выше")),
+        ],
+        default='NODE')
+    gtatools_alpha_bulk_blend: EnumProperty(
+        name=T("Режим для всех"),
+        items=_ALPHA_BLEND_ITEMS,
+        default='CLIP')
+
+    # ── GTA Material EFFECTS collapsible sections ───────────────
+    gtatools_mat_show_vehicle: BoolProperty(
+        name=T("Машина"), default=False,
+        description=T("Свернуть/развернуть блок машины (слот цвета + Paintjob)"))
+    gtatools_mat_show_fx: BoolProperty(
+        name=T("GTA-эффекты"), default=False,
+        description=T("Свернуть/развернуть GTA-эффекты (env map, bump, reflection, specular, dual, UV-аним)"))
+
+    # Global export toggle — write per-vertex alpha into the DFF.
+    # Default OFF: rarely needed and prone to accidental alpha (LOD etc.).
+    gtatools_export_vertex_alpha: BoolProperty(
+        name=T("Vertex Alpha"), default=False,
+        description=T("Записывать вершинную альфу (прозрачность vertex colors) в DFF. "
+                      "По умолчанию ВЫКЛ — редко нужна и может дать случайную альфу "
+                      "(напр. на LOD). Включай осознанно для стёкол/листвы/заборов; "
+                      "при выключенной альфа всегда 255 (непрозрачно)"))
 
     # ── Export All ──────────────────────────────────────────────
     gtatools_export_all_dff: BoolProperty(

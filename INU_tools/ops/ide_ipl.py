@@ -169,60 +169,52 @@ class GTATOOLS_OT_upsert_ide(bpy.types.Operator):
         from ..core.ide import upsert_ide
 
         entries = []
-        processed_names = set()
+
+        # Classify every object ONCE, then group by base name. This used
+        # to be O(N²) — a nested get_model_type loop over the whole
+        # selection — which froze the UI for minutes when a big map had
+        # thousands of selected meshes. Now it's a single O(N) pass.
+        from ..tools.model_utils import get_model_type
+        from .. import _ide_entry_from_obj, _clean_model_name_ide
+
+        by_base = {}   # base -> {'DFF': obj, 'LOD': obj}
+        order = []     # base names in first-seen order
         for obj in objs:
-            from ..tools.model_utils import get_model_type
             model_type, base_name = get_model_type(obj)
-            if base_name in processed_names:
-                continue
-            processed_names.add(base_name)
+            slot = by_base.get(base_name)
+            if slot is None:
+                slot = {}
+                by_base[base_name] = slot
+                order.append(base_name)
+            if model_type in ('DFF', 'LOD') and model_type not in slot:
+                slot[model_type] = obj
 
-            # Add DFF entry
-            dff_obj = obj if model_type == 'DFF' else None
-            lod_obj = obj if model_type == 'LOD' else None
+        for base_name in order:
+            slot = by_base[base_name]
+            dff_obj = slot.get('DFF')
+            lod_obj = slot.get('LOD')
 
-            # Auto-find paired LOD/DFF among selected
-            for o2 in objs:
-                mt2, bn2 = get_model_type(o2)
-                if bn2 == base_name and o2 != obj:
-                    if mt2 == 'LOD':
-                        lod_obj = o2
-                    elif mt2 == 'DFF':
-                        dff_obj = o2
-
-            # Import unconditionally: a local import inside `if dff_obj`
-            # made Python treat the name as a function-local everywhere, so
-            # the `if lod_obj` branch below raised UnboundLocalError when a
-            # LOD was selected without a paired DFF.
-            from .. import _ide_entry_from_obj
             if dff_obj:
                 entries.append(_ide_entry_from_obj(dff_obj))
             if lod_obj:
                 lod_entry = _ide_entry_from_obj(lod_obj)
                 # LOD model name: LOD + base_name
                 lod_entry.model_name = "LOD" + base_name
-                # LOD shares the model's TXD. Prefer the paired DFF's TXD,
-                # then the LOD's own (what the user set — _ide_entry_from_obj
-                # already read it), and only fall back to the cleaned base
-                # name. Previously this ALWAYS used the base name, clobbering
-                # a user-set TXD (e.g. «base» → «base67»).
-                from .. import _clean_model_name_ide
+                # LOD shares the model's TXD: prefer the paired DFF's TXD,
+                # then the LOD's own, else the cleaned base name.
                 dff_txd = ((getattr(dff_obj.inu, 'txd_name', '') or '').strip()
                            if dff_obj else '')
                 lod_txd = (lod_entry.txd_name or '').strip()
                 lod_entry.txd_name = (dff_txd or lod_txd
                                       or _clean_model_name_ide(base_name))
-                # LOD model_id = DFF model_id + 1 if LOD has no ID
+                # LOD model_id = DFF model_id + 1 if the LOD has no ID.
                 if lod_entry.model_id == 0 and dff_obj:
                     dff_id = getattr(dff_obj.inu, 'model_id', 0)
                     if dff_id > 0:
                         lod_entry.model_id = dff_id + 1
-                # LOD draw distance from DFF's lod_draw_distance property.
-                # For an unpaired LOD: only override to a LOD-typical far
-                # distance when the value is still the property DEFAULT (299)
-                # i.e. untouched — a deliberately set value (incl. 300) is
-                # respected. Previously both 299 AND 300 were treated as
-                # "unset", silently clobbering a user-chosen 300.
+                # LOD draw distance from the DFF; an unpaired LOD keeps a
+                # deliberately-set value — only the untouched 299 default
+                # is bumped to a LOD-typical far distance.
                 if dff_obj:
                     lod_entry.draw_distance = dff_obj.inu.lod_draw_distance
                 elif lod_obj.inu.draw_distance == 299.0:
@@ -385,8 +377,10 @@ class GTATOOLS_OT_upsert_ipl(bpy.types.Operator):
         # placements (vanilla R* pattern).
         lod_per_base = {}     # base_name → LOD obj
         dff_objs = []
+        base_of = {}          # id(obj) → base, so builders don't re-classify
         for obj in objs:
             mt, base = get_model_type(obj)
+            base_of[id(obj)] = base
             if mt == 'LOD':
                 lod_per_base[base] = obj
             elif mt == 'COL':
@@ -462,7 +456,9 @@ class GTATOOLS_OT_upsert_ipl(bpy.types.Operator):
 
         # LOD builder: keep "LOD<base>" name + auto model_id (DFF id + 1).
         def _lod_builder(lod_obj):
-            mt, base = get_model_type(lod_obj)
+            base = base_of.get(id(lod_obj))
+            if base is None:
+                _, base = get_model_type(lod_obj)
             e = _ipl_entry_from_obj(lod_obj)
             e.model_name = "LOD" + base
             e.lod_index = -1
@@ -494,7 +490,9 @@ class GTATOOLS_OT_upsert_ipl(bpy.types.Operator):
 
         def _dff_builder(o):
             e = _ipl_entry_from_obj(o)
-            _, base = get_model_type(o)
+            base = base_of.get(id(o))
+            if base is None:
+                _, base = get_model_type(o)
             e.lod_index = _resolve_lod_index(o, base)
             return e
 

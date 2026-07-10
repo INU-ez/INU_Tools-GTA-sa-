@@ -3,6 +3,40 @@
 # Values are Spanish translations.
 
 LANG = {
+    # --- export vertex-alpha toggle ---
+    "Vertex Alpha": "Vertex Alpha",
+    "Записывать вершинную альфу (прозрачность vertex colors) в DFF. По умолчанию ВЫКЛ — редко нужна и может дать случайную альфу (напр. на LOD). Включай осознанно для стёкол/листвы/заборов; при выключенной альфа всегда 255 (непрозрачно)": "Escribir el alfa por vértice (transparencia de vertex colors) en el DFF. Desactivado por defecto — rara vez necesario y puede filtrar alfa accidental (p. ej. en LOD). Actívalo a propósito para vidrios/follaje/vallas; cuando está apagado, el alfa siempre es 255 (opaco)",
+    # --- alpha blend-mode labels ---
+    "Непрозрачность": "Opaco",
+    "Альфа-усечение": "Alpha Clip",
+    "Альфа-смешивание": "Alpha Blend",
+    # --- material EFFECTS collapsible sections ---
+    "GTA-эффекты": "Efectos GTA",
+    "Машина": "Vehículo",
+    "Свернуть/развернуть GTA-эффекты (env map, bump, reflection, specular, dual, UV-аним)": "Contraer/expandir efectos GTA (env map, bump, reflection, specular, dual, UV anim)",
+    "Свернуть/развернуть блок машины (слот цвета + Paintjob)": "Contraer/expandir el bloque de vehículo (ranura de color + Paintjob)",
+    "Массовая замена режима прозрачности у альфа-материалов сцены": "Cambio masivo del modo de mezcla de los materiales alfa de la escena",
+    # --- alpha-materials bulk tool ---
+    "blend_method уже не Opaque": "blend_method ya no es Opaque",
+    "Альфа текстуры подключена ко входу Alpha шейдера": "El alfa de la textura está conectado a la entrada Alpha del shader",
+    "Альфа-хеш": "Alpha Hashed",
+    "Вся сцена": "Toda la escena",
+    "Выделено объектов": "Objetos seleccionados",
+    "Выделить объекты": "Seleccionar objetos",
+    "Есть альфа-канал": "Tiene canal alfa",
+    "Любой из критериев выше": "Cualquiera de los criterios anteriores",
+    "Найдено альфа-материалов": "Materiales alfa encontrados",
+    "Нет альфа-материалов — нажми «Обновить»": "No hay materiales alfa — pulsa «Actualizar»",
+    "Область": "Ámbito",
+    "По ноде альфы": "Por nodo de alfa",
+    "Применить ко всем": "Aplicar a todos",
+    "Режим для всех": "Modo para todos",
+    "Режим прозрачности изменён у": "Modo de mezcla cambiado en",
+    "Собирать по всей сцене": "Recolectar en toda la escena",
+    "Только материалы выделенных объектов": "Solo materiales de los objetos seleccionados",
+    "У текстуры есть значимый альфа-канал": "La textura tiene un canal alfa significativo",
+    "Уже прозрачные": "Ya transparentes",
+    "материал(ов)": "material(es)",
     # --- v2.2.0: added missing translations ---
     "RW-затенение:": "Sombreado RW:",
     "Адресация U": "Direccionamiento U",

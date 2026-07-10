@@ -3,6 +3,40 @@
 # Values are English translations.
 
 LANG = {
+    # --- export vertex-alpha toggle ---
+    "Vertex Alpha": "Vertex Alpha",
+    "Записывать вершинную альфу (прозрачность vertex colors) в DFF. По умолчанию ВЫКЛ — редко нужна и может дать случайную альфу (напр. на LOD). Включай осознанно для стёкол/листвы/заборов; при выключенной альфа всегда 255 (непрозрачно)": "Write per-vertex alpha (vertex-color transparency) into the DFF. OFF by default — rarely needed and can leak accidental alpha (e.g. on LODs). Turn on deliberately for glass/foliage/fences; when off, alpha is always 255 (opaque)",
+    # --- alpha blend-mode labels ---
+    "Непрозрачность": "Opaque",
+    "Альфа-усечение": "Alpha Clip",
+    "Альфа-смешивание": "Alpha Blend",
+    # --- material EFFECTS collapsible sections ---
+    "GTA-эффекты": "GTA effects",
+    "Машина": "Vehicle",
+    "Свернуть/развернуть GTA-эффекты (env map, bump, reflection, specular, dual, UV-аним)": "Collapse/expand GTA effects (env map, bump, reflection, specular, dual, UV anim)",
+    "Свернуть/развернуть блок машины (слот цвета + Paintjob)": "Collapse/expand the vehicle block (color slot + Paintjob)",
+    "Массовая замена режима прозрачности у альфа-материалов сцены": "Bulk-change the blend mode of the scene's alpha materials",
+    # --- alpha-materials bulk tool ---
+    "blend_method уже не Opaque": "blend_method is already non-opaque",
+    "Альфа текстуры подключена ко входу Alpha шейдера": "Texture alpha is wired to the shader Alpha input",
+    "Альфа-хеш": "Alpha Hashed",
+    "Вся сцена": "Whole scene",
+    "Выделено объектов": "Objects selected",
+    "Выделить объекты": "Select objects",
+    "Есть альфа-канал": "Has alpha channel",
+    "Любой из критериев выше": "Any of the criteria above",
+    "Найдено альфа-материалов": "Alpha materials found",
+    "Нет альфа-материалов — нажми «Обновить»": "No alpha materials — press “Refresh”",
+    "Область": "Scope",
+    "По ноде альфы": "By alpha node",
+    "Применить ко всем": "Apply to all",
+    "Режим для всех": "Mode for all",
+    "Режим прозрачности изменён у": "Blend mode changed on",
+    "Собирать по всей сцене": "Collect across the whole scene",
+    "Только материалы выделенных объектов": "Only materials of selected objects",
+    "У текстуры есть значимый альфа-канал": "The texture has a significant alpha channel",
+    "Уже прозрачные": "Already transparent",
+    "материал(ов)": "material(s)",
     # --- v2.2.0: added missing translations ---
     "2DFX-размеры, Scene-свойства pre-Step-9.": "2DFX sizes, Scene props pre-Step-9.",
     "IDE/IPL: файлы не выбраны в панели — пропущено": "IDE/IPL: no files picked in the panel — skipped",

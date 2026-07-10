@@ -29,6 +29,37 @@ MIN_SUPPORTED = (2, 83, 0)
 # mesh.vertex_colors (только BYTE_COLOR per-corner).
 HAS_COLOR_ATTRIBUTES = BL >= (3, 2, 0)
 
+
+# ── Material node-tree compat ────────────────────────────────────────
+# Material.use_nodes is deprecated on Blender 5.x — reading it emits a
+# DeprecationWarning (spammy from panel draw). Use these helpers instead:
+# on ≥4.0 we never touch use_nodes (node_tree presence is the real
+# check); on older Blender use_nodes still gates node usage.
+
+def material_uses_nodes(mat):
+    """True if `mat` has an active shader node tree. Avoids the
+    use_nodes DeprecationWarning on Blender ≥4.0."""
+    if mat is None:
+        return False
+    nt = getattr(mat, 'node_tree', None)
+    if nt is None:
+        return False
+    if BL < (4, 0, 0):
+        return bool(getattr(mat, 'use_nodes', True))
+    return True
+
+
+def material_enable_nodes(mat):
+    """Ensure `mat` uses a shader node tree, tolerating Blender versions
+    where the use_nodes setter no longer exists."""
+    if mat is None:
+        return
+    try:
+        if not mat.use_nodes:
+            mat.use_nodes = True
+    except AttributeError:
+        pass
+
 # ShaderNodeMix (универсальный, RGBA/Vector/Float) — 3.4+. До этого
 # для RGBA был ShaderNodeMixRGB с другими input-именами.
 HAS_SHADER_NODE_MIX = BL >= (3, 4, 0)

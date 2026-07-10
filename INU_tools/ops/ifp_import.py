@@ -244,11 +244,18 @@ def apply_ifp_action(action_name: str, armature, context=None):
                     fc_ry.keyframe_points.insert(frame, bl_quat.y, options={'FAST'})
                     fc_rz.keyframe_points.insert(frame, bl_quat.z, options={'FAST'})
 
-                # FAST option skips sorting + handle recompute. Call
-                # update() so handle types and curve evaluation are
-                # consistent — иначе keyframe могут не отрисовываться
-                # корректно в Curves Editor пока не дёрнешь fcurve.
-                fc_rw.update(); fc_rx.update(); fc_ry.update(); fc_rz.update()
+                # FAST skipped sorting + handle recompute. GTA/RenderWare
+                # interpolate keyframes LINEARLY between samples; Blender
+                # inserts them as BEZIER by default, whose auto-handles
+                # OVERSHOOT on the near-constant root-bone curves → the
+                # animation visibly jitters ('подёргивание', «режет глаз»).
+                # Force LINEAR so the preview matches the game and a
+                # re-import round-trips cleanly. update() rebuilds handles.
+                for _fc in (fc_rw, fc_rx, fc_ry, fc_rz):
+                    _n = len(_fc.keyframe_points)
+                    if _n:
+                        _fc.keyframe_points.foreach_set('interpolation', [1] * _n)  # 1 = LINEAR
+                    _fc.update()
 
             if abone.key_type & HAS_TRANS:
                 fc_lx = fc_container.new(data_path_loc, index=0)
@@ -264,7 +271,12 @@ def apply_ifp_action(action_name: str, armature, context=None):
                     fc_ly.keyframe_points.insert(frame, bl_loc.y, options={'FAST'})
                     fc_lz.keyframe_points.insert(frame, bl_loc.z, options={'FAST'})
 
-                fc_lx.update(); fc_ly.update(); fc_lz.update()
+                # LINEAR — same reason as rotation above (no BEZIER jitter).
+                for _fc in (fc_lx, fc_ly, fc_lz):
+                    _n = len(_fc.keyframe_points)
+                    if _n:
+                        _fc.keyframe_points.foreach_set('interpolation', [1] * _n)  # 1 = LINEAR
+                    _fc.update()
         except Exception:
             continue
 

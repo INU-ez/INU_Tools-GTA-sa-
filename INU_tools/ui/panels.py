@@ -137,7 +137,7 @@ def _draw_material_effects(layout, mat):
     tbox.label(text=T("Текстура:"), **inu_icon(safe_icon('TEXTURE')))
     # Превью + выбор картинки (первая Image-нода материала).
     _img_node = None
-    if mat.use_nodes and mat.node_tree:
+    if compat.material_uses_nodes(mat):
         for _n in mat.node_tree.nodes:
             if _n.type == 'TEX_IMAGE':
                 _img_node = _n
@@ -153,110 +153,118 @@ def _draw_material_effects(layout, mat):
     row.prop(inu, "tex_addr_v", text="V")
     tbox.prop(inu, "mask_texture", text=T("Маска"))
 
-    # Быстрые пресеты — один клик для частых случаев материала.
-    layout.label(text=T("Быстрые пресеты:"), **inu_icon(safe_icon('PRESET')))
-    qrow = layout.row(align=True)
-    qrow.operator("gtatools.material_preset", text=T("Стекло")).preset = 'VEHICLE_GLASS'
-    qrow.operator("gtatools.material_preset", text="Хром").preset = 'CHROME'
-    qrow.operator("gtatools.material_preset", text=T("Краска")).preset = 'VEHICLE'
-    qrow.operator("gtatools.material_preset", text=T("Сброс")).preset = 'GENERIC'
-
     # Скопировать настройки этого материала на материалы выделенных объектов.
     layout.operator("gtatools.copy_material_settings",
                     text=T("Копировать на выделенные"),
                     **inu_icon(safe_icon('COPYDOWN')))
 
-    box = layout.box()
-    row = box.row()
-    row.label(text=T("Слот цвета машины:"), **inu_icon(safe_icon('AUTO')))
-    box.prop(inu, "vehicle_color_slot", text="")
-    if inu.vehicle_color_slot != 'NONE':
-        box.operator("gtatools.sa_vehicle_preset", text=T("Применить SA Vehicle defaults"), **inu_icon(safe_icon('SHADING_RENDERED')))
+    # `s` — глобальное UI-состояние сворачиваемых секций (не пер-материал).
+    s = getattr(bpy.context.scene, 'inu_settings', None)
 
-    # ── Vehicle Paintjob (Pay'n'Spray alt textures) ──
-    # These two images are packed into the vehicle's TXD as
-    # <base>_paintjob1 / <base>_paintjob2 — the game swaps them with the
-    # main body texture at runtime when the player buys a paintjob.
-    pj_box = layout.box()
-    pj_row = pj_box.row()
-    pj_row.label(text=T("Paintjob (Pay'n'Spray):"), **inu_icon(safe_icon('BRUSH_DATA')))
-    has_pj = bool(inu.paintjob_alt_1 or inu.paintjob_alt_2)
-    if has_pj:
-        pj_row.operator("gtatools.validate_paintjobs",
-                        text="", **inu_icon(compat.ICON_CHECK))
-    pj_box.template_ID(inu, "paintjob_alt_1", open="image.open",
-                       text=T("Раскраска 1"))
-    pj_box.template_ID(inu, "paintjob_alt_2", open="image.open",
-                       text=T("Раскраска 2"))
-    if has_pj and not (inu.paintjob_alt_1 and inu.paintjob_alt_2):
-        pj_box.label(
-            text=T("Нужны обе альтернативы (1 и 2)"),
-            **inu_icon(safe_icon('ERROR')))
+    def _mat_section(prop, label):
+        """Заголовок сворачиваемой секции. True — секция раскрыта."""
+        if s is None:
+            return True
+        open_ = getattr(s, prop)
+        hdr = layout.row(align=True)
+        hdr.prop(s, prop, text=label, emboss=False,
+                 **inu_icon(safe_icon('TRIA_DOWN') if open_ else 'TRIA_RIGHT'))
+        return open_
 
-    layout.separator()
+    # ── Машина: пресеты + слот цвета + Paintjob (сворачиваемо) ──
+    if _mat_section("gtatools_mat_show_vehicle", T("Машина")):
+        # Быстрые пресеты материалов машин — один клик.
+        layout.label(text=T("Быстрые пресеты:"), **inu_icon(safe_icon('PRESET')))
+        qrow = layout.row(align=True)
+        qrow.operator("gtatools.material_preset", text=T("Стекло")).preset = 'VEHICLE_GLASS'
+        qrow.operator("gtatools.material_preset", text="Хром").preset = 'CHROME'
+        qrow.operator("gtatools.material_preset", text=T("Краска")).preset = 'VEHICLE'
+        qrow.operator("gtatools.material_preset", text=T("Сброс")).preset = 'GENERIC'
 
-    # All effect toggles glued into ONE fused block: an outer column(align=True)
-    # sticks the boxes together (1px shared border, no default inter-box gap),
-    # and each box's own column(align=True) tightens its rows. Reads as a single
-    # panel instead of a stack of disconnected grey boxes.
-    outer = layout.column(align=True)
+        box = layout.box()
+        row = box.row()
+        row.label(text=T("Слот цвета машины:"), **inu_icon(safe_icon('AUTO')))
+        box.prop(inu, "vehicle_color_slot", text="")
+        if inu.vehicle_color_slot != 'NONE':
+            box.operator("gtatools.sa_vehicle_preset", text=T("Применить SA Vehicle defaults"), **inu_icon(safe_icon('SHADING_RENDERED')))
 
-    box = outer.box().column(align=True)
-    box.prop(inu, "export_env_map", text=T("Карта окружения"))
-    if inu.export_env_map:
-        box.prop(inu, "env_map_tex", text=T("Текстура"))
-        box.prop(inu, "env_map_coef", text=T("Коэффициент"))
-        box.prop(inu, "env_map_fb_alpha", text=T("Использовать FB Alpha"))
+        # Vehicle Paintjob (Pay'n'Spray alt textures) — packed into the
+        # vehicle TXD as <base>_paintjob1/2, swapped in-game at a spray shop.
+        pj_box = layout.box()
+        pj_row = pj_box.row()
+        pj_row.label(text=T("Paintjob (Pay'n'Spray):"), **inu_icon(safe_icon('BRUSH_DATA')))
+        has_pj = bool(inu.paintjob_alt_1 or inu.paintjob_alt_2)
+        if has_pj:
+            pj_row.operator("gtatools.validate_paintjobs",
+                            text="", **inu_icon(compat.ICON_CHECK))
+        pj_box.template_ID(inu, "paintjob_alt_1", open="image.open",
+                           text=T("Раскраска 1"))
+        pj_box.template_ID(inu, "paintjob_alt_2", open="image.open",
+                           text=T("Раскраска 2"))
+        if has_pj and not (inu.paintjob_alt_1 and inu.paintjob_alt_2):
+            pj_box.label(
+                text=T("Нужны обе альтернативы (1 и 2)"),
+                **inu_icon(safe_icon('ERROR')))
 
-    box = outer.box().column(align=True)
-    box.prop(inu, "export_bump_map", text=T("Карта высот"))
-    if inu.export_bump_map:
-        box.prop(inu, "bump_map_tex", text=T("Текстура карты высот"))
+    # ── GTA-эффекты: env map / bump / reflection / specular / dual / UV (сворачиваемо) ──
+    if _mat_section("gtatools_mat_show_fx", T("GTA-эффекты")):
+        # Все тумблеры эффектов склеены в один fused-блок.
+        outer = layout.column(align=True)
 
-    box = outer.box().column(align=True)
-    box.prop(inu, "export_reflection", text=T("Отражение материала"))
-    if inu.export_reflection:
-        row = box.row(align=True)
-        row.prop(inu, "reflection_scale_x", text=T("Масштаб X"))
-        row.prop(inu, "reflection_scale_y", text="Y")
-        row = box.row(align=True)
-        row.prop(inu, "reflection_offset_x", text=T("Смещение X"))
-        row.prop(inu, "reflection_offset_y", text="Y")
-        box.prop(inu, "reflection_intensity", text=T("Интенсивность"))
+        box = outer.box().column(align=True)
+        box.prop(inu, "export_env_map", text=T("Карта окружения"))
+        if inu.export_env_map:
+            box.prop(inu, "env_map_tex", text=T("Текстура"))
+            box.prop(inu, "env_map_coef", text=T("Коэффициент"))
+            box.prop(inu, "env_map_fb_alpha", text=T("Использовать FB Alpha"))
 
-    box = outer.box().column(align=True)
-    box.prop(inu, "export_specular", text=T("Зеркальный материал"))
-    if inu.export_specular:
-        box.prop(inu, "specular_level", text=T("Уровень зеркальности"))
-        box.prop(inu, "specular_texture", text=T("Текстура"))
+        box = outer.box().column(align=True)
+        box.prop(inu, "export_bump_map", text=T("Карта высот"))
+        if inu.export_bump_map:
+            box.prop(inu, "bump_map_tex", text=T("Текстура карты высот"))
 
-    box = outer.box().column(align=True)
-    box.prop(inu, "export_dual_tex", text="Blend Mode (Src/Dst)")
-    if inu.export_dual_tex:
-        box.prop(inu, "dual_tex_src_blend", text="Src")
-        box.prop(inu, "dual_tex_dst_blend", text="Dst")
-        box.prop(inu, "dual_tex_texture", text=T("Текстура"))
-
-    # UV-анимация — единый блок. Тумблер пишет `uv_anim_write` (именно его
-    # проверяет экспортёр), а «Имя анимации» (animation_name) идёт сюда же, т.к.
-    # экспорт UVAnim берёт имя из него.
-    box = outer.box().column(align=True)
-    box.prop(inu, "uv_anim_write", text=T("UV Анимация"))
-    if inu.uv_anim_write:
-        box.prop(inu, "animation_name", text=T("Имя анимации"))
-        box.prop(inu, "uv_anim_mode", expand=True)
-        if inu.uv_anim_mode == 'SCROLL':
+        box = outer.box().column(align=True)
+        box.prop(inu, "export_reflection", text=T("Отражение материала"))
+        if inu.export_reflection:
             row = box.row(align=True)
-            row.prop(inu, "uv_anim_speed_u", text="Speed U")
-            row.prop(inu, "uv_anim_speed_v", text="Speed V")
-            box.prop(inu, "uv_anim_duration", text=T("Длительность"))
-        else:  # KEYFRAME
-            box.label(text=T("Ключи — в UV-редакторе:"),
-                      **inu_icon(safe_icon('UV')))
-            box.label(text=T("N-панель → GTA Tools → UV Анимация"),
-                      **inu_icon(safe_icon('BLANK1')))
-        box.label(text=T("▶ Пробел — предпросмотр (Material Preview / Rendered)"),
-                  **inu_icon(safe_icon('PLAY')))
+            row.prop(inu, "reflection_scale_x", text=T("Масштаб X"))
+            row.prop(inu, "reflection_scale_y", text="Y")
+            row = box.row(align=True)
+            row.prop(inu, "reflection_offset_x", text=T("Смещение X"))
+            row.prop(inu, "reflection_offset_y", text="Y")
+            box.prop(inu, "reflection_intensity", text=T("Интенсивность"))
+
+        box = outer.box().column(align=True)
+        box.prop(inu, "export_specular", text=T("Зеркальный материал"))
+        if inu.export_specular:
+            box.prop(inu, "specular_level", text=T("Уровень зеркальности"))
+            box.prop(inu, "specular_texture", text=T("Текстура"))
+
+        box = outer.box().column(align=True)
+        box.prop(inu, "export_dual_tex", text="Blend Mode (Src/Dst)")
+        if inu.export_dual_tex:
+            box.prop(inu, "dual_tex_src_blend", text="Src")
+            box.prop(inu, "dual_tex_dst_blend", text="Dst")
+            box.prop(inu, "dual_tex_texture", text=T("Текстура"))
+
+        # UV-анимация — тумблер пишет `uv_anim_write` (его проверяет экспортёр).
+        box = outer.box().column(align=True)
+        box.prop(inu, "uv_anim_write", text=T("UV Анимация"))
+        if inu.uv_anim_write:
+            box.prop(inu, "animation_name", text=T("Имя анимации"))
+            box.prop(inu, "uv_anim_mode", expand=True)
+            if inu.uv_anim_mode == 'SCROLL':
+                row = box.row(align=True)
+                row.prop(inu, "uv_anim_speed_u", text="Speed U")
+                row.prop(inu, "uv_anim_speed_v", text="Speed V")
+                box.prop(inu, "uv_anim_duration", text=T("Длительность"))
+            else:  # KEYFRAME
+                box.label(text=T("Ключи — в UV-редакторе:"),
+                          **inu_icon(safe_icon('UV')))
+                box.label(text=T("N-панель → GTA Tools → UV Анимация"),
+                          **inu_icon(safe_icon('BLANK1')))
+            box.label(text=T("▶ Пробел — предпросмотр (Material Preview / Rendered)"),
+                      **inu_icon(safe_icon('PLAY')))
 
 
 
@@ -369,6 +377,9 @@ class GTATOOLS_PT_material_panel(bpy.types.Panel):
         tab = mat.inu.material_tab
         if tab == 'SURFACE':
             _draw_material_surface(layout, mat)
+        elif tab == 'ALPHA':
+            from ..ops.alpha_tools import draw_alpha_tools
+            draw_alpha_tools(layout, context)
         else:  # EFFECTS (вкладка Pipeline и пресеты материала удалены)
             _draw_material_effects(layout, mat)
 
@@ -3309,7 +3320,7 @@ class GTATOOLS_PT_prelight_panel(bpy.types.Panel):
             _lm_exists = False
             for _ms in obj.material_slots:
                 _m = _ms.material
-                if _m and _m.use_nodes:
+                if compat.material_uses_nodes(_m):
                     _lm_mix = _m.node_tree.nodes.get("LM_Mix")
                     if _lm_mix:
                         _lm_exists = True

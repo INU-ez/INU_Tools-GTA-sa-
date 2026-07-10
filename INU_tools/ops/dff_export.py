@@ -608,10 +608,17 @@ def _process_mesh(obj, clump: DffClump, frame_index: int, *,
     # из VC Layer System и т.п.) между Day и Night — индексный доступ
     # [0]/[1] прихватит не тот слой. Fallback на индексы — для старых
     # мешей без именованных атрибутов.
-    orig_mesh = obj.data
-    day_attr = vcol_get(orig_mesh, "Day")
-    night_attr = vcol_get(orig_mesh, "Night")
-    all_attrs = vcol_list(orig_mesh)
+    #
+    # КРИТИЧНО: берём атрибуты и лупы из ТОГО ЖЕ evaluated-меша (`mesh`),
+    # из которого строится bmesh — НЕ из obj.data. При топологическом
+    # модификаторе (Decimate у LOD, Mirror, Weld) индексы вершин
+    # оригинала и evaluated НЕ совпадают: таблица альфы по orig-индексам
+    # промахивалась, вершины уходили в ненадёжный bmesh-фолбэк и получали
+    # alpha=0 (баг «на LOD появляется вертекс-альфа, которой не было»).
+    # Данные меша (в отличие от bmesh) читают байтовую альфу надёжно и в 5.x.
+    day_attr = vcol_get(mesh, "Day")
+    night_attr = vcol_get(mesh, "Night")
+    all_attrs = vcol_list(mesh)
     if day_attr is None and len(all_attrs) >= 1:
         day_attr = all_attrs[0]
     if night_attr is None and len(all_attrs) >= 2 and all_attrs[1] is not day_attr:
@@ -620,12 +627,13 @@ def _process_mesh(obj, clump: DffClump, frame_index: int, *,
     # Read alpha per vertex from named Day/Night attributes
     # (workaround: bmesh doesn't read alpha from byte color attrs in Blender 5.x).
     # Bulk read через foreach_get + numpy — ×30-50 быстрее старого
-    # Python-цикла на каждый loop.
+    # Python-цикла на каждый loop. Ключи — индексы вершин evaluated-меша,
+    # они же у bmesh loop.vert.index → попадание 1:1.
     _mesh_alpha = [{}, {}]
-    n_loops = len(orig_mesh.loops)
+    n_loops = len(mesh.loops)
     if n_loops > 0:
         loop_vidx = np.empty(n_loops, dtype=np.int32)
-        orig_mesh.loops.foreach_get('vertex_index', loop_vidx)
+        mesh.loops.foreach_get('vertex_index', loop_vidx)
         for ci, ca in enumerate([day_attr, night_attr]):
             if ca is None or len(ca.data) != n_loops:
                 continue  # missing or POINT-domain — skip
@@ -673,6 +681,13 @@ def _process_mesh(obj, clump: DffClump, frame_index: int, *,
 
     has_day = len(color_layers_bm) > 0 and flags['day_cols']
     has_night = len(color_layers_bm) > 1 and flags['night_cols']
+
+    # Global "write vertex alpha" toggle. Default OFF → force fully-opaque
+    # alpha (255) so stray/unpainted vertex alpha never leaks into the DFF
+    # (the LOD alpha=0 pitfall). Turn on for glass/foliage/fences.
+    _write_valpha = bool(getattr(
+        getattr(bpy.context.scene, 'inu_settings', None),
+        'gtatools_export_vertex_alpha', False))
 
     # ── Vertex splitting ──
     # Each vertex may need multiple copies if loops have different UV/color
@@ -786,13 +801,15 @@ def _process_mesh(obj, clump: DffClump, frame_index: int, *,
 
             if has_day:
                 c = loop[color_layers_bm[0]]
-                alpha = _mesh_alpha[0].get(loop.vert.index, int(c[3]*255))
+                alpha = (_mesh_alpha[0].get(loop.vert.index, int(c[3]*255))
+                         if _write_valpha else 255)
                 day_colors[out_idx] = RGBA(
                     int(c[0]*255), int(c[1]*255), int(c[2]*255), alpha)
 
             if has_night:
                 c = loop[color_layers_bm[1]]
-                alpha = _mesh_alpha[1].get(loop.vert.index, int(c[3]*255))
+                alpha = (_mesh_alpha[1].get(loop.vert.index, int(c[3]*255))
+                         if _write_valpha else 255)
                 night_colors[out_idx] = RGBA(
                     int(c[0]*255), int(c[1]*255), int(c[2]*255), alpha)
 
@@ -1760,6 +1777,10 @@ def draw_dff_flags_block(layout, context):
     layout.label(text=T("Pipeline:"))
     row = layout.row(align=True)
     row.prop(scn.inu_settings, "gtatools_export_pipeline", expand=True)
+
+    # Global toggle — write per-vertex alpha into the DFF. Off forces
+    # fully-opaque (255) so stray/unpainted vertex alpha never leaks in.
+    layout.prop(scn.inu_settings, "gtatools_export_vertex_alpha")
 
     # В контексте файлового браузера context.active_object бывает None —
     # берём активный объект из view_layer (работает во всех областях),
