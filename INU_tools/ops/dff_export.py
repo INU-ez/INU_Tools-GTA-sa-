@@ -963,39 +963,29 @@ def _process_mesh(obj, clump: DffClump, frame_index: int, *,
 
         skin = SkinData(num_bones=len(bones))
 
-        # Bone matrices — use original if available (round-trip)
+        # Inverse-bind matrices: ALWAYS compute from the CURRENT armature so
+        # bone edits (Edit-Mode rest-pose changes) are reflected. Reusing the
+        # stored import-time matrices kept the OLD bind pose → the skeleton/
+        # skin reverted on export (same root cause as the frame positions
+        # above). Vertex weights are already recomputed from groups below.
         import json
-        orig_matrices = None
-        raw = obj.get('dff_bone_matrices')
-        if raw:
-            try:
-                orig_matrices = json.loads(raw)
-            except Exception:
-                pass
+        for bone in bones:
+            inv_mat = bone.matrix_local.inverted().transposed()
+            skin.bone_matrices.append(
+                [[inv_mat[row][col] for col in range(4)] for row in range(4)])
 
-        if orig_matrices and len(orig_matrices) == len(bones):
-            skin.bone_matrices = orig_matrices
-            # Restore original skin header
+        # Skin header (num_used / max_weights / bones_used) is weights-related,
+        # NOT bone-position — keep it from the import if present, else it's
+        # computed from the fresh weights further down.
+        raw_bu = obj.get('dff_skin_bones_used')
+        if obj.get('dff_bone_matrices') and raw_bu:
             skin.num_used = obj.get('dff_skin_num_used', 0)
             skin.max_weights = obj.get('dff_skin_max_weights', 4)
-            raw_bu = obj.get('dff_skin_bones_used')
-            if raw_bu:
-                try:
-                    if isinstance(raw_bu, str):
-                        skin.bones_used = json.loads(raw_bu)
-                    else:
-                        skin.bones_used = list(raw_bu)
-                except Exception as e:
-                    print(f"[DFF Export] bones_used error: {e}, raw_bu type={type(raw_bu)}")
-            print(f"[DFF Export] Using original skin: num_used={skin.num_used}, bones_used={skin.bones_used[:5]}...")
-        else:
-            print(f"[DFF Export] Computing bone_matrices from Blender (orig={len(orig_matrices) if orig_matrices else 'None'}, bones={len(bones)})")
-            for bone in bones:
-                inv_mat = bone.matrix_local.inverted().transposed()
-                mat = []
-                for row in range(4):
-                    mat.append([inv_mat[row][col] for col in range(4)])
-                skin.bone_matrices.append(mat)
+            try:
+                skin.bones_used = (json.loads(raw_bu)
+                                   if isinstance(raw_bu, str) else list(raw_bu))
+            except Exception:
+                pass
 
         # Vertex weights — build per-original-vertex first, then expand for splits
         bone_name_to_idx = {name: i for i, name in enumerate(bone_names)}
@@ -1226,33 +1216,32 @@ def _export_armature(arm_obj, clump: DffClump, parent_frame: int):
         bone_id = str(bone.get('bone_id', 0))
         orig = orig_data.get(bone_id)
 
+        # Position/rotation: ALWAYS compute from the CURRENT armature so a
+        # user's bone edits (Edit-Mode repositioning of the rest pose) take
+        # effect. The stored import-time rot/pos was reused before, silently
+        # discarding every edit — the "skeleton/bones revert to their
+        # original position on export, ignoring transforms" bug.
+        if bone.parent:
+            mat = bone.parent.matrix_local.inverted() @ bone.matrix_local
+        else:
+            mat = bone.matrix_local
+        loc = mat.to_translation()
+        rot = mat.to_3x3().transposed()
+        frame.position = (loc.x, loc.y, loc.z)
+        frame.rotation = (
+            rot[0][0], rot[0][1], rot[0][2],
+            rot[1][0], rot[1][1], rot[1][2],
+            rot[2][0], rot[2][1], rot[2][2],
+        )
+        # Flags / write_name are DFF metadata (not position) — keep them
+        # from the import for round-trip fidelity, else sensible defaults.
         if orig:
-            frame.rotation = tuple(orig['rot'])
-            frame.position = tuple(orig['pos'])
             frame.flags = orig.get('flags', 0)
             frame.write_name = bool(orig.get('write_name', False))
-            if i < 3:
-                print(f"[DFF Export] Bone '{bone.name}' write_name={frame.write_name} (raw={orig.get('write_name')})")
         else:
-            # Fallback: compute from Blender bone (new model, not round-trip)
             frame.write_name = True
-            # SA skinned: root bone frame flags = 0x20003, others = 0
-            if i == 0:
+            if i == 0:      # SA skinned root frame flags
                 frame.flags = 0x20003
-            if bone.parent:
-                mat = bone.parent.matrix_local.inverted() @ bone.matrix_local
-            else:
-                mat = bone.matrix_local
-
-            loc = mat.to_translation()
-            rot = mat.to_3x3().transposed()
-
-            frame.position = (loc.x, loc.y, loc.z)
-            frame.rotation = (
-                rot[0][0], rot[0][1], rot[0][2],
-                rot[1][0], rot[1][1], rot[1][2],
-                rot[2][0], rot[2][1], rot[2][2],
-            )
         # Parent frame — use original if available
         if orig and 'parent' in orig:
             frame.parent = orig['parent']
