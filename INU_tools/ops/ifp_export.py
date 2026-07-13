@@ -470,13 +470,17 @@ def _build_animation(action, armature, fps: float) -> Animation:
                     quat[fc.array_index] = fc.evaluate(frame)
                 bl_quat = mathutils.Quaternion(
                     (quat[0], quat[1], quat[2], quat[3]))
-                # Per-channel evaluate on Bezier-sampled (densified)
-                # fcurves can produce non-unit quaternions — magnitudes
-                # drift to 0.7-1.2. Without this normalize, the off
-                # magnitude propagates through ANP3 int16×4096 quant
-                # and the engine applies slightly-off rotations every
-                # 30Hz tick → visible "stepped" playback in-game.
-                if bl_quat.magnitude > 0:
+                # Only RE-normalize when the quaternion is genuinely off —
+                # i.e. a between-keyframe sample on densified/euler curves
+                # (magnitude drifts to 0.7-1.2). At a real keyframe the
+                # value is the imported bl_quat, whose magnitude is already
+                # the ORIGINAL non-unit ~0.9998 (raw int16/4096 quats are
+                # not unit). Forcing it to 1.0 there shifts it AWAY from the
+                # source → the round-trip int16 comes out ±1 LSB wrong and
+                # the engine shows constant micro-jitter. Preserving the
+                # native magnitude reproduces the original int16 exactly.
+                _m = bl_quat.magnitude
+                if _m > 0 and abs(_m - 1.0) > 5e-3:
                     bl_quat.normalize()
                 gta_quat = rest_quat @ bl_quat
                 kf.rotation = (
