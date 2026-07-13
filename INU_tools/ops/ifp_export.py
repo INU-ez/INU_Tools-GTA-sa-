@@ -219,6 +219,8 @@ def _build_animation_from_ik_samples(action, armature,
                 pb = armature.pose.bones.get(bone_name)
                 if pb:
                     bone.bone_id = list(armature.pose.bones).index(pb)
+            if data_bone is not None and 'gta_ifp_name' in data_bone:
+                bone.name = str(data_bone['gta_ifp_name'])
 
         for frame, loc, rot_q in sample_list:
             kf = KeyFrame(time=frame / fps)
@@ -259,6 +261,20 @@ def _build_animation(action, armature, fps: float) -> Animation:
         # Fall through to fcurve path if no keys at all (empty action).
 
     anim = Animation(name=action.name)
+
+    # Byte-exact source cache (set by ifp_import): {bone_name: {frame: [rot4
+    # (+trans3)]}}. When a keyframe was NOT edited, we re-emit the original
+    # quantised values verbatim instead of the ±1 LSB the float rest-transform
+    # round-trip would otherwise produce, so a vanilla-in→export-out is
+    # bit-identical.
+    src_map = {}
+    _src_raw = action.get('inu_ifp_src')
+    if _src_raw:
+        try:
+            import json
+            src_map = json.loads(_src_raw)
+        except Exception:
+            src_map = {}
 
     # Group fcurves by bone name
     bone_curves = {}
@@ -393,6 +409,11 @@ def _build_animation(action, armature, fps: float) -> Animation:
                 pb = armature.pose.bones.get(bone_name)
                 if pb:
                     bone.bone_id = list(armature.pose.bones).index(pb)
+            # Write the IFP's original bone name back (e.g. 'Normal' when the
+            # armature renamed it to 'Root'), so a vanilla round-trip is
+            # byte-faithful. Stashed by ifp_import when it matched by bone_id.
+            if data_bone is not None and 'gta_ifp_name' in data_bone:
+                bone.name = str(data_bone['gta_ifp_name'])
 
         # Mirrors the import-time formula: import did
         #   bl_quat = rest_inv @ gta_quat,  bl_loc = rest_inv_mat @ gta_loc
@@ -436,6 +457,8 @@ def _build_animation(action, armature, fps: float) -> Animation:
             if pb is not None and pb.rotation_mode in (
                     'XYZ', 'XZY', 'YXZ', 'YZX', 'ZXY', 'ZYX'):
                 euler_rotation_mode = pb.rotation_mode
+
+        src_bone = src_map.get(bone_name, {})
 
         for frame in sorted(times):
             kf = KeyFrame(time=frame / fps)
@@ -483,6 +506,33 @@ def _build_animation(action, armature, fps: float) -> Animation:
                     loc[fc.array_index] = fc.evaluate(frame)
                 gta_loc = rest_mat @ mathutils.Vector(loc)
                 kf.translation = (gta_loc.x, gta_loc.y, gta_loc.z)
+
+            # Byte-exact snap: if this frame's recomputed value still matches
+            # the original IFP source (i.e. the user never touched it), emit
+            # the source verbatim so quantisation reproduces the original
+            # int16 exactly — no ±1 LSB drift. A real edit moves the value
+            # well past the tolerance and falls through to the computed one.
+            rec = src_bone.get(str(int(round(frame))))
+            if rec is not None:
+                if (kf.rotation is not None) and len(rec) >= 4:
+                    sx, sy, sz, sw = rec[0], rec[1], rec[2], rec[3]
+                    cx, cy, cz, cw = kf.rotation
+                    dot = cx * sx + cy * sy + cz * sz + cw * sw
+                    # q and -q are the same rotation — align hemisphere
+                    # before measuring the component distance.
+                    if dot < 0.0:
+                        sx, sy, sz, sw = -sx, -sy, -sz, -sw
+                    if (abs(cx - sx) < 4.9e-4 and abs(cy - sy) < 4.9e-4
+                            and abs(cz - sz) < 4.9e-4 and abs(cw - sw) < 4.9e-4):
+                        # Write the ORIGINAL-sign source so the emitted int16
+                        # bytes match vanilla exactly.
+                        kf.rotation = (rec[0], rec[1], rec[2], rec[3])
+                if (kf.translation is not None) and len(rec) >= 7:
+                    tx, ty, tz = kf.translation
+                    if (abs(tx - rec[4]) < 1.96e-3
+                            and abs(ty - rec[5]) < 1.96e-3
+                            and abs(tz - rec[6]) < 1.96e-3):
+                        kf.translation = (rec[4], rec[5], rec[6])
 
             bone.keyframes.append(kf)
 

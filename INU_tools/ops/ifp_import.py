@@ -199,6 +199,13 @@ def apply_ifp_action(action_name: str, armature, context=None):
         if db is not None and 'bone_id' in db:
             id_to_pose_bone[int(db['bone_id'])] = pb
 
+    # Source-value cache for byte-exact round-trips. We stash the raw IFP
+    # rotation/translation (exact int16/4096 & int16/1024) per bone+frame;
+    # the exporter re-emits these verbatim for any keyframe the user did
+    # NOT edit, so a vanilla-in → export-out is bit-identical instead of
+    # drifting ±1 LSB through the float rest-transform round-trip.
+    src_map = {}
+
     for abone in anim.bones:
         bone_name = abone.name
         pose_bone = armature.pose.bones.get(bone_name)
@@ -212,6 +219,27 @@ def apply_ifp_action(action_name: str, armature, context=None):
 
         if not pose_bone:
             continue
+
+        # Preserve the IFP's original bone name for a faithful round-trip.
+        # Custom skins rename the root (vanilla 'Normal' → 'Root'/'Bip01'),
+        # so the armature bone we matched by id carries a different name.
+        # SA binds by bone_id, not name, so this is cosmetic in-game — but
+        # storing the source name lets the exporter write it back verbatim
+        # instead of leaking the Blender bone name into the IFP.
+        db_orig = armature.data.bones.get(pose_bone.name)
+        if db_orig is not None and abone.name and abone.name != pose_bone.name:
+            db_orig['gta_ifp_name'] = abone.name
+
+        # Stash the raw source keyframes for the exporter's byte-exact snap.
+        sm_bone = src_map.setdefault(pose_bone.name, {})
+        for _kf in abone.keyframes:
+            _fr = round(_kf.time * fps)
+            _rec = [_kf.rotation[0], _kf.rotation[1],
+                    _kf.rotation[2], _kf.rotation[3]]
+            if (abone.key_type & HAS_TRANS) and _kf.translation is not None:
+                _rec.extend((_kf.translation[0], _kf.translation[1],
+                             _kf.translation[2]))
+            sm_bone[str(_fr)] = _rec
 
         data_path_rot = f'pose.bones["{pose_bone.name}"].rotation_quaternion'
         data_path_loc = f'pose.bones["{pose_bone.name}"].location'
@@ -283,6 +311,13 @@ def apply_ifp_action(action_name: str, armature, context=None):
                     _fc.update()
         except Exception:
             continue
+
+    # Persist the source cache on the action for the byte-exact exporter.
+    try:
+        import json
+        action['inu_ifp_src'] = json.dumps(src_map, separators=(',', ':'))
+    except Exception:
+        pass
 
     # Assign action to armature
     if not armature.animation_data:
