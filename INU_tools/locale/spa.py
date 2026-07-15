@@ -1137,6 +1137,31 @@ LANG = {
     "OK": "Aceptar",
     "Настройка анимации": "Configuración de animación",
     "Исправить кватернионы (sign-flip)": "Arreglar cuaterniones (sign-flip)",
+    "Отзеркалить анимацию": "Reflejar animación",
+    "Ось зеркала": "Eje del espejo",
+    "Менять L/R кости": "Intercambiar huesos L/R",
+    "Лево ↔ право (обычное зеркало)": "Izquierda ↔ derecha (espejo normal)",
+    "Вперёд ↔ назад": "Adelante ↔ atrás",
+    "Верх ↔ низ": "Arriba ↔ abajo",
+    "Нет ключей анимации": "Sin fotogramas clave de animación",
+    "Анимация отзеркалена по оси": "Animación reflejada en el eje",
+    "обмен L/R только по оси": "intercambio L/R solo en el eje",
+    "кадров": "fotogramas",
+    "кривых": "curvas",
+    "Не найдено кривых поворота костей": "No se encontraron curvas de rotación de huesos",
+    "Поменять L/R кости": "Intercambiar huesos L/R",
+    "Переставлено ключей L/R": "Claves L/R intercambiadas",
+    "Не найдено парных L/R костей": "No se encontraron huesos L/R emparejados",
+    "Плоскость отражения анимации в armature-space: "
+    "X — лево↔право (сагиттальная), Y — вперёд↔назад, "
+    "Z — верх↔низ":
+        "Plano de reflexión en espacio de armadura: X — izquierda↔derecha "
+        "(sagital), Y — adelante↔atrás, Z — arriba↔abajo",
+    "Обменивать данные парных костей 'L …'↔'R …' "
+    "(настоящее зеркало гуманоида). Выключи для чистого "
+    "геометрического флипа без обмена":
+        "Intercambiar datos de huesos emparejados 'L …'↔'R …' (espejo "
+        "humanoide real). Desactiva para un volteo geométrico simple",
     "Размер тени / интенсивность света": "Tamaño de sombra / intensidad de luz",
     "VC Layers System": "Sistema de Capas VC",
     "Выдели объект чтобы увидеть иерархию": "Seleccione un objeto para ver la jerarquía",
@@ -3447,8 +3472,8 @@ LANG = {
         'Eje a lo largo del cual suavizar',
 
     # === f-string error/report templates ===
-    'геометрия #{0}: {1} вершин — RenderWare хранит индексы треугольников в uint16 (максимум {2} вершин). Разбей меш на части или упрости (Decimate).':
-        'geometría #{0}: {1} vértices — RenderWare almacena los índices de triángulo como uint16 (máx {2} vértices). Divide la malla o simplifícala (Decimate).',
+    'геометрия #{0}: {1} вершин — RenderWare хранит индексы треугольников в uint16 (максимум {2} вершин). Экспорт продолжен, но модель может отображаться некорректно. Рекомендуется разбить меш на части или упростить (Decimate).':
+        'geometría #{0}: {1} vértices — RenderWare almacena los índices de triángulo como uint16 (máx {2} vértices). La exportación continuó, pero el modelo puede visualizarse incorrectamente. Se recomienda dividir la malla o simplificarla (Decimate).',
     'геометрия #{0}: {1} треугольников — много для одной геометрии. Экспорт продолжен (счётчик треугольников u32), но движок/инструменты могут тормозить. Рекомендуется разбить меш на части.':
         'geometría #{0}: {1} triángulos — muchos para una sola geometría. Exportación continuada (el contador de triángulos es u32), pero el motor/las herramientas pueden ralentizarse. Se recomienda dividir la malla.',
     'геометрия #{0}: {1} материалов — RenderWare хранит material-индекс в uint16 (максимум {2}). Используй меньше материалов.':

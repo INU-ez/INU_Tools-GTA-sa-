@@ -545,6 +545,136 @@ class GTATOOLS_OT_fix_quat_signs(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _mirror_lr_partner(name, valid_names):
+    """GTA SA left/right bone partner by name, or self for centre bones.
+
+    Handles 'L UpperArm'↔'R UpperArm', 'L Thigh'↔'R Thigh', 'L breast'↔…
+    and the 'Bip01 L Clavicle'↔'Bip01 R Clavicle' embedded form. Falls
+    back to self when no partner exists in the armature."""
+    p = None
+    if name[:2] == 'L ':
+        p = 'R ' + name[2:]
+    elif name[:2] == 'R ':
+        p = 'L ' + name[2:]
+    elif ' L ' in name:
+        p = name.replace(' L ', ' R ', 1)
+    elif ' R ' in name:
+        p = name.replace(' R ', ' L ', 1)
+    return p if (p and p in valid_names) else name
+
+
+def _bones_parent_first(arm):
+    """Pose bones ordered parents-before-children (needed so setting a
+    child's armature-space matrix resolves against its already-posed
+    parent)."""
+    ordered, seen = [], set()
+
+    def visit(pb):
+        if pb.name in seen:
+            return
+        if pb.parent is not None:
+            visit(pb.parent)
+        seen.add(pb.name)
+        ordered.append(pb)
+
+    for pb in arm.pose.bones:
+        visit(pb)
+    return ordered
+
+
+class GTATOOLS_OT_mirror_anim(bpy.types.Operator):
+    """Отзеркалить активную анимацию по оси X/Y/Z (in-place).
+
+    Blender-овские встроенные зеркала ломают GTA-анимацию, потому что
+    GTA-риг не именует кости .L/.R и имеет свой roll/rest. Здесь зеркало
+    делается в armature-space через FK: для каждого кадра читаем мировую
+    матрицу каждой кости, отражаем её конъюгацией `flip @ W @ flip`
+    (позиция и поворот отражаются, det остаётся +1 — без негатив-скейла),
+    и назначаем результат ПАРНОЙ L/R кости (при включённом обмене).
+    Так «повернуть налево» превращается в «повернуть направо», а не в
+    вывернутую наизнанку позу."""
+    bl_idname = "gtatools.mirror_anim"
+    bl_label = "INU: Mirror Animation"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj and obj.type == 'ARMATURE'
+                and obj.animation_data
+                and obj.animation_data.action is not None)
+
+    def execute(self, context):
+        arm = context.active_object
+        action = arm.animation_data.action
+        slot = arm.animation_data.action_slot
+
+        # Gather the action's fcurves (layered 5.x + legacy fallback).
+        fcurves = []
+        for layer in getattr(action, 'layers', []):
+            for strip in layer.strips:
+                cbs = []
+                if slot is not None:
+                    try:
+                        cb = strip.channelbag(slot)
+                        if cb:
+                            cbs.append(cb)
+                    except Exception:
+                        pass
+                for cb in getattr(strip, 'channelbags', []):
+                    if cb not in cbs:
+                        cbs.append(cb)
+                for cb in cbs:
+                    fcurves.extend(cb.fcurves)
+        if not fcurves:
+            fcurves = list(getattr(action, 'fcurves', []))
+
+        # Index every pose-bone fcurve by (bone, property, array_index).
+        fmap = {}
+        for fc in fcurves:
+            dp = fc.data_path
+            if not dp.startswith('pose.bones['):
+                continue
+            bname = dp[dp.find('"') + 1:dp.rfind('"')]
+            prop = dp.rsplit('.', 1)[-1]
+            fmap[(bname, prop, fc.array_index)] = fc
+
+        valid = {pb.name for pb in arm.pose.bones}
+
+        # Plain L/R key swap: for every 'L …'↔'R …' bone pair, swap the
+        # keyframe VALUES of their matching channels (rotation + location).
+        # Nothing else — no reflection, no axis math.
+        swapped = 0
+        done = set()
+        for (bname, prop, idx), fc in list(fmap.items()):
+            partner = _mirror_lr_partner(bname, valid)
+            if partner == bname:
+                continue
+            pair_key = (min(bname, partner), max(bname, partner), prop, idx)
+            if pair_key in done:
+                continue
+            done.add(pair_key)
+            pfc = fmap.get((partner, prop, idx))
+            if pfc is None:
+                continue
+            a = {round(kp.co.x): kp for kp in fc.keyframe_points}
+            b = {round(kp.co.x): kp for kp in pfc.keyframe_points}
+            for f in set(a) & set(b):
+                ka, kb = a[f], b[f]
+                va, vb = ka.co.y, kb.co.y
+                ka.co = (ka.co.x, vb)
+                kb.co = (kb.co.x, va)
+                swapped += 1
+            fc.update()
+            pfc.update()
+
+        if not swapped:
+            self.report({'WARNING'}, T("Не найдено парных L/R костей"))
+            return {'CANCELLED'}
+        self.report({'INFO'}, f"{T('Переставлено ключей L/R')}: {swapped}")
+        return {'FINISHED'}
+
+
 class GTATOOLS_OT_smooth_between_anchors(bpy.types.Operator):
     """Сгладить ключи между выделенными опорными.
 

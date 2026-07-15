@@ -1185,8 +1185,14 @@ class DffGeometry:
                     struct_data += pack('<2f', tc.u, tc.v)
 
             # Triangles (RenderWare format: b, a, material, c)
+            # Indices are u16. Vertex counts above 65536 are out of spec
+            # (surfaced as a warning in _validate_geometry_writable, not a
+            # hard block), so mask to u16 to write a file instead of
+            # crashing with a struct.error — over-limit indices wrap and
+            # the mesh may render incorrectly, as the warning states.
             for tri in self.triangles:
-                struct_data += pack('<4H', tri.b, tri.a, tri.material, tri.c)
+                struct_data += pack('<4H', tri.b & 0xFFFF, tri.a & 0xFFFF,
+                                    tri.material, tri.c & 0xFFFF)
 
         # Bounding sphere — emitted on both paths.
         bs = self.bounding_sphere
@@ -1358,9 +1364,16 @@ def _validate_geometry_writable(geom: 'DffGeometry', idx: int):
     """
     n_verts = len(geom.vertices)
     if n_verts > _U16_MAX + 1:
-        raise DffLimitError(_t(
-            "геометрия #{0}: {1} вершин — RenderWare хранит индексы треугольников в uint16 (максимум {2} вершин). Разбей меш на части или упрости (Decimate)."
-        ).format(idx, n_verts, _U16_MAX + 1))
+        # RenderWare stores triangle indices as u16, so > 65536 vertices
+        # is technically out of spec. Rather than hard-blocking the
+        # export, surface it as a non-fatal warning (like the triangle
+        # check below) and let the export proceed — to_bytes() masks the
+        # indices to u16 so the write completes instead of crashing.
+        _w = _t(
+            "геометрия #{0}: {1} вершин — RenderWare хранит индексы треугольников в uint16 (максимум {2} вершин). Экспорт продолжен, но модель может отображаться некорректно. Рекомендуется разбить меш на части или упростить (Decimate)."
+        ).format(idx, n_verts, _U16_MAX + 1)
+        DFF_EXPORT_WARNINGS.append(_w)
+        print(f"[DFF Export WARNING] {_w}")
 
     n_tris = len(geom.triangles)
     if n_tris > _U16_MAX + 1:

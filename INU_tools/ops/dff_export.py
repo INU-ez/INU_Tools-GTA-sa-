@@ -1221,7 +1221,17 @@ def _export_armature(arm_obj, clump: DffClump, parent_frame: int):
         # effect. The stored import-time rot/pos was reused before, silently
         # discarding every edit — the "skeleton/bones revert to their
         # original position on export, ignoring transforms" bug.
-        if bone.parent:
+        #
+        # The transform must live in the space of the frame we point at. For
+        # i == 0 frame.parent is forced to the clump root (below), so the root
+        # bone stays ABSOLUTE. If that bone happens to carry an armature
+        # parent, going parent-relative wrote position (0,0,0) while the skin
+        # bind matrix — built from the absolute matrix_local — still said
+        # (3.197, 0.595, 0.817): skeleton and skin disagreed by that offset
+        # and the ped collapsed / lay on its side in game. No-op for rigs whose
+        # root is unparented (verified: re-exporting DragonFF's fam3 stays
+        # bit-consistent, max err 0.0000).
+        if bone.parent and i != 0:
             mat = bone.parent.matrix_local.inverted() @ bone.matrix_local
         else:
             mat = bone.matrix_local

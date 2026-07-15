@@ -4376,6 +4376,13 @@ class GTATOOLS_PT_anim_panel(bpy.types.Panel):
                 **inu_icon(safe_icon('SMOOTHCURVE')))
             smooth_btn.axis_mode = scene.inu_settings.gtatools_smooth_axis_mode
 
+            # ── Зеркало анимации: простая перестановка ключей L↔R ─────
+            acol.separator()
+            acol.operator(
+                "gtatools.mirror_anim",
+                text=T("Поменять L/R кости"),
+                **inu_icon(safe_icon('MOD_MIRROR')))
+
 
 
 @apply_order

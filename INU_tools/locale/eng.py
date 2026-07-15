@@ -2352,6 +2352,31 @@ LANG = {
     "Root motion (walk/run)": "Root motion (walk/run)",
     "Настройка анимации": "Animation setup",
     "Исправить кватернионы (sign-flip)": "Fix quaternions (sign-flip)",
+    "Отзеркалить анимацию": "Mirror animation",
+    "Ось зеркала": "Mirror axis",
+    "Менять L/R кости": "Swap L/R bones",
+    "Лево ↔ право (обычное зеркало)": "Left ↔ right (normal mirror)",
+    "Вперёд ↔ назад": "Front ↔ back",
+    "Верх ↔ низ": "Top ↔ bottom",
+    "Нет ключей анимации": "No animation keyframes",
+    "Анимация отзеркалена по оси": "Animation mirrored along axis",
+    "обмен L/R только по оси": "L/R swap only on axis",
+    "кадров": "frames",
+    "кривых": "curves",
+    "Не найдено кривых поворота костей": "No bone rotation curves found",
+    "Поменять L/R кости": "Swap L/R bones",
+    "Переставлено ключей L/R": "L/R keys swapped",
+    "Не найдено парных L/R костей": "No paired L/R bones found",
+    "Плоскость отражения анимации в armature-space: "
+    "X — лево↔право (сагиттальная), Y — вперёд↔назад, "
+    "Z — верх↔низ":
+        "Reflection plane in armature space: X — left↔right (sagittal), "
+        "Y — front↔back, Z — top↔bottom",
+    "Обменивать данные парных костей 'L …'↔'R …' "
+    "(настоящее зеркало гуманоида). Выключи для чистого "
+    "геометрического флипа без обмена":
+        "Swap paired 'L …'↔'R …' bone data (true humanoid mirror). "
+        "Disable for a plain geometric flip without swapping",
     "Сгладить между выделенными ключами":
         "Smooth between selected anchor keys",
     "Сгладить ключей":
@@ -3659,8 +3684,8 @@ LANG = {
         'Axis along which to smooth',
 
     # === f-string error/report templates ===
-    'геометрия #{0}: {1} вершин — RenderWare хранит индексы треугольников в uint16 (максимум {2} вершин). Разбей меш на части или упрости (Decimate).':
-        'geometry #{0}: {1} vertices — RenderWare stores triangle indices as uint16 (max {2} vertices). Split the mesh or simplify it (Decimate).',
+    'геометрия #{0}: {1} вершин — RenderWare хранит индексы треугольников в uint16 (максимум {2} вершин). Экспорт продолжен, но модель может отображаться некорректно. Рекомендуется разбить меш на части или упростить (Decimate).':
+        'geometry #{0}: {1} vertices — RenderWare stores triangle indices as uint16 (max {2} vertices). Export continued, but the model may render incorrectly. Splitting the mesh or simplifying it (Decimate) is recommended.',
     'геометрия #{0}: {1} треугольников — много для одной геометрии. Экспорт продолжен (счётчик треугольников u32), но движок/инструменты могут тормозить. Рекомендуется разбить меш на части.':
         'geometry #{0}: {1} triangles — a lot for a single geometry. Export continued (triangle count is u32), but the engine/tools may lag. Splitting the mesh is recommended.',
     'геометрия #{0}: {1} материалов — RenderWare хранит material-индекс в uint16 (максимум {2}). Используй меньше материалов.':

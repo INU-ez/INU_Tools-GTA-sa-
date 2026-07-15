@@ -1268,6 +1268,23 @@ class INUSceneSettings(bpy.types.PropertyGroup):
             ('WORLD_Z', "Z", "World Z (translation only)"),
         ],
         default='ALL')
+    gtatools_mirror_axis: EnumProperty(
+        name=T("Ось зеркала"),
+        description=T("Плоскость отражения анимации в armature-space: "
+                      "X — лево↔право (сагиттальная), Y — вперёд↔назад, "
+                      "Z — верх↔низ"),
+        items=[
+            ('X', "X", T("Лево ↔ право (обычное зеркало)")),
+            ('Y', "Y", T("Вперёд ↔ назад")),
+            ('Z', "Z", T("Верх ↔ низ")),
+        ],
+        default='X')
+    gtatools_mirror_swap_lr: BoolProperty(
+        name=T("Менять L/R кости"),
+        description=T("Обменивать данные парных костей 'L …'↔'R …' "
+                      "(настоящее зеркало гуманоида). Выключи для чистого "
+                      "геометрического флипа без обмена"),
+        default=True)
     gtatools_ik_chain_offset: FloatVectorProperty(
         name=T("Смещение куба руки/ноги"),
         description=T("Визуальный сдвиг кубов IK для рук и ног"),

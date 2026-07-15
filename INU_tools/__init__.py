@@ -3111,6 +3111,7 @@ from .ops.ifp_ops import (
     GTATOOLS_OT_ifp_preview_toggle,
     GTATOOLS_OT_apply_ifp,
     GTATOOLS_OT_fix_quat_signs,
+    GTATOOLS_OT_mirror_anim,
     GTATOOLS_OT_smooth_between_anchors,
     GTATOOLS_OT_delete_active_action,
 )
@@ -3390,6 +3391,7 @@ classes = (
     GTATOOLS_OT_ifp_preview_toggle,
     GTATOOLS_OT_apply_ifp,
     GTATOOLS_OT_fix_quat_signs,
+    GTATOOLS_OT_mirror_anim,
     GTATOOLS_OT_smooth_between_anchors,
     GTATOOLS_OT_delete_active_action,
     GTATOOLS_OT_add_ik_rig,
