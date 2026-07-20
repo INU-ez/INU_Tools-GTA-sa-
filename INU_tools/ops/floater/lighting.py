@@ -607,8 +607,8 @@ class LightingFloater(B.Floater):
                 _, th = TA._text_dims(txt)
                 TA._text(int(rx), int(ry + (rh - th) / 2), txt, TH._C_WARN)
 
-        # Open dropdown — drawn LAST so it overlays the rest.
-        self._draw_open_dropdown(context, L)
+        # NOTE: the open dropdown is drawn by the base _draw_content AFTER
+        # the status strip, so the strip can't paint over its lower rows.
 
     def _draw_open_dropdown(self, context, L):
         """Resolve the dynamic preset items list and delegate the

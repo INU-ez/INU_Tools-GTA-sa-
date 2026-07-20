@@ -459,6 +459,7 @@ def _build_animation(action, armature, fps: float) -> Animation:
                 euler_rotation_mode = pb.rotation_mode
 
         src_bone = src_map.get(bone_name, {})
+        _prev_rot = None   # previous frame's gta quaternion (hemisphere ref)
 
         for frame in sorted(times):
             kf = KeyFrame(time=frame / fps)
@@ -537,6 +538,26 @@ def _build_animation(action, armature, fps: float) -> Animation:
                             and abs(ty - rec[5]) < 1.96e-3
                             and abs(tz - rec[6]) < 1.96e-3):
                         kf.translation = (rec[4], rec[5], rec[6])
+
+            # Quaternion hemisphere continuity: keep consecutive keyframes on
+            # the same side (dot >= 0 with the previous). GTA slerps between
+            # keyframes and only takes the SHORT arc when they're same-
+            # hemisphere; a sign that flips frame-to-frame — which editing a
+            # pose easily introduces on a near-static bone like a clavicle —
+            # makes the engine swing the long way → visible jitter. Flipping
+            # the sign is free: q and -q are the same rotation. Vanilla anims
+            # are already continuous so nothing flips there (byte-exact snap
+            # above stays intact); only edit-induced flips get corrected.
+            if kf.rotation is not None:
+                if _prev_rot is not None:
+                    d = (kf.rotation[0] * _prev_rot[0]
+                         + kf.rotation[1] * _prev_rot[1]
+                         + kf.rotation[2] * _prev_rot[2]
+                         + kf.rotation[3] * _prev_rot[3])
+                    if d < 0.0:
+                        kf.rotation = (-kf.rotation[0], -kf.rotation[1],
+                                       -kf.rotation[2], -kf.rotation[3])
+                _prev_rot = kf.rotation
 
             bone.keyframes.append(kf)
 

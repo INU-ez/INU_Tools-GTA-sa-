@@ -886,6 +886,16 @@ class GTATOOLS_MT_create_2dfx(bpy.types.Menu):
         op = layout.operator("gtatools.create_2dfx", text=T("Блик солнца"),
                              **inu_icon(safe_icon('LIGHT_SUN')))
         op.effect_type = 'SUN_GLARE'
+        layout.separator()
+        op = layout.operator("gtatools.create_2dfx", text=T("Вход/Выход"),
+                             **inu_icon(safe_icon('EMPTY_ARROWS')))
+        op.effect_type = 'ENTER_EXIT'
+        op = layout.operator("gtatools.create_2dfx", text=T("Дорожный знак"),
+                             **inu_icon(safe_icon('FONT_DATA')))
+        op.effect_type = 'ROAD_SIGN'
+        op = layout.operator("gtatools.create_2dfx", text=T("Эскалатор"),
+                             **inu_icon(safe_icon('SORTSIZE')))
+        op.effect_type = 'ESCALATOR'
 
 
 # ── Menu: Radar generation modes ────────────────────────────────
@@ -2143,12 +2153,27 @@ class GTATOOLS_PT_2dfx_panel(bpy.types.Panel):
 
 
 
+# Short per-effect titles for the "GTA SA: <тип>" panel header.
+_2DFX_TITLE = {
+    'LIGHT': "Свет",
+    'PARTICLE': "Частица",
+    'PED_ATTRACTOR': "Ped Attractor",
+    'SUN_GLARE': "Блик солнца",
+    'ENTER_EXIT': "Вход/Выход",
+    'ROAD_SIGN': "Дорожный знак",
+    'ESCALATOR': "Эскалатор",
+    'RAW_2DFX': "Raw",
+}
+
+
 class GTATOOLS_PT_2dfx_settings(bpy.types.Panel):
     """2DFX per-effect SETTINGS on the empty itself (Object Data
     Properties) — presets + light / particle / behaviour / shadow / flags.
     The action buttons (create, attach, apply, preview, relationship-line
     toggle) stay in the N-panel 2DFX panel."""
-    bl_label = "GTA SA: 2DFX"
+    # Empty bl_label — the full title ("GTA SA: <тип>") is drawn dynamically
+    # in draw_header so it reflects the selected effect type.
+    bl_label = ""
     bl_idname = "GTATOOLS_PT_2dfx_settings"
     bl_space_type = 'PROPERTIES'
     bl_region_type = 'WINDOW'
@@ -2161,6 +2186,12 @@ class GTATOOLS_PT_2dfx_settings(bpy.types.Panel):
         return bool(obj and obj.type == 'EMPTY'
                     and getattr(obj, 'inu', None)
                     and obj.inu.type == '2DFX')
+
+    def draw_header(self, context):
+        obj = context.active_object
+        eff = getattr(obj.inu, 'effect_2dfx', '') if obj and getattr(obj, 'inu', None) else ''
+        title = _2DFX_TITLE.get(eff, "2DFX")
+        self.layout.label(text="GTA SA: " + T(title))
 
     def draw(self, context):
         from .. import _get_effect_emitter_count
@@ -2297,7 +2328,14 @@ class GTATOOLS_PT_2dfx_settings(bpy.types.Panel):
             # ── Texture / blend ── #
             tex_box = _section(box, 'gtatools_pfx_exp_texture', T("Спрайт и смешивание"), 'TEXTURE')
             if tex_box:
-                tex_box.prop(inu, 'particle_texture', text=T("Текстура"))
+                # Searchable list of loaded sprites instead of blind typing.
+                # particle.txd textures auto-load into bpy.data.images; the
+                # button next to it loads them if the list is still empty.
+                trow = tex_box.row(align=True)
+                trow.prop_search(inu, 'particle_texture', bpy.data, 'images',
+                                 text=T("Текстура"))
+                trow.operator('gtatools.load_fx_textures', text='',
+                              **inu_icon(safe_icon('FILE_REFRESH')))
                 row = tex_box.row(align=True)
                 row.prop(inu, 'particle_src_blend', text="SRC")
                 row.prop(inu, 'particle_dst_blend', text="DST")
@@ -2431,6 +2469,54 @@ class GTATOOLS_PT_2dfx_settings(bpy.types.Panel):
             box = main_box.box()
             box.label(text=T("Солнечный блик"), **inu_icon(safe_icon('LIGHT_SUN')))
             box.label(text=T("Только позиция (без доп. данных)"))
+
+        elif effect == 'ENTER_EXIT':
+            box = main_box.box()
+            box.label(text=T("Вход/Выход (интерьер):"), **inu_icon(safe_icon('EMPTY_ARROWS')))
+            col = box.column(align=True)
+            col.prop(settings, "ee_interior", text=T("Интерьер #"))
+            col.prop(settings, "ee_interior_name", text=T("Имя интерьера"))
+            col = box.column(align=True)
+            col.prop(settings, "ee_enter_angle", text=T("Угол входа"))
+            col.prop(settings, "ee_exit_angle", text=T("Угол выхода"))
+            col.prop(settings, "ee_exit_loc", text=T("Позиция выхода"))
+            row = box.row(align=True)
+            row.prop(settings, "ee_radius_x", text=T("Радиус X"))
+            row.prop(settings, "ee_radius_y", text=T("Радиус Y"))
+            row = box.row(align=True)
+            row.prop(settings, "ee_time_on", text=T("Вкл"))
+            row.prop(settings, "ee_time_off", text=T("Выкл"))
+            box.prop(settings, "ee_sky_color", text=T("Цвет неба"))
+
+        elif effect == 'ROAD_SIGN':
+            box = main_box.box()
+            box.label(text=T("Дорожный знак (текст):"), **inu_icon(safe_icon('FONT_DATA')))
+            col = box.column(align=True)
+            n = max(1, min(4, settings.sign_lines))
+            for li in range(n):
+                col.prop(settings, "sign_text%d" % li, text=T("Строка %d") % (li + 1))
+            box.prop(settings, "sign_lines", text=T("Строк"))
+            box.prop(settings, "sign_maxchars", text=T("Символов/строку"))
+            box.prop(settings, "sign_color", text=T("Цвет"))
+            box.prop(settings, "sign_size", text=T("Размер"))
+            box.prop(settings, "sign_rotation", text=T("Поворот"))
+
+        elif effect == 'ESCALATOR':
+            box = main_box.box()
+            box.label(text=T("Эскалатор:"), **inu_icon(safe_icon('SORTSIZE')))
+            col = box.column(align=True)
+            col.prop(settings, "esc_bottom", text=T("Низ"))
+            col.prop(settings, "esc_top", text=T("Верх"))
+            col.prop(settings, "esc_end", text=T("Конец"))
+            box.prop(settings, "esc_direction", text=T("Направление"), expand=True)
+
+        elif effect == 'RAW_2DFX':
+            box = main_box.box()
+            box.label(text=T("Сохранённый эффект"), **inu_icon(safe_icon('LOCKED')))
+            box.label(text=f"type {obj.get('2dfx_raw_effect_id', '?')}, "
+                           f"{len(obj.get('2dfx_raw_bytes', []))} B")
+            box.label(text=T("Байт-в-байт round-trip, не редактируется"),
+                      **inu_icon(safe_icon('INFO')))
 
 
 @apply_order

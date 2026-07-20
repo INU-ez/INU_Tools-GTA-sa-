@@ -1131,6 +1131,27 @@ class INUObjectProps(bpy.types.PropertyGroup):
              "окон, металлических деталях. Рисуется как корона с "
              "альфа-блендингом, размер и яркость зависят от угла "
              "между направлением точки и солнцем."),
+            ('ENTER_EXIT', 'Вход/Выход (интерьер)',
+             "Маркер входа/выхода в интерьер (тип 6).\n"
+             "Пара маркеров: вход на позиции объекта и выход на "
+             "exit-позиции. Хранит угол поворота маркеров, радиус, "
+             "номер интерьера, имя интерьера, время вкл/выкл. Раньше "
+             "жил в IPL (секция enex), в SA — прямо в DFF."),
+            ('ROAD_SIGN', 'Дорожный знак (текст)',
+             "Текстовый знак на меше (тип 7).\n"
+             "До 4 строк текста, рисуемых движком поверх геометрии "
+             "(указатели улиц). Хранит размер, поворот и флаги "
+             "(число строк, макс. символов, цвет: белый/чёрный/"
+             "серый/красный)."),
+            ('ESCALATOR', 'Эскалатор',
+             "Эскалатор (тип 10).\n"
+             "Задаёт три точки — низ, верх и конец — и направление "
+             "(вверх/вниз). Движок двигает педов по этой траектории. "
+             "Используется в аэропортах и торговых центрах SA."),
+            ('RAW_2DFX', 'Raw (сохранённый)',
+             "Нередактируемый 2DFX-эффект, сохранённый байт-в-байт "
+             "при импорте (типы 8 trigger / 9 cover и прочие). Не "
+             "меняй вручную — служит для точного round-trip."),
         ],
         name="2DFX Effect Type",
         default='LIGHT',
@@ -1416,6 +1437,139 @@ class INUObjectProps(bpy.types.PropertyGroup):
                 sync_preview_from_props(obj)
             except Exception as e:
                 print(f"[2DFX] Preview update error: {e}")
+
+    def _update_escalator_preview(self, context):
+        """Live-refresh the escalator wire the instant a point / direction
+        changes — no button, no poll lag (these are real PropertyGroup
+        fields, so editing one fires this callback immediately)."""
+        obj = self.id_data
+        if obj and obj.type == 'EMPTY' and self.type == '2DFX' and self.effect_2dfx == 'ESCALATOR':
+            try:
+                from .ops.fx_preview import sync_escalator_preview
+                sync_escalator_preview(obj)
+            except Exception as e:
+                print(f"[2DFX] Escalator preview update error: {e}")
+
+    esc_bottom : FloatVectorProperty(
+        name=T("Низ"), size=3, subtype='XYZ', unit='LENGTH',
+        description=T("Нижняя точка эскалатора (модельное пространство)"),
+        update=_update_escalator_preview,
+    )
+    esc_top : FloatVectorProperty(
+        name=T("Верх"), size=3, subtype='XYZ', unit='LENGTH',
+        description=T("Верхняя точка эскалатора"),
+        update=_update_escalator_preview,
+    )
+    esc_end : FloatVectorProperty(
+        name=T("Конец"), size=3, subtype='XYZ', unit='LENGTH',
+        description=T("Точка схода (Z как у верха при движении вверх, "
+                      "как у низа — при движении вниз)"),
+        update=_update_escalator_preview,
+    )
+    esc_direction : EnumProperty(
+        items=[('1', T("Вверх"), T("Едет вверх")),
+               ('0', T("Вниз"), T("Едет вниз"))],
+        name=T("Направление"), default='1',
+        update=_update_escalator_preview,
+    )
+
+    # ── Road sign (type 7) ──
+    def _update_road_sign_preview(self, context):
+        """Live-rebuild the sign preview (plane + text) on any edit.
+
+        Only rebuilds when a preview already exists — otherwise setting the
+        fields during import / create (before the Empty is linked to its
+        collection) would spawn stray previews; the explicit create call at
+        the end of those flows builds the first one."""
+        obj = self.id_data
+        if obj and obj.type == 'EMPTY' and self.type == '2DFX' and self.effect_2dfx == 'ROAD_SIGN':
+            try:
+                from .ops.fx_preview import update_road_sign_preview, _has_preview_children
+                if _has_preview_children(obj):
+                    update_road_sign_preview(obj)
+            except Exception as e:
+                print(f"[2DFX] Road sign preview update error: {e}")
+
+    sign_text0 : StringProperty(name=T("Строка 1"), maxlen=16,
+                                update=_update_road_sign_preview)
+    sign_text1 : StringProperty(name=T("Строка 2"), maxlen=16,
+                                update=_update_road_sign_preview)
+    sign_text2 : StringProperty(name=T("Строка 3"), maxlen=16,
+                                update=_update_road_sign_preview)
+    sign_text3 : StringProperty(name=T("Строка 4"), maxlen=16,
+                                update=_update_road_sign_preview)
+    sign_size : FloatVectorProperty(
+        name=T("Размер"), size=2, default=(2.0, 1.0), min=0.0,
+        description=T("Ширина и высота области текста на меше"),
+        update=_update_road_sign_preview,
+    )
+    sign_rotation : FloatVectorProperty(
+        name=T("Поворот"), size=3, subtype='EULER',
+        default=(1.5707963, 0.0, 0.0),   # stand upright by default
+        description=T("Ориентация плоскости знака"),
+        update=_update_road_sign_preview,
+    )
+    sign_lines : IntProperty(
+        name=T("Строк"), min=1, max=4, default=1,
+        description=T("Сколько строк текста используется"),
+        update=_update_road_sign_preview,
+    )
+    sign_maxchars : EnumProperty(
+        items=[('16', '16', ''), ('2', '2', ''), ('4', '4', ''), ('8', '8', '')],
+        name=T("Символов/строку"), default='16',
+        update=_update_road_sign_preview,
+    )
+    sign_color : EnumProperty(
+        items=[('WHITE', T("Белый"), ''), ('BLACK', T("Чёрный"), ''),
+               ('GREY', T("Серый"), ''), ('RED', T("Красный"), '')],
+        name=T("Цвет"), default='WHITE',
+        update=_update_road_sign_preview,
+    )
+
+    # ── Enter/Exit (type 6) ──
+    def _update_enterexit_preview(self, context):
+        """Live-sync the enter-marker ring/arrow the instant a geometry field
+        (radius / enter angle) changes. In-place, no-op without a preview."""
+        obj = self.id_data
+        if obj and obj.type == 'EMPTY' and self.type == '2DFX' and self.effect_2dfx == 'ENTER_EXIT':
+            try:
+                from .ops.fx_preview import sync_enterexit_preview
+                sync_enterexit_preview(obj)
+            except Exception as e:
+                print(f"[2DFX] Enter/Exit preview update error: {e}")
+
+    ee_enter_angle : FloatProperty(
+        name=T("Угол входа"), default=0.0,
+        description=T("Направление, куда повёрнут игрок при входе (градусы)"),
+        update=_update_enterexit_preview,
+    )
+    ee_exit_angle : FloatProperty(
+        name=T("Угол выхода"), default=0.0,
+        description=T("Направление игрока при выходе из интерьера (градусы)"),
+    )
+    ee_radius_x : FloatProperty(
+        name=T("Радиус X"), default=1.0, min=0.0,
+        update=_update_enterexit_preview,
+    )
+    ee_radius_y : FloatProperty(
+        name=T("Радиус Y"), default=1.0, min=0.0,
+        update=_update_enterexit_preview,
+    )
+    ee_exit_loc : FloatVectorProperty(
+        name=T("Позиция выхода"), size=3, subtype='XYZ',
+        description=T("Куда телепортирует игрока (координаты интерьера)"),
+    )
+    ee_interior : IntProperty(
+        name=T("Интерьер #"), min=0, max=65535, default=0,
+        description=T("Номер интерьерного мира (0 = обычный мир)"),
+    )
+    ee_interior_name : StringProperty(name=T("Имя интерьера"), maxlen=8)
+    ee_time_on : IntProperty(name=T("Время вкл"), min=0, max=24, default=0)
+    ee_time_off : IntProperty(name=T("Время выкл"), min=0, max=24, default=24)
+    ee_sky_color : IntProperty(name=T("Цвет неба"), min=0, max=255, default=0)
+    ee_flags1 : IntProperty(name=T("Флаги 1"), min=0, max=255, default=0)
+    ee_flags2 : IntProperty(name=T("Флаги 2"), min=0, max=255, default=0)
+    ee_unknown : IntProperty(name=T("Unknown"), min=0, max=255, default=0)
 
     color_2dfx : FloatVectorProperty(
         name="2DFX Color",
@@ -4473,11 +4627,14 @@ def _on_file_load_migrate_prelight_nodes(dummy):
     активно — строим минимальный граф, иначе удаляем остатки. Дёшево —
     трогаем только объекты, где реально есть наши preview-ноды."""
     try:
-        from .tools.prelight import setup_prelight_preview
+        from .tools.prelight import (setup_prelight_preview,
+                                     PRELIGHT_LEGACY_NODES as LEGACY)
     except Exception:
         return
-    LEGACY = ("Prelight_Mix", "Prelight_Ambient", "Prelight_PostFx1",
-              "Prelight_PostFx2", "Prelight_BrightContrast", "Prelight_Gamma")
+    # LEGACY — только ноды старого modulate-графа. Раньше в этот список по
+    # ошибке входила Prelight_Mix — нода АКТУАЛЬНОГО превью, из-за чего
+    # каждое открытие .blend «мигрировало» вообще все объекты с превью и
+    # пересобирало их материалы (на карте — тысячи перекомпиляций шейдеров).
     for obj in bpy.data.objects:
         if obj.type != 'MESH' or obj.data is None:
             continue

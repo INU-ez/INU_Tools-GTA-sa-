@@ -62,6 +62,9 @@ class GTATOOLS_OT_create_2dfx(bpy.types.Operator):
             ('PARTICLE', 'Particle', 'Particle effect'),
             ('PED_ATTRACTOR', 'Ped Attractor', 'Ped attractor point'),
             ('SUN_GLARE', 'Sun Glare', 'Sun glare on surface'),
+            ('ENTER_EXIT', 'Enter/Exit', 'Interior enter/exit marker'),
+            ('ROAD_SIGN', 'Road Sign', 'On-mesh text sign'),
+            ('ESCALATOR', 'Escalator', 'Escalator path'),
         ],
         default='LIGHT',
     )
@@ -74,6 +77,9 @@ class GTATOOLS_OT_create_2dfx(bpy.types.Operator):
             'PARTICLE': ('CIRCLE', 0.2),
             'PED_ATTRACTOR': ('CUBE', 0.15),
             'SUN_GLARE': ('SPHERE', 0.1),
+            'ENTER_EXIT': ('ARROWS', 0.5),
+            'ROAD_SIGN': ('PLAIN_AXES', 0.5),
+            'ESCALATOR': ('SINGLE_ARROW', 0.5),
         }
         display_type, display_size = display_map[self.effect_type]
 
@@ -111,6 +117,22 @@ class GTATOOLS_OT_create_2dfx(bpy.types.Operator):
             obj['2dfx_rotation_matrix'] = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
             obj['2dfx_external_script'] = ""
             obj['2dfx_ped_probability'] = 0
+        elif self.effect_type == 'ENTER_EXIT':
+            obj.inu.ee_radius_x = 1.5
+            obj.inu.ee_radius_y = 1.5
+            obj.inu.ee_time_off = 24
+        elif self.effect_type == 'ROAD_SIGN':
+            obj.inu.sign_text0 = "TEXT"
+            obj.inu.sign_size = (2.0, 1.0)
+            obj.inu.sign_lines = 1
+            obj.inu.sign_color = 'WHITE'
+        elif self.effect_type == 'ESCALATOR':
+            # Sample shape as offsets RELATIVE to the marker (Empty), so the
+            # preview shows a ready escalator and moves with the Empty.
+            obj.inu.esc_bottom = (0.0, 0.0, 0.0)
+            obj.inu.esc_top = (0.0, 2.0, 3.0)
+            obj.inu.esc_end = (0.0, 3.0, 3.0)
+            obj.inu.esc_direction = '1'
 
         # Link to dedicated 2DFX collection (auto-create if missing)
         col_name = "2DFX"
@@ -128,6 +150,15 @@ class GTATOOLS_OT_create_2dfx(bpy.types.Operator):
         elif self.effect_type == 'PARTICLE':
             from .fx_preview import create_particle_preview
             create_particle_preview(obj)
+        elif self.effect_type == 'ESCALATOR':
+            from .fx_preview import create_escalator_preview
+            create_escalator_preview(obj)
+        elif self.effect_type == 'ROAD_SIGN':
+            from .fx_preview import create_road_sign_preview
+            create_road_sign_preview(obj)
+        elif self.effect_type == 'ENTER_EXIT':
+            from .fx_preview import create_enterexit_preview
+            create_enterexit_preview(obj)
 
         bpy.ops.object.select_all(action='DESELECT')
         obj.select_set(True)
@@ -291,13 +322,16 @@ class GTATOOLS_OT_refresh_2dfx_preview(bpy.types.Operator):
         return (obj and obj.type == 'EMPTY'
                 and getattr(obj, 'inu', None)
                 and obj.inu.type == '2DFX'
-                and obj.inu.effect_2dfx in ('LIGHT', 'PARTICLE'))
+                and obj.inu.effect_2dfx in ('LIGHT', 'PARTICLE', 'ESCALATOR'))
 
     def execute(self, context):
         obj = context.active_object
         if obj.inu.effect_2dfx == 'LIGHT':
             from .fx_preview import update_light_preview
             update_light_preview(obj)
+        elif obj.inu.effect_2dfx == 'ESCALATOR':
+            from .fx_preview import update_escalator_preview
+            update_escalator_preview(obj)
         else:
             from .fx_preview import update_particle_preview
             update_particle_preview(obj)

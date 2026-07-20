@@ -580,8 +580,8 @@ class ImportExportFloater(B.Floater):
                         WG._draw_toggle(ft['rect'], ft['label'], on, hovered,
                                         alert=ft.get('alert', False))
 
-        # Dropdown panel (drawn LAST so it overlays everything else)
-        self._draw_open_dropdown(context, L)
+        # NOTE: the open dropdown is drawn by the base _draw_content AFTER
+        # the status strip, so the strip can't paint over its lower rows.
 
     def handle_body_mousemove(self, context, L, mx, my):
         st = self.state

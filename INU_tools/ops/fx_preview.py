@@ -122,6 +122,41 @@ def _create_plane_mesh(name: str, size: float = 1.0) -> bpy.types.Mesh:
     return mesh
 
 
+def _create_cross_mesh(name: str, size: float = 1.0) -> bpy.types.Mesh:
+    """Three perpendicular quads forming a 3-axis cross ('вкрест по 3 осям').
+
+    A corona/particle built from this reads as a volumetric glow from ANY
+    angle (including straight-down) WITHOUT any camera-facing update — the
+    horizontal quad covers the top/bottom view the two vertical ones miss.
+    That lets us drop the POST_VIEW draw handler which rewrote every
+    billboard's rotation_euler on each viewport redraw — that write triggered
+    a depsgraph update that scheduled another redraw (feedback loop), dragging
+    viewport FPS down whenever the N-panel / 2DFX previews were visible."""
+    import bmesh
+    mesh = bpy.data.meshes.new(name)
+    bm = bmesh.new()
+    s = size / 2.0
+    uv_layer = bm.loops.layers.uv.new("UVMap")
+    # One quad per axis-plane: XZ (normal ±Y), YZ (normal ±X) — both vertical
+    # so the glow "stands up" — plus XY (normal ±Z), horizontal, so the light
+    # still reads as a volume when viewed from directly above or below.
+    quads = (
+        ((-s, 0, -s), (s, 0, -s), (s, 0, s), (-s, 0, s)),
+        ((0, -s, -s), (0, s, -s), (0, s, s), (0, -s, s)),
+        ((-s, -s, 0), (s, -s, 0), (s, s, 0), (-s, s, 0)),
+    )
+    uvs = ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
+    for quad in quads:
+        verts = [bm.verts.new(co) for co in quad]
+        face = bm.faces.new(verts)
+        for loop, uv in zip(face.loops, uvs):
+            loop[uv_layer].uv = uv
+    bm.to_mesh(mesh)
+    bm.free()
+    mesh.update()
+    return mesh
+
+
 def _lock_child(obj, lock_rotation=True):
     """Make child object non-selectable and non-exportable."""
     # Non-exportable
@@ -327,9 +362,9 @@ def create_light_preview(parent_obj):
     collection.objects.link(light_obj)
     _lock_child(light_obj)
 
-    # ── Billboard plane (corona sprite) ──
+    # ── Corona sprite (crossed vertical planes — no camera tracking) ──
     billboard_name = f"{parent_obj.name}_corona"
-    plane_mesh = _create_plane_mesh(billboard_name, size=1.0)
+    plane_mesh = _create_cross_mesh(billboard_name, size=1.0)
 
     billboard = bpy.data.objects.new(billboard_name, plane_mesh)
     billboard.parent = parent_obj
@@ -347,7 +382,10 @@ def create_light_preview(parent_obj):
     mat = _create_corona_material(corona_tex, (r, g, b), unique_key=parent_obj.name)
     billboard.data.materials.append(mat)
 
-    _lock_child(billboard, lock_rotation=False)
+    # Crossed planes look volumetric from any angle → no camera-facing needed,
+    # so lock rotation. We DO register it, but only so the fixed-rate show-mode
+    # timer (flicker/strobe/pulse) can find it — NOT for per-redraw rotation.
+    _lock_child(billboard, lock_rotation=True)
     register_billboard(billboard)
 
     return light_obj, billboard
@@ -606,7 +644,7 @@ def create_particle_preview(parent_obj):
     collection = parent_obj.users_collection[0] if parent_obj.users_collection else bpy.context.collection
 
     billboard_name = f"{parent_obj.name}_particle"
-    plane_mesh = _create_plane_mesh(billboard_name, size=1.0)
+    plane_mesh = _create_cross_mesh(billboard_name, size=1.0)
     billboard = bpy.data.objects.new(billboard_name, plane_mesh)
     billboard.parent = parent_obj
     billboard.location = (0, 0, 0)
@@ -617,9 +655,8 @@ def create_particle_preview(parent_obj):
                                     unique_key=parent_obj.name)
     billboard.data.materials.append(mat)
 
-    _lock_child(billboard, lock_rotation=False)
-    register_billboard(billboard)
-    _face_billboard_to_view(billboard)
+    # Crossed planes → volumetric without camera tracking (see corona above).
+    _lock_child(billboard, lock_rotation=True)
     return billboard
 
 
@@ -679,17 +716,397 @@ def remove_preview_children(parent_obj):
         unregister_billboard(child.name)
         mesh_data = child.data if child.type == 'MESH' else None
         light_data = child.data if child.type == 'LIGHT' else None
+        curve_data = child.data if child.type == 'FONT' else None
         bpy.data.objects.remove(child, do_unlink=True)
         if mesh_data and mesh_data.users == 0:
             bpy.data.meshes.remove(mesh_data)
         if light_data and light_data.users == 0:
             bpy.data.lights.remove(light_data)
+        # FONT curve data (road-sign text previews) — free it too, else the
+        # datablock leaks every time the preview is rebuilt on edit.
+        if curve_data and curve_data.users == 0:
+            bpy.data.curves.remove(curve_data)
 
 
 def update_light_preview(parent_obj):
     """Recreate visual preview for a Light2dfx Empty."""
     remove_preview_children(parent_obj)
     create_light_preview(parent_obj)
+
+
+# ── Escalator / Enter-Exit schematic previews ───────────────────────
+# Wireframe children built from the effect's stored points, drawn relative
+# to the Empty (parent) so cleanup/duplication go through the same
+# remove_preview_children / autobuild path as light & particle rigs. No
+# GPU draw handler — same reason the corona uses crossed static planes.
+
+def _create_wire_mesh(name: str, verts, edges) -> bpy.types.Mesh:
+    """Edges-only mesh (no faces) from explicit vert/edge lists."""
+    mesh = bpy.data.meshes.new(name)
+    mesh.from_pydata([tuple(v) for v in verts],
+                     [tuple(e) for e in edges], [])
+    mesh.update()
+    return mesh
+
+
+def _link_wire_child(parent_obj, mesh):
+    """Wrap a wire mesh as a locked, non-exportable preview child."""
+    obj = bpy.data.objects.new(mesh.name, mesh)
+    obj.parent = parent_obj
+    obj.location = (0.0, 0.0, 0.0)
+    obj.display_type = 'WIRE'
+    obj.show_in_front = True
+    collection = (parent_obj.users_collection[0]
+                  if parent_obj.users_collection else bpy.context.collection)
+    collection.objects.link(obj)
+    _lock_child(obj)
+    return obj
+
+
+def _escalator_geometry(parent_obj):
+    """Return (verts, edges) for the escalator wire in the child's local space.
+
+    Points are stored RELATIVE to the Empty (its local space), so the child —
+    parented at the Empty's origin — inherits the Empty's transform: moving or
+    rotating the Empty carries the whole escalator rigidly, no re-anchoring
+    needed. That's why there is no location offset and no polling here."""
+    inu = getattr(parent_obj, 'inu', None)
+    if inu is not None:
+        b, t, e = tuple(inu.esc_bottom), tuple(inu.esc_top), tuple(inu.esc_end)
+        up = 1.0 if inu.esc_direction == '1' else -1.0
+    else:
+        b = t = e = (0.0, 0.0, 0.0)
+        up = 1.0
+
+    mid = ((b[0] + t[0]) / 2, (b[1] + t[1]) / 2, (b[2] + t[2]) / 2)
+    apex = (mid[0], mid[1], mid[2] + 0.6 * up)
+    barb_l = (mid[0] - 0.25, mid[1], mid[2] + 0.2 * up)
+    barb_r = (mid[0] + 0.25, mid[1], mid[2] + 0.2 * up)
+
+    verts = [b, t, e, mid, apex, barb_l, barb_r]
+    edges = [(0, 1), (1, 2), (3, 4), (4, 5), (4, 6)]
+    return verts, edges
+
+
+def _find_escalator_preview_child(parent_obj):
+    """The escalator wire child of an Empty, or None. Uses a substring match
+    so Blender's ``.001`` duplicate suffix still matches."""
+    for child in parent_obj.children:
+        if (child.type == 'MESH' and child.get("inu_2dfx_preview")
+                and "_escalator" in child.name):
+            return child
+    return None
+
+
+def create_escalator_preview(parent_obj):
+    """Wire path bottom→top→end + an up/down chevron for direction."""
+    parent_obj.pop("inu_2dfx_no_preview", None)
+    verts, edges = _escalator_geometry(parent_obj)
+    mesh = _create_wire_mesh(f"{parent_obj.name}_escalator", verts, edges)
+    return _link_wire_child(parent_obj, mesh)
+
+
+def update_escalator_preview(parent_obj):
+    """Recreate the escalator wire preview (call after editing its points)."""
+    remove_preview_children(parent_obj)
+    create_escalator_preview(parent_obj)
+
+
+def sync_escalator_preview(parent_obj) -> bool:
+    """Re-write the escalator wire verts in place from current props.
+
+    Cheap (7 verts, no object churn) and only writes when a coordinate
+    actually changed — so the 0.6 s autobuild tick can keep the line live
+    without spamming depsgraph updates (which would drag viewport FPS, the
+    reason we don't use a per-redraw handler). Returns True if it wrote."""
+    child = _find_escalator_preview_child(parent_obj)
+    if child is None:
+        return False
+    verts, _edges = _escalator_geometry(parent_obj)
+    me = child.data
+    if len(me.vertices) != len(verts):
+        update_escalator_preview(parent_obj)   # topology changed → rebuild
+        return True
+    # Change guard: bail if every vert is already where it should be.
+    changed = False
+    for v, co in zip(me.vertices, verts):
+        if (abs(v.co.x - co[0]) > 1e-6 or abs(v.co.y - co[1]) > 1e-6
+                or abs(v.co.z - co[2]) > 1e-6):
+            changed = True
+            break
+    if not changed:
+        return False
+    for v, co in zip(me.vertices, verts):
+        v.co = co
+    me.update()
+    return True
+
+
+# ── Road sign (type 7) preview ──────────────────────────────────────
+
+_SIGN_COLOR_RGB = {
+    'WHITE': (1.0, 1.0, 1.0),
+    'BLACK': (0.05, 0.05, 0.05),
+    'GREY':  (0.5, 0.5, 0.5),
+    'RED':   (0.85, 0.06, 0.06),
+}
+
+
+def _create_sign_text_material(rgb, key):
+    """Emission material so the sign text reads at any viewport shading."""
+    name = f"INU_SignText_{key}"
+    mat = bpy.data.materials.get(name)
+    if mat is None:
+        mat = bpy.data.materials.new(name)
+    mat.use_nodes = True
+    nt = mat.node_tree
+    nt.nodes.clear()
+    out = nt.nodes.new('ShaderNodeOutputMaterial')
+    emit = nt.nodes.new('ShaderNodeEmission')
+    emit.inputs['Color'].default_value = (rgb[0], rgb[1], rgb[2], 1.0)
+    emit.inputs['Strength'].default_value = 1.0
+    nt.links.new(emit.outputs['Emission'], out.inputs['Surface'])
+    return mat
+
+
+def create_road_sign_preview(parent_obj):
+    """Wire rectangle (size) + a FONT text object showing the real lines.
+
+    Both children are built in the Empty's local XY plane and rotated by
+    ``sign_rotation`` (default upright), so they inherit the Empty's
+    transform — moving the marker carries the whole sign."""
+    parent_obj.pop("inu_2dfx_no_preview", None)
+    inu = getattr(parent_obj, 'inu', None)
+    if inu is None:
+        return None
+
+    w = max(float(inu.sign_size[0]), 0.01)
+    h = max(float(inu.sign_size[1]), 0.01)
+    rot = tuple(inu.sign_rotation)
+    rgb = _SIGN_COLOR_RGB.get(inu.sign_color, (1.0, 1.0, 1.0))
+    n = max(1, min(4, int(inu.sign_lines)))
+    lines = [inu.sign_text0, inu.sign_text1, inu.sign_text2, inu.sign_text3][:n]
+
+    collection = (parent_obj.users_collection[0]
+                  if parent_obj.users_collection else bpy.context.collection)
+
+    # 1) Bounds rectangle (XY plane, edges only).
+    sw, sh = w / 2.0, h / 2.0
+    verts = [(-sw, -sh, 0.0), (sw, -sh, 0.0), (sw, sh, 0.0), (-sw, sh, 0.0)]
+    edges = [(0, 1), (1, 2), (2, 3), (3, 0)]
+    mesh = _create_wire_mesh(f"{parent_obj.name}_sign", verts, edges)
+    rect = bpy.data.objects.new(mesh.name, mesh)
+    rect.parent = parent_obj
+    rect.location = (0.0, 0.0, 0.0)
+    rect.rotation_euler = rot
+    rect.display_type = 'WIRE'
+    rect.show_in_front = True
+    collection.objects.link(rect)
+    _lock_child(rect)
+
+    # 2) Text object with the real lines.
+    cu = bpy.data.curves.new(f"{parent_obj.name}_signtext", type='FONT')
+    cu.body = "\n".join(lines)
+    cu.align_x = 'CENTER'
+    cu.align_y = 'CENTER'
+    cu.size = min(w, h) * 0.35
+    txt = bpy.data.objects.new(cu.name, cu)
+    txt.parent = parent_obj
+    txt.location = (0.0, 0.0, 0.0)
+    txt.rotation_euler = rot
+    txt.show_in_front = True
+    txt.data.materials.append(_create_sign_text_material(rgb, parent_obj.name))
+    collection.objects.link(txt)
+    _lock_child(txt)
+
+    return rect, txt
+
+
+def update_road_sign_preview(parent_obj):
+    """Rebuild the sign preview (call after editing text / size / rotation)."""
+    remove_preview_children(parent_obj)
+    create_road_sign_preview(parent_obj)
+
+
+# ── Enter/Exit (type 6) preview ─────────────────────────────────────
+# A proper volumetric marker — a glowing translucent cylinder (the column
+# of light you walk into), sized by radius_x × radius_y, plus a floor arrow
+# for the enter heading. Solid faces (not wire), a Mix(Transparent+Emission)
+# material so it reads as a real marker from any angle. The exit lives far
+# away in interior space, so it stays panel data, not a viewport gizmo.
+
+_ENEX_SEG = 16        # cylinder segments around the circumference
+_ENEX_HEIGHT = 2.5    # marker column height (metres)
+_ENEX_COLOR = (0.9, 0.05, 0.05)   # GTA interior-marker red
+
+
+# Vertex layout (SEG = _ENEX_SEG):
+#   [0 .. SEG)        bottom ring   (z=0)      fade = 1
+#   [SEG .. 2SEG)     middle ring   (z=H/2)    fade = 1
+#   [2SEG .. 3SEG)    top ring      (z=H)      fade = 0
+#   3SEG, +1, +2      floor arrow                fade = 1
+# The middle ring is what makes the fade begin exactly at the halfway point:
+# the lower band (bottom→middle) is a constant fade=1 (solid), the upper band
+# (middle→top) interpolates 1→0. Baked per-vertex, so it needs no procedural
+# texture coords — robust in every shading mode / Blender build.
+
+def _enterexit_marker_verts(parent_obj):
+    """Ordered vertex positions: bottom / middle / top ring, arrow, centre.
+    Constant count → syncs in place on edit."""
+    inu = getattr(parent_obj, 'inu', None)
+    rx = max(float(getattr(inu, 'ee_radius_x', 1.0)) if inu else 1.0, 0.1)
+    ry = max(float(getattr(inu, 'ee_radius_y', 1.0)) if inu else 1.0, 0.1)
+    ang = math.radians(float(getattr(inu, 'ee_enter_angle', 0.0)) if inu else 0.0)
+
+    verts = []
+    for z in (0.0, _ENEX_HEIGHT * 0.5, _ENEX_HEIGHT):
+        for k in range(_ENEX_SEG):
+            a = 2.0 * math.pi * k / _ENEX_SEG
+            verts.append((rx * math.cos(a), ry * math.sin(a), z))
+
+    # Floor arrow for the enter heading.
+    dx, dy = math.sin(ang), math.cos(ang)
+    px, py = math.cos(ang), -math.sin(ang)
+    L = max(rx, ry) * 1.3
+    verts.append((dx * L, dy * L, 0.02))
+    verts.append((dx * L * 0.4 + px * 0.28, dy * L * 0.4 + py * 0.28, 0.02))
+    verts.append((dx * L * 0.4 - px * 0.28, dy * L * 0.4 - py * 0.28, 0.02))
+    return verts
+
+
+def _enterexit_marker_fade():
+    """Per-vertex fade weights matching _enterexit_marker_verts order."""
+    seg = _ENEX_SEG
+    fade = [1.0] * seg          # bottom ring
+    fade += [1.0] * seg         # middle ring
+    fade += [0.0] * seg         # top ring
+    fade += [1.0, 1.0, 1.0]     # arrow
+    return fade
+
+
+def _enterexit_marker_faces():
+    """Two side bands (bottom→middle→top) + arrow triangle. Open tube — no
+    bottom cap."""
+    seg = _ENEX_SEG
+    faces = []
+    for k in range(seg):
+        k2 = (k + 1) % seg
+        faces.append((k, k2, seg + k2, seg + k))              # lower band
+        faces.append((seg + k, seg + k2, 2 * seg + k2, 2 * seg + k))  # upper band
+    arrow = 3 * seg
+    faces.append((arrow, arrow + 1, arrow + 2))
+    return faces
+
+
+def _create_marker_material(rgb, alpha, key):
+    """Translucent glowing marker whose alpha comes from the baked per-vertex
+    ``fade`` attribute (1 across the solid bottom half, ramping 1→0 across the
+    top half). Reading a mesh attribute is shading-mode/version proof — no
+    procedural texture coords involved. Mix(Transparent, Emission)."""
+    name = f"INU_EnexMarker_{key}"
+    mat = bpy.data.materials.get(name)
+    if mat is None:
+        mat = bpy.data.materials.new(name)
+    mat.use_nodes = True
+    nt = mat.node_tree
+    nt.nodes.clear()
+
+    out = nt.nodes.new('ShaderNodeOutputMaterial')
+    mix = nt.nodes.new('ShaderNodeMixShader')
+    transp = nt.nodes.new('ShaderNodeBsdfTransparent')
+    emit = nt.nodes.new('ShaderNodeEmission')
+    emit.inputs['Color'].default_value = (rgb[0], rgb[1], rgb[2], 1.0)
+    emit.inputs['Strength'].default_value = 1.3
+
+    # Fac = fade_attribute * alpha.
+    attr = nt.nodes.new('ShaderNodeAttribute')
+    attr.attribute_type = 'GEOMETRY'
+    attr.attribute_name = 'fade'
+    scl = nt.nodes.new('ShaderNodeMath')
+    scl.operation = 'MULTIPLY'
+    scl.inputs[1].default_value = alpha
+    nt.links.new(attr.outputs['Fac'], scl.inputs[0])
+    nt.links.new(scl.outputs[0], mix.inputs['Fac'])
+
+    nt.links.new(transp.outputs[0], mix.inputs[1])
+    nt.links.new(emit.outputs[0], mix.inputs[2])
+    nt.links.new(mix.outputs[0], out.inputs['Surface'])
+    mat.blend_method = 'BLEND'
+    # Render back faces too — front+back translucency overlap makes the
+    # column read as a filled volume (like the in-game marker), not a shell.
+    mat.show_transparent_back = True
+    mat.use_backface_culling = False
+    return mat
+
+
+def _find_enterexit_preview_child(parent_obj):
+    for child in parent_obj.children:
+        if (child.type == 'MESH' and child.get("inu_2dfx_preview")
+                and "_enex" in child.name):
+            return child
+    return None
+
+
+def create_enterexit_preview(parent_obj):
+    """Glowing cylinder marker + floor heading arrow (parented → moves with
+    the Empty)."""
+    parent_obj.pop("inu_2dfx_no_preview", None)
+    verts = _enterexit_marker_verts(parent_obj)
+    faces = _enterexit_marker_faces()
+    mesh = bpy.data.meshes.new(f"{parent_obj.name}_enex")
+    mesh.from_pydata([tuple(v) for v in verts], [], faces)
+    # Bake the vertical fade as a per-vertex FLOAT attribute the material
+    # reads (1 across the solid bottom half → 0 at the top).
+    fade = _enterexit_marker_fade()
+    attr = mesh.attributes.new(name='fade', type='FLOAT', domain='POINT')
+    for i, f in enumerate(fade):
+        attr.data[i].value = f
+    # Smooth shading so the cylinder reads as round, not faceted.
+    for p in mesh.polygons:
+        p.use_smooth = True
+    mesh.update()
+
+    obj = bpy.data.objects.new(mesh.name, mesh)
+    obj.parent = parent_obj
+    obj.location = (0.0, 0.0, 0.0)
+    obj.show_in_front = False
+    collection = (parent_obj.users_collection[0]
+                  if parent_obj.users_collection else bpy.context.collection)
+    collection.objects.link(obj)
+    obj.data.materials.append(
+        _create_marker_material(_ENEX_COLOR, 0.5, parent_obj.name))
+    _lock_child(obj)
+    return obj
+
+
+def update_enterexit_preview(parent_obj):
+    remove_preview_children(parent_obj)
+    create_enterexit_preview(parent_obj)
+
+
+def sync_enterexit_preview(parent_obj) -> bool:
+    """Re-write the marker verts in place from current props — instant,
+    change-guarded, no object churn (same approach as the escalator)."""
+    child = _find_enterexit_preview_child(parent_obj)
+    if child is None:
+        return False
+    verts = _enterexit_marker_verts(parent_obj)
+    me = child.data
+    if len(me.vertices) != len(verts):
+        update_enterexit_preview(parent_obj)
+        return True
+    changed = False
+    for v, co in zip(me.vertices, verts):
+        if (abs(v.co.x - co[0]) > 1e-6 or abs(v.co.y - co[1]) > 1e-6
+                or abs(v.co.z - co[2]) > 1e-6):
+            changed = True
+            break
+    if not changed:
+        return False
+    for v, co in zip(me.vertices, verts):
+        v.co = co
+    me.update()
+    return True
 
 
 def sync_preview_from_props(parent_obj):
@@ -799,13 +1216,16 @@ def _apply_show_mode_visibility(corona_obj, parent_obj):
 
 
 def _set_corona_emission(corona_obj, strength):
-    """Set emission strength on corona material."""
+    """Set emission strength on corona material (skip if already ~equal so a
+    steady corona never tags a redraw from the show-mode timer)."""
     if corona_obj.data and corona_obj.data.materials:
         mat = corona_obj.data.materials[0]
         if mat and mat.use_nodes:
             for node in mat.node_tree.nodes:
                 if node.type == 'EMISSION':
-                    node.inputs['Strength'].default_value = strength
+                    sock = node.inputs['Strength']
+                    if abs(sock.default_value - strength) > 1e-4:
+                        sock.default_value = strength
                     break
 
 
@@ -940,26 +1360,78 @@ def _billboard_draw_callback():
         print(f"[2DFX Billboard] Draw handler error: {e}")
 
 
-def start_billboard_timer():
-    """Register the POST_VIEW draw handler for billboard rotation."""
-    global _billboard_draw_handler
-    if _billboard_draw_handler is None:
+_show_mode_timer_running = False
+
+
+def _show_mode_tick():
+    """Fixed-rate driver for corona show-mode (flicker / strobe / rain pulse).
+
+    Runs off ``bpy.app.timers`` at ~10 Hz, NOT off the viewport redraw. The old
+    POST_VIEW draw handler rotated billboards every redraw → depsgraph update →
+    another redraw (feedback loop) → viewport FPS tanked. Crossed-plane previews
+    no longer rotate, so all that's left is animating visibility/emission, and a
+    fixed-rate timer does that without ever triggering itself.
+
+    Steady modes (0/4) are guarded no-ops (emission/hide only written on real
+    change), so a scene full of static coronas costs nothing and the poll drops
+    to 2 Hz when nothing is actually animating."""
+    if not _billboards:
+        return 0.5
+    dead = []
+    any_animated = False
+    for name in list(_billboards):
+        obj = bpy.data.objects.get(name)
+        if obj is None:
+            dead.append(name)
+            continue
+        parent = obj.parent
+        if parent is None or getattr(parent, 'inu', None) is None:
+            continue
+        if getattr(parent.inu, 'type', None) != '2DFX':
+            continue
+        if _get_show_mode(parent) in ('1', '2', '3', '5'):
+            any_animated = True
         try:
-            _billboard_draw_handler = bpy.types.SpaceView3D.draw_handler_add(
-                _billboard_draw_callback, (), 'WINDOW', 'POST_VIEW')
-        except Exception as e:
-            print(f"[2DFX Billboard] Failed to register draw handler: {e}")
+            _apply_show_mode_visibility(obj, parent)
+        except Exception:
+            pass
+    for name in dead:
+        _billboards.discard(name)
+    return 0.1 if any_animated else 0.5
+
+
+def start_billboard_timer():
+    """Start the fixed-rate show-mode timer (flicker/strobe/pulse preview).
+
+    Replaces the old per-redraw POST_VIEW handler. Previews are crossed static
+    planes now (no camera facing), so this bpy.app.timers callback is all that's
+    needed — and unlike a draw handler it can't spin a redraw feedback loop."""
+    global _show_mode_timer_running
+    try:
+        if not bpy.app.timers.is_registered(_show_mode_tick):
+            bpy.app.timers.register(_show_mode_tick, first_interval=0.3,
+                                    persistent=True)
+        _show_mode_timer_running = True
+    except Exception as e:
+        print(f"[2DFX Show-mode] Failed to register timer: {e}")
 
 
 def stop_billboard_timer():
-    """Unregister draw handler."""
-    global _billboard_draw_handler
+    """Tear down the show-mode timer and any leftover legacy draw handler."""
+    global _billboard_draw_handler, _show_mode_timer_running
     if _billboard_draw_handler is not None:
         try:
-            bpy.types.SpaceView3D.draw_handler_remove(_billboard_draw_handler, 'WINDOW')
+            bpy.types.SpaceView3D.draw_handler_remove(
+                _billboard_draw_handler, 'WINDOW')
         except Exception:
             pass
         _billboard_draw_handler = None
+    try:
+        if bpy.app.timers.is_registered(_show_mode_tick):
+            bpy.app.timers.unregister(_show_mode_tick)
+    except Exception:
+        pass
+    _show_mode_timer_running = False
     _billboards.clear()
 
 
@@ -996,7 +1468,7 @@ def rebuild_missing_previews():
         if not inu or getattr(inu, 'type', '') != '2DFX':
             continue
         eff = getattr(inu, 'effect_2dfx', '')
-        if eff not in ('LIGHT', 'PARTICLE'):
+        if eff not in ('LIGHT', 'PARTICLE', 'ESCALATOR', 'ROAD_SIGN', 'ENTER_EXIT'):
             continue
         if obj.get("inu_2dfx_no_preview"):
             continue
@@ -1005,6 +1477,12 @@ def rebuild_missing_previews():
         try:
             if eff == 'LIGHT':
                 create_light_preview(obj)
+            elif eff == 'ESCALATOR':
+                create_escalator_preview(obj)
+            elif eff == 'ROAD_SIGN':
+                create_road_sign_preview(obj)
+            elif eff == 'ENTER_EXIT':
+                create_enterexit_preview(obj)
             else:
                 create_particle_preview(obj)
             rebuilt += 1

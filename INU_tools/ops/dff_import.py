@@ -23,6 +23,7 @@ from ..core.dff import (
     read_dff_file, DffClump, DffGeometry, DffMaterial, UserData,
     USERDATA_INT, USERDATA_FLOAT, USERDATA_STRING,
     Extension2dfx, Light2dfx, Particle2dfx, PedAttractor2dfx, SunGlare2dfx,
+    EnterExit2dfx, RoadSign2dfx, Escalator2dfx, RawUnknown2dfx,
 )
 
 
@@ -843,6 +844,77 @@ def _import_2dfx(ext_2dfx: Extension2dfx, collection, base_name: str) -> list:
             obj.inu.type = '2DFX'
             obj.inu.effect_2dfx = 'SUN_GLARE'
 
+        elif isinstance(entry, EnterExit2dfx):
+            name = f"{base_name}.2dfx_enex.{i}"
+            obj = bpy.data.objects.new(name, None)
+            obj.empty_display_type = 'ARROWS'
+            obj.empty_display_size = 0.5
+            obj.location = entry.loc
+            obj.inu.type = '2DFX'
+            obj.inu.effect_2dfx = 'ENTER_EXIT'
+            obj.inu.ee_enter_angle = entry.enter_angle
+            obj.inu.ee_radius_x = entry.approximation_radius_x
+            obj.inu.ee_radius_y = entry.approximation_radius_y
+            obj.inu.ee_exit_loc = tuple(entry.exit_loc)
+            obj.inu.ee_exit_angle = entry.exit_angle
+            obj.inu.ee_interior = entry.interior
+            obj.inu.ee_flags1 = entry.flags1
+            obj.inu.ee_sky_color = entry.sky_color
+            obj.inu.ee_interior_name = entry.interior_name
+            obj.inu.ee_time_on = entry.time_on
+            obj.inu.ee_time_off = entry.time_off
+            obj.inu.ee_flags2 = entry.flags2
+            obj.inu.ee_unknown = entry.unknown
+
+        elif isinstance(entry, RoadSign2dfx):
+            name = f"{base_name}.2dfx_sign.{i}"
+            obj = bpy.data.objects.new(name, None)
+            obj.empty_display_type = 'PLAIN_AXES'
+            obj.empty_display_size = 0.5
+            obj.location = entry.loc
+            obj.inu.type = '2DFX'
+            obj.inu.effect_2dfx = 'ROAD_SIGN'
+            obj.inu.sign_size = tuple(entry.size)
+            obj.inu.sign_rotation = tuple(entry.rotation)
+            lines = list(entry.text_lines) + ["", "", "", ""]
+            obj.inu.sign_text0 = lines[0]
+            obj.inu.sign_text1 = lines[1]
+            obj.inu.sign_text2 = lines[2]
+            obj.inu.sign_text3 = lines[3]
+            # Unpack the flags byte into friendly fields (bits 0-1 lines,
+            # 2-3 max chars, 4-5 colour) — see _pack_sign_flags for the map.
+            f = entry.flags
+            obj.inu.sign_lines = (f & 0x3) + 1
+            obj.inu.sign_maxchars = ('16', '2', '4', '8')[(f >> 2) & 0x3]
+            obj.inu.sign_color = ('WHITE', 'BLACK', 'GREY', 'RED')[(f >> 4) & 0x3]
+
+        elif isinstance(entry, Escalator2dfx):
+            name = f"{base_name}.2dfx_escalator.{i}"
+            obj = bpy.data.objects.new(name, None)
+            obj.empty_display_type = 'SINGLE_ARROW'
+            obj.empty_display_size = 0.5
+            obj.location = entry.loc
+            obj.inu.type = '2DFX'
+            obj.inu.effect_2dfx = 'ESCALATOR'
+            # Store points RELATIVE to the marker (entry.loc) so the Empty is
+            # the anchor: moving it in Blender carries the whole escalator.
+            lx, ly, lz = entry.loc
+            obj.inu.esc_bottom = (entry.bottom[0] - lx, entry.bottom[1] - ly, entry.bottom[2] - lz)
+            obj.inu.esc_top = (entry.top[0] - lx, entry.top[1] - ly, entry.top[2] - lz)
+            obj.inu.esc_end = (entry.end[0] - lx, entry.end[1] - ly, entry.end[2] - lz)
+            obj.inu.esc_direction = '1' if entry.direction else '0'
+
+        elif isinstance(entry, RawUnknown2dfx):
+            name = f"{base_name}.2dfx_raw{entry.effect_id}.{i}"
+            obj = bpy.data.objects.new(name, None)
+            obj.empty_display_type = 'CUBE'
+            obj.empty_display_size = 0.1
+            obj.location = entry.loc
+            obj.inu.type = '2DFX'
+            obj.inu.effect_2dfx = 'RAW_2DFX'
+            obj['2dfx_raw_effect_id'] = entry.effect_id
+            obj['2dfx_raw_bytes'] = list(entry.raw)
+
         else:
             continue
 
@@ -856,6 +928,24 @@ def _import_2dfx(ext_2dfx: Extension2dfx, collection, base_name: str) -> list:
                 create_light_preview(obj)
             except Exception as e:
                 print(f"[INU_tools] 2DFX import preview error: {e}")
+        elif isinstance(entry, Escalator2dfx):
+            try:
+                from .fx_preview import create_escalator_preview
+                create_escalator_preview(obj)
+            except Exception as e:
+                print(f"[INU_tools] 2DFX escalator preview error: {e}")
+        elif isinstance(entry, RoadSign2dfx):
+            try:
+                from .fx_preview import create_road_sign_preview
+                create_road_sign_preview(obj)
+            except Exception as e:
+                print(f"[INU_tools] 2DFX road sign preview error: {e}")
+        elif isinstance(entry, EnterExit2dfx):
+            try:
+                from .fx_preview import create_enterexit_preview
+                create_enterexit_preview(obj)
+            except Exception as e:
+                print(f"[INU_tools] 2DFX enter/exit preview error: {e}")
 
     return objects
 
@@ -1448,10 +1538,20 @@ def import_dff_from_clump(clump, base_name: str, *, skip_2dfx=None,
                 continue
             rot = frame.rotation
             pos = frame.position
+            # DFF stores the frame rotation as ROWS = axis vectors (RW
+            # convention), so it must be TRANSPOSED to get the actual local
+            # matrix — exactly what DragonFF and our own exporter do
+            # (dff_export.py: `mat.to_3x3().transposed()`). Reading the 9
+            # floats straight as matrix rows (the old code) yielded the
+            # transpose = inverse rotation, so original CS/rigid-attached
+            # models came in rotated wrong (mesh lying on its side). Verified
+            # on vanilla fam3.dff: transposed → skeleton↔bind consistent to
+            # 0.0000, un-transposed → 2.0 error. (animobj meshes are skipped
+            # above and don't reach this path.)
             obj.matrix_basis = mathutils.Matrix((
-                (rot[0], rot[1], rot[2], pos[0]),
-                (rot[3], rot[4], rot[5], pos[1]),
-                (rot[6], rot[7], rot[8], pos[2]),
+                (rot[0], rot[3], rot[6], pos[0]),
+                (rot[1], rot[4], rot[7], pos[1]),
+                (rot[2], rot[5], rot[8], pos[2]),
                 (0, 0, 0, 1),
             ))
 

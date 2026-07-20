@@ -571,18 +571,27 @@ def _dropdown_height(items):
     return h
 
 
-def _dropdown_layout(anchor_rect, items):
+def _dropdown_layout(anchor_rect, items, min_y=None):
     """Return (panel_rect, item_rects) for a dropdown anchored under
-    `anchor_rect`. Panel hangs DOWN from anchor's bottom edge with a
-    1-px gap so the two read as a continuous widget without the
-    outlines overlapping.
+    `anchor_rect`. Panel normally hangs DOWN from the anchor's bottom edge
+    with a 1-px gap so the two read as a continuous widget.
+
+    When `min_y` is given (the panel's usable bottom) and the downward panel
+    would drop below it, the menu FLIPS to open UPWARD above the anchor —
+    that keeps it inside the floater's offscreen buffer, so it's not clipped
+    and the window doesn't have to resize its buffer (which made it vanish).
 
     Shared by extend_body_layout (so click hit-test sees the rects)
     and _draw_open_dropdown (so we don't recompute during drawing)."""
-    ax, ay, aw, _ah = anchor_rect
+    ax, ay, aw, ah = anchor_rect
     total_h = _dropdown_height(items)
-    # `ay` is the anchor's bottom edge; panel top sits 1 px below it.
-    panel_rect = (ax, ay - _DD_ANCHOR_GAP - total_h, aw, total_h)
+    # Default: hang down; `ay` is the anchor's bottom edge.
+    down_bottom = ay - _DD_ANCHOR_GAP - total_h
+    if min_y is not None and down_bottom < min_y:
+        # Not enough room below → open upward above the anchor's top edge.
+        panel_rect = (ax, ay + ah + _DD_ANCHOR_GAP, aw, total_h)
+    else:
+        panel_rect = (ax, down_bottom, aw, total_h)
     dx, dy, dw, dh = panel_rect
     item_rects = []   # list of (kind, index, rect) where kind='item'|'sep'|'header'
     cur_top_y = dy + dh - _DD_INNER_PAD_TOP

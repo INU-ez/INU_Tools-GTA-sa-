@@ -36,6 +36,10 @@ from core.dff import (  # noqa: E402
     Particle2dfx,
     PedAttractor2dfx,
     SunGlare2dfx,
+    EnterExit2dfx,
+    RoadSign2dfx,
+    Escalator2dfx,
+    RawUnknown2dfx,
     Extension2dfx,
     BreakableData,
     SkinData,
@@ -313,6 +317,61 @@ def test_2dfx_multiple_effects_in_one_geom():
     entries = parsed.geometries[0].ext_2dfx.entries
     assert len(entries) == 3
     assert {e.effect_id for e in entries} == {0, 1, 4}
+
+
+def test_2dfx_enter_exit():
+    geom = _basic_geom()
+    geom.ext_2dfx = Extension2dfx(entries=[EnterExit2dfx(
+        loc=(1.0, 2.0, 3.0), enter_angle=45.0,
+        approximation_radius_x=1.5, approximation_radius_y=2.5,
+        exit_loc=(4.0, 5.0, 6.0), exit_angle=90.0, interior=13,
+        flags1=7, sky_color=2, interior_name="casino",
+        time_on=6, time_off=20, flags2=1, unknown=0)])
+    e = read_dff(write_dff(_wrap(geom))).geometries[0].ext_2dfx.entries[0]
+    assert e.effect_id == 6
+    assert e.loc == (1.0, 2.0, 3.0)
+    assert e.exit_loc == (4.0, 5.0, 6.0)
+    assert e.interior == 13
+    assert e.interior_name == "casino"
+    assert e.time_off == 20
+    assert e.enter_angle == 45.0
+
+
+def test_2dfx_road_sign():
+    geom = _basic_geom()
+    geom.ext_2dfx = Extension2dfx(entries=[RoadSign2dfx(
+        loc=(7.0, 8.0, 9.0), size=(2.0, 1.0), rotation=(0.0, 0.0, 90.0),
+        flags=0b011011, text_lines=["LINE1", "LINE2", "THIRD", ""])])
+    e = read_dff(write_dff(_wrap(geom))).geometries[0].ext_2dfx.entries[0]
+    assert e.effect_id == 7
+    assert e.text_lines[:3] == ["LINE1", "LINE2", "THIRD"]
+    assert e.flags == 0b011011
+    assert e.size[0] == 2.0
+
+
+def test_2dfx_escalator():
+    geom = _basic_geom()
+    geom.ext_2dfx = Extension2dfx(entries=[Escalator2dfx(
+        loc=(10.0, 11.0, 12.0), bottom=(1.0, 1.0, 0.0),
+        top=(1.0, 3.0, 5.0), end=(1.0, 3.0, 5.0), direction=1)])
+    e = read_dff(write_dff(_wrap(geom))).geometries[0].ext_2dfx.entries[0]
+    assert e.effect_id == 10
+    assert e.direction == 1
+    assert e.top == (1.0, 3.0, 5.0)
+
+
+def test_2dfx_raw_unknown_preserved():
+    """Undecoded types (here a fake type 8 trigger point) must round-trip
+    byte-exact instead of being dropped."""
+    import struct
+    geom = _basic_geom()
+    payload = struct.pack('<I', 42)
+    geom.ext_2dfx = Extension2dfx(entries=[
+        RawUnknown2dfx(effect_id=8, loc=(0.0, 0.0, 0.0), raw=payload)])
+    e = read_dff(write_dff(_wrap(geom))).geometries[0].ext_2dfx.entries[0]
+    assert isinstance(e, RawUnknown2dfx)
+    assert e.effect_id == 8
+    assert e.raw == payload
 
 
 # ── Frame hierarchy ──────────────────────────────────────────────

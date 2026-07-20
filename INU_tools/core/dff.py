@@ -694,8 +694,8 @@ class BreakableData:
 #   4 = Sun reflection / sun glare         — VC + SA
 #   6 = Enter-Exit, 7 = Street sign, 8 = Trigger point,
 #   9 = Cover point, 10 = Escalator        — SA-specific extras
-#       (we don't currently write 6-10 so they're omitted here;
-#       adding them would require type-specific binary writers).
+#       6/7/10 are now written by typed serializers below; 8/9 (and any
+#       other type) round-trip byte-exact via RawUnknown2dfx.
 #
 # IMPORTANT — storage location differs across games:
 #   * III / VC: 2DFX entries live in IDE files (``2dfx`` section).
@@ -712,7 +712,7 @@ class BreakableData:
 _2DFX_ALLOWLIST_BY_RW_VERSION = {
     0x33000: frozenset({0, 1, 2}),          # III: + Strobe
     0x35000: frozenset({0, 1, 2, 3, 4}),    # VC:  + Strobe + PedAttractor + SunGlare
-    0x36000: frozenset({0, 1, 3, 4}),       # SA:  Strobe dropped (Type 2 removed)
+    0x36000: frozenset({0, 1, 3, 4, 6, 7, 10}),  # SA:  + Enter/Exit, RoadSign, Escalator
 }
 
 
@@ -778,6 +778,74 @@ class SunGlare2dfx:
 
 
 @dataclass
+class EnterExit2dfx:
+    """Enter/Exit marker (type 6) — interior teleport pairs.
+
+    Payload = 44 bytes. Layout verified against gtamods 2d_Effect (RW
+    Section) and DragonFF's parser (both agree on 44 bytes / field order):
+        enter_angle f, radius_x f, radius_y f, exit_loc 3f, exit_angle f,
+        interior u16, flags1 u8, sky_color u8, interior_name char[8],
+        time_on u8, time_off u8, flags2 u8, unknown u8.
+    """
+    effect_id: int = 6
+    loc: tuple = (0.0, 0.0, 0.0)
+    enter_angle: float = 0.0
+    approximation_radius_x: float = 0.0
+    approximation_radius_y: float = 0.0
+    exit_loc: tuple = (0.0, 0.0, 0.0)
+    exit_angle: float = 0.0
+    interior: int = 0
+    flags1: int = 0
+    sky_color: int = 0
+    interior_name: str = ""
+    time_on: int = 0
+    time_off: int = 0
+    flags2: int = 0
+    unknown: int = 0
+
+
+@dataclass
+class RoadSign2dfx:
+    """Road/street sign (type 7) — up to 4 lines of on-mesh text.
+
+    Payload = 88 bytes: size 2f (w,h), rotation 3f, flags u16, then four
+    16-byte text lines + 2 pad bytes. ``flags`` packs line count (bits 0-1),
+    max symbols/line (bits 2-3) and text colour (bits 4-5).
+    """
+    effect_id: int = 7
+    loc: tuple = (0.0, 0.0, 0.0)
+    size: tuple = (1.0, 1.0)
+    rotation: tuple = (0.0, 0.0, 0.0)
+    flags: int = 0
+    text_lines: list = field(default_factory=lambda: ["", "", "", ""])
+
+
+@dataclass
+class Escalator2dfx:
+    """Escalator (type 10). Payload = 40 bytes: bottom 3f, top 3f, end 3f,
+    direction u32 (0 = down, 1 = up). ``end`` Z matches top when going up,
+    bottom when going down."""
+    effect_id: int = 10
+    loc: tuple = (0.0, 0.0, 0.0)
+    bottom: tuple = (0.0, 0.0, 0.0)
+    top: tuple = (0.0, 0.0, 0.0)
+    end: tuple = (0.0, 0.0, 0.0)
+    direction: int = 0
+
+
+@dataclass
+class RawUnknown2dfx:
+    """Byte-exact passthrough for 2DFX entry types we don't decode into
+    typed objects (e.g. 2/5 interior, 8 trigger point, 9 cover point, or any
+    future type). Preserving the raw payload means round-tripping a DFF never
+    silently drops effects the engine still reads — the previous reader
+    skipped unknown entries entirely."""
+    effect_id: int = 0
+    loc: tuple = (0.0, 0.0, 0.0)
+    raw: bytes = b""
+
+
+@dataclass
 class Extension2dfx:
     """Container for all 2DFX effect entries."""
     entries: list = field(default_factory=list)  # list of Light2dfx/Particle2dfx/etc.
@@ -795,7 +863,10 @@ class Extension2dfx:
             return b''
 
         allowed = _allowed_2dfx_ids(rw_version)
-        kept = [e for e in self.entries if e.effect_id in allowed]
+        # RawUnknown entries are verbatim passthrough of already-valid bytes —
+        # keep them regardless of the typed allowlist so nothing is dropped.
+        kept = [e for e in self.entries
+                if isinstance(e, RawUnknown2dfx) or e.effect_id in allowed]
         if not kept:
             return b''
 
@@ -2408,6 +2479,40 @@ def _write_2dfx_entry(entry) -> bytes:
     elif isinstance(entry, SunGlare2dfx):
         return b''
 
+    elif isinstance(entry, EnterExit2dfx):
+        data = pack('<3f', entry.enter_angle,
+                    entry.approximation_radius_x, entry.approximation_radius_y)
+        data += pack('<3f', *entry.exit_loc)
+        data += pack('<f', entry.exit_angle)
+        data += pack('<H', entry.interior & 0xFFFF)
+        data += pack('<BB', entry.flags1 & 0xFF, entry.sky_color & 0xFF)
+        name = entry.interior_name.encode('ascii', errors='replace')[:8]
+        data += name + b'\x00' * (8 - len(name))
+        data += pack('<4B', entry.time_on & 0xFF, entry.time_off & 0xFF,
+                     entry.flags2 & 0xFF, entry.unknown & 0xFF)
+        return data   # 44 bytes
+
+    elif isinstance(entry, RoadSign2dfx):
+        data = pack('<2f', entry.size[0], entry.size[1])
+        data += pack('<3f', *entry.rotation)
+        data += pack('<H', entry.flags & 0xFFFF)
+        lines = list(entry.text_lines) + ["", "", "", ""]
+        for line in lines[:4]:
+            b = line.encode('ascii', errors='replace')[:16]
+            data += b + b'\x00' * (16 - len(b))
+        data += b'\x00\x00'   # 2 pad bytes
+        return data   # 88 bytes
+
+    elif isinstance(entry, Escalator2dfx):
+        data = pack('<3f', *entry.bottom)
+        data += pack('<3f', *entry.top)
+        data += pack('<3f', *entry.end)
+        data += pack('<I', entry.direction & 0xFFFFFFFF)
+        return data   # 40 bytes
+
+    elif isinstance(entry, RawUnknown2dfx):
+        return entry.raw
+
     return b''
 
 
@@ -2465,6 +2570,47 @@ def _read_2dfx_plugin(r: BinaryReader, size: int) -> Extension2dfx:
 
         elif entry_type == 4:  # Sun Glare
             ext.entries.append(SunGlare2dfx(loc=loc))
+
+        elif entry_type == 6:  # Enter/Exit
+            ee = EnterExit2dfx(loc=loc)
+            (ee.enter_angle, ee.approximation_radius_x,
+             ee.approximation_radius_y) = r.read('<3f')
+            ee.exit_loc = r.read('<3f')
+            ee.exit_angle = r.read_one('<f')
+            ee.interior = r.read_one('<H')
+            ee.flags1, ee.sky_color = r.read('<BB')
+            nm = r.read_bytes(8)
+            end_n = nm.find(b'\x00')
+            ee.interior_name = nm[:end_n if end_n >= 0 else 8].decode('ascii', errors='replace')
+            ee.time_on, ee.time_off, ee.flags2, ee.unknown = r.read('<4B')
+            ext.entries.append(ee)
+
+        elif entry_type == 7:  # Road / street sign
+            rs = RoadSign2dfx(loc=loc)
+            rs.size = r.read('<2f')
+            rs.rotation = r.read('<3f')
+            rs.flags = r.read_one('<H')
+            lines = []
+            for _ in range(4):
+                raw = r.read_bytes(16)
+                end_l = raw.find(b'\x00')
+                lines.append(raw[:end_l if end_l >= 0 else 16].decode('ascii', errors='replace'))
+            rs.text_lines = lines
+            ext.entries.append(rs)
+
+        elif entry_type == 10:  # Escalator
+            es = Escalator2dfx(loc=loc)
+            es.bottom = r.read('<3f')
+            es.top = r.read('<3f')
+            es.end = r.read('<3f')
+            es.direction = r.read_one('<I')
+            ext.entries.append(es)
+
+        else:
+            # Types we don't decode (2/5 interior, 8 trigger, 9 cover, …):
+            # keep the payload verbatim so re-export doesn't drop them.
+            raw = r.read_bytes(entry_size)
+            ext.entries.append(RawUnknown2dfx(effect_id=entry_type, loc=loc, raw=raw))
 
         r.seek(entry_start + entry_size)
 

@@ -1929,7 +1929,10 @@ class GTATOOLS_OT_prelight_preview(bpy.types.Operator):
     """Переключить превью prelight - показать vertex colors с текстурами"""
     bl_idname = "gtatools.prelight_preview"
     bl_label = "INU: Toggle Prelight Preview"
-    bl_options = {'REGISTER', 'UNDO'}
+    # No 'UNDO': non-destructive viewport preview, and the undo snapshot
+    # (whole-scene on big maps) was the main cost per click — same reason
+    # as GTATOOLS_OT_alpha_preview below. Обратный ход — та же кнопка.
+    bl_options = {'REGISTER'}
 
     enable: BoolProperty(
         name="Enable",

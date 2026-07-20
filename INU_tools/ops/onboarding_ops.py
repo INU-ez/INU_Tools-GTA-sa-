@@ -32,31 +32,45 @@ def _doc_url_for_active_locale():
 
 # What's-new popup body. Two locales — kept hardcoded rather than
 # parsing the bl_info changelog so the layout stays curated and we
-# don't ship 4000+ lines of release notes to the modal.
+# don't ship 4000+ lines of release notes to the modal. The version number
+# in the header is filled in at draw time from bl_info so it never goes
+# stale on a bump (it used to be hardcoded «v1.7.0»).
+_WHATS_NEW_HEADER_RU = "Анимации IFP, Альфа-материалы, IK Rig"
+_WHATS_NEW_HEADER_EN = "IFP animations, Alpha materials, IK Rig"
+
 _WHATS_NEW_RU = [
-    ("v1.7.0 — IK Rig, Animated Map Object, Profile System", 'PRESET'),
-    ("",  None),
+    ("• Анимации IFP: импорт/экспорт + зеркало L/R", 'ACTION'),
     ("• IK Rig для педов — Add IK Rig + Floor", 'ARMATURE_DATA'),
     ("• Animated Map Object (мельницы, краны)", 'CON_FOLLOWPATH'),
+    ("• Массовая замена альфа-режимов материалов", 'MATERIAL'),
     ("• Frame Hierarchy Editor + Validate Vehicle/Ped", 'OUTLINER'),
     ("• Paintjob (Pay'n'Spray) на материалах", 'BRUSH_DATA'),
-    ("• Adaptive grid auto-split (quadtree)", 'GRID'),
-    ("• Profile system: наборы N-панелей", 'PRESET'),
-    ("• Drag-drop DFF/COL во viewport", 'IMPORT'),
-    ("• Smart auto-TXD picker", 'TEXTURE'),
+    ("• Profile: наборы N-панелей", 'PRESET'),
+    ("• Drag-drop DFF/COL + Smart auto-TXD", 'IMPORT'),
 ]
 _WHATS_NEW_EN = [
-    ("v1.7.0 — IK Rig, Animated Map Object, Profile System", 'PRESET'),
-    ("",  None),
+    ("• IFP animations: import/export + L/R mirror", 'ACTION'),
     ("• IK Rig for peds — Add IK Rig + Floor", 'ARMATURE_DATA'),
     ("• Animated Map Object (windmills, cranes)", 'CON_FOLLOWPATH'),
+    ("• Bulk alpha blend-mode replace on materials", 'MATERIAL'),
     ("• Frame Hierarchy Editor + Validate Vehicle/Ped", 'OUTLINER'),
     ("• Paintjob (Pay'n'Spray) on materials", 'BRUSH_DATA'),
-    ("• Adaptive grid auto-split (quadtree)", 'GRID'),
-    ("• Profile system: N-sidebar panel sets", 'PRESET'),
-    ("• Drag-drop DFF/COL into viewport", 'IMPORT'),
-    ("• Smart auto-TXD picker", 'TEXTURE'),
+    ("• Profile: N-sidebar panel sets", 'PRESET'),
+    ("• Drag-drop DFF/COL + Smart auto-TXD", 'IMPORT'),
 ]
+
+
+def _addon_version_str():
+    """Current addon version as 'vX.Y.Z', read from bl_info so the what's-new
+    header tracks the real version instead of a stale hardcoded one."""
+    try:
+        from .. import bl_info
+        v = bl_info.get("version")
+        if v:
+            return "v" + ".".join(str(n) for n in v)
+    except Exception:
+        pass
+    return ""
 
 
 # ── Operators ───────────────────────────────────────────────────────
@@ -108,7 +122,16 @@ class GTATOOLS_OT_whats_new(bpy.types.Operator):
 
     def draw(self, context):
         layout = self.layout
-        body = _WHATS_NEW_RU if get_locale() == 'ru' else _WHATS_NEW_EN
+        is_ru = get_locale() == 'ru'
+        header = _WHATS_NEW_HEADER_RU if is_ru else _WHATS_NEW_HEADER_EN
+        body = _WHATS_NEW_RU if is_ru else _WHATS_NEW_EN
+
+        # Version header, filled from bl_info at draw time (never stale).
+        ver = _addon_version_str()
+        title = f"{ver} — {header}" if ver else header
+        layout.row().label(text=title, **inu_icon(safe_icon('PRESET')))
+        layout.row().label(text="")   # divider
+
         for text, icon in body:
             row = layout.row()
             if not text:

@@ -1498,6 +1498,73 @@ def _modulate_preset_values(mode, mix=0.15, contrast=0.0, gamma=1.0):
             contrast, gamma)
 
 
+# Ноды старого «Modulate»-превью (8 нод). В актуальном графе их быть не
+# должно: их наличие = материал из старого .blend, граф надо пересобрать.
+# Prelight_Mix / Prelight_VertexColor сюда НЕ входят — это ноды нового
+# минимального превью.
+PRELIGHT_LEGACY_NODES = (
+    "Prelight_Bright", "Prelight_Ambient", "Prelight_PostFx1",
+    "Prelight_PostFx2", "Prelight_BrightContrast", "Prelight_Gamma",
+)
+
+
+def _preview_graph_is_current(nodes, principled, base_color,
+                              vc_node, mix_node, color_name):
+    """True, если граф превью в материале УЖЕ собран как надо.
+
+    Нужно, чтобы `setup_prelight_preview` был идемпотентным: материалы в
+    GTA-сценах общие на сотни объектов, и без этой проверки каждый объект
+    заново перевязывал links в одном и том же material.node_tree — каждая
+    правка помечает дерево грязным, и EEVEE перекомпилирует шейдер. На карте
+    в 1500+ объектов это выливалось в бесконечную «загрузку нодов»."""
+    if vc_node is None or mix_node is None:
+        return False
+    if any(nodes.get(nm) is not None for nm in PRELIGHT_LEGACY_NODES):
+        return False   # остатки старого modulate-графа — пересобрать
+
+    if hasattr(vc_node, 'layer_name'):
+        if vc_node.layer_name != color_name:
+            return False
+    elif hasattr(vc_node, 'attribute_name'):
+        if vc_node.attribute_name != color_name:
+            return False
+    else:
+        return False
+
+    b = compat.mix_input_b(mix_node)
+    if not b.is_linked or b.links[0].from_node is not vc_node:
+        return False
+    if not base_color.is_linked or base_color.links[0].from_node is not mix_node:
+        return False
+
+    # Mix.A без текстуры допустим только если текстуры в графе и правда нет
+    # (иначе — материал сменили/починили, надо перевязать).
+    a = compat.mix_input_a(mix_node)
+    if not a.is_linked and _find_base_image_socket(nodes, principled) is not None:
+        return False
+    return True
+
+
+def _preview_graph_is_absent(nodes, principled, base_color,
+                            vc_node, mix_node, mat):
+    """True, если в материале уже нет ни наших нод, ни следов превью —
+    выключать нечего. Парная к `_preview_graph_is_current` проверка,
+    чтобы повторное «выключить» не дёргало общий материал по кругу."""
+    if vc_node is not None or mix_node is not None:
+        return False
+    if any(nodes.get(nm) is not None for nm in PRELIGHT_LEGACY_NODES):
+        return False
+    if 'prelight_alpha_mode' in mat or 'prelight_orig_blend' in mat:
+        return False
+    if nodes.get("Prelight_AlphaMult") is not None:
+        return False
+    # Base Color должен уже вести к текстуре (или ни к чему, если её нет).
+    if not base_color.is_linked and \
+            _find_base_image_socket(nodes, principled) is not None:
+        return False
+    return True
+
+
 def setup_prelight_preview(obj, enable=True):
     """Превью прилайта: умножает vertex colors на текстуру в Material Preview.
 
@@ -1506,6 +1573,11 @@ def setup_prelight_preview(obj, enable=True):
     Лёгкий для компиляции шейдера, поэтому переключение моделей не тормозит.
     (Старый режим «Modulate» с 8 нодами убран; оставшиеся modulate-ноды из
     старых .blend здесь вычищаются.)
+
+    Идемпотентно: материал, уже находящийся в нужном состоянии, не трогается
+    вовсе — ни одной правки нод/links, значит и ни одной перекомпиляции
+    шейдера. Это принципиально для карт, где один материал висит на сотнях
+    объектов и функция вызывается для каждого из них.
     """
     if obj is None or obj.type != 'MESH':
         return False, "Select a mesh object!"
@@ -1520,8 +1592,7 @@ def setup_prelight_preview(obj, enable=True):
     color_name = color_attr.name
 
     # Устаревшие modulate-ноды — могли остаться в файлах со старым превью.
-    _LEGACY = ("Prelight_Bright", "Prelight_Ambient", "Prelight_PostFx1",
-               "Prelight_PostFx2", "Prelight_BrightContrast", "Prelight_Gamma")
+    _LEGACY = PRELIGHT_LEGACY_NODES
 
     modified_count = 0
 
@@ -1543,6 +1614,16 @@ def setup_prelight_preview(obj, enable=True):
 
         vc_node = nodes.get("Prelight_VertexColor")
         mix_node = nodes.get("Prelight_Mix")
+
+        # Уже в нужном состоянии — не трогаем граф (см. докстринг).
+        if enable:
+            if _preview_graph_is_current(nodes, principled, base_color,
+                                         vc_node, mix_node, color_name):
+                continue
+        else:
+            if _preview_graph_is_absent(nodes, principled, base_color,
+                                        vc_node, mix_node, mat):
+                continue
 
         if enable:
             # Текстура: сохранённый вход Mix.A (если превью уже стоит), иначе
@@ -1653,12 +1734,15 @@ def setup_prelight_preview(obj, enable=True):
             modified_count += 1
 
     # Флаг состояния на каждом материале — кнопки UI смотрят на него.
+    # Пишем только если значение реально меняется: запись ID-свойства метит
+    # материал грязным, а на карте один материал общий для сотен объектов.
     for mat_slot in obj.material_slots:
         mat = mat_slot.material
         if mat is None:
             continue
         if enable:
-            mat['prelight_preview_active'] = True
+            if not mat.get('prelight_preview_active'):
+                mat['prelight_preview_active'] = True
         else:
             try:
                 if 'prelight_preview_active' in mat:

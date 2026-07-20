@@ -873,6 +873,10 @@ class Floater:
         if not L['collapsed']:
             self.draw_body(context, L)
             self._draw_status_strip(L)
+        # NOTE: the open dropdown is NOT drawn here. It's painted directly in
+        # blit_pass, on top of the blitted panel, so it can hang DOWNWARD past
+        # the panel without being clipped by the offscreen buffer edge (and
+        # without a per-open buffer resize that made the window vanish).
 
     def draw(self, context):
         """Прямая (без offscreen) однопроходная отрисовка — используется,
@@ -913,19 +917,33 @@ class Floater:
         L = getattr(self, '_last_L', None)
         if L is None:
             return
+        blitted = False
         if getattr(self, '_os', None) is not None and getattr(self, '_os_blit', None):
             try:
                 px, py, W, H = self._os_blit
                 GS._draw_offscreen_texture(self._os.texture_color, px, py, W, H,
                                            _OS_BLIT_GAMMA, _OS_BLIT_PREMULT)
-                return
+                blitted = True
             except Exception as e:
                 print(f"[INU Floater] blit ({self.name}): {e}")
-        # Фолбэк — прямая отрисовка этого кадра.
-        try:
-            self._draw_content(context, L)
-        except Exception as e:
-            print(f"[INU Floater] draw error in {self.name}: {e}")
+        if not blitted:
+            # Фолбэк — прямая отрисовка этого кадра.
+            try:
+                self._draw_content(context, L)
+            except Exception as e:
+                print(f"[INU Floater] draw error in {self.name}: {e}")
+
+        # Open dropdown drawn DIRECTLY on top of the panel (region pixel
+        # coords, like the fallback path) — NOT into the cached offscreen
+        # buffer. This lets a menu hang downward past the panel bottom without
+        # being clipped by the buffer edge, and never resizes the buffer.
+        if not L.get('collapsed') and self.state.open_dropdown is not None:
+            dd = getattr(self, '_draw_open_dropdown', None)
+            if dd is not None:
+                try:
+                    dd(context, L)
+                except Exception as e:
+                    print(f"[INU Floater] dropdown draw ({self.name}): {e}")
 
     def _render_offscreen(self, context, L):
         """Создать/переиспользовать GPU-offscreen и отрендерить в него
@@ -933,6 +951,10 @@ class Floater:
         blit_pass. Координаты блита сохраняются в self._os_blit."""
         x, y, w, h = int(L['x']), int(L['y']), int(L['w']), int(L['h'])
         M = _OS_PAD
+        # Base bounds = panel + pad. An open dropdown that extends past the
+        # bottom is handled by making it open UPWARD (see _dropdown_layout),
+        # so it stays inside this buffer — no per-open resize (that resize
+        # was making the whole window vanish when the menu opened).
         px, py = x - M, y - M
         W, H = w + 2 * M, h + 2 * M
         self._os_blit = None
@@ -1325,6 +1347,40 @@ class Floater:
                     _tag_redraw_view3d(context)
                 return 'PASS_THROUGH'
 
+        # Window-drag fast path: while the panel is being dragged its layout
+        # doesn't change (only the origin moves), so skip the per-move
+        # compute_layout + body hover-tests — reposition using the size cached
+        # at drag start. This removes the dominant per-move CPU cost; the
+        # viewport still has to redraw (an overlay can't move without it), but
+        # the layout solver no longer re-runs on every mouse-move. Everything
+        # else (clicks, hover, release, sliders, open dropdown) falls through
+        # to the full path below.
+        if (event.type == 'MOUSEMOVE' and st.drag_active
+                and st.drag_slider is None and st.open_dropdown is None
+                and getattr(st, 'drag_w', None) is not None):
+            # NOTE: deliberately do NOT set self._dirty here. A pure move
+            # doesn't change the panel's pixels — the cached offscreen texture
+            # can just be re-blitted at the new position, skipping a full GPU
+            # re-render every mouse-move. render_pass still updates the blit
+            # position from the new x/y without redrawing the content.
+            try:
+                with bpy.context.temp_override(area=area, region=region):
+                    w, h = st.drag_w, st.drag_h
+                    ox, oy = st.drag_offset
+                    nx = max(_VIEWPORT_MARGIN_LEFT,
+                             min(mx - ox,
+                                 region.width - w - _VIEWPORT_MARGIN_RIGHT))
+                    ny = max(_VIEWPORT_MARGIN_BOTTOM,
+                             min(my - oy,
+                                 region.height - h - _VIEWPORT_MARGIN_TOP))
+                    nx, ny = self._collision_adjust(bpy.context, nx, ny, w, h)
+                    self._set_prop(bpy.context.scene, 'x', nx)
+                    self._set_prop(bpy.context.scene, 'y', ny)
+                    _tag_redraw_view3d(bpy.context)
+                return 'RUNNING_MODAL'
+            except Exception:
+                pass   # any hiccup → fall through to the robust full path
+
         # Past the cheap reject → this event touches the window; its
         # appearance may change (hover highlight, click, drag), so
         # invalidate the offscreen cache to re-render this frame.
@@ -1591,6 +1647,10 @@ class Floater:
         if _hit(mx, my, L['x'], L['y'], L['w'], L['h']):
             st.drag_active = True
             st.drag_offset = (mx - L['x'], my - L['y'])
+            # Cache the panel size so the drag fast-path in modal() can
+            # reposition without a full compute_layout every mouse-move.
+            st.drag_w = L['w']
+            st.drag_h = L['h']
             return 'RUNNING_MODAL'
         return 'PASS_THROUGH'
 

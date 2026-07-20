@@ -447,10 +447,17 @@ def _write_face_v2(w: BinaryWriter, f: ColFace):
 
 
 def _write_vertex_compressed(w: BinaryWriter, v: Vec3):
-    """Write vertex as int16 * 128."""
-    w.write_i16(max(-32768, min(32767, int(v.x * 128))))
-    w.write_i16(max(-32768, min(32767, int(v.y * 128))))
-    w.write_i16(max(-32768, min(32767, int(v.z * 128))))
+    """Write vertex as int16 * 128.
+
+    Uses round() (nearest) rather than int() (truncate toward zero): plain
+    truncation biases every vertex ~half a quantum toward the origin (up to
+    1/128 ≈ 8 mm), and the systematic bias also pushes near-coincident verts
+    together, spawning zero-area collision faces. Rounding halves the error
+    and reduces those collapses.
+    """
+    w.write_i16(max(-32768, min(32767, round(v.x * 128))))
+    w.write_i16(max(-32768, min(32767, round(v.y * 128))))
+    w.write_i16(max(-32768, min(32767, round(v.z * 128))))
 
 
 def _write_vertex_float(w: BinaryWriter, v: Vec3):

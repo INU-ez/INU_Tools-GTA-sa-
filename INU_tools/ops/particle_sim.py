@@ -463,6 +463,19 @@ def _tick():
                 del _sim_state[dead]
                 _emit_accum.pop(dead, None)
 
+        # Force the viewport to show THIS tick. Writing the mesh from a timer
+        # doesn't reliably schedule a redraw, so without this the sim only
+        # refreshes whenever the viewport happens to redraw (playback at the
+        # scene's fps — 24 by default — or mouse movement), making it look
+        # like it runs at 24 fps. Tagging here locks the visible rate to our
+        # 30 Hz tick regardless of scene fps.
+        if active_names:
+            wm = bpy.context.window_manager
+            for window in (wm.windows if wm else ()):
+                for area in window.screen.areas:
+                    if area.type == 'VIEW_3D':
+                        area.tag_redraw()
+
     except Exception as e:
         print(f"[2DFX PSim] tick error: {e}")
 

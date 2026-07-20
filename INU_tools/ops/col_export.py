@@ -109,6 +109,44 @@ def _get_surface_from_material(mat, target_game: str = '') -> Surface:
 _COL_VERSION_TO_GAME = {1: 'III', 2: 'VC', 3: 'SA'}
 
 
+def _drop_degenerate_faces(bm, compressed: bool):
+    """Remove degenerate triangles that would produce broken collision.
+
+    Runs after triangulation. Two failure modes are cleaned:
+
+      * Zero-area / collinear triangles (area < 1e-4) — a sliver produced by
+        triangulating a concave or non-planar quad/n-gon. These are invisible
+        to the pre-flight "loose vertex" / "n-gon" checks (all 3 verts are
+        attached and it is a triangle, not an n-gon), yet the game treats a
+        zero-area face as a hole → "invisible walls" / missing collision.
+
+      * On compressed formats (COL2+), triangles that stay non-degenerate at
+        full precision but *collapse* once vertices snap to the int16/128 grid:
+        if any two of the three snapped positions land on the same integer
+        cell the face becomes zero-area in the written file. We reproduce the
+        exact round(co*128) snap the writer uses so the check matches reality.
+
+    Loose verts left behind by the face removal are dropped too, so the vertex
+    count and file size don't carry dead geometry.
+    """
+    dead = []
+    for face in bm.faces:
+        if face.calc_area() < 1e-4:
+            dead.append(face)
+            continue
+        if compressed:
+            snapped = {(round(v.co.x * 128), round(v.co.y * 128),
+                        round(v.co.z * 128)) for v in face.verts}
+            if len(snapped) < 3:   # two verts fell into the same cell
+                dead.append(face)
+    if dead:
+        bmesh.ops.delete(bm, geom=dead, context='FACES_ONLY')
+        loose = [v for v in bm.verts if not v.link_faces]
+        if loose:
+            bmesh.ops.delete(bm, geom=loose, context='VERTS')
+    return len(dead)
+
+
 def _collect_mesh(obj, model: ColModel):
     """Triangulate a mesh object and add its vertices/faces to the model."""
     mesh = obj.data
@@ -121,6 +159,7 @@ def _collect_mesh(obj, model: ColModel):
         mat.translation = (0, 0, 0)
         bm.transform(mat)
         bmesh.ops.triangulate(bm, faces=bm.faces[:])
+        _drop_degenerate_faces(bm, compressed=model.version >= 2)
         bm.verts.index_update()
 
         vert_offset = len(model.vertices)
@@ -181,6 +220,7 @@ def _collect_shadow_mesh(obj, model: ColModel):
         mat.translation = (0, 0, 0)
         bm.transform(mat)
         bmesh.ops.triangulate(bm, faces=bm.faces[:])
+        _drop_degenerate_faces(bm, compressed=model.version >= 2)
         bm.verts.index_update()
 
         vert_offset = len(model.shadow_vertices)

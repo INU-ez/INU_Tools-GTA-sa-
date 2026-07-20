@@ -17,6 +17,7 @@ from ..core.dff import (
     UserData, UserDataSection,
     USERDATA_INT, USERDATA_FLOAT, USERDATA_STRING,
     Extension2dfx, Light2dfx, Particle2dfx, PedAttractor2dfx, SunGlare2dfx,
+    EnterExit2dfx, RoadSign2dfx, Escalator2dfx, RawUnknown2dfx,
     UVAnim, UVAnimDict, UVAnimKeyframe,
     BreakableData,
     GTA_SA_VERSION, write_dff_file,
@@ -1367,6 +1368,61 @@ def _collect_2dfx(objects) -> Extension2dfx:
 
         elif effect_type == 'SUN_GLARE':
             ext.entries.append(SunGlare2dfx(loc=loc))
+
+        elif effect_type == 'ENTER_EXIT':
+            ee = EnterExit2dfx(loc=loc)
+            ee.enter_angle = inu.ee_enter_angle
+            ee.approximation_radius_x = inu.ee_radius_x
+            ee.approximation_radius_y = inu.ee_radius_y
+            ee.exit_loc = tuple(inu.ee_exit_loc)
+            ee.exit_angle = inu.ee_exit_angle
+            ee.interior = int(inu.ee_interior)
+            ee.flags1 = int(inu.ee_flags1)
+            ee.sky_color = int(inu.ee_sky_color)
+            ee.interior_name = inu.ee_interior_name
+            ee.time_on = int(inu.ee_time_on)
+            ee.time_off = int(inu.ee_time_off)
+            ee.flags2 = int(inu.ee_flags2)
+            ee.unknown = int(inu.ee_unknown)
+            ext.entries.append(ee)
+
+        elif effect_type == 'ROAD_SIGN':
+            rs = RoadSign2dfx(loc=loc)
+            rs.size = tuple(inu.sign_size)
+            rs.rotation = tuple(inu.sign_rotation)
+            rs.text_lines = [inu.sign_text0, inu.sign_text1,
+                             inu.sign_text2, inu.sign_text3]
+            # Pack friendly fields → flags byte (bits 0-1 lines-1,
+            # 2-3 max chars, 4-5 colour).
+            mc = {'16': 0, '2': 1, '4': 2, '8': 3}.get(inu.sign_maxchars, 0)
+            col = {'WHITE': 0, 'BLACK': 1, 'GREY': 2, 'RED': 3}.get(inu.sign_color, 0)
+            rs.flags = ((max(1, inu.sign_lines) - 1) & 0x3) | ((mc & 0x3) << 2) | ((col & 0x3) << 4)
+            ext.entries.append(rs)
+
+        elif effect_type == 'ESCALATOR':
+            # Points are stored relative to the marker (Empty local space).
+            # Push each through the Empty's world matrix, then into mesh-local
+            # space — so the exported points match exactly what the preview
+            # shows, robust to the Empty being moved / rotated / scaled.
+            import mathutils
+
+            def _esc_pt(off):
+                world = obj.matrix_world @ mathutils.Vector((off[0], off[1], off[2]))
+                lp = (mesh_inv @ world) if mesh_inv is not None else world
+                return (lp.x, lp.y, lp.z)
+
+            es = Escalator2dfx(loc=loc)
+            es.bottom = _esc_pt(inu.esc_bottom)
+            es.top = _esc_pt(inu.esc_top)
+            es.end = _esc_pt(inu.esc_end)
+            es.direction = int(inu.esc_direction)
+            ext.entries.append(es)
+
+        elif effect_type == 'RAW_2DFX':
+            raw = bytes(int(b) & 0xFF for b in obj.get('2dfx_raw_bytes', []))
+            ext.entries.append(RawUnknown2dfx(
+                effect_id=int(obj.get('2dfx_raw_effect_id', 0)),
+                loc=loc, raw=raw))
 
     return ext if ext.entries else None
 
