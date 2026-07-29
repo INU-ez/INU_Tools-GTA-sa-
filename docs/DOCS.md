@@ -48,8 +48,12 @@
 - [Texture Browser](#texture-browser)
 - [Texture Baking](#texture-baking-210)
 - [Characters (Skinned DFF)](#characters-skinned-dff)
+- [Animated Map Objects](#animated-map-objects)
 - [Water IO](#water-io)
 - [Path IO](#path-io)
+- [Vehicles](#vehicles)
+- [Grass](#grass)
+- [X Radar Maker](#x-radar-maker)
 - [LightMap (beta_MTA)](#lightmap-beta_mta)
 - [Integrations](#integrations)
 - [Asset Library](#asset-library)
@@ -458,7 +462,7 @@ Rows go to the **picked file** (the chosen file always wins — no silent split)
 - Set **Game Root** to GTA SA installation folder
 - Select **Region** (auto-detected from gta.dat: LA, SF, VEGAS, COUNTRY, etc.)
 - Make sure **Skip 2DFX** is on for map import (default) — otherwise every street light, corona, and ped-attractor in the district becomes a Blender Light/Empty object (thousands of them) and the viewport grinds to a halt. Leave it off only when importing a single model where you want the effects.
-- **Load COL** toggle (default on) — pulls collisions from the cache alongside DFF geometry. Needed for the round-trip workflow (import part of the map → edit → export to IMG in another build). Turn it off if you only care about geometry and want a lighter scene.
+- **Load COL** toggle (default off) — pulls collisions from the cache alongside DFF geometry. Needed for the round-trip workflow (import part of the map → edit → export to IMG in another build). Turn it off if you only care about geometry and want a lighter scene.
 
 **Step 2: Extract Resources**
 - Click **Extract Resources** — extracts all DFF, COL, and textures from IMG archives into `.inu_cache/` folder next to your .blend file (so save the .blend first)
@@ -470,13 +474,13 @@ Rows go to the **picked file** (the chosen file always wins — no silent split)
 - If cache is empty, the operator reports *"Cache is empty — run «Extract Resources» first"* and bails out
 - DFFs are parsed in parallel (4-worker thread pool, numpy releases GIL) while the main thread creates Blender objects — no wait between stages
 - COLs are parsed in the same pool. SA ships district-wide lib-COL files (LAs.col, LAn.col …) each containing hundreds of ColModel entries, so the map is keyed by model name (not filename); a DFF named `building01` automatically gets its `building01` ColModel if one exists anywhere in the cached COL libs
-- Objects auto-sorted into collections (default mode):
+- Objects auto-sorted into collections — with **Group by IPL** off, into four flat buckets:
   - **Map_DFF_Far** — draw distance 300+
   - **Map_DFF_Mid** — draw distance 100-299
   - **Map_DFF_Near** — draw distance <100
   - **Map_LOD** — LOD models (detected by name: `LODfoo`, `foo_LOD`, `foo1LOD`, `modeLODlaett`)
   - **Map_COL** — collision meshes (created lazily, only if `Load COL` is on AND at least one match is found). Each COL object shares the transform of its DFF instance
-- **Group by IPL** toggle (default off) — when ON, the four `Map_DFF_*` / `Map_LOD` buckets and the global `Map_COL` are replaced by per-IPL collection trees, named after the source IPL filenames (no `Map_` prefix — keeps the round-trip readable, the parent's name matches the original IPL exactly):
+- **Group by IPL** toggle (**default on**) — instead of the four flat `Map_DFF_*` / `Map_LOD` buckets and the global `Map_COL`, objects go into per-IPL collection trees, named after the source IPL filenames (no `Map_` prefix — keeps the round-trip readable, the parent's name matches the original IPL exactly):
   ```
   vegasN/
     vegasN_DFF
@@ -1584,189 +1588,6 @@ force: (0, 0, -9.8)
 
 ---
 
-## Animated Map Objects
-
-**Panel:** View3D → Sidebar (N) → GTA Tools → Animated Map Object
-
-GTA SA's standard way to animate **static map props with moving parts** — windmills, cranes, weather vanes, gate doors, propellers, fans. INU Tools uses an **Empty-rig** approach (mimics the Kams 3ds Max script) instead of an armature — this sidesteps the `rest_quat` bug of the bone-flow that caused IFP geometry stepping.
-
-### Required artifacts
-
-For one animated model the game needs **three coordinated artifacts**:
-
-| File | Contains |
-|------|----------|
-| `<base>.dff` | Frame hierarchy + HAnim PLG (marks animated "bones" by `bone_id`) + meshes |
-| `<base>.ifp` | One animation with a track per animated part |
-| IDE `anim` entry | `model_id, model_name, txd_name, anim_file, drawdist, flags` |
-
-At runtime: engine parses IDE → sees `anim` entry → loads DFF + IFP → applies the IFP track to the bone hierarchy from the DFF by matching frame names.
-
-INU automates **all three steps** via the **Empty-rig** flow.
-
-### 🚨 Critical rules (READ BEFORE STARTING)
-
-1. **Model name length ≤ 12 chars.** GTA SA uses fixed-size buffers for frame/bone names. Names longer than ~16 chars **crash the game** when the IFP is applied (access violation at `0x534134`). Use short names like `mill`, `gate`, `vane` — NOT `airport_billboard_lvS`.
-2. **Animation name in IFP = model name.** The IDE's 4th field is the IFP pack name; inside the pack the game looks for an animation **named equal to the model name (2nd field)**. INU forces this automatically (`action_name=base` in the exporter).
-3. **IFP must live inside an IMG archive** (`gta3.img`), NOT as a loose file in `anim/`. The streaming system only scans IMG archives for map-object animations.
-4. **IDE entry must be in the `anim` section**, not `objs`. This tells the engine the model has an associated IFP.
-
-### Mesh preparation
-
-Split the model into **two (or more) parts**:
-- **Static mesh** — windmill base / crane chassis / vane frame. **Name:** `mill_base` (no suffix), **Model ID:** `0` (not set).
-- **Animated mesh** — blades / boom / rooster. **Name:** `mill_blades`, **Model ID:** unique game ID (e.g. `19000`).
-
-> ⚠️ **Model ID is set ONLY on the animated mesh** in Object → INU Tools → Model ID. On the static mesh it stays `0`. Both meshes end up in one `.dff` and the game references the whole model via the single `model_id` in the IDE anim entry.
-
-> ⚠️ **Keep names ≤ 12 chars.** The pivot is auto-named `<rig_name>_pivot1`. With rig `mill` (4 chars) → pivot `mill_pivot1` (11) is fine. With rig `airprtbits12_lvS` (16) → pivot `airprtbits12_lvS_pivot1` (23) → **GAME CRASHES**.
-
-### Setup
-
-Select the animated mesh, **N → Animated Map Object → Setup** (popup):
-- **Base name:** short, ≤ 12 chars. E.g. `mill`, `gate`, `vane`. Used as:
-  - Empty prefix (`mill_root`, `mill_pivot1`)
-  - File names (`mill.dff`, `mill.ifp`)
-  - `model_name` in IDE
-  - **Animation name in IFP** (forced by the exporter)
-- **Action name:** informational only (shown in Action Editor), does NOT control the IFP animation name
-- **Rotation axis:** Z (windmill blades) / Y (airplane propeller) / X (boom gate)
-- **Turns per cycle:** 1
-- **Duration:** 60 frames (= 2 sec @ FPS=30)
-- **Active mesh:** "Parent to pivot" — animated mesh attaches to pivot1
-
-Result:
-```
-mill_root           Empty (ARROWS)    bone_id=0   ← root, static base anchor
-└── mill_pivot1     Empty (SPHERE)    bone_id=1   ← rotates, Action on rotation_quaternion
-    └── mill_blades                                ← animated mesh
-```
-
-### Parent the static mesh
-
-The static mesh (`mill_base`) goes **under root**, NOT under pivot (otherwise it would rotate too):
-
-- **Manually:** select `mill_base` → Shift-click `mill_root` → `Ctrl+P → Object`
-- **Via eyedropper:** in N-panel, click the eyedropper "To root (static)" → click `mill_base` in viewport
-
-### Multi-part rig
-
-Two animated parts at once (blades + a rooster on top)? Press **N → Animated Map Object → +Pivot**:
-
-- Creates `mill_pivot2` (bone_id=2) with its own Action
-- Attach the second animated mesh under it via the "To pivot" eyedropper
-- The IFP will contain **both** tracks in one animation; both parts rotate independently in-game
-
-### Validate (optional, recommended)
-
-**N → Animated Map Object → Validate** checks:
-- All pivots under one root
-- Unique `inu_bone_id` (no collisions)
-- Action exists on each animated pivot
-- Mesh-children parented correctly
-- **Name length within the safe limit**
-
-Issues appear in Blender's Info area.
-
-### Export
-
-Select **any object of the rig** (Empty root, pivot, or mesh — the exporter auto-finds the rig via `_find_animobj_empty_root`). Press **`DFF+IFP+IDE`** in the N-panel (NOT the "Export" button — that's for standalone IFP flow). Popup:
-
-- **Folder:** where to write
-- **Base name:** `mill` — DFF / IFP / IDE `model_name`
-- **TXD name:** `mill` (usually same as base)
-- **Model ID:** auto-filled from the animated mesh
-- **Draw distance:** 300
-- **Write IDE entry:** ✓ — appends to the `anim` section of `Scene → INU Tools → IDE Path`
-- **IFP name:** empty = base name. Or a shared name like `myhood_anims` to bundle multiple rigs into one IFP
-- **IFP mode:** `Append` (default) — adds to existing .ifp without loss
-- **Existing IFP:** optional path to an existing file (e.g. `<game>/anim/myhood.ifp`)
-
-Outputs:
-- **`mill.dff`** — Empty hierarchy + static + animated meshes + HAnim PLG on root (with full bone tree) and each pivot
-- **`mill.ifp`** — **ANP3** format (SA compressed), one animation named `'mill'` (== base name), `bone_id=-1`, first keyframe at `t=0.0`
-- IDE file updated with:
-  ```
-  anim
-  19000, mill, mill, mill, 300, 0
-  end
-  ```
-
-### Place in-game
-
-1. **DFF + TXD → into `gta3.img`** via **N → IDE/IPL/IMG → Export to IMG**, or with IMG Tool manually
-2. **IFP → into `gta3.img` too** (NOT into loose `anim/` folder!). All vanilla animated map object IFPs live in `gta3.img` (counxref.ifp, airport.ifp, etc.).
-3. **IDE** already updated by the exporter
-4. **IPL** — place the object on the map via `Object IDE/IPL` (Properties → Object) → IPL Export. The game animates wherever an `inst <model_id>` row references this ID.
-
-**Rebuild Archive** after replacing any file in the IMG — without it the game uses stale offsets.
-
-After launch — the model animates at every placement.
-
-### 🛑 Pitfalls (ALL CRITICAL)
-
-#### A. Names
-
-| Problem | Symptom | Fix |
-|---------|---------|-----|
-| **Name > 12 chars** | Crash `0x534134` access violation on animation apply | Use short names (≤ 12 chars) |
-| **Cyrillic in Action name** | IFP gets name `'????????'` → game doesn't find animation | INU forces `action_name=base` (ASCII model name) — should auto-fix |
-| **Animation name ≠ model name** | Game doesn't find animation → silently doesn't animate (no crash) | INU does this automatically; don't hand-edit IDE |
-
-#### B. IDE
-
-| Problem | Symptom | Fix |
-|---------|---------|-----|
-| **Entry in `objs` section** | Game loads as a static object, IFP isn't applied | Move to `anim` section (INU does this automatically) |
-| **Flag ≠ 0 or = 2097152** | Optional. Vanilla uses `2097152` (bit 21) for animated. Works without it too. | Set `2097152` in the 6th field to match vanilla |
-| **Model ID on the static mesh** | Duplicate IDE entries, game gets confused | Static mesh Model ID must be `0` |
-
-#### C. IMG / streaming
-
-| Problem | Symptom | Fix |
-|---------|---------|-----|
-| **IFP in `anim/` folder** | Game can't find the animation (loose .ifp isn't scanned by streaming for map objects) | Put IFP in `gta3.img` |
-| **Forgot Rebuild Archive** | Stale offsets, new file invisible | After any IMG file replacement — Rebuild |
-| **Duplicate name across IDEs** | Conflict, undefined behavior | One model_name = one IDE entry across the whole mod |
-
-#### D. DFF internals (INU handles automatically)
-
-| Aspect | What INU does | Why |
-|--------|---------------|-----|
-| **HAnim PLG on root** | Writes full bone tree | Engine requires this for bone hierarchy |
-| **HAnim PLG on each pivot** | Minimal `{bone_id}` | Marks the bone in the hierarchy |
-| **`bone_type` in bone list** | `[0, 1]` for 2 bones, `[0, 3, 0, …, 1]` for more | Exact match with vanilla RW format |
-| **`frame.flags = 0x20003` on root** | Auto-set for animobj root | Without this the HAnim hierarchy walker fails inside the engine |
-| **ATOMIC `flags = 5`** (render + collision) | Default in `core/dff.py` | Without the collision bit the engine crashes on collision tests |
-| **DFS pivot sort** | Empties with `inu_bone_id` come first in hierarchy | Pivot becomes `idx=1` (as in vanilla), not `idx=2+` |
-
-#### E. IFP internals (INU handles automatically)
-
-| Aspect | What INU does | Why |
-|--------|---------------|-----|
-| **ANP3 format** | Forced in `build_ifp_from_empty_rig` | The vanilla SA format (counxref.ifp, airport.ifp) |
-| **`bone_id = -1`** | For all bones | Vanilla always uses `-1`; the game matches by frame name |
-| **First keyframe at t=0.0** | Normalised via `(frame - frame_start) / fps` | Without this the game can't find the initial key |
-| **Root excluded** | `inu_animobj_empty_root` is skipped in IFP | In vanilla the root is never animated |
-
-#### F. Other
-
-- **"No animations to export"** — you pressed **«Export»** instead of **`DFF+IFP+IDE`**. «Export» is the standalone IFP operator for armatures, not for Empty-rigs.
-- **DFF stepping in-game** — quaternions weren't normalised at export. Fixed in v2.0.0 (`ifp_export.py` via `bl_quat.normalize()`). Re-export if you used an older version.
-- **Skinned peds:** Empty-rig is for **map objects**. Skinned characters use the armature + IK-rig workflow (`ik_rig.py`).
-
-### 🔬 Crash diagnostics
-
-If the game crashes when the model appears:
-
-1. **Check name length** — over 12 chars? Shorten it.
-2. **Check IDE section** — is the model in `anim`? (not `objs`)
-3. **Check IFP in IMG** — does `gta3.img` contain `<base>.ifp`?
-4. **Install `crashes.asi` + `CrashRpt1402.dll`** — captures the address. `0x534134` typically = HAnim / CClumpAnimMgr (name length or structure issue).
-5. **Isolation:** temporarily move the IDE entry into `objs` (flag=0). If it loads — the crash is in the animation. If it still crashes — something else is wrong (other mod / config / scripts).
-
----
-
 ## UV Tools
 
 **Panel:** UV Editor → Sidebar (N) → GTA Tools
@@ -1956,8 +1777,8 @@ Decoding is lazy — texture headers (name + dimensions + format) are read upfro
 
 INU Tools includes a layered texture-baking system (think Photoshop layers, but each layer is a baked map). You stack maps such as AO, Diffuse and Bevel, blend them live on the model, then flatten the stack into a single GTA-ready diffuse texture. The light needed for AO/Shadow/Diffuse-Lit is generated internally — you do not need any lamps in your scene. Baking uses **Cycles** (it must be enabled in your Blender add-ons), and if you have a GPU compute device enabled in Blender Preferences it is used automatically.
 
-**Panel:** `UV/Image Editor → Sidebar (N) → GTA Tools → Texture Bake`
-(the panel lives in the Image Editor sidebar, next to TexTools — not in the 3D Viewport)
+**Panel:** `3D Viewport → Sidebar (N) → GTA Tools → Texture Bake`
+(the baked texture is shown automatically in the Image Editor)
 
 ### Output size, padding & anti-aliasing
 
@@ -2107,6 +1928,8 @@ After baking, two actions appear at the bottom of the panel:
 
 Import/export GTA SA character models with skeleton and animations.
 
+> This section covers **skeletal animation of characters/peds** (the "Character" tab of the Animations panel). Animating static map props with moving parts (windmills, cranes) → see [Animated Map Objects](#animated-map-objects) below.
+
 **Import:**
 - Armature with bone hierarchy
 - Vertex weights (skin data)
@@ -2137,6 +1960,189 @@ Searchable animation list in the panel.
 
 ---
 
+## Animated Map Objects
+
+**Panel:** View3D → Sidebar (N) → GTA Tools → Animated Map Object
+
+GTA SA's standard way to animate **static map props with moving parts** — windmills, cranes, weather vanes, gate doors, propellers, fans. INU Tools uses an **Empty-rig** approach (mimics the Kams 3ds Max script) instead of an armature — this sidesteps the `rest_quat` bug of the bone-flow that caused IFP geometry stepping.
+
+### Required artifacts
+
+For one animated model the game needs **three coordinated artifacts**:
+
+| File | Contains |
+|------|----------|
+| `<base>.dff` | Frame hierarchy + HAnim PLG (marks animated "bones" by `bone_id`) + meshes |
+| `<base>.ifp` | One animation with a track per animated part |
+| IDE `anim` entry | `model_id, model_name, txd_name, anim_file, drawdist, flags` |
+
+At runtime: engine parses IDE → sees `anim` entry → loads DFF + IFP → applies the IFP track to the bone hierarchy from the DFF by matching frame names.
+
+INU automates **all three steps** via the **Empty-rig** flow.
+
+### 🚨 Critical rules (READ BEFORE STARTING)
+
+1. **Model name length ≤ 12 chars.** GTA SA uses fixed-size buffers for frame/bone names. Names longer than ~16 chars **crash the game** when the IFP is applied (access violation at `0x534134`). Use short names like `mill`, `gate`, `vane` — NOT `airport_billboard_lvS`.
+2. **Animation name in IFP = model name.** The IDE's 4th field is the IFP pack name; inside the pack the game looks for an animation **named equal to the model name (2nd field)**. INU forces this automatically (`action_name=base` in the exporter).
+3. **IFP must live inside an IMG archive** (`gta3.img`), NOT as a loose file in `anim/`. The streaming system only scans IMG archives for map-object animations.
+4. **IDE entry must be in the `anim` section**, not `objs`. This tells the engine the model has an associated IFP.
+
+### Mesh preparation
+
+Split the model into **two (or more) parts**:
+- **Static mesh** — windmill base / crane chassis / vane frame. **Name:** `mill_base` (no suffix), **Model ID:** `0` (not set).
+- **Animated mesh** — blades / boom / rooster. **Name:** `mill_blades`, **Model ID:** unique game ID (e.g. `19000`).
+
+> ⚠️ **Model ID is set ONLY on the animated mesh** in Object → INU Tools → Model ID. On the static mesh it stays `0`. Both meshes end up in one `.dff` and the game references the whole model via the single `model_id` in the IDE anim entry.
+
+> ⚠️ **Keep names ≤ 12 chars.** The pivot is auto-named `<rig_name>_pivot1`. With rig `mill` (4 chars) → pivot `mill_pivot1` (11) is fine. With rig `airprtbits12_lvS` (16) → pivot `airprtbits12_lvS_pivot1` (23) → **GAME CRASHES**.
+
+### Setup
+
+Select the animated mesh, **N → Animated Map Object → Setup** (popup):
+- **Base name:** short, ≤ 12 chars. E.g. `mill`, `gate`, `vane`. Used as:
+  - Empty prefix (`mill_root`, `mill_pivot1`)
+  - File names (`mill.dff`, `mill.ifp`)
+  - `model_name` in IDE
+  - **Animation name in IFP** (forced by the exporter)
+- **Action name:** informational only (shown in Action Editor), does NOT control the IFP animation name
+- **Rotation axis:** Z (windmill blades) / Y (airplane propeller) / X (boom gate)
+- **Turns per cycle:** 1
+- **Duration:** 60 frames (= 2 sec @ FPS=30)
+- **Active mesh:** "Parent to pivot" — animated mesh attaches to pivot1
+
+Result:
+```
+mill_root           Empty (ARROWS)    bone_id=0   ← root, static base anchor
+└── mill_pivot1     Empty (SPHERE)    bone_id=1   ← rotates, Action on rotation_quaternion
+    └── mill_blades                                ← animated mesh
+```
+
+### Parent the static mesh
+
+The static mesh (`mill_base`) goes **under root**, NOT under pivot (otherwise it would rotate too):
+
+- **Manually:** select `mill_base` → Shift-click `mill_root` → `Ctrl+P → Object`
+- **Via eyedropper:** in N-panel, click the eyedropper "To root (static)" → click `mill_base` in viewport
+
+### Multi-part rig
+
+Two animated parts at once (blades + a rooster on top)? Press **N → Animated Map Object → +Pivot**:
+
+- Creates `mill_pivot2` (bone_id=2) with its own Action
+- Attach the second animated mesh under it via the "To pivot" eyedropper
+- The IFP will contain **both** tracks in one animation; both parts rotate independently in-game
+
+### Validate (optional, recommended)
+
+**N → Animated Map Object → Validate** checks:
+- All pivots under one root
+- Unique `inu_bone_id` (no collisions)
+- Action exists on each animated pivot
+- Mesh-children parented correctly
+- **Name length within the safe limit**
+
+Issues appear in Blender's Info area.
+
+### Export
+
+Select **any object of the rig** (Empty root, pivot, or mesh — the exporter auto-finds the rig via `_find_animobj_empty_root`). Press **`DFF+IFP+IDE`** in the N-panel (NOT the "Export" button — that's for standalone IFP flow). Popup:
+
+- **Folder:** where to write
+- **Base name:** `mill` — DFF / IFP / IDE `model_name`
+- **TXD name:** `mill` (usually same as base)
+- **Model ID:** auto-filled from the animated mesh
+- **Draw distance:** 300
+- **Write IDE entry:** ✓ — appends to the `anim` section of `Scene → INU Tools → IDE Path`
+- **IFP name:** empty = base name. Or a shared name like `myhood_anims` to bundle multiple rigs into one IFP
+- **IFP mode:** `Append` (default) — adds to existing .ifp without loss
+- **Existing IFP:** optional path to an existing file (e.g. `<game>/anim/myhood.ifp`)
+
+Outputs:
+- **`mill.dff`** — Empty hierarchy + static + animated meshes + HAnim PLG on root (with full bone tree) and each pivot
+- **`mill.ifp`** — **ANP3** format (SA compressed), one animation named `'mill'` (== base name), `bone_id=-1`, first keyframe at `t=0.0`
+- IDE file updated with:
+  ```
+  anim
+  19000, mill, mill, mill, 300, 0
+  end
+  ```
+
+### Place in-game
+
+1. **DFF + TXD → into `gta3.img`** via **N → IDE/IPL/IMG → Export to IMG**, or with IMG Tool manually
+2. **IFP → into `gta3.img` too** (NOT into loose `anim/` folder!). All vanilla animated map object IFPs live in `gta3.img` (counxref.ifp, airport.ifp, etc.).
+3. **IDE** already updated by the exporter
+4. **IPL** — place the object on the map via `Object IDE/IPL` (Properties → Object) → IPL Export. The game animates wherever an `inst <model_id>` row references this ID.
+
+**Rebuild Archive** after replacing any file in the IMG — without it the game uses stale offsets.
+
+After launch — the model animates at every placement.
+
+### 🛑 Pitfalls (ALL CRITICAL)
+
+#### A. Names
+
+| Problem | Symptom | Fix |
+|---------|---------|-----|
+| **Name > 12 chars** | Crash `0x534134` access violation on animation apply | Use short names (≤ 12 chars) |
+| **Cyrillic in Action name** | IFP gets name `'????????'` → game doesn't find animation | INU forces `action_name=base` (ASCII model name) — should auto-fix |
+| **Animation name ≠ model name** | Game doesn't find animation → silently doesn't animate (no crash) | INU does this automatically; don't hand-edit IDE |
+
+#### B. IDE
+
+| Problem | Symptom | Fix |
+|---------|---------|-----|
+| **Entry in `objs` section** | Game loads as a static object, IFP isn't applied | Move to `anim` section (INU does this automatically) |
+| **Flag ≠ 0 or = 2097152** | Optional. Vanilla uses `2097152` (bit 21) for animated. Works without it too. | Set `2097152` in the 6th field to match vanilla |
+| **Model ID on the static mesh** | Duplicate IDE entries, game gets confused | Static mesh Model ID must be `0` |
+
+#### C. IMG / streaming
+
+| Problem | Symptom | Fix |
+|---------|---------|-----|
+| **IFP in `anim/` folder** | Game can't find the animation (loose .ifp isn't scanned by streaming for map objects) | Put IFP in `gta3.img` |
+| **Forgot Rebuild Archive** | Stale offsets, new file invisible | After any IMG file replacement — Rebuild |
+| **Duplicate name across IDEs** | Conflict, undefined behavior | One model_name = one IDE entry across the whole mod |
+
+#### D. DFF internals (INU handles automatically)
+
+| Aspect | What INU does | Why |
+|--------|---------------|-----|
+| **HAnim PLG on root** | Writes full bone tree | Engine requires this for bone hierarchy |
+| **HAnim PLG on each pivot** | Minimal `{bone_id}` | Marks the bone in the hierarchy |
+| **`bone_type` in bone list** | `[0, 1]` for 2 bones, `[0, 3, 0, …, 1]` for more | Exact match with vanilla RW format |
+| **`frame.flags = 0x20003` on root** | Auto-set for animobj root | Without this the HAnim hierarchy walker fails inside the engine |
+| **ATOMIC `flags = 5`** (render + collision) | Default in `core/dff.py` | Without the collision bit the engine crashes on collision tests |
+| **DFS pivot sort** | Empties with `inu_bone_id` come first in hierarchy | Pivot becomes `idx=1` (as in vanilla), not `idx=2+` |
+
+#### E. IFP internals (INU handles automatically)
+
+| Aspect | What INU does | Why |
+|--------|---------------|-----|
+| **ANP3 format** | Forced in `build_ifp_from_empty_rig` | The vanilla SA format (counxref.ifp, airport.ifp) |
+| **`bone_id = -1`** | For all bones | Vanilla always uses `-1`; the game matches by frame name |
+| **First keyframe at t=0.0** | Normalised via `(frame - frame_start) / fps` | Without this the game can't find the initial key |
+| **Root excluded** | `inu_animobj_empty_root` is skipped in IFP | In vanilla the root is never animated |
+
+#### F. Other
+
+- **"No animations to export"** — you pressed **«Export»** instead of **`DFF+IFP+IDE`**. «Export» is the standalone IFP operator for armatures, not for Empty-rigs.
+- **DFF stepping in-game** — quaternions weren't normalised at export. Fixed in v2.0.0 (`ifp_export.py` via `bl_quat.normalize()`). Re-export if you used an older version.
+- **Skinned peds:** Empty-rig is for **map objects**. Skinned characters use the armature + IK-rig workflow (`ik_rig.py`).
+
+### 🔬 Crash diagnostics
+
+If the game crashes when the model appears:
+
+1. **Check name length** — over 12 chars? Shorten it.
+2. **Check IDE section** — is the model in `anim`? (not `objs`)
+3. **Check IFP in IMG** — does `gta3.img` contain `<base>.ifp`?
+4. **Install `crashes.asi` + `CrashRpt1402.dll`** — captures the address. `0x534134` typically = HAnim / CClumpAnimMgr (name length or structure issue).
+5. **Isolation:** temporarily move the IDE entry into `objs` (flag=0). If it loads — the crash is in the animation. If it still crashes — something else is wrong (other mod / config / scripts).
+
+---
+
 ## Water IO
 
 **Panel:** View3D → Sidebar (N) → GTA Tools → Water
@@ -2147,7 +2153,10 @@ Searchable animation list in the panel.
 | Export Water | Save water.dat (from Water collection) |
 | Add Water | Create water quad with current settings |
 | Snap to Grid | Align vertices to 4-unit grid |
+| Snap to Block (500) | Align vertices to the nearest 500-block corner |
+| Split by Blocks (500) | Cut the selected water along the 500×500 block grid (the blue lines of the limits overlay) so every face sits inside a single block — oversized/straddling faces render untextured in-game. The pieces are also separated into one object per block (`Water_-3_2` etc.), carrying over the water flag, material and collection; the original object is removed. Untick **Separate into objects** in the operator panel (F9) to keep it all as one mesh. N-gons left by the cut are triangulated, and water params (speed / wave height) are carried over to the new vertices |
 | Stitch Edges | Merge overlapping water quads |
+| Show Limits (500) | Viewport overlay: block grid + face tint (green fits / orange straddles / red >500) |
 
 **Water properties:**
 - Flag: 0=Default visible, 1=Invisible, 2=Shallow visible, 3=Shallow invisible
@@ -2201,6 +2210,84 @@ Auto-splits into groups of 12 nodes (GTA SA limit).
 2. **Auto-split by zones** — objects without `nodes_filename` are automatically distributed across the GTA SA map zone grid (8x8, 64 zones, 750 units per zone). Each vertex is assigned to a zone by coordinates: `gx = (X + 3000) / 750`, `gy = (3000 - Y) / 750`. Files are saved as `nodes0.dat` ... `nodes63.dat`
 
 > **Zone grid:** GTA SA map ranges from -3000 to +3000 on X and Y. Zones are numbered left-to-right, top-to-bottom (zone = gy × 8 + gx).
+
+---
+
+## Vehicles
+
+**Panel:** View3D → Sidebar (N) → GTA Tools → **Машины** (Vehicles)
+
+Vehicle-workflow tools: quick single-DFF export, uniform scaling of the whole vehicle hierarchy, and `_ok` / `_dam` damage-variant management.
+
+| Button | Operator | Description |
+|--------|----------|-------------|
+| Export vehicle (single DFF)… | `gtatools.quick_single_export` | Turns on "Single DFF" mode and opens the export dialog — the whole vehicle (collision + spheres) ships into one `.dff` |
+| Vehicle scale… | `gtatools.vehicle_scale` | Proportionally scales the whole hierarchy (root Empty + meshes + dummies), baking scale into mesh data. Options: `factor`, `dummies_only` |
+| Create _dam | `gtatools.vehicle_add_damage_variant` | Makes a damaged (`_dam`) duplicate of the active mesh (source renamed to `_ok` if needed). `_dam` is viewport-hidden but still exported into the DFF |
+| Show: OK / Dam / Both | `gtatools.vehicle_show_damage` | Toggles viewport visibility: intact / damaged / both. Preview only — does not affect export |
+| Check pairs | `gtatools.vehicle_pair_report` | Scans for `_ok`/`_dam` pairs, reports unpaired meshes (the engine skips them on damage). Details in the system console |
+
+### Frame Hierarchy
+
+Collapsible sub-panel under Vehicles — an indented tree of the active object's frames with per-row reparenting, plus validation and L/R mirroring. Frame names are written verbatim into the DFF, so exact naming matters.
+
+| Button | Operator | Description |
+|--------|----------|-------------|
+| Validate Vehicle | `gtatools.frame_validate` | Checks dummy names against the vanilla SA template; lists missing required ones and suspicious wheel names (no `_lf/_rf/_lb/_rb`) |
+| Mirror L↔R | `gtatools.frame_mirror_lr` | For selected `_lf`/`_lb` frames creates a mirrored twin (`_rf`/`_rb`) with local X flipped |
+| ⤴ (per row) | `gtatools.frame_reparent` | Make this frame the parent of the active one (world position kept, `matrix_parent_inverse` reset — DFF requirement) |
+| ⛓ (per row) | `gtatools.frame_reparent` | Unparent the frame (make it a root) |
+| Frame name | `gtatools.frame_select` | Click selects the frame. **F2** renames the active frame |
+
+> 💡 **Typical order:** scale if needed → select a mesh and "Create _dam" for each damaged twin → edit `_dam` → preview OK/Dam/Both → "Check pairs" → "Export vehicle (single DFF)".
+
+---
+
+## Grass
+
+**Panel:** View3D → Sidebar (N) → GTA Tools → **Трава** (Grass)
+
+Editor for GTA SA procedural grass from `plants.dat`: import/edit/export entries, a live scatter preview in the viewport, and assigning a plants.dat surface (COL material) to selected faces so grass grows there.
+
+| Button | Operator | Description |
+|--------|----------|-------------|
+| Show grass | `gtatools.grass_preview` | Live-preview toggle: builds temporary grass cards on the selected COL meshes from the plants.dat entries and updates as you edit. Press again to remove. Preview is not exported |
+| Import | `gtatools.grass_import` | Parses `plants.dat` into the editable entry list |
+| Export | `gtatools.grass_export` | Writes the list back to `plants.dat`, preserving the game's formatting; backs the original up once as `plants.dat.bak` |
+| + / − / duplicate | `gtatools.grass_add` / `grass_remove` / `grass_duplicate` | Add / remove / duplicate an entry |
+| Assign to selected faces | `gtatools.grass_apply_surface` | Assigns the entry's surface to the selected faces (auto-creates a COL material with the right surface ID) — this marks faces as grass-bearing |
+
+**Paths:** `.txd` (`gtatools_grass_txd_path`, grass sprites) and `.dat` (`gtatools_plants_dat_path`; falls back to Game Root).
+
+**Selected-entry fields** (collapsible sections): **Base** (PCD id, density), **Texture** (slot/model id, UV offset — sprite `txgrass{Slot}_{UVoff}`), **Color** (RGB, intensity + variation, alpha), **Size** (XY/Z scale + variances), **Wind** (bend scale + variation). The magnifier by the name opens the COL surface picker.
+
+> 💡 **Order:** set `.txd`/`.dat` → Import (or +) → pick an entry, its surface and fields → "Assign to selected faces" on terrain faces → "Show grass" to preview → Export.
+
+---
+
+## X Radar Maker
+
+**Panel:** View3D → Sidebar (N) → GTA Tools → **X Radar Maker**
+
+Renders the scene top-down (ortho camera) into GTA SA minimap/radar tiles (PNG) and packs them into TXD archives. The SA map is assumed to span −3000…3000 on X/Y.
+
+**Settings** (`scene.inu_settings.*`):
+- **Folder** (`gtatools_radar_output`) — where PNGs (and a `txd/` subfolder) are saved.
+- **Grid** (`gtatools_radar_grid`) — the N×N tile grid (`radar00`, `radar01`, …).
+- **Size** (`gtatools_radar_size`) — pixel resolution of each tile.
+- **Height** (`gtatools_radar_height`) — Z height of the ortho camera.
+- **Indices** (`gtatools_radar_specific`) — comma-separated indices (`0,1,8,9`) for the SPECIFIC mode.
+
+| Button | Operator | Description |
+|--------|----------|-------------|
+| Generate → Generate radar | `gtatools.radar_generate` (`ALL`) | Full grid×grid of `radarNN.png` tiles |
+| Generate → Menu radar (3x3) | `gtatools.radar_generate` (`MENU`) | 3×3 menu radar (`MapTop01…MapBot03`) |
+| Generate → Full radar | `gtatools.radar_generate` (`FULL`) | One full-map image `FullRadar.png` |
+| Generate → Full menu | `gtatools.radar_generate` (`FULL_MENU`) | One image `FullMenuRadar.png` |
+| Generate → Specific tiles | `gtatools.radar_generate` (`SPECIFIC`) | Only the tiles listed in "Indices" |
+| Pack into TXD | `gtatools.radar_pack_txd` | Packs `radarNN.png` into TXDs (one tile = one TXD) in `output/txd/`; missing PNGs are skipped |
+
+> 💡 **Order:** set folder, grid, size and height → "Generate" → pick a mode (ALL for the game grid, or SPECIFIC with indices) → "Pack into TXD".
 
 ---
 
