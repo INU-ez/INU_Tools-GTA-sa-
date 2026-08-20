@@ -8,7 +8,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/Blender-2.83%E2%80%935.1-orange?logo=blender" alt="Blender">
-  <img src="https://img.shields.io/badge/Version-2.2.0-green" alt="Version">
+  <img src="https://img.shields.io/badge/Version-2.3.0-green" alt="Version">
   <img src="https://img.shields.io/badge/License-GPL--3.0-blue" alt="License">
 </p>
 
@@ -49,11 +49,35 @@
 
 ## 🔮 Roadmap
 
-Ideas being considered. Not all of these will ship — some may turn out impractical, deprioritised, or just not worth it on closer inspection.
+### 🚧 Landing in 2.3.0 (done — pending release)
+
+- 🔗 **Ariane bridge** — live folder-watch bridge that auto-imports DFFs pushed from the external **Ariane** tool into a running Blender
+- 🌿 **Plants / grass** — import/export grass, generate geometry, viewport preview, apply to selected polygons, built-in **plants.dat** editor
+- 🌐 **Zones** — import/export `map.zon` / `info.zon` as editable boxes (one file = one collection)
+- 📷 **Cameras** — import/export cutscene camera `.dat` (position + FOV/roll keyframes)
+- 🧩 **Fragments** — split a mesh into breakable fragment objects in one click (grid / scatter)
+- ✋ **Hand signs** — author gang hand-signs for `ghands.ifp`
+- 💡 **Prelight — all light types + HDRI** — bake now uses **Point / Sun / Spot / Area** (per-source toggles) and can sample the **World / HDRI** environment per normal, not just point lamps
+- 🔥 **Texture baking** — **Alpha map** (RGBA save), **Decal** (Shadow → transparent shadow decal: threshold/softness, hard cut, invert), single-map **RGBA save**, **"Scene lights"** for Shadow/Diffuse-Lit, **Bevel bake on selected edges**, **transparent / average-colour background** toggle
+- 📐 **UV tools** — **Fit UV to Grid Scale** + texel density
+- 🎨 **Alpha materials** — scan, select and bulk-apply transparent materials (unified transparency, fixes Blender 4.2+/EEVEE Next)
+- 🗺️ **Import: vanilla vs custom** — **"Standard GTA SA model (vanilla)"** checkbox; OFF = custom model (connect loose geometry, keep double-sided fences), ON leaves vanilla behavior untouched
+- 🚗 **Vehicles / DFF round-trip** — editable import keeps authored normals; re-export **splits by normal**; **swapped textures now export**; single-vehicle DFF with embedded collision
+- 💡 **2DFX** — 4 new effect types with previews: **Road sign**, **Enter/Exit**, **Escalator**, **Raw**
+- 🎬 **Animation (IFP)** — rest-aware **L/R mirror**; byte-exact round-trip + jitter fixes; **IFP Library Viewer** (live-scrub 294 vanilla anims via Action dropdown + Timeline); **Frame Hierarchy** sub-panel with in-tree reparenting
+- 🧱 **IDE / IPL / IMG import overhaul** — modal import with a progress bar, **"Find IMG"** scan of the game folder, multi-IPL select, auto-fills **TXD name / LOD partner / draw distances / IDE link**; a **copied model adds a NEW IPL instance** instead of overwriting the source; split **"Update from IDE" / "from IPL"**; **Import / Export** as toggle-tabs
+- 🌊 **Water** — Water-Limits overlay + snap-to-block; **"Cut by blocks (500)"** also splits pieces into per-block objects
+- 🧵 **TXD** — trilinear **mip filter** on exported textures
+- 🧱 **Collision** — imports into a dedicated collection, dummy frames drawn as cubes
+- ⚡ **Performance** — panel-draw memoisation (`draw_cache`) removes viewport stutter on big maps
+- 🐛 **Fixes** — no longer shows Russian in an English Blender; floating info windows no longer steal clicks meant for the N-panel / toolbar drawn on top of them
+
+### 💭 Ideas being considered
+
+Not all of these will ship — some may turn out impractical, deprioritised, or just not worth it on closer inspection.
 
 - 💾 **Game Folder Backup** — auto-snapshot `gta3.img` and key `.ide` files before destructive ops (Map Export, IMG rebuild)
 - 🔁 **IPL Mass Replace** — swap all INST entries with model X for model Y by coordinates / radius / tag
-- 🎬 **IFP Library Viewer** — preview any of the 294 animations on a temporary armature without creating a ped
 - 🎆 **Auto-LOD generation** — when no paired `_L0` is found, Map Export auto-generates a decimated copy (EMAPTool-style)
 
 ## 🆕 What's New in 2.2.0
@@ -67,7 +91,7 @@ Ideas being considered. Not all of these will ship — some may turn out impract
 - 🆔 **ID Manager** — **"Skip occupied IDs"** toggle (strict from the start number vs. skip occupied)
 - 🧹 **Cleanup + Blender Extensions ready** — dropped NVTT/nvcompress (pure numpy DXT) and dead code (broken JSON material presets, hidden panels); manifest updated for extensions.blender.org rules
 
-→ [Release notes 2.2.0](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v2.2.0) · [2.1.0](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v2.1.0) · [2.0.0](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v2.0.0) · [Version history](../../releases)
+→ [Release notes 2.3.0](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v2.3.0) · [2.2.0](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v2.2.0) · [2.1.0](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v2.1.0) · [Version history](../../releases)
 
 ## 🧰 Features
 
@@ -190,6 +214,10 @@ Inspired by and partially compatible with:
 
 **INU** — addon author (Discord: `1.n.u`)
 https://discord.gg/sqtGAVTGdy
+
+### Feature authors
+
+**yeezyk** — animation mirroring
 
 ### License
 
