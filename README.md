@@ -201,6 +201,8 @@ Inspired by and partially compatible with:
 
 - **[Itera Tools 3](https://itera.gumroad.com/l/IteraTools3)** — Blender addon for vertex lighting. INU_tools includes a dedicated **Itera Tools 3** sub-panel (under the *Lighting* container): auto-detects Itera in your Asset Libraries and applies its `Vertex Lit Linear` / `Quickstart` material presets to the selection (plus one-click `Remove Itera` to restore original materials).
 
+- **[Ariane](https://github.com/Dryxio/ariane)** — Ariane is a map viewer and editor for Grand Theft Auto III, Vice City and San Andreas, built on librw and based on aap's euryopa.
+
 ### Author
 
 **INU** — addon author (Discord: `1.n.u`)

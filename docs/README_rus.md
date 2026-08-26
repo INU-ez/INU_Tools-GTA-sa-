@@ -201,6 +201,8 @@ INU Tools по умолчанию нацелен на **GTA San Andreas**, но 
 
 - **[Itera Tools 3](https://itera.gumroad.com/l/IteraTools3)** — Blender-аддон для vertex lighting. В INU_tools есть отдельная подпанель **Itera Tools 3** (внутри контейнера *Освещение*): авто-определяет Itera в Asset Libraries и применяет его пресеты `Vertex Lit Linear` / `Quickstart` к выделению (плюс `Убрать Itera` одной кнопкой — восстанавливает оригинальные материалы).
 
+- **[Ariane](https://github.com/Dryxio/ariane)** — Ariane — это программа для просмотра и редактирования карт для Grand Theft Auto III, Vice City и San Andreas, созданная на основе librw и базирующаяся на euryopa от aap.
+
 ### Автор
 
 **INU** — автор аддона (Discord: `1.n.u`)
