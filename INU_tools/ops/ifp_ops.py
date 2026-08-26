@@ -2,13 +2,14 @@
 #
 # Phase 3 (2026-04-26): operators moved from __init__.py.
 
+import math
 import re
 
 import bpy
 from bpy.props import (
     StringProperty, BoolProperty, FloatProperty, EnumProperty,
 )
-from mathutils import Vector, Matrix
+from mathutils import Vector, Matrix, Quaternion
 
 from .. import T
 
@@ -487,7 +488,7 @@ class GTATOOLS_OT_fix_quat_signs(bpy.types.Operator):
         from collections import defaultdict
         arm = context.active_object
         action = arm.animation_data.action
-        slot = arm.animation_data.action_slot
+        slot = getattr(arm.animation_data, 'action_slot', None)
         scene = context.scene
         start = scene.inu_settings.gtatools_anim_fix_start
         end = scene.inu_settings.gtatools_anim_fix_end
@@ -607,7 +608,26 @@ class GTATOOLS_OT_mirror_anim(bpy.types.Operator):
     def execute(self, context):
         arm = context.active_object
         action = arm.animation_data.action
-        slot = arm.animation_data.action_slot
+        slot = getattr(arm.animation_data, 'action_slot', None)
+        scene = context.scene
+        st = getattr(scene, 'inu_settings', None)
+        mirror_root_rot = bool(getattr(st, 'gtatools_mirror_root_rotation',
+                                       True))
+        # Root post-corrections (compensate the ~90° rest→in-game Root offset
+        # of GTA rigs — a constant armature-space reflection lands the animated
+        # body on the wrong plane, so we re-orient the Root explicitly).
+        flip_root_180 = bool(getattr(st, 'gtatools_mirror_flip_root_180',
+                                     True))
+        flip_root_axis = getattr(st, 'gtatools_mirror_flip_root_axis', 'X')
+        flip_root_space = getattr(st, 'gtatools_mirror_flip_root_space',
+                                  'GLOBAL')
+        invert_loc_axis = getattr(st, 'gtatools_mirror_invert_root_loc',
+                                  'Y')
+        _axis_i = {'X': 0, 'Y': 1, 'Z': 2}
+        _axis_v = {'X': (1.0, 0.0, 0.0), 'Y': (0.0, 1.0, 0.0),
+                   'Z': (0.0, 0.0, 1.0)}
+        flip_quat = Quaternion(_axis_v.get(flip_root_axis, (1.0, 0.0, 0.0)),
+                               math.pi)
 
         # Gather the action's fcurves (layered 5.x + legacy fallback).
         fcurves = []
@@ -629,49 +649,157 @@ class GTATOOLS_OT_mirror_anim(bpy.types.Operator):
         if not fcurves:
             fcurves = list(getattr(action, 'fcurves', []))
 
-        # Index every pose-bone fcurve by (bone, property, array_index).
-        fmap = {}
+        # Index rotation/location fcurves per bone with a frame→keyframe map,
+        # so we can rewrite values in place.
+        chan = {}          # bone -> {'rot': {idx: fc}, 'loc': {idx: fc}}
+        kp_at = {}         # id(fc) -> {frame:int -> keyframe_point}
+        frames_set = set()
         for fc in fcurves:
             dp = fc.data_path
             if not dp.startswith('pose.bones['):
                 continue
             bname = dp[dp.find('"') + 1:dp.rfind('"')]
-            prop = dp.rsplit('.', 1)[-1]
-            fmap[(bname, prop, fc.array_index)] = fc
+            if dp.endswith('rotation_quaternion'):
+                kind = 'rot'
+            elif dp.endswith('location'):
+                kind = 'loc'
+            else:
+                continue
+            chan.setdefault(bname, {'rot': {}, 'loc': {}})[kind][
+                fc.array_index] = fc
+            m = {int(round(kp.co.x)): kp for kp in fc.keyframe_points}
+            kp_at[id(fc)] = m
+            frames_set.update(m.keys())
+
+        all_frames = sorted(frames_set)
+        if not all_frames:
+            self.report({'WARNING'}, T("Нет ключей анимации"))
+            return {'CANCELLED'}
 
         valid = {pb.name for pb in arm.pose.bones}
+        partner = {n: _mirror_lr_partner(n, valid) for n in valid}
 
-        # Plain L/R key swap: for every 'L …'↔'R …' bone pair, swap the
-        # keyframe VALUES of their matching channels (rotation + location).
-        # Nothing else — no reflection, no axis math.
-        swapped = 0
-        done = set()
-        for (bname, prop, idx), fc in list(fmap.items()):
-            partner = _mirror_lr_partner(bname, valid)
-            if partner == bname:
-                continue
-            pair_key = (min(bname, partner), max(bname, partner), prop, idx)
-            if pair_key in done:
-                continue
-            done.add(pair_key)
-            pfc = fmap.get((partner, prop, idx))
-            if pfc is None:
-                continue
-            a = {round(kp.co.x): kp for kp in fc.keyframe_points}
-            b = {round(kp.co.x): kp for kp in pfc.keyframe_points}
-            for f in set(a) & set(b):
-                ka, kb = a[f], b[f]
-                va, vb = ka.co.y, kb.co.y
-                ka.co = (ka.co.x, vb)
-                kb.co = (kb.co.x, va)
-                swapped += 1
-            fc.update()
-            pfc.update()
+        # Detect the sagittal (L↔right) reflection axis from where L/R bones
+        # actually sit (for GTA rigs this is armature-Z, not world-X).
+        axis_sep = [0.0, 0.0, 0.0]
+        npairs = 0
+        for n in valid:
+            p = partner[n]
+            if p != n and p > n:
+                d = arm.data.bones[n].head_local - arm.data.bones[p].head_local
+                for i in range(3):
+                    axis_sep[i] += abs(d[i])
+                npairs += 1
+        axis_idx = (max(range(3), key=lambda i: axis_sep[i]) if npairs else 0)
+        S = Matrix.Identity(4)
+        S[axis_idx][axis_idx] = -1.0
 
-        if not swapped:
+        # Parent-relative rest matrix per bone (static).
+        rest_rel = {}
+        for db in arm.data.bones:
+            if db.parent is not None:
+                rest_rel[db.name] = (db.parent.matrix_local.inverted()
+                                     @ db.matrix_local)
+            else:
+                rest_rel[db.name] = db.matrix_local.copy()
+
+        orig_frame = scene.frame_current
+
+        # PHASE A — read every bone's LOCAL matrix_basis at each keyed frame
+        # from the (still-original) action.
+        src_mb = {}
+        for f in all_frames:
+            scene.frame_set(f)
+            src_mb[f] = {pb.name: pb.matrix_basis.copy()
+                         for pb in arm.pose.bones}
+
+        # PHASE B — mirror each bone's basis with the REST-AWARE formula and
+        # write it straight into the existing keyframes:
+        #   MB'(target) = Rp(target)⁻¹ @ S @ Rp(source) @ MB(source) @ S
+        # (Rp = parent-relative rest, S = reflection). This accounts for the
+        # different rest/roll of the L and R bones, so a GTA (Bip01) rig —
+        # whose sides are mirror-image — comes out correct, unlike a plain
+        # value swap. Sign continuity keeps the engine from slerping the long
+        # way between frames.
+        prev_q = {}
+        touched = set()
+        for f in all_frames:
+            mb = src_mb[f]
+            for pb in arm.pose.bones:
+                t = pb.name
+                cd = chan.get(t)
+                if not cd:
+                    continue
+                s = partner.get(t, t)
+                if s not in mb or t not in rest_rel or s not in rest_rel:
+                    continue
+                new_basis = (rest_rel[t].inverted() @ S @ rest_rel[s]
+                             @ mb[s] @ S)
+                loc, rot, _scale = new_basis.decompose()
+
+                db = arm.data.bones.get(t)
+                is_root = ((db is not None and db.parent is None)
+                           or t.strip() in ('Root', 'Normal', 'Bip01'))
+                if is_root and not mirror_root_rot:
+                    # Keep original root rotation, mirror only its movement.
+                    rot = mb[t].to_quaternion()
+
+                if is_root and flip_root_180:
+                    # Add a constant 180° turn to the Root (replaces the
+                    # manual per-frame flip). LOCAL = rot @ flip (bone frame),
+                    # GLOBAL = flip @ rot (armature frame).
+                    if flip_root_space == 'LOCAL':
+                        rot = rot @ flip_quat
+                    else:
+                        rot = flip_quat @ rot
+
+                if is_root and invert_loc_axis != 'NONE':
+                    # Negate one Root location axis (replaces manual
+                    # "By Values / Over Cursor Value" at cursor 0).
+                    ai = _axis_i[invert_loc_axis]
+                    loc = loc.copy()
+                    loc[ai] = -loc[ai]
+
+                pq = prev_q.get(t)
+                if pq is not None and pq.dot(rot) < 0:
+                    rot = Quaternion((-rot.w, -rot.x, -rot.y, -rot.z))
+                prev_q[t] = rot.copy()
+
+                if cd['rot']:
+                    qt = (rot.w, rot.x, rot.y, rot.z)
+                    for idx, fc in cd['rot'].items():
+                        kp = kp_at[id(fc)].get(f)
+                        if kp is not None:
+                            kp.co = (kp.co.x, qt[idx])
+                            touched.add(id(fc))
+                if cd['loc']:
+                    for idx, fc in cd['loc'].items():
+                        kp = kp_at[id(fc)].get(f)
+                        if kp is not None:
+                            kp.co = (kp.co.x, loc[idx])
+                            touched.add(id(fc))
+
+        if not touched:
             self.report({'WARNING'}, T("Не найдено парных L/R костей"))
             return {'CANCELLED'}
-        self.report({'INFO'}, f"{T('Переставлено ключей L/R')}: {swapped}")
+
+        for fc in fcurves:
+            if id(fc) in touched:
+                n = len(fc.keyframe_points)
+                if n:
+                    fc.keyframe_points.foreach_set('interpolation', [1] * n)
+                fc.update()
+
+        if 'inu_ifp_src' in action:
+            del action['inu_ifp_src']
+
+        arm.update_tag()
+        context.view_layer.update()
+        scene.frame_set(orig_frame)
+        self.report(
+            {'INFO'},
+            f"{T('Анимация отзеркалена')} ({'XYZ'[axis_idx]}), "
+            f"{len(touched)} {T('кривых')}")
         return {'FINISHED'}
 
 
@@ -748,7 +876,7 @@ class GTATOOLS_OT_smooth_between_anchors(bpy.types.Operator):
         """Original behavior: process every F-curve in bone-local space."""
         obj = context.active_object
         action = obj.animation_data.action
-        slot = obj.animation_data.action_slot
+        slot = getattr(obj.animation_data, 'action_slot', None)
         fcurves = self._collect_fcurves(action, slot)
 
         total_modified = 0
@@ -801,7 +929,7 @@ class GTATOOLS_OT_smooth_between_anchors(bpy.types.Operator):
         """
         obj = context.active_object
         action = obj.animation_data.action
-        slot = obj.animation_data.action_slot
+        slot = getattr(obj.animation_data, 'action_slot', None)
         scene = context.scene
 
         # Group .location F-curves by bone name.

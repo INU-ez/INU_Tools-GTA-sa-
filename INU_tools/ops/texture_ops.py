@@ -177,28 +177,26 @@ def link_material_alpha_if_textured(material) -> bool:
             links.new(tex_node.outputs['Alpha'], alpha_input)
             changed = True
 
-        # CRITICAL: always enforce blend_method, even when the link was
+        # CRITICAL: always enforce the blend mode, even when the link was
         # already correct. Reason — earlier passes (Phase 1 from
         # _assign_textures_to_materials, manual user wiring) may have
-        # created the link without touching blend_method, leaving the
-        # material in an inconsistent state where Alpha is wired in the
-        # node graph but the viewport renders it opaque. This is the
-        # exact bug that produces «alpha pin connected, fence still
-        # black». Re-running this every TXD import keeps blend mode
-        # in sync with the actual link state.
-        if hasattr(material, 'blend_method') and material.blend_method == 'OPAQUE':
-            material.blend_method = 'HASHED'
+        # created the link without touching it, leaving the material in
+        # an inconsistent state where Alpha is wired in the node graph
+        # but the viewport renders it opaque. This is the exact bug that
+        # produces «alpha pin connected, fence still black». Re-running
+        # this every TXD import keeps blend mode in sync with the actual
+        # link state. Standard: Смешанный + Перекрытие прозрачности ВЫКЛ
+        # (compat.make_material_alpha writes both EEVEE generations —
+        # blend_method alone is a no-op on 4.2+).
+        if compat.make_material_alpha(material):
             changed = True
         if hasattr(material, 'shadow_method') and material.shadow_method == 'OPAQUE':
             material.shadow_method = 'HASHED'
             changed = True
-        if hasattr(material, 'show_transparent_back') and material.show_transparent_back:
-            material.show_transparent_back = False
-            changed = True
 
         if changed:
             _alog(f"[ALPHA-LINK] mat={name!r} img={img.name!r}: "
-                  f"Alpha {'WIRED' if not already_linked else 'kept'} + blend=HASHED")
+                  f"Alpha {'WIRED' if not already_linked else 'kept'} + blend=BLEND")
         else:
             _alog(f"[ALPHA-LINK] mat={name!r} img={img.name!r}: already correct (link + blend)")
         return changed
@@ -208,10 +206,12 @@ def link_material_alpha_if_textured(material) -> bool:
         if link.from_node is tex_node:
             links.remove(link)
             changed = True
-    if changed and hasattr(material, 'blend_method'):
+    if changed:
         # Only flip blend back to OPAQUE if WE removed a link — leave it
         # alone if the user has set BLEND/HASHED for some other reason.
-        material.blend_method = 'OPAQUE'
+        # Via compat so the 4.2+ render method goes back to Dithered too
+        # (otherwise the material stays «Смешанный» forever).
+        compat.set_blend_method(material, 'OPAQUE')
         if hasattr(material, 'shadow_method'):
             material.shadow_method = 'OPAQUE'
 
@@ -241,8 +241,8 @@ def _force_material_opaque(material) -> bool:
             if ai.default_value != 1.0:
                 ai.default_value = 1.0
                 changed = True
-    if hasattr(material, 'blend_method') and material.blend_method != 'OPAQUE':
-        material.blend_method = 'OPAQUE'
+    if compat.blend_method_of(material) != 'OPAQUE':
+        compat.set_blend_method(material, 'OPAQUE')
         changed = True
     if hasattr(material, 'shadow_method') and material.shadow_method != 'OPAQUE':
         material.shadow_method = 'OPAQUE'
@@ -397,12 +397,9 @@ class GTATOOLS_OT_load_textures(bpy.types.Operator):
             alpha_input = principled.inputs.get('Alpha')
             if alpha_input and not alpha_input.is_linked:
                 links.new(tex_node.outputs['Alpha'], alpha_input)
-                if hasattr(material, 'blend_method'):
-                    material.blend_method = 'HASHED'
+                compat.make_material_alpha(material)
                 if hasattr(material, 'shadow_method'):
                     material.shadow_method = 'HASHED'
-                if hasattr(material, 'show_transparent_back'):
-                    material.show_transparent_back = False
 
         return True
 
@@ -557,13 +554,12 @@ class GTATOOLS_OT_drop_texture_as_material(bpy.types.Operator):
                 transparent_count = int(np.sum(alpha < 0.95))
                 if transparent_count > 5000:
                     links.new(tex_node.outputs['Alpha'], principled.inputs['Alpha'])
-                    if hasattr(material, 'blend_method'):
-                        material.blend_method = 'HASHED'
+                    compat.make_material_alpha(material)
                     if hasattr(material, 'shadow_method'):
                         material.shadow_method = 'HASHED'
-                    if hasattr(material, 'show_transparent_back'):
-                        material.show_transparent_back = False
-            except:
+            except (RuntimeError, ValueError, KeyError, MemoryError):
+                # Пиксели могут быть не загружены (RuntimeError), а сокета
+                # 'Alpha' может не быть на нестандартной ноде (KeyError).
                 pass
 
         # Применяем материал к объекту

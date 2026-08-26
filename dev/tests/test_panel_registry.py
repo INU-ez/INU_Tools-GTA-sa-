@@ -106,7 +106,9 @@ def test_top_level_bl_order_invariant():
         'GTATOOLS_PT_check_panel':          10,
         'GTATOOLS_PT_vehicle_panel':        11,
         'GTATOOLS_PT_light_master':         12,
-        'GTATOOLS_PT_frame_hierarchy':      13,
+        # GTATOOLS_PT_frame_hierarchy moved to a SUB-panel of the Vehicles
+        # panel (+ a Ped copy under Анимации), so it's no longer a top-level
+        # tab in PANELS.
         'GTATOOLS_PT_2dfx_panel':           22,
         'GTATOOLS_PT_anim_panel':           24,
         'GTATOOLS_PT_object_ide_ipl_panel': 29,

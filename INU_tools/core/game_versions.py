@@ -57,9 +57,28 @@ def rw_version_for_game(game: str) -> int:
 
 def detect_from_rw_version(version: int) -> Optional[str]:
     """Reverse lookup: which game wrote this RW version? Returns
-    GAME_III/VC/SA, or None if the version doesn't match any vanilla
-    build. Use for auto-detect on DFF/TXD/COL import."""
-    return _GAME_BY_RW_VERSION.get(version)
+    GAME_III/VC/SA, or None if the version isn't recognisable as an RW3
+    build. Use for auto-detect on DFF/TXD/COL import.
+
+    Exact vanilla versions match first; otherwise we fall back to the
+    RW-version RANGE each game shipped, because real files use several
+    builds (III: 3.1–3.3, VC: 3.4–3.5, SA: 3.6), not one fixed value —
+    e.g. original III models are RW 3.2.0.0 (0x32000), which isn't the
+    canonical 0x33002 but is unmistakably III.
+    """
+    exact = _GAME_BY_RW_VERSION.get(version)
+    if exact is not None:
+        return exact
+    # Range fallback — only within the RW3 space (0x3xxxx). The three
+    # games occupy non-overlapping minor-version bands, so the boundary
+    # test never misclassifies one for another.
+    if 0x30000 <= version < 0x34000:
+        return GAME_III          # 3.0–3.3
+    if 0x34000 <= version < 0x36000:
+        return GAME_VC           # 3.4–3.5
+    if 0x36000 <= version < 0x40000:
+        return GAME_SA           # 3.6+
+    return None
 
 
 # ── Per-game limits & feature flags ──────────────────────────────

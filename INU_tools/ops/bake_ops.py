@@ -9,12 +9,127 @@
 # объявляет Operator-проперти (EnumProperty), их ломает PEP 563.
 
 import json
+import os
 import re
 
 import bpy
 from bpy.props import EnumProperty, StringProperty, IntProperty
 
 from .. import T
+from ..tools import compat
+
+
+# ── Память запечённых полигонов на слой (Bevel «только выделенные») ──
+# Индексы граней хранятся на ОБЪЕКТЕ под ключом слоя → работает и для
+# нескольких объектов; переключение слоя восстанавливает выделение.
+
+def _lkey(L):
+    """Ключ картинки слоя = uid | map_id. Каждый слой пишет в свою картинку
+    <base>_<key> → несколько слоёв одной карты (напр. Bevel) не затирают друг
+    друга. Совпадает с bake_composite.layer_image_key."""
+    return getattr(L, 'uid', '') or L.map_id
+
+
+def _bl_owner(context):
+    """Владелец стека слоёв запекания = inu АКТИВНОЙ модели (стек теперь
+    per-object, а не на сцене). None, если активной меш-модели нет. Возвращает
+    объект с полями .gtatools_bake_layers / .gtatools_bake_layers_index — те же
+    хелперы (_layer_specs/_composite_stack_image/…) принимают его вместо
+    scene.inu_settings, т.к. используют аргумент только ради этой коллекции."""
+    obj = getattr(context, 'active_object', None) or getattr(context, 'object', None)
+    return obj.inu if (obj is not None and hasattr(obj, 'inu')) else None
+
+
+def _alpha_src_img(s, base, src):
+    """Картинка карты-источника альфы (alpha_source ссылается по map_id) — берём
+    у ПЕРВОГО включённого слоя этой карты (его per-layer ключ); fallback —
+    старое имя <base>_<map_id>."""
+    for L in s.gtatools_bake_layers:
+        if getattr(L, 'enabled', True) and L.map_id == src:
+            im = bpy.data.images.get(f"{base}_{_lkey(L)}")
+            if im is not None:
+                return im
+    return bpy.data.images.get(f"{base}_{src}")
+
+
+def _layer_faces_key(uid):
+    return f"inu_bake_faces_{uid}"
+
+
+def _selected_face_indices(obj):
+    me = getattr(obj, 'data', None)
+    polys = getattr(me, 'polygons', None)
+    if polys is None:
+        return []
+    return [p.index for p in polys if p.select]
+
+
+def _save_layer_faces(obj, uid, indices):
+    if obj is None or not uid:
+        return
+    try:
+        obj[_layer_faces_key(uid)] = ",".join(str(i) for i in indices)
+    except Exception:                             # noqa: BLE001
+        pass
+
+
+def _restore_layer_faces(obj, uid):
+    """Выделить на obj грани, запечённые для слоя uid. Returns кол-во."""
+    me = getattr(obj, 'data', None)
+    polys = getattr(me, 'polygons', None)
+    if polys is None or not uid:
+        return 0
+    raw = obj.get(_layer_faces_key(uid))
+    if not raw:
+        return 0
+    try:
+        want = {int(x) for x in str(raw).split(',') if x.strip().isdigit()}
+    except Exception:                             # noqa: BLE001
+        return 0
+    n = 0
+    for p in polys:
+        sel = p.index in want
+        if p.select != sel:
+            p.select = sel
+        if sel:
+            n += 1
+    me.update()
+    return n
+
+
+def _isolate_selected_faces(context, obj):
+    """Временная копия obj только с ВЫДЕЛЕННЫМИ гранями (сохраняет UV +
+    материалы) — чтобы запечь карту только по ним. Returns (tmp, teardown)
+    или (None, None), если выделенных граней нет."""
+    import bmesh
+    me = getattr(obj, 'data', None)
+    polys = getattr(me, 'polygons', None)
+    if polys is None or not any(p.select for p in polys):
+        return None, None
+    tmp_mesh = me.copy()
+    bm = bmesh.new()
+    bm.from_mesh(tmp_mesh)
+    bm.faces.ensure_lookup_table()
+    doomed = [f for f in bm.faces if not f.select]
+    if doomed:
+        bmesh.ops.delete(bm, geom=doomed, context='FACES')
+    bm.to_mesh(tmp_mesh)
+    bm.free()
+    tmp = obj.copy()
+    tmp.data = tmp_mesh
+    tmp.name = obj.name + "__bake_sel"
+    context.scene.collection.objects.link(tmp)
+    tmp.matrix_world = obj.matrix_world.copy()
+
+    def teardown():
+        try:
+            d = tmp.data
+            bpy.data.objects.remove(tmp, do_unlink=True)
+            if d and getattr(d, 'users', 1) == 0:
+                bpy.data.meshes.remove(d)
+        except Exception:                         # noqa: BLE001
+            pass
+    return tmp, teardown
 
 
 class GTATOOLS_OT_bake_select_layer(bpy.types.Operator):
@@ -26,9 +141,9 @@ class GTATOOLS_OT_bake_select_layer(bpy.types.Operator):
     index: IntProperty(default=0)
 
     def execute(self, context):
-        s = context.scene.inu_settings
-        if 0 <= self.index < len(s.gtatools_bake_layers):
-            s.gtatools_bake_layers_index = self.index   # триггерит показ карты
+        blo = _bl_owner(context)
+        if blo and 0 <= self.index < len(blo.gtatools_bake_layers):
+            blo.gtatools_bake_layers_index = self.index   # триггерит показ карты
         return {'FINISHED'}
 
 
@@ -52,6 +167,66 @@ def _derive_texture_name(obj, s):
             break
     name = name.strip(' _.')
     return name or "inu_bake"
+
+
+# Имя INT-атрибута FACE-домена, куда прячем привязку «полигон → материал» на
+# время превью. В отличие от JSON-снимка по номерам полигонов, атрибут
+# ПЕРЕЖИВАЕТ правки топологии (экструд/разрез копируют значение на новые грани),
+# поэтому материалы вернутся даже если ты редактировал сетку с включённым
+# композитом (напр. выделял/добавлял полигоны для Bevel).
+_MAT_IDX_ATTR = "inu_bake_mat_idx"
+
+
+def _store_mat_idx_attr(me):
+    """Сохранить material_index в FACE-атрибут (перезаписать, если был)."""
+    try:
+        n = len(me.polygons)
+        if n == 0:
+            return
+        idx = [0] * n
+        me.polygons.foreach_get('material_index', idx)
+        attr = me.attributes.get(_MAT_IDX_ATTR)
+        if attr is not None and (attr.domain != 'FACE'
+                                 or attr.data_type != 'INT'):
+            me.attributes.remove(attr)
+            attr = None
+        if attr is None:
+            attr = me.attributes.new(_MAT_IDX_ATTR, 'INT', 'FACE')
+        attr.data.foreach_set('value', idx)
+    except Exception:                                 # noqa: BLE001
+        pass
+
+
+def _restore_mat_idx_attr(me):
+    """Вернуть material_index из FACE-атрибута. True при успехе. Работает даже
+    после правок топологии — у атрибута ровно столько значений, сколько граней
+    сейчас (Blender ресайзит его вместе с сеткой)."""
+    try:
+        attr = me.attributes.get(_MAT_IDX_ATTR)
+        if (attr is None or attr.domain != 'FACE'
+                or attr.data_type != 'INT'):
+            return False
+        n = len(me.polygons)
+        if n == 0 or len(attr.data) != n or len(me.materials) == 0:
+            return False
+        idx = [0] * n
+        attr.data.foreach_get('value', idx)
+        top = len(me.materials) - 1
+        idx = [i if 0 <= i <= top else 0 for i in idx]
+        me.polygons.foreach_set('material_index', idx)
+        me.update()
+        return True
+    except Exception:                                 # noqa: BLE001
+        return False
+
+
+def _clear_mat_idx_attr(me):
+    try:
+        attr = me.attributes.get(_MAT_IDX_ATTR)
+        if attr is not None:
+            me.attributes.remove(attr)
+    except Exception:                                 # noqa: BLE001
+        pass
 
 
 def _snapshot_materials(obj):
@@ -85,6 +260,9 @@ def _snapshot_materials(obj):
         obj["inu_bake_prev_mat_idx"] = json.dumps(idx)
     except Exception:
         obj["inu_bake_prev_mat_idx"] = "[]"
+    # Плюс тот же снимок в FACE-атрибут — он переживёт правку топологии и
+    # восстановит материалы, когда JSON-снимок по номерам уже не совпадёт.
+    _store_mat_idx_attr(me)
 
 
 def _assign_material(obj, mat, uv_name):
@@ -117,16 +295,21 @@ def _restore_materials(obj):
         print("[INU bake] восстановление материалов: не найдены "
               + ", ".join(_missing))
     # Вернуть привязку материалов к полигонам (см. _snapshot_materials).
-    try:
-        idx = json.loads(obj.get("inu_bake_prev_mat_idx", "[]"))
-        if idx and len(idx) == len(me.polygons) and len(me.materials) > 0:
-            # Зажать индексы в число слотов (на случай, если слотов стало меньше).
-            top = len(me.materials) - 1
-            idx = [i if 0 <= i <= top else 0 for i in idx]
-            me.polygons.foreach_set('material_index', idx)
-            me.update()
-    except Exception:
-        pass
+    # Сначала пробуем FACE-атрибут — он верен даже после правки топологии
+    # (добавил/удалил полигоны с включённым композитом). Если его нет или он
+    # не совпал — падаем на старый JSON-снимок по номерам полигонов.
+    if not _restore_mat_idx_attr(me):
+        try:
+            idx = json.loads(obj.get("inu_bake_prev_mat_idx", "[]"))
+            if idx and len(idx) == len(me.polygons) and len(me.materials) > 0:
+                # Зажать индексы в число слотов (если слотов стало меньше).
+                top = len(me.materials) - 1
+                idx = [i if 0 <= i <= top else 0 for i in idx]
+                me.polygons.foreach_set('material_index', idx)
+                me.update()
+        except Exception:
+            pass
+    _clear_mat_idx_attr(me)
     ruv = obj.get("inu_bake_prev_render_uv", "")
     if ruv and ruv in me.uv_layers:
         for u in me.uv_layers:
@@ -252,12 +435,13 @@ def _build_standard_material(img, uv_name, vcol_name=None):
     elif 'Specular' in bsdf.inputs:
         bsdf.inputs['Specular'].default_value = 0.0
     nt.links.new(bsdf.outputs[0], out.inputs['Surface'])
-    # Прозрачность billboard — alpha-clip (резкий силуэт листвы).
-    if has_alpha and hasattr(mat, 'blend_method'):
-        try:
-            mat.blend_method = 'CLIP'
-        except Exception:
-            pass
+    # Прозрачность billboard — стандарт проекта: Метод рендеринга Смешанный
+    # + Перекрытие прозрачности ВЫКЛ (compat пишет оба поколения EEVEE;
+    # на 4.2+ blend_method сам по себе — no-op).
+    if has_alpha:
+        compat.make_material_alpha(mat)
+    else:
+        compat.set_blend_method(mat, 'OPAQUE')   # датаблок переиспользуется
     return mat
 
 
@@ -272,9 +456,16 @@ def _apply_standard_material(obj, img, uv_name):
 
 
 def _layer_specs(s):
-    return [{'map_id': L.map_id, 'blend_mode': L.blend_mode,
+    return [{'map_id': L.map_id, 'uid': getattr(L, 'uid', ''),
+             'blend_mode': L.blend_mode,
              'opacity': L.opacity, 'enabled': L.enabled,
-             'contrast': L.contrast, 'gamma': L.gamma}
+             'contrast': L.contrast, 'gamma': L.gamma,
+             'alpha_source': getattr(L, 'alpha_source', ''),
+             'alpha_invert': getattr(L, 'alpha_invert', False),
+             'as_decal': getattr(L, 'as_decal', False),
+             'decal_threshold': getattr(L, 'decal_threshold', 0.5),
+             'decal_softness': getattr(L, 'decal_softness', 0.25),
+             'decal_invert': getattr(L, 'decal_invert', False)}
             for L in s.gtatools_bake_layers]
 
 
@@ -293,14 +484,21 @@ def _apply_result_material(obj):
     _snapshot_materials(obj)
     if obj.get("inu_bake_mode_live", 0):
         from ..tools.bake import bake_nodes
+        # RAW — без ×prelight (как и single-превью ниже): «Показать текстуру»
+        # показывает запечённое, а не in-game освещение. Иначе тёмный prelight
+        # чернил стены. In-game вид даёт отдельная «Показать поверх базы».
         mat = bake_nodes.build_composite_material(
-            _layer_specs(s), base, uv, _prelight_attr_name(obj))
+            _layer_specs(obj.inu), base, uv, None)
         obj["inu_bake_preview_kind"] = "composite"
     else:
         img = bpy.data.images.get(obj.get("inu_bake_image", ""))
         if img is None:
             return None
-        mat = _build_single_image_mat(img, uv, _prelight_attr_name(obj))
+        # RAW запечённая карта — БЕЗ ×prelight. Иначе там, где prelight тёмный
+        # (теневые стены зданий GTA), карта чернела, хотя запеклась нормально
+        # (юзер: «стены чёрные, а „поверх базы“ — норм»). «Показать текстуру» =
+        # показать ЧТО запёк, без освещения (как в TexTools).
+        mat = _build_single_image_mat(img, uv, None)
         obj["inu_bake_preview_kind"] = "single"
     _assign_material(obj, mat, uv)
     return mat
@@ -319,12 +517,28 @@ def _apply_lightmap_preview(obj):
     uv = obj.get("inu_bake_lm_uv", "") or obj.get("inu_bake_uv", "")
     _snapshot_materials(obj)
     from ..tools.bake import bake_nodes
-    mat = bake_nodes.build_composite_material(_layer_specs(s), base, uv, None)
+    mat = bake_nodes.build_composite_material(_layer_specs(obj.inu), base, uv, None)
     _assign_material(obj, mat, uv)
     obj["inu_bake_mode_live"] = 1
     obj["inu_bake_image"] = ""
     obj["inu_bake_preview_kind"] = "lightmap"
     return mat
+
+
+def _stack_has_bakeable(s, base):
+    """Есть ли что сводить: включённый слой со своей запечённой картой ИЛИ
+    ALPHA-слой, чей источник (напр. Shadow) запечён."""
+    for L in s.gtatools_bake_layers:
+        if not L.enabled:
+            continue
+        if bpy.data.images.get(f"{base}_{_lkey(L)}") is not None:
+            return True
+        if L.map_id == 'ALPHA':
+            src = getattr(L, 'alpha_source', '')
+            if (src and src != 'MATERIAL'
+                    and _alpha_src_img(s, base, src) is not None):
+                return True
+    return False
 
 
 def _composite_stack_image(s, base, out_name):
@@ -334,24 +548,94 @@ def _composite_stack_image(s, base, out_name):
     from ..tools import bake as B
     pixels = {}
     for L in s.gtatools_bake_layers:
-        if not L.enabled or L.map_id in pixels:
+        key = _lkey(L)
+        if not L.enabled or key in pixels:
             continue
-        img = bpy.data.images.get(f"{base}_{L.map_id}")
+        img = bpy.data.images.get(f"{base}_{key}")
         if img is not None:
-            pixels[L.map_id] = B.read_image_to_numpy(img)
+            arr = B.read_image_to_numpy(img)
+            pixels[key] = arr
+            pixels.setdefault(L.map_id, arr)   # дубль по map_id для alpha_source
+    # Дозагрузить карту-источник альфы (напр. Shadow), даже если её слой
+    # выключен в RGB — она нужна только как альфа-канал.
+    for L in s.gtatools_bake_layers:
+        if not L.enabled or L.map_id != 'ALPHA':
+            continue
+        src = getattr(L, 'alpha_source', '')
+        if src and src != 'MATERIAL' and src not in pixels:
+            img = _alpha_src_img(s, base, src)
+            if img is not None:
+                pixels[src] = B.read_image_to_numpy(img)
     if not pixels:
         return None
     first = bpy.data.images.get(f"{base}_{next(iter(pixels))}")
     w, h = first.size
     specs = [B.LayerSpec(
-        map_id=L.map_id, enabled=L.enabled, blend_mode=L.blend_mode,
+        map_id=L.map_id, uid=getattr(L, 'uid', ''), enabled=L.enabled, blend_mode=L.blend_mode,
         opacity=L.opacity, contrast=L.contrast, gamma=L.gamma,
         influence_target=L.influence_target,
-        influence_amount=L.influence_amount) for L in s.gtatools_bake_layers]
+        influence_amount=L.influence_amount,
+        alpha_source=getattr(L, 'alpha_source', ''),
+        alpha_invert=getattr(L, 'alpha_invert', False),
+        as_decal=getattr(L, 'as_decal', False),
+        decal_threshold=getattr(L, 'decal_threshold', 0.5),
+        decal_softness=getattr(L, 'decal_softness', 0.25),
+        decal_invert=getattr(L, 'decal_invert', False))
+        for L in s.gtatools_bake_layers]
     # srgb=True: композит считается в линейном, на выходе кодируется в sRGB
     # для sRGB-байтовой картинки (совпадает с нодовым превью и с игрой).
     arr = B.composite_layers(pixels, specs, w, h, srgb=True)
     out = B.setup_target_image(out_name, w, h, transient=False)
+    B.write_numpy_to_image(out, arr, pack=True)
+    return out
+
+
+def _layer_to_spec(B, L):
+    """LayerSpec из INUBakeLayer (все поля, включая alpha/decal)."""
+    return B.LayerSpec(
+        map_id=L.map_id, uid=getattr(L, 'uid', ''), enabled=True, blend_mode=L.blend_mode,
+        opacity=L.opacity, contrast=L.contrast, gamma=L.gamma,
+        influence_target=L.influence_target,
+        influence_amount=L.influence_amount,
+        alpha_source=getattr(L, 'alpha_source', ''),
+        alpha_invert=getattr(L, 'alpha_invert', False),
+        as_decal=getattr(L, 'as_decal', False),
+        decal_threshold=getattr(L, 'decal_threshold', 0.5),
+        decal_softness=getattr(L, 'decal_softness', 0.25),
+        decal_invert=getattr(L, 'decal_invert', False))
+
+
+def _single_layer_composite_image(s, base, layer, out_name):
+    """Свести ОДИН слой-провайдер альфы (as_decal / ALPHA) в RGBA-картинку:
+    RGB как при общем сведении (без др. слоёв = чёрный), alpha = декаль/маска.
+    out_name — ВРЕМЕННОЕ имя (не перезаписывает сырую <base>_<map>).
+    Возвращает временную image (transient) или None."""
+    from ..tools import bake as B
+    pixels = {}
+    lk = _lkey(layer)
+    own = bpy.data.images.get(f"{base}_{lk}")
+    if own is not None:
+        arr0 = B.read_image_to_numpy(own)
+        pixels[lk] = arr0
+        pixels.setdefault(layer.map_id, arr0)
+    extra = set()
+    src = getattr(layer, 'alpha_source', '')
+    if src and src != 'MATERIAL':
+        extra.add(src)
+    if layer.map_id == 'ALPHA':
+        extra.add('ALPHA')
+    for mid in extra:
+        if mid in pixels:
+            continue
+        img = _alpha_src_img(s, base, mid)
+        if img is not None:
+            pixels[mid] = B.read_image_to_numpy(img)
+    if not pixels:
+        return None
+    first = own or bpy.data.images.get(f"{base}_{next(iter(pixels))}")
+    w, h = first.size
+    arr = B.composite_layers(pixels, [_layer_to_spec(B, layer)], w, h, srgb=True)
+    out = B.setup_target_image(out_name, w, h, transient=True)
     B.write_numpy_to_image(out, arr, pack=True)
     return out
 
@@ -437,10 +721,12 @@ def rebuild_live_composite(obj):
       * over-base — пересчитываем композит-картинку <base>_OVER (per-слот
         overlay-материалы ссылаются на неё → обновляются сами);
       * lightmap — живой композит БЕЗ prelight, через lm-UV;
-      * обычный композит — живой композит с prelight."""
+      * обычный композит — живой композит БЕЗ prelight (как и первичный показ
+        _apply_result_material с vcol=None). In-game вид (×prelight) даёт
+        отдельная «Показать поверх базы»."""
     if not (obj and obj.get("inu_bake_preview_on", 0)):
         return
-    s = bpy.context.scene.inu_settings
+    s = obj.inu           # стек слоёв теперь на объекте (per-model)
     base = obj.get("inu_bake_base", "")
     # over-base: пересчёт свёрнутого композита (numpy применяет cg/opacity).
     if obj.get("inu_bake_overbase_on", 0):
@@ -450,7 +736,10 @@ def rebuild_live_composite(obj):
         return
     from ..tools.bake import bake_nodes
     is_lm = obj.get("inu_bake_preview_kind", "") == "lightmap"
-    vcol = None if is_lm else _prelight_attr_name(obj)
+    # RAW: живой композит — БЕЗ ×prelight. Иначе переключение слоя добавляло бы
+    # умножение на вертекс-цвет прилайта («Day») и модель темнела, хотя первичный
+    # показ (_apply_result_material) строит композит без прилайта. Совпадаем с ним.
+    vcol = None
     uv = ((obj.get("inu_bake_lm_uv", "") or obj.get("inu_bake_uv", ""))
           if is_lm else obj.get("inu_bake_uv", ""))
     bake_nodes.build_composite_material(_layer_specs(s), base, uv, vcol)
@@ -468,6 +757,11 @@ class GTATOOLS_OT_bake_run(bpy.types.Operator):
     only_map_id: StringProperty(
         name="", default="",
         description="Запечь только эту карту (пусто = все включённые слои)")
+    only_uid: StringProperty(
+        name="", default="",
+        description="Запечь только слой с этим ключом (uid|map_id) — для "
+                    "per-layer «Запечь», чтобы не затрагивать другие слои той "
+                    "же карты")
 
     @classmethod
     def poll(cls, context):
@@ -488,8 +782,9 @@ class GTATOOLS_OT_bake_run(bpy.types.Operator):
         if not B.cycles_available(scene):
             self.report({'ERROR'}, T("Cycles недоступен — включите аддон Cycles"))
             return {'CANCELLED'}
-        layers = [L for L in s.gtatools_bake_layers if L.enabled]
-        if not self.only_map_id and not layers:
+        blo = obj.inu            # стек слоёв запекания — per-model, на объекте
+        layers = [L for L in blo.gtatools_bake_layers if L.enabled]
+        if not self.only_map_id and not self.only_uid and not layers:
             self.report({'ERROR'}, T("Добавьте хотя бы один слой карты"))
             return {'CANCELLED'}
 
@@ -501,7 +796,14 @@ class GTATOOLS_OT_bake_run(bpy.types.Operator):
         params = {
             'bevel_size': float(s.gtatools_bake_bevel_size),
             'bevel_samples': int(s.gtatools_bake_bevel_samples),
+            # Bevel только по выделенным РЁБРАМ: маска-вертекс-атрибут по
+            # вершинам выделенных рёбер, домножается на маску кромок.
+            'bevel_selected_edges': bool(
+                getattr(s, 'gtatools_bake_selected_edges', False)),
             'light_energy_scale': float(s.gtatools_bake_light_energy_scale),
+            # ВКЛ → Shadow/Diffuse-Lit печём от реального света сцены (без
+            # внутреннего рига и изоляции); ВЫКЛ → внутренний SUN/DOME.
+            'use_scene_light': bool(s.gtatools_bake_use_scene_light),
         }
 
         if obj.mode != 'OBJECT':
@@ -523,6 +825,7 @@ class GTATOOLS_OT_bake_run(bpy.types.Operator):
         cam_axis = s.gtatools_bake_cam_axis
         cam_padding = float(s.gtatools_bake_cam_padding)
         cam_orient_normal = None
+        cam_keep_uv = False
         if s.gtatools_bake_mode == 'CAMERA':
             # Рендерим детальный объект ортокамерой; результат кладём на
             # billboard-плоскость. Если есть пара _hi/_low — рендерим high,
@@ -538,9 +841,15 @@ class GTATOOLS_OT_bake_run(bpy.types.Operator):
                 render_obj = obj
                 bake_obj = obj
             is_camera = True
-            target_uv = (bake_obj.data.uv_layers.active.name
-                         if (bake_obj.data.uv_layers
-                             and bake_obj.data.uv_layers.active) else "")
+            cam_keep_uv = bool(getattr(s, 'gtatools_bake_cam_keep_uv', False))
+            if cam_keep_uv:
+                # Проекция уйдёт в отдельный слой INU_BakeUV; активная (твоя)
+                # UV не трогается. Результат сэмплится через INU_BakeUV.
+                target_uv = "INU_BakeUV"
+            else:
+                target_uv = (bake_obj.data.uv_layers.active.name
+                             if (bake_obj.data.uv_layers
+                                 and bake_obj.data.uv_layers.active) else "")
             for o in context.view_layer.objects:
                 try:
                     o.select_set(o is bake_obj)
@@ -591,18 +900,75 @@ class GTATOOLS_OT_bake_run(bpy.types.Operator):
         # Имя выходной текстуры — из имени модели (без префиксов/суффиксов).
         result_name = _derive_texture_name(bake_obj, s)
 
-        # Уникальные карты (одна карта может встречаться в стеке несколько
-        # раз с разными blend — печём её ОДИН раз, композит переиспользует).
-        if self.only_map_id:
-            unique = [self.only_map_id] if B.get_map(self.only_map_id) else []
+        # Если превью включено — печём по ИСХОДНЫМ материалам (иначе запеклась
+        # бы превью-эмиссия / чёрный композит). КРИТИЧНО восстановить ДО изоляции
+        # выделенных граней ниже: временная копия дублирует материалы объекта, и
+        # если сделать её при активном INU_BakeComposite — она унесёт его с
+        # собой, а _restore_materials починит только оригинал → Diffuse на копии
+        # запечётся чёрным. Превью с новой текстурой вернём в конце.
+        was_preview = bool(bake_obj.get("inu_bake_preview_on", 0))
+        if was_preview:
+            _restore_materials(bake_obj)
+
+        # «Только выделенные полигоны» (UV→UV): сам бейк-пасс идёт по ВРЕМЕННОЙ
+        # копии с одними выделенными гранями (карта ложится лишь на них, и это
+        # быстрее), а метадата/результат-материал остаются на ОРИГИНАЛЕ. Плюс
+        # запоминаем эти грани за АКТИВНЫМ слоем — переключение слоя их вернёт.
+        # «Только выделенные полигоны» задумана под Bevel — на обычных картах
+        # (Diffuse/AO/Normal/LightMap) она давала бы чёрное вне выделения.
+        # Поэтому изоляцию делаем ТОЛЬКО если в этом прогоне печётся Bevel.
+        if self.only_uid:
+            _bevel_run = any(_lkey(L) == self.only_uid and L.map_id == 'BEVEL'
+                             for L in blo.gtatools_bake_layers)
+        elif self.only_map_id:
+            _bevel_run = (self.only_map_id == 'BEVEL')
         else:
-            unique = []
+            _bevel_run = any(L.map_id == 'BEVEL' for L in layers)
+
+        _bake_src = bake_obj
+        _sel_teardown = None
+        if (not is_camera and s.gtatools_bake_mode == 'UV' and _bevel_run
+                and getattr(s, 'gtatools_bake_selected_faces', False)):
+            _sel_idx = _selected_face_indices(bake_obj)
+            if _sel_idx:
+                _li = blo.gtatools_bake_layers_index
+                if 0 <= _li < len(blo.gtatools_bake_layers):
+                    _save_layer_faces(bake_obj,
+                                      blo.gtatools_bake_layers[_li].uid, _sel_idx)
+                _tmp, _sel_teardown = _isolate_selected_faces(context, bake_obj)
+                if _tmp is not None:
+                    _bake_src = _tmp
+                    for _o in context.view_layer.objects:
+                        try:
+                            _o.select_set(_o is _tmp)
+                        except Exception:         # noqa: BLE001
+                            pass
+                    context.view_layer.objects.active = _tmp
+
+        # Список СЛОЁВ для запекания. Каждый слой печём в свою картинку
+        # <base>_<key> (key = uid|map_id) → два слоя одной карты (напр. две
+        # Bevel) НЕ затирают друг друга. Дедуп по ключу: один и тот же слой,
+        # встречающийся в стеке несколько раз с разными blend, печём ОДИН раз.
+        if self.only_uid:
+            bake_targets = [L for L in blo.gtatools_bake_layers
+                            if _lkey(L) == self.only_uid
+                            and B.get_map(L.map_id) is not None]
+        elif self.only_map_id:
+            bake_targets = [L for L in blo.gtatools_bake_layers
+                            if L.map_id == self.only_map_id
+                            and B.get_map(L.map_id) is not None][:1]
+        else:
+            bake_targets, _seen_key = [], set()
             for L in layers:
-                if L.map_id not in unique and B.get_map(L.map_id) is not None:
-                    unique.append(L.map_id)
-        if not unique:
+                k = _lkey(L)
+                if k not in _seen_key and B.get_map(L.map_id) is not None:
+                    _seen_key.add(k)
+                    bake_targets.append(L)
+        if not bake_targets:
             self.report({'ERROR'}, T("Нет валидных карт"))
             return {'CANCELLED'}
+        # Набор map_id среди запекаемых — для проверок «есть ли LIGHTMAP».
+        baked_mids = {L.map_id for L in bake_targets}
 
         _LM_QUALITY_SAMPLES = {'PREVIEW': 32, 'MEDIUM': 128,
                                'HIGH': 512, 'PRODUCTION': 1024}
@@ -626,12 +992,8 @@ class GTATOOLS_OT_bake_run(bpy.types.Operator):
                 return max(1, base // (aa * aa))
             return None
 
-        # Если превью включено — печём по ИСХОДНЫМ материалам (иначе
-        # запеклась бы превью-эмиссия), потом вернём превью с новой
-        # текстурой → она обновится сразу.
-        was_preview = bool(bake_obj.get("inu_bake_preview_on", 0))
-        if was_preview:
-            _restore_materials(bake_obj)
+        # (was_preview + _restore_materials перенесены ВЫШЕ, до изоляции
+        #  выделенных граней — см. комментарий там.)
 
         # Сглаживание (AA) суперсэмплингом — как в TexTools: печём во
         # внутреннем aa×размер и ужимаем до целевого через img.scale().
@@ -652,15 +1014,115 @@ class GTATOOLS_OT_bake_run(bpy.types.Operator):
 
         baked = 0
         result_img = None
+        # «Учитывать PreLight»: на время бейка ставим превью прилайта на
+        # ИСТОЧНИК цвета (hi→low: хайполи; камера: рендер-объект; UV: объект) —
+        # Diffuse сэмплит его Base Color. Вьюпорт-коррекцию (яркость/контраст/
+        # гамма/насыщенность) НЕЙТРАЛИЗУЕМ: она только для превью, в текстуру
+        # попадать не должна. Галка выкл = чистая текстура без прилайта.
+        _pl_restore = []
+        _pl_touched = False
+        try:
+            from ..tools.prelight import (setup_prelight_preview as _spp,
+                                          _set_view_correction_values)
+            _use_pl = bool(getattr(s, 'gtatools_bake_use_prelight', False))
+            if s.gtatools_bake_mode == 'HILOW':
+                _pl_src = [o for o in keep if getattr(o, 'type', None) == 'MESH']
+            elif is_camera:
+                _pl_src = [render_obj] if render_obj else []
+            else:
+                _pl_src = [bake_obj]
+            for _o in _pl_src:
+                _on = any(ms.material and ms.material.use_nodes
+                          and ms.material.node_tree.nodes.get("Prelight_Mix")
+                          for ms in _o.material_slots)
+                if _on != _use_pl:
+                    _spp(_o, enable=_use_pl)
+                    _pl_restore.append((_o, _on))
+                if _use_pl:
+                    for ms in _o.material_slots:
+                        mat = ms.material
+                        nt = mat.node_tree if (mat and mat.use_nodes) else None
+                        if nt is None:
+                            continue
+                        bc = nt.nodes.get("Prelight_ViewBC")
+                        gm = nt.nodes.get("Prelight_ViewGamma")
+                        sat = nt.nodes.get("Prelight_ViewSat")
+                        if bc and gm and sat:
+                            _set_view_correction_values(bc, gm, sat, 0.0, 0.0, 1.0, 1.0)
+                            _pl_touched = True
+        except Exception:                     # noqa: BLE001
+            pass
+        # Диагностика (галка «Профайлер»): печатаем в системную консоль
+        # состояние источника и статистику каждой запечённой картинки —
+        # чтобы отличить «чёрная сама запечка» от «композит читает не то».
+        _dbg = bool(getattr(s, 'gtatools_profile_enabled', False))
+
+        def _img_stats(image):
+            try:
+                a = B.read_image_to_numpy(image)      # (h, w, ch) float32
+                mn = [round(float(a[..., c].min()), 4) for c in range(a.shape[2])]
+                mx = [round(float(a[..., c].max()), 4) for c in range(a.shape[2])]
+                av = [round(float(a[..., c].mean()), 4) for c in range(a.shape[2])]
+                return f"size={a.shape[1]}x{a.shape[0]} min={mn} max={mx} mean={av}"
+            except Exception as _e:                   # noqa: BLE001
+                return "stats-fail: " + str(_e)
+
+        if _dbg:
+            try:
+                print("[INU bake] === старт ===")
+                print("[INU bake] источник:", getattr(_bake_src, 'name', '?'),
+                      "| режим:", s.gtatools_bake_mode,
+                      "| камера:", is_camera)
+                print("[INU bake] материалы источника:",
+                      [ms.material.name if ms.material else "<пусто>"
+                       for ms in _bake_src.material_slots])
+                _uvs = [(u.name, u.active, u.active_render)
+                        for u in _bake_src.data.uv_layers]
+                print("[INU bake] UV (имя,active,active_render):", _uvs,
+                      "| target_uv:", target_uv)
+                print("[INU bake] слои-карты:", [_lkey(L) for L in layers])
+            except Exception as _e:                   # noqa: BLE001
+                print("[INU bake] дамп источника упал:", _e)
+
+        # Изоляция объекта: на время бейка прячем прочие МЕШ-объекты сцены
+        # (лампы/пустышки не трогаем — иначе сломается «Свет от сцены»),
+        # кроме цели, hi-поли (keep) и временной копии выделенных граней.
+        # Чинит чёрный AO (соседи по сцене больше не затеняют) и ускоряет
+        # бейк (BVH только по цели). Камеру не трогаем — у неё свой рендер.
+        _isolate = bool(getattr(s, 'gtatools_bake_isolate', True)) and not is_camera
+        _iso_hidden = []
         try:
             with B.BakeStateGuard(context):
+                if _isolate:
+                    _keep_iso = {bake_obj, _bake_src} | set(keep)
+                    for _o in context.scene.objects:
+                        if (_o.type == 'MESH' and _o not in _keep_iso
+                                and not _o.hide_render):
+                            _iso_hidden.append(_o)
+                            _o.hide_render = True
                 # Каждую карту печём в свою картинку <base>_<map> — это
                 # источники и для живого нодового стека, и для «Свести».
-                for mid in unique:
+                for L in bake_targets:
+                    mid = L.map_id
+                    key = _lkey(L)
                     md = B.get_map(mid)
-                    # Печём в супер-разрешение bw×bh (при aa=1 = целевое).
+                    # AA (super-sampling) per-map. Bevel сэмплит лучи вокруг
+                    # КАЖДОГО пикселя и уже сам сглаживает (bevel.samples), так
+                    # что super-sampling ему не нужен — а он множит стоимость в
+                    # aa² раз (при AA 4× это 16×) и вешает бейк на сложных
+                    # моделях. Печём Bevel БЕЗ AA, в целевом разрешении.
+                    map_aa = 1 if mid == 'BEVEL' else aa
+                    mbw, mbh = res_x * map_aa, res_y * map_aa
+                    # Печём в супер-разрешение mbw×mbh (при map_aa=1 = целевое).
                     img = B.setup_target_image(
-                        f"{result_name}_{mid}", bw, bh, transient=False)
+                        f"{result_name}_{key}", mbw, mbh, transient=False)
+                    if mid == 'ALPHA':
+                        # Альфа — сырые данные: Non-Color, чтобы sRGB-гамма
+                        # не искажала маску (значение 1:1 в альфа-канал).
+                        try:
+                            img.colorspace_settings.name = 'Non-Color'
+                        except Exception:
+                            pass
                     if is_camera:
                         # Камера: рендер ортокамерой. samples повышаем —
                         # нужны для сглаживания alpha-краёв листвы.
@@ -681,14 +1143,14 @@ class GTATOOLS_OT_bake_run(bpy.types.Operator):
                             _pass = {'INDIRECT': (False, True, False),
                                      'DIRECT': (True, False, False)}.get(
                                          _lm, (True, True, False))
-                        B.bake_one_map(context, md, bake_obj, img, margin=margin * aa,
+                        B.bake_one_map(context, md, _bake_src, img, margin=margin * map_aa,
                                        params=params, samples=_samples_for(md),
                                        target_uv=target_uv, selected_to_active=s2a,
                                        cage_extrusion=cage, max_ray=mray,
                                        keep_visible=keep, pass_overrides=_pass)
                     # Ужать супер-разрешение до целевого (фильтрованное
                     # уменьшение Blender) — это и даёт сглаживание.
-                    if aa > 1:
+                    if map_aa > 1:
                         try:
                             img.scale(res_x, res_y)
                         except Exception:
@@ -703,8 +1165,8 @@ class GTATOOLS_OT_bake_run(bpy.types.Operator):
                         _alb = _nrm = None
                         if (mid == 'LIGHTMAP'
                                 and s.gtatools_bake_lightmap_denoise_passes):
-                            _alb = bpy.data.images.get(f"{result_name}_DIFFUSE")
-                            _nrm = bpy.data.images.get(f"{result_name}_NORMAL")
+                            _alb = _alpha_src_img(blo, result_name, 'DIFFUSE')
+                            _nrm = _alpha_src_img(blo, result_name, 'NORMAL')
                         B.denoise_image(img, context, albedo=_alb, normal=_nrm)
                     # LightMap: сохранить сырой результат (post-denoise) в
                     # <base>_LIGHTMAP_raw и применить пост-обработку (интенсивность
@@ -719,15 +1181,38 @@ class GTATOOLS_OT_bake_run(bpy.types.Operator):
                     if mid == 'NORMAL' and any(
                             L.enabled and L.map_id == 'NORMAL'
                             and getattr(L, 'desaturate', False)
-                            for L in s.gtatools_bake_layers):
+                            for L in blo.gtatools_bake_layers):
                         from ..scene_settings import _desaturate_image_inplace
                         _desaturate_image_inplace(img)
+                    # Непрозрачный фон (галка «Прозрачный фон» снята, дефолт):
+                    # фон вне развёртки заливаем СРЕДНИМ цветом запечённых
+                    # (покрытых) пикселей и ставим альфу 1 → текстура сплошная,
+                    # без черноты на швах/мипах. Пропускаем ALPHA/декали (там
+                    # альфа значима) и камеру-billboard (альфа = вырез листвы).
+                    if (not getattr(s, 'gtatools_bake_transparent_bg', False)
+                            and not is_camera and mid != 'ALPHA'
+                            and not getattr(L, 'as_decal', False)):
+                        try:
+                            _a = B.read_image_to_numpy(img)
+                            if _a.shape[2] >= 4:
+                                _cov = _a[..., 3] > 0.5      # покрытые пиксели
+                                if _cov.any():
+                                    _avg = _a[..., :3][_cov].mean(axis=0)
+                                    _a[..., :3][~_cov] = _avg
+                                _a[..., 3] = 1.0
+                                B.write_numpy_to_image(img, _a, pack=False)
+                        except Exception:             # noqa: BLE001
+                            pass
                     try:
                         img.pack()
                     except Exception:
                         pass
                     img.update()
-                    if result_img is None or mid == 'DIFFUSE':
+                    if _dbg:
+                        print(f"[INU bake] карта {mid}: {img.name} |",
+                              _img_stats(img))
+                    # ALPHA — не «результат» (это альфа-канал, не RGB-картинка).
+                    if mid == 'DIFFUSE' or (result_img is None and mid != 'ALPHA'):
                         result_img = img
                     baked += 1
         except RuntimeError as e:
@@ -736,14 +1221,42 @@ class GTATOOLS_OT_bake_run(bpy.types.Operator):
         except Exception as e:
             self.report({'ERROR'}, T("Ошибка: ") + str(e))
             return {'CANCELLED'}
+        finally:
+            # Снять изоляцию — вернуть спрятанным мешам render-видимость.
+            for _o in _iso_hidden:
+                try:
+                    _o.hide_render = False
+                except Exception:             # noqa: BLE001
+                    pass
+            # Вернуть прилайт-состояние источника и значения вьюпорт-коррекции.
+            try:
+                from ..tools.prelight import (setup_prelight_preview as _spp,
+                                              apply_prelight_view_correction)
+                for _o, _was in _pl_restore:
+                    _spp(_o, enable=_was)
+                if _pl_touched:
+                    apply_prelight_view_correction(context.scene)
+            except Exception:                 # noqa: BLE001
+                pass
+            # Убрать временную копию «только выделенные» и вернуть оригинал
+            # активным/выделенным.
+            if _sel_teardown is not None:
+                _sel_teardown()
+                try:
+                    for _o in context.view_layer.objects:
+                        _o.select_set(_o is bake_obj)
+                    context.view_layer.objects.active = bake_obj
+                except Exception:             # noqa: BLE001
+                    pass
 
         # Камера + billboard: перепроецируем UV плоскости из того же
         # ракурса, что снимала камера — текстура ложится точь-в-точь
         # (0..1, без зеркала/поворота), независимо от исходной развёртки.
         if is_camera and cam_orient_normal is not None:
             try:
-                B.reproject_billboard_uv(bake_obj, cam_orient_normal,
-                                         padding=cam_padding)
+                B.reproject_billboard_uv(
+                    bake_obj, cam_orient_normal, padding=cam_padding,
+                    uv_name=("INU_BakeUV" if cam_keep_uv else None))
             except Exception:
                 pass
 
@@ -754,7 +1267,7 @@ class GTATOOLS_OT_bake_run(bpy.types.Operator):
         bake_obj["inu_bake_uv"] = baked_uv
         # UV, в которую запечён LIGHTMAP (= общая цель) — для «Применить»
         # (сэмплинг в prelight) и превью.
-        if 'LIGHTMAP' in unique:
+        if 'LIGHTMAP' in baked_mids:
             bake_obj["inu_bake_lm_uv"] = baked_uv
 
         # Сброс вида превью — иначе _apply_result_material после прошлой
@@ -770,7 +1283,7 @@ class GTATOOLS_OT_bake_run(bpy.types.Operator):
             bake_obj["inu_bake_image"] = result_img.name if result_img else ""
             _apply_standard_material(bake_obj, result_img, baked_uv)
             msg = T("Запечено камерой (стандартный материал)")
-        elif 'LIGHTMAP' in unique:
+        elif 'LIGHTMAP' in baked_mids:
             # LightMap всегда сразу показываем на модели (живой композит без
             # prelight) — без кнопки. Не нужно — снять «Скрыть текстуру».
             _apply_lightmap_preview(bake_obj)
@@ -800,9 +1313,15 @@ class GTATOOLS_OT_bake_layer_add(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
+        import uuid
         from ..tools.bake import BAKE_MAPS, get_map
         s = context.scene.inu_settings
-        layer = s.gtatools_bake_layers.add()      # добавляется в конец
+        blo = _bl_owner(context)
+        if blo is None:
+            self.report({'ERROR'}, T("Выделите модель"))
+            return {'CANCELLED'}
+        layer = blo.gtatools_bake_layers.add()    # добавляется в конец
+        layer.uid = uuid.uuid4().hex[:16]         # ключ памяти полигонов слоя
         # Карта берётся из формы «Добавить слой» (gtatools_bake_new_map);
         # fallback на первую карту реестра, если значение почему-то пустое.
         chosen = get_map(s.gtatools_bake_new_map) or next(iter(BAKE_MAPS.values()), None)
@@ -815,10 +1334,10 @@ class GTATOOLS_OT_bake_layer_add(bpy.types.Operator):
             if chosen.id == 'NORMAL':
                 layer.desaturate = True
         # Список сверху-вниз → новый слой должен быть СВЕРХУ (index 0).
-        last = len(s.gtatools_bake_layers) - 1
+        last = len(blo.gtatools_bake_layers) - 1
         if last > 0:
-            s.gtatools_bake_layers.move(last, 0)
-        s.gtatools_bake_layers_index = 0
+            blo.gtatools_bake_layers.move(last, 0)
+        blo.gtatools_bake_layers_index = 0
         rebuild_live_composite(context.active_object)
         return {'FINISHED'}
 
@@ -833,17 +1352,19 @@ class GTATOOLS_OT_bake_layer_remove(bpy.types.Operator):
         default=-1, description="Индекс слоя (-1 = выбранный)")
 
     def execute(self, context):
-        s = context.scene.inu_settings
-        n = len(s.gtatools_bake_layers)
-        i = self.index if self.index >= 0 else s.gtatools_bake_layers_index
+        blo = _bl_owner(context)
+        if blo is None:
+            return {'CANCELLED'}
+        n = len(blo.gtatools_bake_layers)
+        i = self.index if self.index >= 0 else blo.gtatools_bake_layers_index
         if 0 <= i < n:
-            s.gtatools_bake_layers.remove(i)
+            blo.gtatools_bake_layers.remove(i)
             # Выбранный слой держим на том же логическом (сдвиг при удалении выше).
-            ai = s.gtatools_bake_layers_index
+            ai = blo.gtatools_bake_layers_index
             if ai > i:
                 ai -= 1
-            s.gtatools_bake_layers_index = max(
-                0, min(ai, len(s.gtatools_bake_layers) - 1))
+            blo.gtatools_bake_layers_index = max(
+                0, min(ai, len(blo.gtatools_bake_layers) - 1))
         rebuild_live_composite(context.active_object)
         return {'FINISHED'}
 
@@ -860,13 +1381,15 @@ class GTATOOLS_OT_bake_layer_move(bpy.types.Operator):
         default=-1, description="Индекс слоя (-1 = выбранный)")
 
     def execute(self, context):
-        s = context.scene.inu_settings
-        n = len(s.gtatools_bake_layers)
-        i = self.index if self.index >= 0 else s.gtatools_bake_layers_index
+        blo = _bl_owner(context)
+        if blo is None:
+            return {'CANCELLED'}
+        n = len(blo.gtatools_bake_layers)
+        i = self.index if self.index >= 0 else blo.gtatools_bake_layers_index
         j = i - 1 if self.direction == 'UP' else i + 1
         if 0 <= i < n and 0 <= j < n:
-            s.gtatools_bake_layers.move(i, j)
-            s.gtatools_bake_layers_index = j
+            blo.gtatools_bake_layers.move(i, j)
+            blo.gtatools_bake_layers_index = j
         rebuild_live_composite(context.active_object)
         return {'FINISHED'}
 
@@ -936,8 +1459,8 @@ class GTATOOLS_OT_bake_flatten(bpy.types.Operator):
         base = obj.get("inu_bake_base", "") if obj else ""
         if not base:
             return None
-        for L in context.scene.inu_settings.gtatools_bake_layers:
-            img = bpy.data.images.get(f"{base}_{L.map_id}") if L.enabled else None
+        for L in obj.inu.gtatools_bake_layers:
+            img = bpy.data.images.get(f"{base}_{_lkey(L)}") if L.enabled else None
             if img is not None:
                 return tuple(img.size)
         return None
@@ -954,9 +1477,8 @@ class GTATOOLS_OT_bake_flatten(bpy.types.Operator):
     def _flatten(self, context):
         """Свести стек в одну картинку <base>. Возвращает image или None."""
         obj = context.active_object
-        s = context.scene.inu_settings
         base = obj.get("inu_bake_base", "")
-        final = _composite_stack_image(s, base, base)
+        final = _composite_stack_image(obj.inu, base, base)
         if final is not None:
             _show_image(context, final)
         return final
@@ -965,8 +1487,7 @@ class GTATOOLS_OT_bake_flatten(bpy.types.Operator):
         # Сначала убедимся, что есть что сводить; путь по умолчанию = <base>.png.
         obj = context.active_object
         base = obj.get("inu_bake_base", "") if obj else ""
-        if not any(L.enabled and bpy.data.images.get(f"{base}_{L.map_id}")
-                   for L in context.scene.inu_settings.gtatools_bake_layers):
+        if obj is None or not _stack_has_bakeable(obj.inu, base):
             self.report({'ERROR'}, T("Нет запечённых карт для сведения"))
             return {'CANCELLED'}
         if not self.filepath:
@@ -1025,14 +1546,39 @@ class GTATOOLS_OT_bake_flatten(bpy.types.Operator):
 
 
 class GTATOOLS_OT_bake_save_map(bpy.types.Operator):
-    """Сохранить картинку выбранной карты (<base>_<map>) в файл."""
+    """Сохранить картинку выбранной карты (<base>_<map>) в файл. Для слоя с
+    «Декаль» (или карты ALPHA) сохраняет RGBA с вычисленной
+    альфой — как в общем сведении, но для одной карты."""
     bl_idname = "gtatools.bake_save_map"
     bl_label = "Сохранить карту"
 
     filepath: StringProperty(subtype='FILE_PATH')
     filter_glob: StringProperty(default="*.png;*.tga;*.bmp", options={'HIDDEN'})
+    # ВНУТРЕННЕЕ: какую запечённую карту брать (DIFFUSE/NORMAL/…). Скрыто из
+    # диалога — проставляется автоматически от карты/слоя, юзеру не нужно.
     map_id: StringProperty(
-        default="", description="Какую карту сохранить (пусто = выбранный слой)")
+        default="", description="Какую карту сохранить (пусто = выбранный слой)",
+        options={'HIDDEN'})
+    # ВНУТРЕННЕЕ: ключ конкретного слоя (uid|map_id) — чтобы при нескольких
+    # слоях одной карты (напр. две Bevel) сохранить именно свой, а не первый.
+    uid: StringProperty(default="", options={'HIDDEN'})
+    # Суффикс имени файла — что дописать к имени модели. Правится вручную.
+    name_suffix: StringProperty(
+        name=T("Суффикс имени"),
+        default="_DEFAULT",
+        description=T("Что дописать к имени модели в имени файла. Например "
+                      "'_DEFAULT' → grozdom97_DEFAULT.png. Меняй под свою "
+                      "текстуру в TXD"))
+    # Размер при сохранении — как в «Сохранить все»: печём в высоком, а в файл
+    # можно уменьшить box-усреднением (чисто, без алиасинга).
+    save_scale: EnumProperty(
+        name="Размер",
+        description=T("Во сколько раз уменьшить текстуру при сохранении"),
+        items=[('1', "Оригинал", "Полный запечённый размер"),
+               ('2', "½",        "В 2 раза меньше"),
+               ('4', "¼",        "В 4 раза меньше"),
+               ('8', "⅛",        "В 8 раз меньше")],
+        default='1')
 
     @classmethod
     def poll(cls, context):
@@ -1040,40 +1586,172 @@ class GTATOOLS_OT_bake_save_map(bpy.types.Operator):
         return (obj is not None and obj.type == 'MESH'
                 and bool(obj.get("inu_bake_base")))
 
+    def _downscaled_copy(self, img, f):
+        """Временная копия img, уменьшенная в f раз box-усреднением (среднее
+        блока f×f). Копия обычной save-all; см. её коммент."""
+        import numpy as np
+        from ..tools import bake as B
+        w, h = img.size
+        nw, nh = max(1, w // f), max(1, h // f)
+        arr = B.read_image_to_numpy(img)
+        ch = arr.shape[2]
+        arr = arr[:nh * f, :nw * f]
+        small = arr.reshape(nh, f, nw, f, ch).mean(axis=(1, 3))
+        tmp = bpy.data.images.new(img.name + f"__x{f}", nw, nh,
+                                  alpha=(ch >= 4), float_buffer=False)
+        tmp.use_fake_user = False
+        B.write_numpy_to_image(tmp, small, pack=False)
+        return tmp
+
+    def _write(self, img):
+        """Сохранить img в self.filepath, уменьшив по save_scale. Возвращает
+        True/False; временную уменьшенную копию убирает сам."""
+        f = int(self.save_scale)
+        save_img, tmp = img, None
+        if f > 1:
+            try:
+                save_img = tmp = self._downscaled_copy(img, f)
+            except Exception as e:                # noqa: BLE001
+                self.report({'ERROR'}, T("Не удалось уменьшить: ") + str(e))
+                return False
+        ok = True
+        try:
+            save_img.filepath_raw = self.filepath
+            save_img.file_format = 'PNG'
+            save_img.save()
+        except Exception as e:                    # noqa: BLE001
+            self.report({'ERROR'}, T("Не удалось сохранить: ") + str(e))
+            ok = False
+        finally:
+            if tmp is not None:
+                try:
+                    bpy.data.images.remove(tmp)
+                except Exception:                 # noqa: BLE001
+                    pass
+        return ok
+
+    def _layer(self, context):
+        """Слой, чью карту сохраняем: по uid (конкретный слой), иначе по map_id
+        (первый включённый с этой картой), иначе выбранный в списке."""
+        blo = _bl_owner(context)
+        if blo is None:
+            return None
+        if self.uid:
+            for L in blo.gtatools_bake_layers:
+                if _lkey(L) == self.uid:
+                    return L
+        if self.map_id:
+            cand = [L for L in blo.gtatools_bake_layers if L.map_id == self.map_id]
+            for L in cand:
+                if L.enabled:
+                    return L
+            return cand[0] if cand else None
+        i = blo.gtatools_bake_layers_index
+        if 0 <= i < len(blo.gtatools_bake_layers):
+            return blo.gtatools_bake_layers[i]
+        return None
+
     def _image(self, context):
         obj = context.active_object
-        base = obj.get("inu_bake_base", "")
-        mid = self.map_id
+        base = obj.get("inu_bake_base", "") if obj else ""
+        if not base:
+            return None
+        L = self._layer(context)
+        if L is not None:
+            im = bpy.data.images.get(f"{base}_{_lkey(L)}")
+            if im is not None:
+                return im
+        mid = self.map_id or (L.map_id if L else "")
         if not mid:
-            s = context.scene.inu_settings
-            i = s.gtatools_bake_layers_index
-            if 0 <= i < len(s.gtatools_bake_layers):
-                mid = s.gtatools_bake_layers[i].map_id
-        if not base or not mid:
             return None
         return bpy.data.images.get(f"{base}_{mid}")
 
+    @staticmethod
+    def _is_provider(L):
+        return L is not None and (getattr(L, 'as_decal', False)
+                                  or L.map_id == 'ALPHA')
+
+    def _provider_source_img(self, context, L):
+        """Запечённая карта-источник для слоя-провайдера (as_decal → сама
+        карта; ALPHA → alpha_source или <base>_ALPHA)."""
+        obj = context.active_object
+        base = obj.get("inu_bake_base", "") if obj else ""
+        if not base or L is None:
+            return None
+        if getattr(L, 'as_decal', False):
+            # Декаль: сама запечённая карта слоя (свой per-layer ключ).
+            return bpy.data.images.get(f"{base}_{_lkey(L)}")
+        src = getattr(L, 'alpha_source', '') or 'MATERIAL'
+        if src == 'MATERIAL':
+            src = 'ALPHA'
+        return _alpha_src_img(obj.inu, base, src)
+
     def invoke(self, context, event):
+        L = self._layer(context)
         img = self._image(context)
-        if img is None:
+        provider = self._is_provider(L)
+        if img is None and not (provider
+                                and self._provider_source_img(context, L) is not None):
             self.report({'ERROR'}, T("Эта карта ещё не запечена"))
             return {'CANCELLED'}
         if not self.filepath:
-            self.filepath = img.name + ".png"
+            self.filepath = self._compose_name(context)
         context.window_manager.fileselect_add(self)
         return {'RUNNING_MODAL'}
 
+    def _base_name(self, context):
+        ao = context.active_object
+        return (ao.get("inu_bake_base", "") if ao else "") or "texture"
+
+    def _compose_name(self, context):
+        """Имя файла = <модель><суффикс>.png в текущей папке диалога."""
+        fname = f"{self._base_name(context)}{self.name_suffix or ''}.png"
+        d = os.path.dirname(self.filepath) if self.filepath else ""
+        return os.path.join(d, fname) if d else fname
+
+    def check(self, context):
+        # Живая синхронизация: меняешь суффикс в сайдбаре → имя файла обновляется.
+        new = self._compose_name(context)
+        if new != self.filepath:
+            self.filepath = new
+            return True
+        return False
+
+    def draw(self, context):
+        layout = self.layout
+        # В сайдбаре — поле суффикса (map_id скрыт) + размер при сохранении.
+        layout.prop(self, "name_suffix")
+        layout.separator()
+        layout.label(text=T("Размер при сохранении:"))
+        layout.prop(self, "save_scale", expand=True)
+        img = self._image(context)
+        if img is not None:
+            f = int(self.save_scale)
+            layout.label(text=f"{img.size[0] // f} × {img.size[1] // f} px")
+
     def execute(self, context):
+        L = self._layer(context)
+        base = context.active_object.get("inu_bake_base", "")
+        # Слой-провайдер (декаль / ALPHA): сохраняем RGBA с вычисленной альфой.
+        if self._is_provider(L):
+            comp = _single_layer_composite_image(
+                context.active_object.inu, base, L, f"{base}_{_lkey(L)}__save")
+            if comp is not None:
+                ok = self._write(comp)
+                try:
+                    bpy.data.images.remove(comp)
+                except Exception:                 # noqa: BLE001
+                    pass
+                if not ok:
+                    return {'CANCELLED'}
+                self.report({'INFO'}, T("Сохранено: ") + self.filepath)
+                return {'FINISHED'}
+            # не собралось — падаем на сырое сохранение ниже
         img = self._image(context)
         if img is None:
             self.report({'ERROR'}, T("Нет картинки карты"))
             return {'CANCELLED'}
-        try:
-            img.filepath_raw = self.filepath
-            img.file_format = 'PNG'
-            img.save()
-        except Exception as e:
-            self.report({'ERROR'}, T("Не удалось сохранить: ") + str(e))
+        if not self._write(img):
             return {'CANCELLED'}
         self.report({'INFO'}, T("Сохранено: ") + self.filepath)
         return {'FINISHED'}
@@ -1346,7 +2024,7 @@ class GTATOOLS_OT_bake_show_over_base(bpy.types.Operator):
         if not over_uv and uvs and len(uvs):
             over_uv = (uvs[1].name if len(uvs) >= 2 else uvs[0].name)
         # Свести стек в один композит (UV2-раскладка).
-        comp = _composite_stack_image(s, base, f"{base}_OVER")
+        comp = _composite_stack_image(obj.inu, base, f"{base}_OVER")
         if comp is None:
             self.report({'ERROR'}, T("Нет запечённых карт"))
             return {'CANCELLED'}

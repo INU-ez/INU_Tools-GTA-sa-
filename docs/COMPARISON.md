@@ -1,6 +1,6 @@
 # INU Tools vs Kams Script vs DragonFF
 
-A focused comparison of the three GTA San Andreas modding toolchains in active use. Updated for **INU Tools 2.0.2** (May 2026).
+A focused comparison of the three GTA San Andreas modding toolchains in active use. Updated for **INU Tools 2.3.0** (2026).
 
 > **[🇷🇺 Русская версия](COMPARISON_rus.md)**
 
@@ -10,7 +10,7 @@ A focused comparison of the three GTA San Andreas modding toolchains in active u
 
 | Tool | Host | Author(s) | License | Latest |
 |---|---|---|---|---|
-| **INU Tools** | Blender 4.2 – 5.1 | INU | GPL-3.0 | 2.0.2 (2026) |
+| **INU Tools** | Blender 4.2 – 5.1 | INU | GPL-3.0 | 2.3.0 (2026) |
 | **Kams Script (GTA_Tools GF)** | 3ds Max | Kam, Goldfish, community | freeware (closed) | 2014–2018 |
 | **DragonFF** | Blender 2.8 – 4.x | Parik | GPL-3.0 | active |
 
@@ -116,7 +116,7 @@ A focused comparison of the three GTA San Andreas modding toolchains in active u
 | Roadblocks / traffic-light enums | partial | ✅ | — |
 | Breakable objects chunk | ✅ | ✅ | ✅ |
 | CST (Steve's COL Editor) read / write | ✅ | ✅ | — |
-| Object Explode (cut into pieces) | — | ✅ | — |
+| Object Explode (cut into pieces) | ✅ grid + scatter | ✅ | — |
 | Native renderware (GameCube / PS2 / PSP / Xbox / WDGL) | — | — | ✅ |
 | Delta Morphs | — | — | ✅ |
 
@@ -153,5 +153,5 @@ A focused comparison of the three GTA San Andreas modding toolchains in active u
 
 - "✅" = supported in the current public release; "partial" = present but incomplete or workflow-limited; "—" = not implemented.
 - Kams Script row reflects the GTA_Tools (GF) bundle by Goldfish plus community add-ons (DeniskaMax, ZZPuma, EMAPTool). Niche standalone Max tools (Water IO, etc.) are folded into the Kams column where applicable.
-- Counts and section coverage verified against INU Tools 2.0.2 source (`core/`, `ops/`).
+- Counts and section coverage verified against INU Tools 2.3.0 source (`core/`, `ops/`).
 - Corrections welcome — open an issue or ping `1.n.u` on Discord.

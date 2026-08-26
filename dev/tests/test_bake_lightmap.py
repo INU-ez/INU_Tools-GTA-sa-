@@ -132,6 +132,127 @@ def test_denoise_fallback_without_blender():
     assert bake_core.denoise_image(None) is False
 
 
+# ── Alpha map (transparency → alpha channel) ─────────────────────────
+
+def test_alpha_registered():
+    md = bake_maps.BAKE_MAPS["ALPHA"]
+    # Baked as flat emission of the material's opacity (no light rig).
+    assert md.bake_type == "EMIT"
+    assert md.needs_light is False
+    assert md.rig_kind == "NONE"
+    # Has a material-swap builder (Cycles has no native alpha pass).
+    assert callable(md.node_group_builder)
+
+
+def test_composite_alpha_channel_from_alpha_map():
+    # ALPHA layer feeds the output alpha channel and is EXCLUDED from the RGB
+    # stack (so a red diffuse + 0.5 alpha mask → red RGB, 0.5 alpha).
+    LS = bake_composite.LayerSpec
+    diffuse = np.array([[[1.0, 0.0, 0.0, 1.0]]], np.float32)
+    alpha = np.array([[[0.5, 0.5, 0.5, 1.0]]], np.float32)   # Non-Color mask
+    pixels = {"DIFFUSE": diffuse, "ALPHA": alpha}
+    layers = [LS(map_id="ALPHA"), LS(map_id="DIFFUSE")]      # UI order: alpha on top
+    out = bake_composite.composite_layers(pixels, layers, 1, 1, srgb=False)
+    assert np.allclose(out[0, 0, :3], [1.0, 0.0, 0.0], atol=1e-5)
+    assert abs(out[0, 0, 3] - 0.5) < 1e-5
+
+
+def test_composite_alpha_opacity_scales_strength():
+    # opacity acts as an alpha-strength multiplier for the ALPHA layer.
+    LS = bake_composite.LayerSpec
+    diffuse = np.array([[[0.2, 0.2, 0.2, 1.0]]], np.float32)
+    alpha = np.array([[[1.0, 1.0, 1.0, 1.0]]], np.float32)
+    pixels = {"DIFFUSE": diffuse, "ALPHA": alpha}
+    layers = [LS(map_id="ALPHA", opacity=0.25), LS(map_id="DIFFUSE")]
+    out = bake_composite.composite_layers(pixels, layers, 1, 1, srgb=False)
+    assert abs(out[0, 0, 3] - 0.25) < 1e-5
+
+
+def test_composite_alpha_only_gives_black_rgb():
+    # Only an ALPHA layer (e.g. a shadow decal alpha) → RGB black, alpha=mask.
+    LS = bake_composite.LayerSpec
+    alpha = np.array([[[0.8, 0.8, 0.8, 1.0]]], np.float32)
+    out = bake_composite.composite_layers(
+        {"ALPHA": alpha}, [LS(map_id="ALPHA")], 1, 1, srgb=False)
+    assert np.allclose(out[0, 0, :3], [0.0, 0.0, 0.0], atol=1e-5)
+    assert abs(out[0, 0, 3] - 0.8) < 1e-5
+
+
+def test_composite_alpha_from_shadow_inverted():
+    # Shadow decal: alpha sourced from Shadow map, inverted → lit=transparent,
+    # shadowed=opaque. Shadow layer itself disabled in RGB (RGB stays black).
+    LS = bake_composite.LayerSpec
+    shadow = np.array([[[1.0, 1.0, 1.0, 1.0],    # lit
+                        [0.0, 0.0, 0.0, 1.0]]], np.float32)   # shadowed (1,2,4)
+    layers = [LS(map_id="ALPHA", alpha_source="SHADOW", alpha_invert=True),
+              LS(map_id="SHADOW", enabled=False)]
+    out = bake_composite.composite_layers({"SHADOW": shadow}, layers, 2, 1, srgb=False)
+    assert np.allclose(out[0, 0, :3], [0.0, 0.0, 0.0], atol=1e-5)   # black decal
+    assert abs(out[0, 0, 3] - 0.0) < 1e-5    # lit → transparent
+    assert abs(out[0, 1, 3] - 1.0) < 1e-5    # shadow → opaque
+
+
+def test_composite_alpha_from_shadow_not_inverted():
+    # Without invert: lit=opaque, shadowed=transparent (opposite direction).
+    LS = bake_composite.LayerSpec
+    shadow = np.array([[[1.0, 1.0, 1.0, 1.0],
+                        [0.0, 0.0, 0.0, 1.0]]], np.float32)
+    layers = [LS(map_id="ALPHA", alpha_source="SHADOW", alpha_invert=False)]
+    out = bake_composite.composite_layers({"SHADOW": shadow}, layers, 2, 1, srgb=False)
+    assert abs(out[0, 0, 3] - 1.0) < 1e-5    # lit → opaque
+    assert abs(out[0, 1, 3] - 0.0) < 1e-5    # shadow → transparent
+
+
+def test_composite_decal_layer_threshold_removes_gray():
+    # as_decal directly on the Shadow layer: threshold removes the gray floor,
+    # keeps only the dark cast shadow. Layer excluded from RGB (RGB black).
+    LS = bake_composite.LayerSpec
+    shadow = np.array([[[0.1, 0.1, 0.1, 1.0],    # dark shadow
+                        [0.5, 0.5, 0.5, 1.0],    # gray floor (light falloff)
+                        [0.9, 0.9, 0.9, 1.0]]], np.float32)   # lit
+    layers = [LS(map_id="SHADOW", as_decal=True,
+                 decal_threshold=0.3, decal_softness=0.05)]
+    out = bake_composite.composite_layers({"SHADOW": shadow}, layers, 3, 1, srgb=False)
+    assert np.allclose(out[0, 0, :3], 0.0, atol=1e-5)   # black decal RGB
+    assert out[0, 0, 3] > 0.9    # shadow → opaque
+    assert out[0, 1, 3] < 0.1    # gray floor → removed
+    assert out[0, 2, 3] < 0.1    # lit → removed
+
+
+def test_composite_decal_hard_cut_softness_zero():
+    # Softness 0 → hard binary cut: shadow fully black+opaque, rest fully
+    # transparent (no gray gradient).
+    LS = bake_composite.LayerSpec
+    shadow = np.array([[[0.1, 0.1, 0.1, 1.0],    # dark
+                        [0.6, 0.6, 0.6, 1.0]]], np.float32)   # light
+    layers = [LS(map_id="SHADOW", as_decal=True,
+                 decal_threshold=0.4, decal_softness=0.0)]
+    out = bake_composite.composite_layers({"SHADOW": shadow}, layers, 2, 1, srgb=False)
+    assert out[0, 0, 3] == 1.0    # dark → fully opaque
+    assert out[0, 1, 3] == 0.0    # light → fully transparent
+    assert np.allclose(out[0, 0, :3], 0.0)   # pure black
+
+
+def test_composite_decal_invert_shows_light():
+    LS = bake_composite.LayerSpec
+    shadow = np.array([[[0.1, 0.1, 0.1, 1.0],
+                        [0.9, 0.9, 0.9, 1.0]]], np.float32)
+    layers = [LS(map_id="SHADOW", as_decal=True, decal_invert=True,
+                 decal_threshold=0.3, decal_softness=0.05)]
+    out = bake_composite.composite_layers({"SHADOW": shadow}, layers, 2, 1, srgb=False)
+    assert out[0, 0, 3] < 0.1    # dark → hidden (inverted)
+    assert out[0, 1, 3] > 0.9    # light → shown
+
+
+def test_composite_without_alpha_keeps_base_coverage():
+    # No ALPHA layer → alpha comes from the base layer's coverage (unchanged).
+    LS = bake_composite.LayerSpec
+    diffuse = np.array([[[0.3, 0.3, 0.3, 0.7]]], np.float32)
+    out = bake_composite.composite_layers(
+        {"DIFFUSE": diffuse}, [LS(map_id="DIFFUSE")], 1, 1, srgb=False)
+    assert abs(out[0, 0, 3] - 0.7) < 1e-5
+
+
 def test_denoise_fallback_accepts_feature_passes():
     # New albedo/normal kwargs must be accepted and still fail gracefully.
     assert bake_core.denoise_image(None, albedo=None, normal=None) is False

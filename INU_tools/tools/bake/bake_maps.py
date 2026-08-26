@@ -107,16 +107,101 @@ def build_bevel_material(params):
     # mask = clamp(1 − dot): ребро (dot<1) → светлое, плоскость → тёмное
     inv.inputs[0].default_value = 1.0
     nt.links.new(dot.outputs['Value'], inv.inputs[1])
-    nt.links.new(inv.outputs['Value'], emit.inputs['Color'])
+
+    # «Только выделенные рёбра»: домножаем маску кромок на вертекс-атрибут
+    # (1 у вершин выделенных рёбер, 0 иначе) → эффект гаснет вне них.
+    edge_attr = params.get('bevel_edge_mask_attr')
+    mask_out = inv.outputs['Value']
+    if edge_attr:
+        vc = None
+        for _t in ('ShaderNodeColorAttribute', 'ShaderNodeVertexColor'):
+            try:
+                vc = nt.nodes.new(_t)
+                break
+            except RuntimeError:
+                vc = None
+        if vc is not None:
+            try:
+                vc.layer_name = edge_attr
+            except Exception:
+                pass
+            mul = nt.nodes.new('ShaderNodeMath')
+            mul.operation = 'MULTIPLY'
+            nt.links.new(inv.outputs['Value'], mul.inputs[0])
+            # Маска хранится в альфа-канале атрибута (1/0).
+            nt.links.new(vc.outputs['Alpha'], mul.inputs[1])
+            mask_out = mul.outputs['Value']
+
+    nt.links.new(mask_out, emit.inputs['Color'])
     nt.links.new(emit.outputs['Emission'], out.inputs['Surface'])
 
     mat.use_fake_user = False
     return mat
 
 
+_BEVEL_EDGE_ATTR = 'INU_BevelEdgeMask'
+
+
+def _make_edge_mask_attr(obj):
+    """Вертекс-атрибут (FLOAT_COLOR, POINT): 1 у вершин ВЫДЕЛЕННЫХ рёбер, 0
+    иначе (значение в т.ч. в альфе). Возвращает имя или None (нет выделения)."""
+    me = getattr(obj, 'data', None)
+    edges = getattr(me, 'edges', None)
+    ca = getattr(me, 'color_attributes', None)
+    if not edges or ca is None:
+        return None
+    sel = set()
+    for e in edges:
+        if e.select:
+            sel.update(e.vertices)
+    if not sel:
+        return None
+    old = ca.get(_BEVEL_EDGE_ATTR)
+    if old is not None:
+        try:
+            ca.remove(old)
+        except Exception:
+            pass
+    try:
+        attr = ca.new(_BEVEL_EDGE_ATTR, 'FLOAT_COLOR', 'POINT')
+    except Exception:
+        return None
+    n = len(attr.data)
+    buf = [0.0] * (n * 4)
+    for vi in sel:
+        if 0 <= vi < n:
+            b = vi * 4
+            buf[b:b + 4] = (1.0, 1.0, 1.0, 1.0)
+    try:
+        attr.data.foreach_set('color', buf)
+    except Exception:
+        return None
+    return _BEVEL_EDGE_ATTR
+
+
+def _remove_edge_mask_attr(obj):
+    ca = getattr(getattr(obj, 'data', None), 'color_attributes', None)
+    if ca is None:
+        return
+    a = ca.get(_BEVEL_EDGE_ATTR)
+    if a is not None:
+        try:
+            ca.remove(a)
+        except Exception:
+            pass
+
+
 def _prepare_bevel(obj, params):
     """Временно подменить материалы объекта на Bevel-материал. Возвращает
     teardown-замыкание, восстанавливающее исходные материалы."""
+    # «Только выделенные рёбра»: помечаем вершины выделенных рёбер атрибутом,
+    # Bevel-материал домножит маску кромок на него (эффект только у них).
+    _edge_attr = None
+    if params.get('bevel_selected_edges'):
+        _edge_attr = _make_edge_mask_attr(obj)
+        if _edge_attr:
+            params = dict(params)
+            params['bevel_edge_mask_attr'] = _edge_attr
     mat = build_bevel_material(params)
     slots = obj.material_slots
     if len(slots) > 0:
@@ -127,6 +212,8 @@ def _prepare_bevel(obj, params):
         def teardown():
             for s, m in zip(obj.material_slots, original):
                 s.material = m
+            if _edge_attr:
+                _remove_edge_mask_attr(obj)
             if mat.users == 0:
                 try:
                     bpy.data.materials.remove(mat)
@@ -141,9 +228,135 @@ def _prepare_bevel(obj, params):
             obj.data.materials.pop()
         except Exception:
             pass
+        if _edge_attr:
+            _remove_edge_mask_attr(obj)
         if mat.users == 0:
             try:
                 bpy.data.materials.remove(mat)
+            except Exception:
+                pass
+    return teardown_appended
+
+
+# ── Alpha material (прозрачность материала → серая эмиссия) ──────────
+# Cycles не умеет печь «альфу» нативным пассом, поэтому подменяем материалы
+# на эмиссию альфа-канала (как Bevel подменяет на эмиссию маски кромок) и
+# печём EMIT. Белый = непрозрачно, чёрный = дыра. Печём в Non-Color картинку
+# (см. bake_ops), чтобы значение не искажалось sRGB-гаммой — тогда оно 1:1
+# ложится в альфа-канал итоговой текстуры при «Сохранить как».
+ALPHA_MAT_PREFIX = 'INU_Alpha_Mat_'
+
+
+def _tex_uv_name(tex_node):
+    """UV-map, к которой привязана Image Texture (или '')."""
+    try:
+        lnk = tex_node.inputs['Vector'].links
+        if lnk and lnk[0].from_node.type == 'UVMAP':
+            return lnk[0].from_node.uv_map
+    except Exception:
+        pass
+    return ''
+
+
+def _find_alpha_source(mat):
+    """Откуда берётся прозрачность материала.
+
+    Возвращает (image, uv_name, const): при image != None эмитим её альфа-
+    канал; при image is None — сплошной серый `const` (0..1). Покрывает
+    типовые случаи GTA/Blender: альфа в Principled.Alpha (константа или
+    текстура) либо альфа основной Image Texture из Base Color.
+    """
+    if not mat or not getattr(mat, 'use_nodes', False) or mat.node_tree is None:
+        return (None, '', 1.0)
+    nodes = mat.node_tree.nodes
+    bsdf = next((n for n in nodes if n.type == 'BSDF_PRINCIPLED'), None)
+    # 1. Principled → Alpha (linked-текстура или константа).
+    if bsdf is not None:
+        ai = bsdf.inputs.get('Alpha')
+        if ai is not None and ai.is_linked:
+            src = ai.links[0].from_node
+            if (src is not None and src.type == 'TEX_IMAGE'
+                    and getattr(src, 'image', None)):
+                return (src.image, _tex_uv_name(src), 1.0)
+        elif ai is not None:
+            return (None, '', float(ai.default_value))
+    # 2. Основная Image Texture (из Base Color, иначе первая) → её альфа-канал.
+    tex = None
+    if bsdf is not None and bsdf.inputs['Base Color'].links:
+        c = bsdf.inputs['Base Color'].links[0].from_node
+        if c is not None and c.type == 'TEX_IMAGE' and getattr(c, 'image', None):
+            tex = c
+    if tex is None:
+        tex = next((n for n in nodes
+                    if n.type == 'TEX_IMAGE' and getattr(n, 'image', None)), None)
+    if tex is not None:
+        return (tex.image, _tex_uv_name(tex), 1.0)
+    return (None, '', 1.0)
+
+
+def _build_alpha_emit_material(name, src_mat):
+    """Материал-эмиссия: серый = альфа исходного материала (белый =
+    непрозрачно). Печётся как EMIT (свет не нужен). tex.Alpha — сырые данные
+    (не цвет), поэтому colorspace исходной картинки не трогаем."""
+    m = bpy.data.materials.get(name) or bpy.data.materials.new(name)
+    m.use_nodes = True
+    m.use_fake_user = False
+    nt = m.node_tree
+    nt.nodes.clear()
+    out = nt.nodes.new('ShaderNodeOutputMaterial')
+    emit = nt.nodes.new('ShaderNodeEmission')
+    img, uv, const = _find_alpha_source(src_mat)
+    if img is not None:
+        tex = nt.nodes.new('ShaderNodeTexImage')
+        tex.image = img
+        if uv:
+            uvm = nt.nodes.new('ShaderNodeUVMap')
+            uvm.uv_map = uv
+            nt.links.new(uvm.outputs['UV'], tex.inputs['Vector'])
+        nt.links.new(tex.outputs['Alpha'], emit.inputs['Color'])
+    else:
+        emit.inputs['Color'].default_value = (const, const, const, 1.0)
+    nt.links.new(emit.outputs['Emission'], out.inputs['Surface'])
+    return m
+
+
+def _prepare_alpha(obj, params):
+    """Подменить материалы объекта на альфа-эмиссию (по слоту — своя, т.к.
+    альфа зависит от материала). Возвращает teardown, восстанавливающий
+    исходные материалы и удаляющий временные."""
+    slots = obj.material_slots
+    temp = []
+    if len(slots) > 0:
+        original = [s.material for s in slots]
+        for i, s in enumerate(slots):
+            am = _build_alpha_emit_material(f'{ALPHA_MAT_PREFIX}{i}', s.material)
+            temp.append(am)
+            s.material = am
+
+        def teardown():
+            for s, m in zip(obj.material_slots, original):
+                s.material = m
+            for am in temp:
+                try:
+                    if am.users == 0:
+                        bpy.data.materials.remove(am)
+                except Exception:
+                    pass
+        return teardown
+
+    am = _build_alpha_emit_material(f'{ALPHA_MAT_PREFIX}0', None)
+    temp.append(am)
+    obj.data.materials.append(am)
+
+    def teardown_appended():
+        try:
+            obj.data.materials.pop()
+        except Exception:
+            pass
+        for am2 in temp:
+            try:
+                if am2.users == 0:
+                    bpy.data.materials.remove(am2)
             except Exception:
                 pass
     return teardown_appended
@@ -313,13 +526,18 @@ def prepare_map(map_def, obj, context, params, keep_visible=()):
     (всегда вызывать в finally).
 
     - Bevel → подмена материалов (node_group_builder).
-    - Светозависимые (Shadow / Diffuse-Lit) → самодостаточный свет-риг
-      (keep_visible не прячется — для hi→low хайполи остаётся виден).
+    - Светозависимые (Shadow / Diffuse-Lit):
+        * params['use_scene_light'] → печём от РЕАЛЬНОГО света сцены (твои
+          лампы/солнце/world, как LightMap): ни рига, ни изоляции → no-op;
+        * иначе → самодостаточный внутренний свет-риг + изоляция сцены
+          (keep_visible не прячется — для hi→low хайполи остаётся виден).
     - Остальные light-free (AO / Diffuse-albedo) → no-op.
     """
     if map_def.node_group_builder is not None:
         return map_def.node_group_builder(obj, params)
     if map_def.needs_light:
+        if params.get('use_scene_light'):
+            return lambda: None
         return _build_light_rig(context, obj, map_def.rig_kind, params,
                                 keep_visible)
     return lambda: None
@@ -431,7 +649,18 @@ BAKE_MAPS = OrderedDict([
         id='BEVEL', label_key='Bevel', bake_type='EMIT',
         needs_light=False, rig_kind='NONE',
         node_group_builder=_prepare_bevel,
-        samples=4, default_blend='OVERLAY', default_opacity=1.0,
+        samples=4, default_blend='ADD', default_opacity=1.0,
+        default_contrast=1.0, default_gamma=1.0)),
+    # Альфа/прозрачность материала → серая маска (EMIT). В стеке НЕ
+    # смешивается в RGB — задаёт альфа-канал итоговой текстуры (при
+    # «Сохранить как» выходит RGBA). Так любую карту (тень, диффуз, …) можно
+    # сделать прозрачным декалем: RGB = карта, A = ALPHA. blend/контраст к
+    # ней не применяются; opacity работает как множитель силы альфы.
+    ('ALPHA', BakeMapDef(
+        id='ALPHA', label_key='Alpha', bake_type='EMIT',
+        needs_light=False, rig_kind='NONE',
+        node_group_builder=_prepare_alpha,
+        samples=1, default_blend='NORMAL', default_opacity=1.0,
         default_contrast=1.0, default_gamma=1.0)),
 
     # ── PBR-карты (нативные пассы Cycles) ─────────────────────────────

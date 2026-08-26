@@ -104,18 +104,12 @@ def test_no_dunder_import_with_runtime_arg():
 #
 # subprocess isn't banned outright, but every call must be defensible:
 # user-initiated, non-network, and not arbitrary code. The addon
-# currently has exactly one subprocess.Popen (xdg-open the user's ID
-# file on Linux). New ones should be reviewed before they land.
+# currently has ZERO subprocess uses — file/folder opening goes through
+# the built-in `bpy.ops.wm.path_open` (no external process, per
+# extensions.blender.org rules). New ones should be reviewed before they land.
 
 ALLOWED_SUBPROCESS_USES = {
     # Path -> reason. Update when adding a legitimate new caller.
-    "INU_tools/ops/id_manager_ops.py": "xdg-open user-initiated file open",
-    "INU_tools/ops/file_scanner_ops.py": (
-        "xdg-open / `open` to reveal the scan-report folder in the "
-        "system file manager. User-initiated (operator triggered by "
-        "explicit button click), no shell=True, args is a literal "
-        "list with a fixed path arg. Windows path uses os.startfile."
-    ),
 }
 
 

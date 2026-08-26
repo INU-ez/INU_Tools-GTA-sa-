@@ -21,15 +21,13 @@ class GTATOOLS_OT_id_manager_open_file(bpy.types.Operator):
         from .. import _id_preset_sync
         _id_preset_sync(context)
         from ..data.id_manager import get_file_path
-        import subprocess, sys
         filepath = get_file_path()
         if not os.path.isfile(filepath):
             self.report({'ERROR'}, T("Файл ID не найден. Нажмите 'Создать файл ID'"))
             return {'CANCELLED'}
-        if sys.platform == 'win32':
-            os.startfile(filepath)
-        else:
-            subprocess.Popen(['xdg-open', filepath])
+        # Штатный кроссплатформенный способ (без внешних процессов —
+        # требование extensions.blender.org): открывает файл в приложении ОС.
+        bpy.ops.wm.path_open(filepath=filepath)
         self.report({'INFO'}, f"{T('Открыт:')} {filepath}")
         return {'FINISHED'}
 

@@ -857,6 +857,20 @@ def _bake_add_over(obj, snapshot):
     return True
 
 
+def _prelight_allowed_types(st):
+    """Множество типов ламп для запекания прилайта по тумблерам панели."""
+    allowed = set()
+    if getattr(st, 'gtatools_prelight_use_point', True):
+        allowed.add('POINT')
+    if getattr(st, 'gtatools_prelight_use_sun', True):
+        allowed.add('SUN')
+    if getattr(st, 'gtatools_prelight_use_spot', True):
+        allowed.add('SPOT')
+    if getattr(st, 'gtatools_prelight_use_area', True):
+        allowed.add('AREA')
+    return allowed
+
+
 class GTATOOLS_OT_bake_vertex_colors(bpy.types.Operator):
     """Запечь освещение от Point источников в vertex colors"""
     bl_idname = "gtatools.bake_vertex_colors"
@@ -903,7 +917,11 @@ class GTATOOLS_OT_bake_vertex_colors(bpy.types.Operator):
             baked = 0
             for obj in mesh_objects:
                 snap = _bake_snapshot_active(obj) if self.over else None
-                success, message = bake_vertex_colors_from_lights(obj, self.use_shadows)
+                _st = context.scene.inu_settings
+                success, message = bake_vertex_colors_from_lights(
+                    obj, self.use_shadows,
+                    allowed_types=_prelight_allowed_types(_st),
+                    use_hdri=getattr(_st, 'gtatools_prelight_use_hdri', False))
                 if success:
                     if self.over and snap is not None:
                         # Add bake on top of the snapshot — no v_offset reset.
@@ -980,7 +998,11 @@ class GTATOOLS_OT_bake_vertex_colors_simple(bpy.types.Operator):
             baked = 0
             for obj in mesh_objects:
                 snap = _bake_snapshot_active(obj) if self.over else None
-                success, message = bake_vertex_colors_simple(obj, ambient, intensity, gamma, use_shadows)
+                success, message = bake_vertex_colors_simple(
+                    obj, ambient, intensity, gamma, use_shadows,
+                    allowed_types=_prelight_allowed_types(scene.inu_settings),
+                    use_hdri=getattr(scene.inu_settings,
+                                     'gtatools_prelight_use_hdri', False))
                 if success:
                     if self.over and snap is not None:
                         _bake_add_over(obj, snap)

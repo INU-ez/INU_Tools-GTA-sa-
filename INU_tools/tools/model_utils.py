@@ -96,6 +96,30 @@ def get_model_type(obj):
     )
 
 
+def is_collision_mesh(obj):
+    """True when OBJ must be exported as collision — embedded CHUNK_COLLISION_MODEL
+    in the .dff, or a .col mesh — instead of visible geometry.
+
+    The ``inu.type`` COL/SHA tag is the signal, EXCEPT when the object name
+    carries an explicit ``_DFF``/``_LOD`` marker: a deliberate name marker
+    outranks the tag, same tier order as classify_model. Without that guard a
+    stale COL tag (inherited by Shift+D from a collision mesh, or left over
+    from Batch Set Type) on a ``*_LOD`` mesh silently wrote a DFF with an EMPTY
+    GeometryList — collision only, so the model never rendered in game.
+
+    Empties are never collision here: sphere/box primitives are recognised
+    separately by dff_export._is_col_primitive_empty."""
+    if getattr(obj, 'type', None) != 'MESH':
+        return False
+    inu = getattr(obj, 'inu', None)
+    if getattr(inu, 'type', 'OBJ') not in ('COL', 'SHA'):
+        return False
+    from ..core.model_classify import explicit_name_type
+    marker, _ = explicit_name_type(
+        _strip_dup_suffix(obj.name), _get_suffixes(), _get_prefixes())
+    return marker not in ('DFF', 'LOD')
+
+
 # ── UI-only classification cache ──────────────────────────────────────
 # get_model_type falls through to _mesh_has_textured_material, which walks
 # each material's node tree for untagged meshes. It's called from several
@@ -112,13 +136,23 @@ def get_model_type(obj):
 _MODEL_TYPE_CACHE = {}
 
 
-def invalidate_model_type_cache(*_args):
+def invalidate_model_type_cache(_scene=None, depsgraph=None):
     """Drop the UI classification cache (registered on depsgraph_update_post).
 
     Marked persistent (survives .blend loads) in __init__.register() rather
     than with a module-level @bpy.app.handlers.persistent decorator — the
     latter runs at import and would break bpy-less unit tests (their stub
-    has no bpy.app)."""
+    has no bpy.app).
+
+    A transform-only update batch is skipped: dragging an object fires a
+    depsgraph update EVERY frame, and clearing here meant the export
+    panel re-classified its whole fallback set (the active collection,
+    when nothing is selected) on every one of those frames. Moving a mesh
+    can't change whether it's a DFF, a LOD or a COL, so the cache is left
+    alone and the drag stays smooth."""
+    from .draw_cache import is_transform_only
+    if is_transform_only(depsgraph):
+        return
     _MODEL_TYPE_CACHE.clear()
 
 

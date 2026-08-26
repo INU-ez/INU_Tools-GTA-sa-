@@ -44,6 +44,45 @@ def _is_scene_lod_name(name):
     return _SCENE_LOD_RE.search(name.lower()) is not None
 
 
+def explicit_name_type(name, suffixes=None, prefixes=None):
+    """Tier 1 of classify_model on its own — the EXPLICIT name marker.
+
+    Returns ``(model_type, base_name)`` when NAME carries a deliberate
+    ``_SHA`` / suffix / prefix marker, else ``(None, name)``.
+
+    Split out because export routing has to know whether the marker was
+    deliberate: an ``inu.type`` COL/SHA tag diverts a mesh into embedded
+    collision, and a stale tag on a ``*_LOD`` mesh used to write a DFF with an
+    empty GeometryList — collision only, nothing to render in game. Tier 1
+    outranks the tag here exactly as it does inside classify_model.
+    """
+    suffixes = suffixes or DEFAULT_SUFFIXES
+    prefixes = prefixes or DEFAULT_PREFIXES
+    name_upper = name.upper()
+
+    # Shadow mesh (_SHA) → COL bucket (non-blocking shadow mesh in the .col).
+    if name_upper.endswith('_SHA'):
+        return 'COL', name[:-4]
+
+    for mt in ('LOD', 'COL', 'DFF'):
+        sfx = suffixes.get(mt, '') or ''
+        sfx_upper = sfx.upper()
+        if sfx_upper and name_upper.endswith(sfx_upper):
+            return mt, name[:-len(sfx)]
+        # No-separator marker (e.g. "modelCOL") — case-SENSITIVE on the
+        # uppercase convention so «protocol» / «exploded» don't trip COL/DFF.
+        bare = sfx_upper.lstrip('_. ')
+        if bare and sfx_upper != bare and name.endswith(bare):
+            return mt, name[:-len(bare)]
+    for mt in ('COL', 'DFF'):     # LOD prefix is handled by is_lod_name below
+        pfx = prefixes.get(mt, '') or ''
+        pfx_upper = pfx.upper()
+        if pfx_upper and name_upper.startswith(pfx_upper):
+            return mt, name[len(pfx):]
+
+    return None, name
+
+
 def classify_model(name, *, has_texture=True, inu_type='OBJ',
                    suffixes=None, prefixes=None):
     """Classify a model NAME into ``LOD`` / ``COL`` / ``DFF`` and return
@@ -62,30 +101,10 @@ def classify_model(name, *, has_texture=True, inu_type='OBJ',
     ``has_texture`` may be a bool OR a 0-arg callable — the callable is only
     evaluated if classification actually reaches the texture tier, so the
     (potentially expensive) material scan is skipped on a name/tag hit."""
-    suffixes = suffixes or DEFAULT_SUFFIXES
-    prefixes = prefixes or DEFAULT_PREFIXES
-    name_upper = name.upper()
-
-    # Shadow mesh (_SHA) → COL bucket (non-blocking shadow mesh in the .col).
-    if name_upper.endswith('_SHA'):
-        return 'COL', name[:-4]
-
-    # ── 1. Explicit suffix / prefix override ──
-    for mt in ('LOD', 'COL', 'DFF'):
-        sfx = suffixes.get(mt, '') or ''
-        sfx_upper = sfx.upper()
-        if sfx_upper and name_upper.endswith(sfx_upper):
-            return mt, name[:-len(sfx)]
-        # No-separator marker (e.g. "modelCOL") — case-SENSITIVE on the
-        # uppercase convention so «protocol» / «exploded» don't trip COL/DFF.
-        bare = sfx_upper.lstrip('_. ')
-        if bare and sfx_upper != bare and name.endswith(bare):
-            return mt, name[:-len(bare)]
-    for mt in ('COL', 'DFF'):     # LOD prefix is handled by is_lod_name below
-        pfx = prefixes.get(mt, '') or ''
-        pfx_upper = pfx.upper()
-        if pfx_upper and name_upper.startswith(pfx_upper):
-            return mt, name[len(pfx):]
+    # ── 1. Explicit suffix / prefix override (see explicit_name_type) ──
+    marker, base = explicit_name_type(name, suffixes, prefixes)
+    if marker is not None:
+        return marker, base
 
     # ── 2. Explicit object type (import / Batch Set Type) ──
     if inu_type in ('COL', 'SHA'):

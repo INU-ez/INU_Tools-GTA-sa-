@@ -12,6 +12,7 @@
 import bpy
 
 from .. import T
+from . import compat
 from .compat import safe_icon, inu_icon
 # Built-in presets — shipped with the addon, always available.
 PRESETS = (
@@ -184,8 +185,12 @@ class GTATOOLS_OT_copy_material_settings(bpy.types.Operator):
                         pass
                 try:
                     mat.diffuse_color = src.diffuse_color
-                    if hasattr(mat, 'blend_method'):
-                        mat.blend_method = src.blend_method
+                    # Через compat: копируем и 4.2+ Метод рендеринга с
+                    # Перекрытием прозрачности, иначе на EEVEE Next
+                    # прозрачность «не копировалась».
+                    compat.set_blend_method(mat, compat.blend_method_of(src))
+                    compat.set_transparency_overlap(
+                        mat, compat.transparency_overlap(src))
                 except Exception:
                     pass
                 done.add(mat.name)

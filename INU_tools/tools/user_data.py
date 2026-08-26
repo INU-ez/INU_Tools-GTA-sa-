@@ -31,10 +31,46 @@ import bpy
 _ADDON_PACKAGE = __package__.rsplit('.', 1)[0]
 
 
+def get_addon_prefs():
+    """AddonPreferences нашего аддона (или None). Хранят пользовательские
+    настройки, которые должны переживать смену файла и перезапуск Blender."""
+    try:
+        addon = bpy.context.preferences.addons.get(_ADDON_PACKAGE)
+        return addon.preferences if addon else None
+    except Exception:
+        return None
+
+
 # Pointer file holding a user-chosen preset/data root. It ALWAYS lives
 # at the *default* base (below) so it can be located regardless of where
 # presets are currently redirected. Contents = one line, an absolute dir.
 _OVERRIDE_POINTER = 'preset_root.txt'
+
+
+# ── Resolved-path cache ───────────────────────────────────────────
+# get_user_data_dir() sits in the UI hot path: the panel-profile lookup
+# runs from every N-sidebar panel's poll() and from the profile enum's
+# items callback, i.e. on EVERY redraw. Uncached, one call cost ~6
+# filesystem syscalls (extension_path_user(create=True) + three
+# makedirs + reading the override pointer), so with the sidebar open the
+# viewport stuttered — Windows syscalls under a realtime AV scanner are
+# not cheap. The resolved roots can't change mid-session except through
+# set_preset_root_override(), which clears the cache explicitly.
+_base_cache = None            # str | None — resolved default base
+_override_cache = None        # None = not resolved yet, else (value,) tuple
+_user_dir_cache = {}          # subfolder → absolute path (already created)
+
+
+def invalidate_path_cache() -> None:
+    """Drop the memoised data-root paths.
+
+    Called by :func:`set_preset_root_override`; also safe to call from
+    anywhere the on-disk layout was changed behind our back.
+    """
+    global _base_cache, _override_cache
+    _base_cache = None
+    _override_cache = None
+    _user_dir_cache.clear()
 
 
 def _default_base() -> str:
@@ -42,7 +78,14 @@ def _default_base() -> str:
 
     This is where the override pointer lives — never affected by the
     override itself, so we can always resolve it.
+
+    Memoised: the path is fixed for the lifetime of the Blender session
+    (it derives from the addon package name and Blender's config dir),
+    so the directory is created once and the answer reused.
     """
+    global _base_cache
+    if _base_cache is not None:
+        return _base_cache
     base = None
     if hasattr(bpy.utils, 'extension_path_user'):
         try:
@@ -57,6 +100,7 @@ def _default_base() -> str:
         os.makedirs(base, exist_ok=True)
     except Exception:
         pass
+    _base_cache = base
     return base
 
 
@@ -71,16 +115,24 @@ def get_preset_root_override() -> str | None:
     Returns ``None`` if the pointer is missing or points at a path that
     no longer exists (so a deleted/unplugged drive falls back to default
     instead of erroring).
+
+    Memoised (see ``_override_cache``) — the pointer only changes through
+    :func:`set_preset_root_override`, which invalidates the cache.
     """
+    global _override_cache
+    if _override_cache is not None:
+        return _override_cache[0]
     ptr = os.path.join(_default_base(), _OVERRIDE_POINTER)
+    result = None
     try:
         with open(ptr, encoding='utf-8') as f:
             p = f.read().strip()
     except OSError:
-        return None
+        p = ''
     if p and os.path.isdir(p):
-        return os.path.abspath(p)
-    return None
+        result = os.path.abspath(p)
+    _override_cache = (result,)
+    return result
 
 
 def set_preset_root_override(path: str | None) -> None:
@@ -97,11 +149,13 @@ def set_preset_root_override(path: str | None) -> None:
             os.remove(ptr)
         except OSError:
             pass
+        invalidate_path_cache()
         return
     path = os.path.abspath(path)
     os.makedirs(path, exist_ok=True)
     with open(ptr, 'w', encoding='utf-8') as f:
         f.write(path)
+    invalidate_path_cache()
 
 
 def copy_presets_to(dest: str) -> int:
@@ -155,20 +209,28 @@ def get_user_data_dir(subfolder: str = "") -> str:
 
     Returns:
         Absolute path. Always created (with parents) before return.
+
+    Memoised per subfolder — the mkdir only runs on the first call of the
+    session (or after :func:`invalidate_path_cache`). Callers may run this
+    per redraw; see the ``_base_cache`` note above.
     """
+    hit = _user_dir_cache.get(subfolder)
+    if hit is not None:
+        return hit
     base = get_preset_root_override() or _default_base()
     try:
         os.makedirs(base, exist_ok=True)
     except Exception:
         pass
+    path = base
     if subfolder:
         path = os.path.join(base, subfolder)
         try:
             os.makedirs(path, exist_ok=True)
         except Exception:
             pass
-        return path
-    return base
+    _user_dir_cache[subfolder] = path
+    return path
 
 
 def _legacy_inu_preset_dir() -> str:

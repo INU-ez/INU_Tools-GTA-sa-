@@ -111,6 +111,30 @@ def find_all_resources(game_root: str) -> GtaDatInfo:
     return resolve_paths(game_root, merged)
 
 
+def list_ide_files(folder: str) -> list[str]:
+    """Return .ide file paths to scan under ``folder``.
+
+    If ``folder`` looks like a game root (has ``data/gta.dat`` or
+    ``data/gta_int.dat``) → use the canonical gta.dat list (fast, only the
+    IDEs the game actually loads). Otherwise → recursively scan the folder
+    for ``*.ide``. This lets the user point at the whole game OR at a tighter
+    folder (fewer files = faster search)."""
+    has_dat = (os.path.isfile(os.path.join(folder, 'data', 'gta.dat'))
+               or os.path.isfile(os.path.join(folder, 'data', 'gta_int.dat')))
+    if has_dat:
+        try:
+            return [p for p in find_all_resources(folder).ide_paths
+                    if os.path.isfile(p)]
+        except Exception:
+            pass
+    out = []
+    for root, _dirs, files in os.walk(folder):
+        for f in files:
+            if f.lower().endswith('.ide'):
+                out.append(os.path.join(root, f))
+    return out
+
+
 def extract_regions(info: GtaDatInfo) -> list[str]:
     """Extract unique region folder names from IPL paths.
     E.g. 'DATA\\MAPS\\LA\\LAe.IPL' → 'LA'

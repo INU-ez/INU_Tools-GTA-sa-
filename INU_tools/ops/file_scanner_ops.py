@@ -174,14 +174,11 @@ class GTATOOLS_OT_scan_reveal_file(bpy.types.Operator):
             self.report({'ERROR'}, f"{T('Файл не найден:')} {path}")
             return {'CANCELLED'}
 
-        # os.startfile is Windows-only; on other platforms fall back.
+        # Штатный кроссплатформенный способ (без внешних процессов —
+        # требование extensions.blender.org): открывает папку в файловом
+        # менеджере ОС.
         try:
-            if hasattr(os, 'startfile'):
-                os.startfile(os.path.dirname(path))
-            else:
-                import subprocess, sys
-                opener = 'open' if sys.platform == 'darwin' else 'xdg-open'
-                subprocess.Popen([opener, os.path.dirname(path)])
+            bpy.ops.wm.path_open(filepath=os.path.dirname(path))
         except Exception as e:
             self.report({'ERROR'}, f"{e.__class__.__name__}: {e}")
             return {'CANCELLED'}

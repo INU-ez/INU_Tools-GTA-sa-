@@ -329,6 +329,19 @@ def apply_ifp_action(action_name: str, armature, context=None):
         except Exception:
             pass
 
+    # Подогнать диапазон кадров сцены под этот блок, чтобы таймлайн показывал
+    # ровно применённую анимацию (запрос ligabesar). Кадры = время(сек) × fps.
+    try:
+        frames = [round(kf.time * fps)
+                  for b in anim.bones for kf in b.keyframes]
+        if frames:
+            scn = context.scene
+            scn.frame_start = min(frames)
+            scn.frame_end = max(frames)
+            scn.frame_current = min(frames)
+    except Exception:
+        pass
+
     return True, f"Applied '{action_name}' ({len(anim.bones)} bones)"
 
 

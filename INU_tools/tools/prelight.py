@@ -100,7 +100,9 @@ class GTASAPrelight:
             bpy.ops.mesh.select_all(action='SELECT')
             try:
                 bpy.ops.mesh.split_normals()
-            except:
+            except (RuntimeError, AttributeError):
+                # Op poll can fail (nothing selected) and the op itself is
+                # absent on some builds — neither is fatal for the preview.
                 pass
             bpy.ops.object.mode_set(mode='OBJECT')
         else:
@@ -621,8 +623,169 @@ def _sun_loop_intensity(light_obj, loop_world_no, loop_vidx, world_pos,
     return n_dot_l * shadow_per_vert[loop_vidx]
 
 
-def bake_vertex_colors_from_lights(obj, use_shadows=True):
-    """Запечь освещение от Point/Sun источников в vertex colors.
+_BAKE_LIGHT_TYPES = ('POINT', 'SUN', 'SPOT', 'AREA')
+
+
+def _spot_cone_factor(light_obj, loop_world_pos):
+    """Per-loop множитель конуса SPOT (1 внутри, 0 снаружи, мягкий край по
+    spot_blend). Для НЕ-SPOT возвращает None (полный вклад). AREA и POINT
+    считаются как точечный источник (без направленного конуса)."""
+    import math
+    light = light_obj.data
+    if light.type != 'SPOT':
+        return None
+    fwd = np.array(light_obj.matrix_world.to_3x3() @ Vector((0.0, 0.0, -1.0)),
+                   dtype=np.float32)
+    fn = float(np.linalg.norm(fwd))
+    if fn < 1e-6:
+        return None
+    fwd /= fn
+    lp = np.array(light_obj.location, dtype=np.float32)
+    d = loop_world_pos - lp[None, :]           # направление свет → поверхность
+    dn = np.linalg.norm(d, axis=1, keepdims=True)
+    dn[dn < 1e-6] = 1.0
+    d = d / dn
+    cos_a = np.sum(d * fwd[None, :], axis=1)
+    half = float(light.spot_size) * 0.5
+    cos_out = math.cos(half)
+    cos_in = math.cos(half * (1.0 - float(light.spot_blend)))
+    denom = (cos_in - cos_out) or 1e-4
+    return np.clip((cos_a - cos_out) / denom, 0.0, 1.0).astype(np.float32)
+
+
+def _sample_equirect(image, dirs, azimuth_offset=0.0):
+    """Сэмпл equirectangular HDRI по направлениям dirs (n,3) → (n,3) RGB.
+    Nearest-выборка, векторизовано. azimuth_offset — поворот мира по Z
+    (радианы). None если картинка недоступна."""
+    import math
+    try:
+        W, H = int(image.size[0]), int(image.size[1])
+        if W <= 0 or H <= 0:
+            return None
+        px = np.empty(W * H * 4, dtype=np.float32)
+        image.pixels.foreach_get(px)
+        px = px.reshape(H, W, 4)          # строка 0 = низ картинки
+    except Exception:
+        return None
+    d = dirs.astype(np.float32)
+    nrm = np.linalg.norm(d, axis=1, keepdims=True)
+    nrm[nrm < 1e-6] = 1.0
+    d = d / nrm
+    u = 0.5 + (np.arctan2(d[:, 1], d[:, 0]) - float(azimuth_offset)) / (2.0 * math.pi)
+    u = np.mod(u, 1.0)                     # заворот по горизонтали
+    v = 0.5 + np.arcsin(np.clip(d[:, 2], -1.0, 1.0)) / math.pi
+    ix = np.clip((u * W).astype(np.int32), 0, W - 1)
+    iy = np.clip((v * H).astype(np.int32), 0, H - 1)
+    return px[iy, ix, :3].astype(np.float32)
+
+
+def _find_view3d_shading():
+    """Shading первого VIEW_3D (вьюпорта). None если не найден."""
+    try:
+        wm = bpy.context.window_manager
+        for win in wm.windows:
+            scr = getattr(win, 'screen', None)
+            if not scr:
+                continue
+            for area in scr.areas:
+                if area.type != 'VIEW_3D':
+                    continue
+                for space in area.spaces:
+                    if space.type == 'VIEW_3D':
+                        return space.shading
+    except Exception:
+        pass
+    return None
+
+
+def _studio_light_path(name):
+    """Путь к .exr studio-light типа WORLD по имени. None если нет."""
+    try:
+        for sl in bpy.context.preferences.studio_lights:
+            if sl.name == name and sl.type == 'WORLD':
+                return sl.path
+    except Exception:
+        pass
+    return None
+
+
+def _viewport_hdri_sample(loop_world_no):
+    """Сэмпл HDRI из «Окружение сцены» вьюпорта (studio-light материал-
+    превью) — та самая HDRI, что юзер выбирает в выпадашке Шейдинг
+    вьюпорта. Учитывает поворот и интенсивность. None если не применимо."""
+    shading = _find_view3d_shading()
+    if shading is None:
+        return None
+    stype = getattr(shading, 'type', '')
+    # Если рендер-режим с реальным миром сцены — HDRI берётся из scene.world
+    # (обработается ниже). Здесь только превью-мир (studio light).
+    if stype == 'RENDERED' and getattr(shading, 'use_scene_world', True):
+        return None
+    if stype == 'MATERIAL' and getattr(shading, 'use_scene_world', False):
+        return None
+    if stype not in ('MATERIAL', 'RENDERED'):
+        return None
+    path = _studio_light_path(getattr(shading, 'studio_light', ''))
+    if not path:
+        return None
+    try:
+        img = bpy.data.images.load(path, check_existing=True)
+    except Exception:
+        return None
+    rot = float(getattr(shading, 'studiolight_rotate_z', 0.0))
+    intensity = float(getattr(shading, 'studiolight_intensity', 1.0))
+    col = _sample_equirect(img, loop_world_no, azimuth_offset=rot)
+    if col is None:
+        return None
+    return col * intensity
+
+
+def _world_env_sample(loop_world_no):
+    """Вклад мира/HDRI (World) на каждый loop по направлению нормали.
+    Приоритет — HDRI вьюпорта (то, что юзер выбирает в Шейдинг вьюпорта),
+    затем scene.world. Возвращает (n_loops,3) float32 или None. Всё в try —
+    бейк не должен падать из-за мира."""
+    try:
+        vp = _viewport_hdri_sample(loop_world_no)
+        if vp is not None:
+            return vp
+        scene = bpy.context.scene
+        world = scene.world if scene else None
+        if world is None:
+            return None
+        n = loop_world_no.shape[0]
+        if getattr(world, 'use_nodes', False) and world.node_tree:
+            nt = world.node_tree
+            env = next((nd for nd in nt.nodes
+                        if nd.type == 'TEX_ENVIRONMENT'
+                        and getattr(nd, 'image', None)), None)
+            bg = next((nd for nd in nt.nodes if nd.type == 'BACKGROUND'), None)
+            strength = 1.0
+            if bg is not None:
+                try:
+                    strength = float(bg.inputs['Strength'].default_value)
+                except Exception:
+                    strength = 1.0
+            if env is not None:
+                col = _sample_equirect(env.image, loop_world_no)
+                if col is not None:
+                    return col * strength
+            if bg is not None:
+                c = bg.inputs['Color'].default_value
+                base = np.array((c[0], c[1], c[2]), dtype=np.float32) * strength
+                return np.tile(base, (n, 1))
+            return None
+        # legacy: плоский цвет мира
+        c = world.color
+        base = np.array((c[0], c[1], c[2]), dtype=np.float32)
+        return np.tile(base, (n, 1))
+    except Exception:
+        return None
+
+
+def bake_vertex_colors_from_lights(obj, use_shadows=True,
+                                   allowed_types=None, use_hdri=False):
+    """Запечь освещение от Point/Sun/Spot/Area источников в vertex colors.
 
     Lambert per-corner (loop.normal сохраняет smooth shading), но
     теневой raycast выполняется один раз на вершину — corner'ы одной
@@ -632,17 +795,18 @@ def bake_vertex_colors_from_lights(obj, use_shadows=True):
     if obj is None or obj.type != 'MESH':
         return False, "Select a mesh object!"
 
+    allowed = set(allowed_types) if allowed_types else set(_BAKE_LIGHT_TYPES)
     lights = []
     for light_obj in bpy.data.objects:
-        if light_obj.type == 'LIGHT' and light_obj.data.type in ('POINT', 'SUN'):
+        if light_obj.type == 'LIGHT' and light_obj.data.type in allowed:
             if not light_obj.visible_get():
                 continue
             if light_obj.hide_render:
                 continue
             lights.append(light_obj)
 
-    if not lights:
-        return False, "No visible Point/Sun lights in scene!"
+    if not lights and not use_hdri:
+        return False, "No visible lights in scene!"
 
     mesh = obj.data
     n_verts = len(mesh.vertices)
@@ -760,7 +924,16 @@ def bake_vertex_colors_from_lights(obj, use_shadows=True):
         atten = 1.0 / (1.0 + dist * 0.01 + dist * dist * 0.0001)
         shadow_for_loop = shadow_per_vert[loop_vidx]
         intensity = atten * n_dot_l * shadow_for_loop
+        _spot = _spot_cone_factor(light_obj, loop_world_pos)
+        if _spot is not None:
+            intensity = intensity * _spot
         total += intensity[:, None] * light_color[None, :]
+
+    # ── HDRI / World: цвет неба по направлению нормали ──
+    if use_hdri:
+        env = _world_env_sample(loop_world_no)
+        if env is not None:
+            total += env
 
     np.clip(total, 0.0, 1.0, out=total)
     flat = np.empty(n_loops * 4, dtype=np.float32)
@@ -770,10 +943,12 @@ def bake_vertex_colors_from_lights(obj, use_shadows=True):
     flat[3::4] = prev_alpha if prev_alpha is not None else 1.0
     color_attr.data.foreach_set('color', flat)
 
-    return True, f"Baked lighting from {len(lights)} lights"
+    _hdri = " + HDRI" if use_hdri else ""
+    return True, f"Baked lighting from {len(lights)} lights{_hdri}"
 
 
-def bake_vertex_colors_simple(obj, ambient=0.05, intensity_mult=0.008, gamma=1.8, use_shadows=True):
+def bake_vertex_colors_simple(obj, ambient=0.05, intensity_mult=0.008, gamma=1.8,
+                              use_shadows=True, allowed_types=None, use_hdri=False):
     """Быстрое запекание vertex colors от Point источников.
 
     Та же оптимизация что и в bake_vertex_colors_from_lights — Lambert
@@ -781,17 +956,18 @@ def bake_vertex_colors_simple(obj, ambient=0.05, intensity_mult=0.008, gamma=1.8
     if obj is None or obj.type != 'MESH':
         return False, "Select a mesh object!"
 
+    allowed = set(allowed_types) if allowed_types else set(_BAKE_LIGHT_TYPES)
     lights = []
     for light_obj in bpy.data.objects:
-        if light_obj.type == 'LIGHT' and light_obj.data.type in ('POINT', 'SUN'):
+        if light_obj.type == 'LIGHT' and light_obj.data.type in allowed:
             if not light_obj.visible_get():
                 continue
             if light_obj.hide_render:
                 continue
             lights.append(light_obj)
 
-    if not lights:
-        return False, "No visible Point/Sun lights in scene!"
+    if not lights and not use_hdri:
+        return False, "No visible lights in scene!"
 
     mesh = obj.data
     n_verts = len(mesh.vertices)
@@ -897,7 +1073,16 @@ def bake_vertex_colors_simple(obj, ambient=0.05, intensity_mult=0.008, gamma=1.8
         atten = 1.0 / (1.0 + dist * dist * 0.0001)
         shadow_for_loop = shadow_per_vert[loop_vidx]
         intensity = atten * n_dot_l * shadow_for_loop
+        _spot = _spot_cone_factor(light_obj, loop_world_pos)
+        if _spot is not None:
+            intensity = intensity * _spot
         total += intensity[:, None] * light_color[None, :]
+
+    # ── HDRI / World: цвет неба по направлению нормали ──
+    if use_hdri:
+        env = _world_env_sample(loop_world_no)
+        if env is not None:
+            total += env
 
     # Gamma + clamp (negatives clipped first so pow is well-defined)
     np.clip(total, 0.0, None, out=total)
@@ -1508,6 +1693,122 @@ PRELIGHT_LEGACY_NODES = (
 )
 
 
+# ── Визуальная коррекция превью прилайта (ТОЛЬКО вьюпорт) ─────────────
+# III и VC хранят очень тёмный prelight → в блендере он почти чёрный.
+# Ноды Prelight_ViewBC (Bright/Contrast) + Prelight_ViewGamma встраиваются
+# на путь vertex-color ПЕРЕД умножением на текстуру и вытягивают его
+# ВИЗУАЛЬНО. На ЭКСПОРТ НЕ ВЛИЯЮТ — экспорт читает реальные vertex colors и
+# текстуру мимо этих нод (dff_export идёт через Prelight_Mix.A/vcol-слой).
+# Это постоянная часть графа: нейтраль (0,0,1) = pass-through, поэтому
+# структура не зависит от значений — их крутят ползунки без пересборки.
+#
+# (bright, contrast, gamma, saturation) per-game. Дефолты, что грузятся в
+# ползунки при смене игры; ползунками можно крутить живьём поверх.
+PRELIGHT_VIEW_NEUTRAL = (0.0, 0.0, 1.0, 1.0)
+PRELIGHT_VIEW_CORRECTION = {
+    'SA':  (-0.150, -0.400, 1.0, 1.0),
+    'VC':  (-0.150, -0.400, 1.0, 1.0),
+    'III': (-0.150, -0.400, 1.0, 1.0),
+}
+
+
+def _current_view_correction(scene):
+    """(bright, contrast, gamma, saturation) для превью — из ползунков сцены
+    (их дефолты грузятся из PRELIGHT_VIEW_CORRECTION при смене игры)."""
+    ins = getattr(scene, 'inu_settings', None) if scene is not None else None
+    if ins is None:
+        return PRELIGHT_VIEW_NEUTRAL
+    return (float(getattr(ins, 'prelight_view_bright', 0.0)),
+            float(getattr(ins, 'prelight_view_contrast', 0.0)),
+            float(getattr(ins, 'prelight_view_gamma', 1.0)),
+            float(getattr(ins, 'prelight_view_saturation', 1.0)))
+
+
+def _set_view_correction_values(bc, gm, sat, bright, contrast, gamma, saturation):
+    try:
+        bc.inputs['Bright'].default_value = bright
+        bc.inputs['Contrast'].default_value = contrast
+        gm.inputs['Gamma'].default_value = gamma
+        sat.inputs['Saturation'].default_value = saturation
+    except Exception:                          # noqa: BLE001
+        pass
+
+
+def _ensure_view_correction_nodes(nodes, links, vc_node, mix_node, correction):
+    """Создать (если нет) и связать ноды визуальной коррекции на пути
+    vertex-color → ViewBC → ViewGamma → ViewSat → Mix.B. Возвращает (bc,gm,sat)."""
+    bright, contrast, gamma, saturation = correction
+    bc = nodes.get("Prelight_ViewBC")
+    if bc is None:
+        bc = nodes.new('ShaderNodeBrightContrast')
+        bc.name = "Prelight_ViewBC"
+        bc.label = "Prelight View B/C (превью)"
+        bc.location = (vc_node.location.x + 200, vc_node.location.y)
+    gm = nodes.get("Prelight_ViewGamma")
+    if gm is None:
+        gm = nodes.new('ShaderNodeGamma')
+        gm.name = "Prelight_ViewGamma"
+        gm.label = "Prelight View Gamma (превью)"
+        gm.location = (vc_node.location.x + 400, vc_node.location.y)
+    sat = nodes.get("Prelight_ViewSat")
+    if sat is None:
+        sat = nodes.new('ShaderNodeHueSaturation')
+        sat.name = "Prelight_ViewSat"
+        sat.label = "Prelight View Saturation (превью)"
+        sat.location = (vc_node.location.x + 600, vc_node.location.y)
+    _set_view_correction_values(bc, gm, sat, bright, contrast, gamma, saturation)
+    links.new(vc_node.outputs['Color'], bc.inputs['Color'])
+    links.new(bc.outputs['Color'], gm.inputs['Color'])
+    links.new(gm.outputs['Color'], sat.inputs['Color'])
+    links.new(sat.outputs['Color'], compat.mix_input_b(mix_node))
+    return bc, gm, sat
+
+
+def apply_prelight_view_correction(scene=None):
+    """Live-обновление ЗНАЧЕНИЙ коррекции во всех материалах с превью —
+    для ползунков (без пересборки графа/перекомпиляции шейдера).
+    Returns кол-во обновлённых материалов."""
+    if scene is None:
+        scene = getattr(bpy.context, 'scene', None)
+    if scene is None:
+        return 0
+    bright, contrast, gamma, saturation = _current_view_correction(scene)
+    count = 0
+    for mat in bpy.data.materials:
+        if not mat or not getattr(mat, 'use_nodes', False):
+            continue
+        nt = mat.node_tree
+        if nt is None:
+            continue
+        bc = nt.nodes.get("Prelight_ViewBC")
+        gm = nt.nodes.get("Prelight_ViewGamma")
+        sat = nt.nodes.get("Prelight_ViewSat")
+        if bc is None or gm is None or sat is None:
+            continue
+        _set_view_correction_values(bc, gm, sat, bright, contrast, gamma, saturation)
+        count += 1
+    return count
+
+
+def load_view_correction_for_game(scene, game):
+    """Загрузить per-game дефолт коррекции в ползунки и применить."""
+    ins = getattr(scene, 'inu_settings', None) if scene is not None else None
+    if ins is None:
+        return
+    bright, contrast, gamma, saturation = PRELIGHT_VIEW_CORRECTION.get(
+        game, PRELIGHT_VIEW_NEUTRAL)
+    try:
+        ins.prelight_view_bright = bright
+        ins.prelight_view_contrast = contrast
+        ins.prelight_view_gamma = gamma
+        ins.prelight_view_saturation = saturation
+    except Exception:                          # noqa: BLE001
+        pass
+    apply_prelight_view_correction(scene)
+
+
+
+
 def _preview_graph_is_current(nodes, principled, base_color,
                               vc_node, mix_node, color_name):
     """True, если граф превью в материале УЖЕ собран как надо.
@@ -1531,8 +1832,26 @@ def _preview_graph_is_current(nodes, principled, base_color,
     else:
         return False
 
+    # Mix.B должен приходить через ноды визуальной коррекции:
+    #   vc → Prelight_ViewBC → Prelight_ViewGamma → Prelight_ViewSat → Mix.B.
+    # Их отсутствие/прямой vc→Mix.B (старый граф) → пересобрать, чтобы
+    # коррекция встроилась.
     b = compat.mix_input_b(mix_node)
-    if not b.is_linked or b.links[0].from_node is not vc_node:
+    bc = nodes.get("Prelight_ViewBC")
+    gm = nodes.get("Prelight_ViewGamma")
+    sat = nodes.get("Prelight_ViewSat")
+    if bc is None or gm is None or sat is None:
+        return False
+    if not b.is_linked or b.links[0].from_node is not sat:
+        return False
+    sat_in = sat.inputs['Color']
+    if not sat_in.is_linked or sat_in.links[0].from_node is not gm:
+        return False
+    gm_in = gm.inputs['Color']
+    if not gm_in.is_linked or gm_in.links[0].from_node is not bc:
+        return False
+    bc_in = bc.inputs['Color']
+    if not bc_in.is_linked or bc_in.links[0].from_node is not vc_node:
         return False
     if not base_color.is_linked or base_color.links[0].from_node is not mix_node:
         return False
@@ -1593,6 +1912,9 @@ def setup_prelight_preview(obj, enable=True):
 
     # Устаревшие modulate-ноды — могли остаться в файлах со старым превью.
     _LEGACY = PRELIGHT_LEGACY_NODES
+
+    # Визуальная коррекция (яркость/контраст/гамма) — одна на всю сцену.
+    view_corr = _current_view_correction(getattr(bpy.context, 'scene', None))
 
     modified_count = 0
 
@@ -1665,12 +1987,16 @@ def setup_prelight_preview(obj, enable=True):
                                      principled.location.y)
                 compat.mix_input_factor(mix_node).default_value = 1.0
 
-            # A = текстура, B = vertex color
+            # A = текстура, B = vertex color (через ноды визуальной коррекции)
             if tex_socket is not None:
                 links.new(tex_socket, compat.mix_input_a(mix_node))
             else:
                 compat.mix_input_a(mix_node).default_value = (1.0, 1.0, 1.0, 1.0)
-            links.new(vc_node.outputs['Color'], compat.mix_input_b(mix_node))
+            # vc → Prelight_ViewBC → Prelight_ViewGamma → Mix.B.
+            # Ноды коррекции — постоянная часть графа (нейтраль = pass-through),
+            # только вьюпорт. Значения потом крутят ползунки.
+            _ensure_view_correction_nodes(nodes, links, vc_node, mix_node,
+                                          view_corr)
 
             # Mix → Base Color
             for lnk in list(base_color.links):
@@ -1726,8 +2052,10 @@ def setup_prelight_preview(obj, enable=True):
                         mat.blend_method = 'OPAQUE'
                 del mat['prelight_orig_blend']
 
-            # Удалить наши ноды (минимальные + любые устаревшие modulate).
-            for nm in ("Prelight_VertexColor", "Prelight_Mix") + _LEGACY:
+            # Удалить наши ноды (минимальные + коррекция + устаревшие modulate).
+            for nm in ("Prelight_VertexColor", "Prelight_Mix",
+                       "Prelight_ViewBC", "Prelight_ViewGamma",
+                       "Prelight_ViewSat") + _LEGACY:
                 n = nodes.get(nm)
                 if n is not None:
                     nodes.remove(n)
@@ -1868,11 +2196,14 @@ def _enable_alpha_on_material(mat, color_name):
     if 'Alpha' not in vc_node.outputs:
         return False  # node type without an Alpha output — bail safely
 
-    # Remember the draw mode once so disable can restore it.
-    if 'alphaview_orig_blend' not in mat and hasattr(mat, 'blend_method'):
-        mat['alphaview_orig_blend'] = mat.blend_method
-    if hasattr(mat, 'blend_method'):
-        mat.blend_method = 'BLEND'
+    # Remember the draw mode once so disable can restore it, then switch to
+    # the project's alpha standard: Метод рендеринга Смешанный + Перекрытие
+    # прозрачности ВЫКЛ. Через compat — на 4.2+ (EEVEE Next) запись одного
+    # blend_method ничего не даёт, и превью вершинной альфы не появлялось.
+    if 'alphaview_orig_blend' not in mat:
+        mat['alphaview_orig_blend'] = compat.blend_method_of(mat)
+        mat['alphaview_orig_overlap'] = compat.transparency_overlap(mat)
+    compat.make_material_alpha(mat)
 
     if alpha_input.is_linked:
         # Texture alpha already feeds Alpha — multiply it by the vertex
@@ -1961,13 +2292,14 @@ def _disable_alpha_on_material(mat):
     # Restore draw mode only if WE changed it (shared mode left it to the
     # Prelight preview, which restores it on its own toggle).
     if mode != 'shared' and 'alphaview_orig_blend' in mat:
-        if hasattr(mat, 'blend_method'):
-            try:
-                mat.blend_method = mat['alphaview_orig_blend']
-            except Exception:
-                mat.blend_method = 'OPAQUE'
+        prev = mat['alphaview_orig_blend']
+        if prev not in ('OPAQUE', 'CLIP', 'HASHED', 'BLEND'):
+            prev = 'OPAQUE'
+        compat.set_blend_method(mat, prev)
+        compat.set_transparency_overlap(
+            mat, bool(mat.get('alphaview_orig_overlap', False)))
     for key in ('alphaview_mode', 'alphaview_orig_blend',
-                'alpha_preview_active'):
+                'alphaview_orig_overlap', 'alpha_preview_active'):
         if key in mat:
             del mat[key]
     return True

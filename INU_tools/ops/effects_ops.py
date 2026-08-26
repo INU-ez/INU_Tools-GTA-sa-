@@ -322,7 +322,8 @@ class GTATOOLS_OT_refresh_2dfx_preview(bpy.types.Operator):
         return (obj and obj.type == 'EMPTY'
                 and getattr(obj, 'inu', None)
                 and obj.inu.type == '2DFX'
-                and obj.inu.effect_2dfx in ('LIGHT', 'PARTICLE', 'ESCALATOR'))
+                and obj.inu.effect_2dfx in (
+                    'LIGHT', 'PARTICLE', 'ESCALATOR', 'ROAD_SIGN', 'ENTER_EXIT'))
 
     def execute(self, context):
         obj = context.active_object

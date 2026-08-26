@@ -641,13 +641,220 @@ class GTATOOLS_OT_extract_resources(bpy.types.Operator):
         context.workspace.status_text_set(None)
 
 
+class _IdeGridInstance:
+    """Псевдо-инстанс для «импорта по IDE» (когда IPL не выбран): одна
+    определённая модель, разложенная сеткой. Поля — как у IPL-инстанса,
+    чтобы import_from_img обрабатывал её тем же циклом."""
+    __slots__ = ('model_name', 'model_id', 'pos_x', 'pos_y', 'pos_z',
+                 'rot_w', 'rot_x', 'rot_y', 'rot_z', 'lod_index')
+
+
+def _instances_from_ide(ide_models, step=30.0):
+    """Псевдо-инстансы из определений IDE — каждая уникальная модель один
+    раз, сеткой (чтобы модели не накладывались друг на друга). Позволяет
+    «Импорт всех моделей» работать и без IPL (по одному IDE)."""
+    import math
+    uniq = {}
+    for mid, ide_obj in ide_models.items():
+        nm = (getattr(ide_obj, 'model_name', '') or '').strip()
+        if nm and nm.lower() not in uniq:
+            uniq[nm.lower()] = (nm, mid)
+    items = list(uniq.values())
+    cols = max(1, int(math.ceil(math.sqrt(len(items) or 1))))
+    out = []
+    for i, (nm, mid) in enumerate(items):
+        pi = _IdeGridInstance()
+        pi.model_name = nm
+        pi.model_id = mid
+        pi.pos_x = (i % cols) * step
+        pi.pos_y = (i // cols) * step
+        pi.pos_z = 0.0
+        pi.rot_w, pi.rot_x, pi.rot_y, pi.rot_z = 1.0, 0.0, 0.0, 0.0
+        pi.lod_index = -1
+        out.append(pi)
+    return out
+
+
+def _ipl_paths_for_import(settings):
+    """IPL-файлы для импорта/сканов: список синхронизации (мультивыбор), иначе
+    один выбранный путь. Возвращает список существующих путей без дублей."""
+    out, seen = [], set()
+    for it in getattr(settings, 'gtatools_ipl_sync_list', []):
+        p = bpy.path.abspath(it.path) if it.path else ''
+        if p and os.path.isfile(p):
+            k = os.path.normcase(os.path.normpath(p))
+            if k not in seen:
+                seen.add(k)
+                out.append(p)
+    if out:
+        return out
+    single = bpy.path.abspath(getattr(settings, 'gtatools_ipl_path', '') or '')
+    return [single] if single and os.path.isfile(single) else []
+
+
+_img_tex_index_cache = {}   # (path, size) -> {texture_lower: set(txd_lower)}
+
+
+def _get_img_texture_index(img_path):
+    """{texture_name → {txd_name}} для всех текстур в IMG. Кэш по (путь, размер)
+    — строится один раз (scan_img читает только имена, без декода)."""
+    try:
+        key = (os.path.normcase(img_path), os.path.getsize(img_path))
+    except OSError:
+        key = (os.path.normcase(img_path), 0)
+    idx = _img_tex_index_cache.get(key)
+    if idx is not None:
+        return idx
+    idx = {}
+    try:
+        from ..core.texture_index import scan_img
+        for e in scan_img(img_path):
+            tn = (getattr(e, 'texture_name', '') or '').lower()
+            if tn:
+                idx.setdefault(tn, set()).add(
+                    (getattr(e, 'txd_name', '') or '').lower())
+    except Exception:
+        idx = {}
+    _img_tex_index_cache[key] = idx
+    return idx
+
+
+def _rescue_textures_from_img(img_path, img_files, tmpdir, extract_file, import_txd):
+    """Дотянуть текстуры ИЗ САМОГО IMG для материалов, у которых имя текстуры
+    (dff_texture_name) есть, а картинки нет. Нужный .txd ищется по СОДЕРЖИМОМУ
+    (индекс имён из IMG, scan_img — без декода пикселей), БЕЗ IDE: IPL/DFF
+    достаточно. Импортируется минимальный набор TXD (greedy set-cover),
+    import_txd привязывает картинки к материалам по имени. Возвращает число
+    подгруженных TXD."""
+    # 1. Материалы с именем текстуры, но без картинки.
+    missing = set()
+    for mat in bpy.data.materials:
+        tn = (mat.get('dff_texture_name') or '').strip().lower()
+        if not tn:
+            continue
+        has_img = False
+        if getattr(mat, 'use_nodes', False) and mat.node_tree:
+            for n in mat.node_tree.nodes:
+                if n.type == 'TEX_IMAGE' and getattr(n, 'image', None):
+                    has_img = True
+                    break
+        if not has_img:
+            missing.add(tn)
+    if not missing:
+        return 0
+    # 2. Индекс texture→txd из IMG (только имена, кэш по размеру архива —
+    #    повторные импорты не пересканируют весь gta3.img).
+    idx = _get_img_texture_index(img_path)
+    if not idx:
+        return 0
+    txd_provides = {}
+    for tn in missing:
+        for txd in idx.get(tn, ()):
+            txd_provides.setdefault(txd, set()).add(tn)
+    # 3. Greedy set-cover: минимум TXD, покрывающих все missing.
+    remaining = set(missing)
+    chosen = []
+    while remaining and txd_provides:
+        best = max(txd_provides, key=lambda t: len(txd_provides[t] & remaining))
+        cover = txd_provides[best] & remaining
+        if not cover:
+            break
+        chosen.append(best)
+        remaining -= cover
+        txd_provides.pop(best, None)
+    # 4. Импортировать выбранные TXD из IMG (привязка по имени).
+    loaded = 0
+    for txd in chosen:
+        real = img_files.get((txd + '.txd').lower())
+        if not real:
+            continue
+        data = extract_file(img_path, real)
+        if not data:
+            continue
+        p = os.path.join(tmpdir, txd + '.txd')
+        try:
+            with open(p, 'wb') as f:
+                f.write(data)
+            import_txd(filepath=p)
+            loaded += 1
+        except Exception:
+            pass
+    return loaded
+
+
 class GTATOOLS_OT_import_from_img(bpy.types.Operator):
-    """Импортировать модели из IMG архива (по списку из IDE/IPL)"""
+    """Импорт всех моделей из IMG: по IPL (с расстановкой) ИЛИ по IDE (все
+    определённые модели, разложенные сеткой). Геометрия и ТЕКСТУРЫ достаются
+    из IMG on-the-fly (текстуры — по содержимому, IDE не требуется)."""
     bl_idname = "gtatools.import_from_img"
     bl_label = "INU: Import from IMG"
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
+        # Быстрая проверка, затем МОДАЛЬНЫЙ запуск: прогресс внизу и без
+        # зависания Blender (как «Импорт карт»). Тяжёлый цикл — в _work-генераторе.
+        img_path = bpy.path.abspath(context.scene.inu_settings.gtatools_img_path)
+        _found = [p for p in
+                  (context.scene.get('gtatools_found_imgs', '') or '').split('\n')
+                  if p and os.path.isfile(p)]
+        # IMG-строку убрали: базой могут быть найденные архивы («Найти IMG»).
+        # Ошибка только если совсем нет ни ручного IMG, ни найденных.
+        if (not img_path or not os.path.isfile(img_path)) and not _found:
+            self.report({'ERROR'},
+                        T("Нет IMG: нажми «Найти IMG» или укажи архив"))
+            return {'CANCELLED'}
+        self._gen = self._work(context)
+        self._final = None          # (level, msg) — отчёт при завершении
+        self._total = 0
+        self._done = 0
+        wm = context.window_manager
+        wm.progress_begin(0, 1)
+        self._timer = wm.event_timer_add(0.02, window=context.window)
+        wm.modal_handler_add(self)
+        context.workspace.status_text_set(T("Импорт из IMG..."))
+        return {'RUNNING_MODAL'}
+
+    def modal(self, context, event):
+        if event.type == 'ESC':
+            try:
+                self._gen.close()
+            except Exception:                         # noqa: BLE001
+                pass
+            self._finish(context)
+            self.report({'WARNING'}, T("Отменено"))
+            return {'CANCELLED'}
+        if event.type != 'TIMER':
+            return {'PASS_THROUGH'}
+        import time
+        wm = context.window_manager
+        deadline = time.monotonic() + 0.08
+        try:
+            while time.monotonic() < deadline:
+                next(self._gen)
+        except StopIteration:
+            self._finish(context)
+            if self._final:
+                self.report({self._final[0]}, self._final[1])
+            return {'FINISHED'}
+        except Exception as e:                        # noqa: BLE001
+            self._finish(context)
+            self.report({'ERROR'}, T("Ошибка импорта: ") + str(e))
+            return {'CANCELLED'}
+        if self._total:
+            wm.progress_update(min(1.0, self._done / self._total))
+        context.workspace.status_text_set(
+            f"{T('Импорт из IMG:')} {self._done}/{self._total or '?'}")
+        return {'RUNNING_MODAL'}
+
+    def _finish(self, context):
+        wm = context.window_manager
+        if getattr(self, '_timer', None):
+            wm.event_timer_remove(self._timer)
+            self._timer = None
+        wm.progress_end()
+        context.workspace.status_text_set(None)
+
+    def _work(self, context):
         from ..core.img import extract_file, read_directory
         from ..core.ide import read_ide
         from ..core.ipl import read_ipl
@@ -660,10 +867,6 @@ class GTATOOLS_OT_import_from_img(bpy.types.Operator):
         ide_path = bpy.path.abspath(scene.inu_settings.gtatools_ide_path)
         ipl_path = bpy.path.abspath(scene.inu_settings.gtatools_ipl_path)
         game_root = bpy.path.abspath(scene.inu_settings.gtatools_game_root)
-
-        if not img_path or not os.path.isfile(img_path):
-            self.report({'ERROR'}, T("Укажите путь к IMG архиву в INU Tools"))
-            return {'CANCELLED'}
 
         # Auto-detect game from the IMG archive's format (VER2 magic →
         # SA, sibling .dir present → VC fallback). Auto-flips scene
@@ -681,7 +884,25 @@ class GTATOOLS_OT_import_from_img(bpy.types.Operator):
             pass
 
         ide_models = {}
+        ide_source = {}   # model_id -> IDE-файл: для статуса «В IDE» и экспорта
+                          # «каждая модель в свой IDE» (round-trip)
         instances = []
+
+        def _load_ide_into(p):
+            """Прочитать IDE `p` в ide_models и запомнить источник (model_id→p).
+            Первый источник побеждает (приоритет уже загруженных определений)."""
+            try:
+                ide = read_ide(p)
+            except Exception:
+                return
+            for o in ide.objects:
+                if o.model_id not in ide_models:
+                    ide_models[o.model_id] = o
+                    ide_source[o.model_id] = p
+            for a in ide.anims:
+                if a.model_id not in ide_models:
+                    ide_models[a.model_id] = a
+                    ide_source[a.model_id] = p
 
         use_gta_dat = getattr(scene.inu_settings, 'gtatools_img_use_gta_dat', False)
         skip_lod = getattr(scene.inu_settings, 'gtatools_img_skip_lod', False)
@@ -693,15 +914,7 @@ class GTATOOLS_OT_import_from_img(bpy.types.Operator):
 
             for p in info.ide_paths:
                 if os.path.isfile(p):
-                    try:
-                        ide = read_ide(p)
-                        for obj in ide.objects:
-                            ide_models[obj.model_id] = obj
-                        for anim in ide.anims:
-                            if anim.model_id not in ide_models:
-                                ide_models[anim.model_id] = anim
-                    except Exception:
-                        pass
+                    _load_ide_into(p)
 
             for p in info.ipl_paths:
                 if os.path.isfile(p):
@@ -727,22 +940,73 @@ class GTATOOLS_OT_import_from_img(bpy.types.Operator):
                         pass
         else:
             if ide_path and os.path.isfile(ide_path):
-                ide = read_ide(ide_path)
-                for obj in ide.objects:
-                    ide_models[obj.model_id] = obj
-                for anim in ide.anims:
-                    if anim.model_id not in ide_models:
-                        ide_models[anim.model_id] = anim
+                _load_ide_into(ide_path)
+            elif game_root and os.path.isdir(game_root):
+                # Авто-IDE: IDE не выбран, но задана папка с IDE — читаем ВСЕ
+                # .ide из неё (корень игры → по gta.dat, иначе рекурсивный скан).
+                # Модель находится по имени из IPL; IDE лишь даёт TXD/дальность/
+                # флаги, лишние определения просто не участвуют.
+                from ..core.gta_dat import list_ide_files
+                for p in list_ide_files(game_root):
+                    if os.path.isfile(p):
+                        _load_ide_into(p)
 
-            if ipl_path and os.path.isfile(ipl_path):
-                ipl = read_ipl(ipl_path)
-                instances = ipl.instances
+            # Мультивыбор IPL: сливаем инстансы из всех выбранных .ipl. lod_index
+            # указывает В СВОЙ IPL, поэтому при слиянии сдвигаем его на смещение
+            # инстансов этого файла — иначе LOD-привязка уедет.
+            for _ip in _ipl_paths_for_import(scene.inu_settings):
+                try:
+                    _ipl = read_ipl(_ip)
+                except Exception:
+                    continue
+                _base = len(instances)
+                for _inst in _ipl.instances:
+                    _li = getattr(_inst, 'lod_index', -1)
+                    if _li is not None and _li >= 0:
+                        try:
+                            _inst.lod_index = _li + _base
+                        except Exception:
+                            pass
+                    instances.append(_inst)
+
+        # Подгрузить найденные «Найти IDE» — тогда txd_name/дальность/флаги
+        # проставятся для ВСЕХ моделей IPL (кастомная карта часто разложена по
+        # нескольким IDE). Уже загруженные из выбранного IDE имеют приоритет.
+        _found_ides = [p for p in
+                       (scene.get('gtatools_found_ides', '') or '').split('\n')
+                       if p and os.path.isfile(p)]
+        for _p in _found_ides:
+            _load_ide_into(_p)
+
+        # «Только по IDE»: без IPL расставлять негде — импортируем КАЖДУЮ
+        # определённую в IDE модель раз, сеткой. Так одна кнопка «Импорт всех
+        # моделей» работает и по IPL (с расстановкой), и по IDE (галерея).
+        if not instances and ide_models:
+            instances = _instances_from_ide(ide_models)
 
         if not instances:
-            self.report({'ERROR'}, T("IPL файл пуст или не указан"))
-            return {'CANCELLED'}
+            self._final = ('ERROR', T("Укажите IPL или IDE файл"))
+            return
+        self._total = len(instances)
 
-        img_files = {e.name.lower(): e.name for e in read_directory(img_path)}
+        # Индекс имя→(архив, реальное_имя): основной IMG + найденные «Найти IMG».
+        # Модели кастомной карты часто разложены по нескольким .img (maps/
+        # RESOURCES) — тянем каждую из архива, где она реально лежит. Найденные
+        # архивы имеют приоритет (кастомная версия перекрывает стоковую).
+        _found_imgs = [p for p in
+                       (context.scene.get('gtatools_found_imgs', '') or '').split('\n')
+                       if p and os.path.isfile(p)]
+        img_index = {}
+        for _p in [img_path] + _found_imgs:
+            if not _p or not os.path.isfile(_p):
+                continue
+            try:
+                for e in read_directory(_p):
+                    img_index[e.name.lower()] = (_p, e.name)
+            except Exception:
+                continue
+        # img_files — плоский {имя: реальное_имя} для совместимости (rescue).
+        img_files = {k: v[1] for k, v in img_index.items()}
 
         def _get_or_create_collection(name):
             col = bpy.data.collections.get(name)
@@ -755,11 +1019,11 @@ class GTATOOLS_OT_import_from_img(bpy.types.Operator):
         lod_collection = _get_or_create_collection("Map_LOD")
         col_collection = _get_or_create_collection("Map_COL")
 
-        wm = context.window_manager
-        wm.progress_begin(0, len(instances))
-
         imported_count = 0
         skipped_count = 0
+        skip_lod_count = 0      # пропущено как LOD (Skip LOD включён)
+        skip_noimg_count = 0    # <модель>.dff не найден в выбранном IMG
+        _noimg_sample = []      # первые имена, которых нет в IMG (для диагностики)
         errors = []
 
         from ..core.ipl import is_lod_name, lod_instance_indices
@@ -767,22 +1031,31 @@ class GTATOOLS_OT_import_from_img(bpy.types.Operator):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             imported_models = {}
+            # Главный объект каждого инстанса — для LOD-привязки после цикла
+            # (inu.lod_object из IPL lod_index).
+            instance_to_obj = [None] * len(instances)
 
             for idx, inst in enumerate(instances):
-                wm.progress_update(idx)
+                self._done = idx
+                if idx % 16 == 0:
+                    yield          # отдать управление Blender (прогресс/отклик)
                 model_name = inst.model_name
                 is_lod = idx in lod_refs or is_lod_name(model_name)
 
                 if skip_lod and is_lod:
                     skipped_count += 1
+                    skip_lod_count += 1
                     continue
 
                 target_collection = lod_collection if is_lod else dff_collection
 
                 dff_filename = model_name + '.dff'
 
-                if dff_filename.lower() not in img_files:
+                if dff_filename.lower() not in img_index:
                     skipped_count += 1
+                    skip_noimg_count += 1
+                    if len(_noimg_sample) < 5:
+                        _noimg_sample.append(model_name)
                     continue
 
                 if model_name in imported_models:
@@ -793,7 +1066,8 @@ class GTATOOLS_OT_import_from_img(bpy.types.Operator):
                         target_collection.objects.link(new_obj)
                         new_objects.append(new_obj)
                 else:
-                    dff_data = extract_file(img_path, img_files[dff_filename.lower()])
+                    _di = img_index[dff_filename.lower()]
+                    dff_data = extract_file(_di[0], _di[1])
                     if not dff_data:
                         errors.append(f"{model_name}: DFF extract failed")
                         continue
@@ -814,15 +1088,18 @@ class GTATOOLS_OT_import_from_img(bpy.types.Operator):
                                 txd_name = ide_models[inst.model_id].txd_name
 
                             txd_filename = txd_name + '.txd'
-                            if txd_filename.lower() in img_files:
-                                txd_data = extract_file(img_path, img_files[txd_filename.lower()])
+                            if txd_filename.lower() in img_index:
+                                _ti = img_index[txd_filename.lower()]
+                                txd_data = extract_file(_ti[0], _ti[1])
                                 if txd_data:
                                     txd_path = os.path.join(tmpdir, txd_filename)
                                     with open(txd_path, 'wb') as f:
                                         f.write(txd_data)
                                     try:
                                         inu_import_txd(filepath=txd_path)
-                                    except:
+                                    except Exception:
+                                        # One unreadable TXD in the archive
+                                        # must not abort the whole map import.
                                         pass
 
                         for obj in new_objects:
@@ -831,8 +1108,9 @@ class GTATOOLS_OT_import_from_img(bpy.types.Operator):
                             target_collection.objects.link(obj)
 
                         col_filename = model_name + '.col'
-                        if col_filename.lower() in img_files:
-                            col_data = extract_file(img_path, img_files[col_filename.lower()])
+                        if col_filename.lower() in img_index:
+                            _ci = img_index[col_filename.lower()]
+                            col_data = extract_file(_ci[0], _ci[1])
                             if col_data:
                                 col_path = os.path.join(tmpdir, col_filename)
                                 with open(col_path, 'wb') as f:
@@ -860,7 +1138,10 @@ class GTATOOLS_OT_import_from_img(bpy.types.Operator):
                                             co.name = base_col + _sfx_col
                                         elif _pfx_col:
                                             co.name = _pfx_col + base_col
-                                except:
+                                except Exception:
+                                    # COL is optional decoration for the
+                                    # instance — a bad one leaves the DFF
+                                    # imported instead of killing the run.
                                     pass
 
                         imported_models[model_name] = new_objects
@@ -919,25 +1200,97 @@ class GTATOOLS_OT_import_from_img(bpy.types.Operator):
                         obj.rotation_quaternion = rot
                         if hasattr(obj, 'inu'):
                             obj.inu.model_id = inst.model_id
+                            # IMG-источник → статус «В IMG» + цель по умолчанию
+                            # для экспорта модели в IMG.
+                            _src_img = img_index.get(dff_filename.lower(),
+                                                     ('', ''))[0]
+                            if _src_img:
+                                obj.inu.img_target_file = _src_img
                             if inst.model_id in ide_models:
                                 ide_obj = ide_models[inst.model_id]
-                                obj.inu.draw_distance = ide_obj.draw_distance
+                                # LOD-строка: её дистанция в IDE — это LOD Dist,
+                                # а не обычная Draw Dist. Кладём в нужное поле.
+                                if is_lod:
+                                    obj.inu.lod_draw_distance = ide_obj.draw_distance
+                                else:
+                                    obj.inu.draw_distance = ide_obj.draw_distance
                                 obj.inu.ide_flags = ide_obj.flags
                                 obj.inu.txd_name = ide_obj.txd_name
+                                # Пометить «в IDE» (как IPL-привязку) + запомнить
+                                # исходный IDE-файл → статус синка работает и
+                                # экспорт пишет модель в её IDE.
+                                _srcide = ide_source.get(inst.model_id, '')
+                                if _srcide:
+                                    obj.inu.ide_linked = True
+                                    obj.inu.ide_target_file = _srcide
+                                    obj.inu.ide_last_draw_distance = obj.inu.draw_distance
+                                    obj.inu.ide_last_txd_name = obj.inu.txd_name
+                                    obj.inu.ide_last_flags = obj.inu.ide_flags
+                                    obj.inu.ide_last_model_id = int(inst.model_id)
+                            elif not obj.inu.txd_name:
+                                # Нет записи в IDE — TXD носит имя модели (так он
+                                # и грузился из архива). Заполняем поле, иначе оно
+                                # пустое, хотя текстуры подгрузились.
+                                obj.inu.txd_name = model_name
 
+                # Главный меш инстанса — для LOD-привязки после цикла.
+                _main = next((o for o in new_objects if o.type == 'MESH'), None)
+                if _main is not None:
+                    instance_to_obj[idx] = _main
                 imported_count += 1
 
-        wm.progress_end()
+            # ── Дотягивание текстур из IMG (по содержимому, без IDE) ──
+            # Материалы, которым TXD не достался (напр. общая растительность,
+            # чей txd_name не в выбранном IDE), добираем прямо из архива.
+            _rescue_textures_from_img(img_path, img_files, tmpdir,
+                                      extract_file, inu_import_txd)
+
+            # ── LOD-привязка: inu.lod_object из IPL lod_index ──
+            # lod_index инстанса указывает на позицию LOD-инстанса в этом же IPL.
+            # Ставим PointerProperty на главную модель → панель показывает LOD
+            # Dist, экспорт пересчитывает lod_index обратно. Работает, если LOD
+            # тоже импортированы (Skip LOD выключен).
+            _n = len(instances)
+            for _idx, _inst in enumerate(instances):
+                _main = instance_to_obj[_idx]
+                if _main is None:
+                    continue
+                _li = getattr(_inst, 'lod_index', -1)
+                if 0 <= _li < _n:
+                    _lodo = instance_to_obj[_li]
+                    if _lodo is not None and hasattr(_main, 'inu'):
+                        try:
+                            _main.inu.lod_object = _lodo
+                            # LOD Dist основной модели = дистанция её LOD-партнёра
+                            # (у LOD lod_draw_distance уже из IDE-строки выше).
+                            if hasattr(_lodo, 'inu'):
+                                _main.inu.lod_draw_distance = \
+                                    _lodo.inu.lod_draw_distance
+                        except Exception:
+                            pass
 
         msg = f"{T('Импортировано:')} {imported_count}"
         if skipped_count:
             msg += f", {T('пропущено:')} {skipped_count}"
+            # Разбивка причин — чтобы не гадать, почему ничего не загрузилось.
+            reasons = []
+            if skip_lod_count:
+                reasons.append(f"{skip_lod_count} {T('LOD — снимите «Skip LOD»')}")
+            if skip_noimg_count:
+                reasons.append(f"{skip_noimg_count} {T('нет DFF в IMG')}")
+            if reasons:
+                msg += " (" + ", ".join(reasons) + ")"
         if errors:
             msg += f", {T('ошибок:')} {len(errors)}"
             for e in errors[:5]:
                 print(f"[Map Import] {e}")
-        self.report({'INFO'}, msg)
-        return {'FINISHED'}
+        # Диагностика в консоль: сколько файлов реально в IMG и примеры имён,
+        # которых там не нашлось (для «нет DFF в IMG»).
+        if skip_noimg_count:
+            print(f"[IMG import] файлов в архиве: {len(img_files)}; "
+                  f"не найдено DFF (примеры): {_noimg_sample}")
+        self._final = ('INFO', msg)
+        return
 
 
 class GTATOOLS_OT_remove_from_img(bpy.types.Operator):
@@ -946,11 +1299,16 @@ class GTATOOLS_OT_remove_from_img(bpy.types.Operator):
     bl_label = "INU: Remove from IMG"
     bl_options = {'REGISTER'}
 
+    # Переопределение архива (пусто → gtatools_img_path). Для 🗑 в боксе —
+    # удалять из РОДНОГО IMG модели.
+    target_img: StringProperty(default="", options={'HIDDEN'})
+
     def execute(self, context):
         from ..core.img import remove_file
         from ..tools.model_utils import get_model_type
 
-        img_path = bpy.path.abspath(context.scene.inu_settings.gtatools_img_path)
+        img_path = bpy.path.abspath(
+            self.target_img or context.scene.inu_settings.gtatools_img_path)
         if not img_path or not os.path.isfile(img_path):
             self.report({'ERROR'}, T("Укажите путь к .img архиву"))
             return {'CANCELLED'}
@@ -993,6 +1351,76 @@ class GTATOOLS_OT_remove_from_img(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class GTATOOLS_OT_verify_img_link(bpy.types.Operator):
+    """Проверить, в каком IMG-архиве папки игры лежит DFF выделенных моделей,
+и обновить статус «В IMG» (img_target_file). Не найдено ни в одном архиве →
+статус станет «Не в IMG». Читает только оглавления архивов (быстро)"""
+    bl_idname = "gtatools.verify_img_link"
+    bl_label = "INU: Verify IMG"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        from ..core.img import read_directory
+        from ..tools.model_utils import get_model_type
+        scn = context.scene
+
+        objs = [o for o in context.selected_objects if o.type == 'MESH']
+        if not objs:
+            self.report({'ERROR'}, T("Выделите меш объекты"))
+            return {'CANCELLED'}
+
+        # Собрать все .img: основной путь + рекурсивно по папке игры.
+        img_paths = []
+        _mp = bpy.path.abspath(scn.inu_settings.gtatools_img_path)
+        if _mp and os.path.isfile(_mp):
+            img_paths.append(_mp)
+        game_root = bpy.path.abspath(scn.inu_settings.gtatools_game_root)
+        if game_root and os.path.isdir(game_root):
+            for dp, _dn, fns in os.walk(game_root):
+                for f in fns:
+                    if f.lower().endswith('.img'):
+                        img_paths.append(os.path.join(dp, f))
+        seen = set()
+        uniq = []
+        for p in img_paths:
+            k = os.path.normcase(os.path.abspath(p))
+            if k not in seen:
+                seen.add(k)
+                uniq.append(p)
+        if not uniq:
+            self.report({'ERROR'},
+                        T("Нет IMG: укажи архив или папку игры"))
+            return {'CANCELLED'}
+
+        # dff-имя (в нижнем регистре) → путь к архиву (первое совпадение).
+        name_to_img = {}
+        for p in uniq:
+            try:
+                for e in read_directory(p):
+                    nm = e.name.lower()
+                    if nm.endswith('.dff'):
+                        name_to_img.setdefault(nm, p)
+            except Exception:
+                continue
+
+        found = lost = 0
+        for o in objs:
+            _mt, base = get_model_type(o)
+            if not base:
+                base = o.name
+            src = name_to_img.get((base + '.dff').lower())
+            if src:
+                o.inu.img_target_file = src
+                found += 1
+            else:
+                o.inu.img_target_file = ''
+                lost += 1
+        self.report({'INFO'},
+                    T("Проверка IMG: найдено {0}, не в архивах {1}").format(
+                        found, lost))
+        return {'FINISHED'}
+
+
 class GTATOOLS_OT_rebuild_img(bpy.types.Operator):
     """Перестроить (компактировать) IMG-архив: убрать мёртвое место,
     оставшееся от перезаписей моделей (replace добавляет данные в конец,
@@ -1029,6 +1457,163 @@ class GTATOOLS_OT_rebuild_img(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class GTATOOLS_OT_scan_ide_for_ipl(bpy.types.Operator):
+    """Найти IDE: прочитать выбранный IPL и найти в указанной папке .ide-файлы,
+    где определены его модели (по Model ID). Если папка — корень игры (есть
+    data/gta.dat), берётся канонический список; иначе рекурсивный скан *.ide.
+    Если модели из разных IDE — покажет список. Ничего не импортирует."""
+    bl_idname = "gtatools.scan_ide_for_ipl"
+    bl_label = "INU: Найти IDE по IPL"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        from ..core.ipl import read_ipl
+        from ..core.ide import find_ides_for_model_ids
+        from ..core.gta_dat import list_ide_files
+        s = context.scene.inu_settings
+        ipl_paths = _ipl_paths_for_import(s)
+        ide_root = bpy.path.abspath(s.gtatools_game_root)
+        if not ipl_paths:
+            self.report({'ERROR'}, T("Выберите IPL-файл"))
+            return {'CANCELLED'}
+        if not ide_root or not os.path.isdir(ide_root):
+            self.report({'ERROR'}, T("Укажите папку с IDE"))
+            return {'CANCELLED'}
+        model_ids = set()
+        for _ip in ipl_paths:
+            try:
+                model_ids |= {inst.model_id for inst in read_ipl(_ip).instances}
+            except Exception:
+                pass
+        if not model_ids:
+            context.scene['gtatools_found_ides'] = ""
+            self.report({'WARNING'}, T("В IPL нет моделей"))
+            return {'CANCELLED'}
+        found = find_ides_for_model_ids(list_ide_files(ide_root), model_ids)
+        # Список путей храним строкой (список строк в ID-property нельзя).
+        context.scene['gtatools_found_ides'] = "\n".join(sorted(found.keys()))
+        # Round-trip: наполняем список IDE «Синхронизации»/Экспорта теми же
+        # найденными IDE, чтобы обратный экспорт писал каждую модель в её IDE.
+        coll = context.scene.inu_settings.gtatools_ide_sync_list
+        coll.clear()
+        for _p in sorted(found.keys()):
+            coll.add().path = _p
+        covered = len({mid for ids in found.values() for mid in ids})
+        self.report(
+            {'INFO'},
+            T("Найдено IDE: {0} · моделей покрыто {1}/{2}").format(
+                len(found), covered, len(model_ids)))
+        return {'FINISHED'}
+
+
+def _find_img_files_in_dir(root):
+    """Все .img архивы в папке `root` (рекурсивно). Возвращает list путей."""
+    out = []
+    for dirpath, _dirs, files in os.walk(root):
+        for fn in files:
+            if fn.lower().endswith('.img'):
+                out.append(os.path.join(dirpath, fn))
+    return out
+
+
+class GTATOOLS_OT_scan_img_for_ipl(bpy.types.Operator):
+    """Найти IMG: прочитать выбранный IPL и найти в папке игры все .img архивы,
+    в которых реально лежат DFF его моделей. Модели кастомной карты часто
+    разложены по нескольким .img (напр. maps/RESOURCES) — импорт затем тянет их
+    из всех найденных архивов, а не только из основного. Ничего не импортирует."""
+    bl_idname = "gtatools.scan_img_for_ipl"
+    bl_label = "INU: Найти IMG по IPL"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        from ..core.ipl import read_ipl
+        from ..core.img import read_directory
+        s = context.scene.inu_settings
+        ipl_paths = _ipl_paths_for_import(s)
+        root = bpy.path.abspath(s.gtatools_game_root)
+        if not ipl_paths:
+            self.report({'ERROR'}, T("Выберите IPL-файл"))
+            return {'CANCELLED'}
+        if not root or not os.path.isdir(root):
+            self.report({'ERROR'}, T("Укажите папку игры"))
+            return {'CANCELLED'}
+        want = set()
+        for _ip in ipl_paths:
+            try:
+                want |= {(inst.model_name or '').lower() + '.dff'
+                         for inst in read_ipl(_ip).instances if inst.model_name}
+            except Exception:
+                pass
+        if not want:
+            context.scene['gtatools_found_imgs'] = ""
+            self.report({'WARNING'}, T("В IPL нет моделей"))
+            return {'CANCELLED'}
+
+        found = []            # пути .img, где нашлась хоть одна нужная модель
+        covered = set()       # покрытые dff-имена (по всем архивам)
+        for img_path in _find_img_files_in_dir(root):
+            try:
+                names = {e.name.lower() for e in read_directory(img_path)}
+            except Exception:
+                continue
+            hit = want & names
+            if hit:
+                found.append(img_path)
+                covered |= hit
+        # Список путей храним строкой (список строк в ID-property нельзя).
+        context.scene['gtatools_found_imgs'] = "\n".join(found)
+        self.report(
+            {'INFO'},
+            T("Найдено IMG: {0} · моделей покрыто {1}/{2}").format(
+                len(found), len(covered), len(want)))
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_open_url(bpy.types.Operator):
+    """Открыть сайт в браузере (обёртка над wm.url_open с нормальным тултипом)."""
+    bl_idname = "gtatools.open_url"
+    bl_label = "INU: Открыть сайт"
+    bl_options = {'REGISTER'}
+
+    url: StringProperty()
+    tip: StringProperty()
+
+    @classmethod
+    def description(cls, context, properties):
+        return properties.tip or T("Открыть сайт в браузере")
+
+    def execute(self, context):
+        if not self.url:
+            return {'CANCELLED'}
+        bpy.ops.wm.url_open(url=self.url)
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_open_text_file(bpy.types.Operator):
+    """Открыть файл (IDE/IPL) во ВНЕШНЕМ текстовом редакторе ОС (как двойной
+    клик в проводнике — Блокнот и т.п.), не в редакторе Blender."""
+    bl_idname = "gtatools.open_text_file"
+    bl_label = "INU: Открыть в текст-редакторе"
+    bl_options = {'REGISTER'}
+
+    filepath: StringProperty()
+
+    def execute(self, context):
+        path = bpy.path.abspath(self.filepath) if self.filepath else ''
+        if not path or not os.path.isfile(path):
+            self.report({'ERROR'}, T("Файл не найден"))
+            return {'CANCELLED'}
+        # Открыть внешним приложением ОС (ассоциация с текстовым редактором —
+        # Блокнот и т.п.), как двойной клик в проводнике. Через блендеровский
+        # wm.path_open — без subprocess, проходит store-compliance.
+        try:
+            bpy.ops.wm.path_open(filepath=path)
+        except Exception as e:                        # noqa: BLE001
+            self.report({'ERROR'}, T("Не удалось открыть: {0}").format(e))
+            return {'CANCELLED'}
+        return {'FINISHED'}
+
+
 class GTATOOLS_OT_export_to_img(bpy.types.Operator):
     """Экспортировать DFF + TXD + COL прямо в .img архив"""
     bl_idname = "gtatools.export_to_img"
@@ -1045,17 +1630,74 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
         description=T("Имя .txd файла без расширения"),
         default="textures",
     )
+    # Переопределение целевого IMG (пусто → gtatools_img_path). Позволяет
+    # «Экспорт модели в IMG» слать в конкретный архив, не трогая основной путь.
+    target_img: StringProperty(default="", options={'HIDDEN'})
+    rebuild_after: BoolProperty(
+        name=T("Пересобрать после экспорта"),
+        description=T("После записи сжать (компактнуть) IMG-архив — убрать мёртвое место от старых версий моделей"),
+        default=False,
+    )
+
+    def _own_img(self, context):
+        """Родной IMG модели — img_target_file первой выделенной модели."""
+        from ..tools.model_utils import find_all_selected_model_groups
+        try:
+            for _base, models in find_all_selected_model_groups().items():
+                src = models['DFF'] or models['LOD']
+                tf = getattr(getattr(src, 'inu', None), 'img_target_file', '') if src else ''
+                if tf:
+                    return tf
+        except Exception:
+            pass
+        return ''
+
+    def _target_img_path(self, context):
+        # Цель берём из выпадающего списка диалога (scene-проперти
+        # gtatools_export_img_target): конкретный архив, либо SELF →
+        # родной IMG модели, либо общий путь gtatools_img_path.
+        scn = context.scene
+        choice = getattr(scn.inu_settings, 'gtatools_export_img_target', 'SELF')
+        if choice and choice != 'SELF':
+            return bpy.path.abspath(choice)
+        own = self._own_img(context)
+        if own:
+            return bpy.path.abspath(own)
+        if self.target_img:
+            return bpy.path.abspath(self.target_img)
+        return bpy.path.abspath(scn.inu_settings.gtatools_img_path)
 
     def invoke(self, context, event):
-        from ..tools.model_utils import find_all_selected_model_groups
+        from ..tools.model_utils import (
+            find_all_selected_model_groups, find_related_models)
+        from ..scene_settings import _export_img_target_items
 
-        img_path = bpy.path.abspath(context.scene.inu_settings.gtatools_img_path)
-        if not img_path or not os.path.isfile(img_path):
-            self.report({'ERROR'}, T("Укажите путь к .img архиву"))
-            return {'CANCELLED'}
         groups = find_all_selected_model_groups()
         if not groups:
             self.report({'ERROR'}, T("Выделите меш объекты"))
+            return {'CANCELLED'}
+
+        # Предвыбор в списке того IMG-архива, из которого пришла модель
+        # (img_target_file). Если он есть среди .img папки игры — выбираем
+        # его пунктом, иначе 'SELF' (родной IMG модели / общий путь).
+        own_raw = self._own_img(context)
+        if own_raw:
+            own_n = os.path.normcase(os.path.normpath(bpy.path.abspath(own_raw)))
+            target_val = 'SELF'
+            for it in _export_img_target_items(None, context):
+                if it[0] == 'SELF':
+                    continue
+                if os.path.normcase(os.path.normpath(bpy.path.abspath(it[0]))) == own_n:
+                    target_val = it[0]
+                    break
+            try:
+                context.scene.inu_settings.gtatools_export_img_target = target_val
+            except Exception:
+                pass
+
+        img_path = self._target_img_path(context)
+        if not img_path or not os.path.isfile(img_path):
+            self.report({'ERROR'}, T("Укажите путь к .img архиву"))
             return {'CANCELLED'}
 
         # Pre-fill the dialog's shared-TXD widgets from the scene-level
@@ -1081,6 +1723,17 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
             if src is not None and hasattr(src, 'inu'):
                 prefilled = getattr(src.inu, 'txd_name', '') or ''
             entry.txd_name = prefilled or base_name
+            # Подтянуть LOD/COL по всей сцене (не только среди выделенных):
+            # сначала из группы выделения, иначе поиск по имени по сцене.
+            related = find_related_models(base_name)
+            lod_obj = models.get('LOD') or related.get('LOD')
+            col_obj = models.get('COL') or related.get('COL')
+            entry.lod_found = bool(lod_obj)
+            entry.col_found = bool(col_obj)
+            entry.lod_name = lod_obj.name if lod_obj else ""
+            entry.col_name = col_obj.name if col_obj else ""
+            entry.inc_lod = True
+            entry.inc_col = True
         wm.gtatools_txd_export_plan_index = 0
 
         return wm.invoke_props_dialog(self, width=460)
@@ -1090,44 +1743,66 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
         wm = context.window_manager
         scn = context.scene
 
+        # Выбор целевого IMG-архива. По умолчанию — родной IMG модели
+        # (предвыбран в invoke). Список: «Родной IMG модели» + все .img
+        # из папки игры.
+        layout.prop(scn.inu_settings, "gtatools_export_img_target",
+                    text=T("IMG архив"))
         info = layout.box()
-        info.label(text=f"{T('IMG:')} {os.path.basename(bpy.path.abspath(scn.inu_settings.gtatools_img_path))}",
+        info.label(text=f"{T('IMG:')} {os.path.basename(self._target_img_path(context))}",
                    **inu_icon(safe_icon('PACKAGE')))
         info.label(text=f"{T('Моделей:')} {len(wm.gtatools_txd_export_plan)}", **inu_icon(safe_icon('INFO')))
 
         # Format pick moved here from the main panel — same scene
         # props the «To folder» path uses, so toggling here also
         # affects the next folder export and vice-versa.
-        layout.label(text=T("Что экспортировать:"))
-        row = layout.row(align=True)
-        row.prop(scn, "gtatools_export_all_dff", text="DFF")
-        row.prop(scn, "gtatools_export_all_col", text="COL")
-        row.prop(scn, "gtatools_export_all_lod", text="LOD")
-        row.prop(scn, "gtatools_export_all_txd", text="TXD")
-        if scn.inu_settings.gtatools_export_all_col:
-            row = layout.row(align=True)
-            row.prop(scn, "gtatools_export_all_col_library",
-                     text="", **inu_icon(safe_icon('PACKAGE')))
-            row.prop(scn, "gtatools_export_all_col_library_name",
-                     text="", placeholder="collision")
-
+        # Общий TXD (упаковка всех текстур в один .txd) — общее для всех.
         row = layout.row(align=True)
         row.prop(self, "shared_txd")
         sub = row.row(align=True)
         sub.active = self.shared_txd
         sub.prop(self, "shared_txd_name", text="")
 
-        box = layout.box()
-        box.active = not self.shared_txd
-        box.label(text=T("TXD имя на модель:") if not self.shared_txd
-                       else T("Общий TXD включён — список игнорируется"),
-                  **inu_icon(safe_icon('TEXTURE')))
-        box.template_list(
-            "GTATOOLS_UL_txd_export_plan", "",
-            wm, "gtatools_txd_export_plan",
-            wm, "gtatools_txd_export_plan_index",
-            rows=min(10, max(4, len(wm.gtatools_txd_export_plan))),
-        )
+        # Иерархия по каждой модели: DFF (галочка + имя TXD), под ним с
+        # отступом — LOD и COL, каждая со своей галочкой. LOD/COL по
+        # умолчанию выключены. Если LOD/COL нет в сцене — пометка «заглушка»
+        # (LOD = копия основной модели, COL = пустая габаритная).
+        layout.label(text=T("Что экспортировать:"))
+        for entry in wm.gtatools_txd_export_plan:
+            mb = layout.box().column(align=True)
+            r = mb.row(align=True)
+            r.prop(entry, "include", text="")
+            rs = r.row(align=True)
+            rs.active = entry.include
+            rs.label(text="DFF: " + (entry.model_name or "?"),
+                     **inu_icon(safe_icon('MESH_DATA')))
+            if not self.shared_txd:
+                rs.prop(entry, "txd_name", text="",
+                        **inu_icon(safe_icon('TEXTURE')))
+            # LOD (с отступом).
+            r2 = mb.row(align=True)
+            r2.separator(factor=2.5)
+            r2.prop(entry, "inc_lod", text="")
+            rs2 = r2.row(align=True)
+            rs2.active = entry.inc_lod
+            rs2.label(
+                text=("LOD: " + entry.lod_name) if entry.lod_found
+                else T("LOD: основная модель (заглушка)"),
+                **inu_icon(safe_icon('MOD_DECIM')))
+            # COL (с отступом).
+            r3 = mb.row(align=True)
+            r3.separator(factor=2.5)
+            r3.prop(entry, "inc_col", text="")
+            rs3 = r3.row(align=True)
+            rs3.active = entry.inc_col
+            rs3.label(
+                text=("COL: " + entry.col_name) if entry.col_found
+                else T("COL: пустая заглушка"),
+                **inu_icon(safe_icon('MESH_CUBE')))
+
+        layout.separator()
+        layout.prop(self, "rebuild_after",
+                    **inu_icon(safe_icon('FILE_REFRESH')))
 
     def execute(self, context):
         from ..core.img import ImgWriter
@@ -1138,7 +1813,7 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
         from .dff_export import build_dff_clump
         from .col_export import build_col_model, export_col_library
 
-        img_path = bpy.path.abspath(context.scene.inu_settings.gtatools_img_path)
+        img_path = self._target_img_path(context)
         if not img_path or not os.path.isfile(img_path):
             self.report({'ERROR'}, T("Укажите путь к .img архиву"))
             return {'CANCELLED'}
@@ -1148,19 +1823,12 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
             self.report({'ERROR'}, T("Выделите меш объекты"))
             return {'CANCELLED'}
 
-        # Unified toggles — same scene props that the «To folder» button
-        # uses, so the DFF/COL/LOD/TXD row next to the export buttons
-        # applies to «To IMG» as well. Previously this operator read a
-        # separate ``gtatools_img_export_*`` set, which led to the
-        # «only COL exports» surprise when users had DFF/TXD toggled off
-        # somewhere out of sight.
-        export_dff_flag = getattr(context.scene.inu_settings, 'gtatools_export_all_dff', True)
-        export_col_flag = getattr(context.scene.inu_settings, 'gtatools_export_all_col', True)
-        export_lod_flag = getattr(context.scene.inu_settings, 'gtatools_export_all_lod', True)
-        export_txd_flag = getattr(context.scene.inu_settings, 'gtatools_export_all_txd', True)
+        # Что экспортировать теперь решают ПОЭЛЕМЕНТНЫЕ галочки диалога
+        # (иерархия DFF → LOD/COL по каждой модели), а не глобальные тумблеры.
+        # DFF+TXD идут по `include`; LOD по `inc_lod` (нет LOD в сцене → копия
+        # основной модели); COL по `inc_col` (нет COL → пустая габаритная).
         col_library = bool(getattr(context.scene.inu_settings, 'gtatools_export_all_col_library', False))
         col_library_name = getattr(context.scene.inu_settings, 'gtatools_export_all_col_library_name', '') or 'collision'
-        empty_col_flag = bool(getattr(context.scene.inu_settings, 'gtatools_export_all_col_empty', False))
         backend = getattr(context.scene.inu_settings, 'gtatools_dxt_backend', 'numpy')
 
         wm = context.window_manager
@@ -1172,8 +1840,40 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
             return plan_by_name.get(base)
 
         def _is_included(base):
+            # DFF (и TXD) модели включены.
             e = _plan_entry(base)
             return e.include if e is not None else True
+
+        def _inc_lod(base):
+            e = _plan_entry(base)
+            return bool(e.inc_lod) if e is not None else False
+
+        def _inc_col(base):
+            e = _plan_entry(base)
+            return bool(e.inc_col) if e is not None else False
+
+        def _want_group(base):
+            # Группу вообще обрабатываем, если включена хоть одна её часть.
+            return _is_included(base) or _inc_lod(base) or _inc_col(base)
+
+        def _lod_src(base, models):
+            # Объект-источник LOD: найденный в сцене LOD, иначе — основная
+            # модель (пишем её копию под LOD-именем, как «заглушку»).
+            e = _plan_entry(base)
+            if e is not None and e.lod_found and e.lod_name:
+                obj = bpy.data.objects.get(e.lod_name)
+                if obj is not None:
+                    return obj
+            return models['LOD'] or models['DFF']
+
+        def _col_src(base, models):
+            # Объект-источник COL (или None → пустая габаритная заглушка).
+            e = _plan_entry(base)
+            if e is not None and e.col_found and e.col_name:
+                obj = bpy.data.objects.get(e.col_name)
+                if obj is not None:
+                    return obj
+            return models['COL']
 
         def _txd_for(base):
             e = _plan_entry(base)
@@ -1198,13 +1898,16 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
 
         # Library COL bypasses the per-group COL loop: one multi-entry .col
         # is written once and stuffed into the archive under a shared name.
+        # Собираем только те COL, что реально найдены и включены (inc_col).
         library_col_objects = []
-        write_col_per_group = export_col_flag
-        if export_col_flag and col_library:
+        write_col_per_group = True
+        if col_library:
             write_col_per_group = False
             for _base, _models in model_groups.items():
-                if _models['COL']:
-                    library_col_objects.append(_models['COL'])
+                if _inc_col(_base):
+                    _cs = _col_src(_base, _models)
+                    if _cs is not None:
+                        library_col_objects.append(_cs)
 
         # Pick the DFF RW version + IMG archive version once for this
         # whole bulk export — scene's gtatools_game drives III/VC/SA
@@ -1220,15 +1923,14 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
         # the per-group pass, but counting each write op (LOD/DFF/COL per
         # group, one tick per bucket, plus the optional library COL)
         # gives a meaningful live progress.
-        included_groups = [(b, m) for b, m in model_groups.items() if _is_included(b)]
+        included_groups = [(b, m) for b, m in model_groups.items() if _want_group(b)]
         total_steps = 0
         for _base, _m in included_groups:
-            if export_lod_flag and _m['LOD']: total_steps += 1
-            if export_dff_flag and _m['DFF']: total_steps += 1
-            if write_col_per_group and (_m['COL'] or empty_col_flag): total_steps += 1
-        if export_txd_flag:
-            total_steps += len({_txd_for(b) for b, m in included_groups
-                                if m['DFF'] or m['LOD']})
+            if _inc_lod(_base): total_steps += 1
+            if _is_included(_base) and _m['DFF']: total_steps += 1
+            if write_col_per_group and _inc_col(_base): total_steps += 1
+        total_steps += len({_txd_for(b) for b, m in included_groups
+                            if _is_included(b) and (m['DFF'] or m['LOD'])})
         if col_library and library_col_objects:
             total_steps += 1
         total_steps = max(1, total_steps)
@@ -1265,16 +1967,16 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
         _NAME_MAX = 23
         _too_long = []
         for _bn, _models in model_groups.items():
-            if not _is_included(_bn):
+            if not _want_group(_bn):
                 continue
             _names = []
-            if export_dff_flag and _models['DFF']:
+            if _is_included(_bn) and _models['DFF']:
                 _names.append(_bn + '.dff')
-            if export_lod_flag and _models['LOD']:
+            if _inc_lod(_bn):
                 _names.append('LOD' + _bn + '.dff')
-            if write_col_per_group and (_models['COL'] or empty_col_flag):
+            if write_col_per_group and _inc_col(_bn):
                 _names.append(_bn + '.col')
-            if export_txd_flag and (_models['DFF'] or _models['LOD']):
+            if _is_included(_bn) and (_models['DFF'] or _models['LOD']):
                 _names.append(_txd_for(_bn) + '.txd')
             for _nm in _names:
                 if len(_nm.encode('ascii', errors='replace')) > _NAME_MAX:
@@ -1294,24 +1996,30 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
                 encode_jobs: list = []  # (filename, callable_returning_bytes, label)
 
                 for base_name, models in model_groups.items():
-                    if not _is_included(base_name):
+                    if not _want_group(base_name):
                         continue
 
-                    if export_lod_flag and models['LOD']:
+                    if _inc_lod(base_name):
                         lod_name = 'LOD' + base_name
-                        try:
-                            clump = build_dff_clump([models['LOD']], version=dff_rw_version, col_model_name=lod_name)
-                            if dff_target_platform == 'MOBILE':
-                                for g in clump.geometries:
-                                    if not g.raw_native_data_plg:
-                                        g.is_native_ogl = True
-                                clump.is_mobile = True
-                            encode_jobs.append((lod_name + '.dff', clump.to_bytes, f"{lod_name}.dff"))
-                        except Exception as e:
-                            results.append(f"{lod_name}.dff error: {e}")
-                            _tick(f"{lod_name}.dff")
+                        # Источник LOD: найденный в сцене LOD, иначе — копия
+                        # основной модели (заглушка) под LOD-именем.
+                        lod_obj = _lod_src(base_name, models)
+                        if lod_obj is None:
+                            results.append(f"{lod_name}.dff: нет геометрии-источника")
+                        else:
+                            try:
+                                clump = build_dff_clump([lod_obj], version=dff_rw_version, col_model_name=lod_name)
+                                if dff_target_platform == 'MOBILE':
+                                    for g in clump.geometries:
+                                        if not g.raw_native_data_plg:
+                                            g.is_native_ogl = True
+                                    clump.is_mobile = True
+                                encode_jobs.append((lod_name + '.dff', clump.to_bytes, f"{lod_name}.dff"))
+                            except Exception as e:
+                                results.append(f"{lod_name}.dff error: {e}")
+                                _tick(f"{lod_name}.dff")
 
-                    if export_dff_flag and models['DFF']:
+                    if _is_included(base_name) and models['DFF']:
                         try:
                             dff_objs = [models['DFF']]
                             for child in models['DFF'].children:
@@ -1328,22 +2036,24 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
                             results.append(f"{base_name}.dff error: {e}")
                             _tick(f"{base_name}.dff")
 
-                    if write_col_per_group and (models['COL'] or empty_col_flag):
+                    if write_col_per_group and _inc_col(base_name):
                         try:
-                            col_src = [models['COL']] if models['COL'] else []
+                            col_obj = _col_src(base_name, models)
+                            is_empty = col_obj is None   # нет COL → заглушка
+                            col_src = [col_obj] if col_obj else []
                             # Empty COL → measure bounds off the visual model so
                             # GTA doesn't cull it (zero sphere = disappears).
                             _bref = None
-                            if empty_col_flag:
+                            if is_empty:
                                 _vis = models['DFF'] or models['LOD']
                                 _bref = [_vis] if _vis else None
-                            col_model = build_col_model(col_src, version=col_version, model_name=base_name, empty=empty_col_flag, bounds_ref=_bref)
+                            col_model = build_col_model(col_src, version=col_version, model_name=base_name, empty=is_empty, bounds_ref=_bref)
                             encode_jobs.append((base_name + '.col', (lambda m=col_model: write_col([m])), f"{base_name}.col"))
                         except Exception as e:
                             results.append(f"{base_name}.col error: {e}")
                             _tick(f"{base_name}.col")
 
-                    if export_txd_flag and (models['DFF'] or models['LOD']):
+                    if _is_included(base_name) and (models['DFF'] or models['LOD']):
                         bucket_name = _txd_for(base_name)
                         for mt in ('DFF', 'LOD'):
                             if models[mt] is not None:
@@ -1362,7 +2072,7 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
                                 results.append(f"{filename} error: {e}")
                             _tick(label)
 
-                if export_txd_flag:
+                if txd_buckets:
                     for txd_name, sources in txd_buckets.items():
                         if not sources:
                             continue
@@ -1399,7 +2109,7 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
                         for obj in library_col_objects:
                             original_locations[obj.name] = obj.location.copy()
                             obj.location = (0, 0, 0)
-                        count = export_col_library(lib_path, library_col_objects, version=col_version, empty=empty_col_flag)
+                        count = export_col_library(lib_path, library_col_objects, version=col_version, empty=False)
                         with open(lib_path, 'rb') as f:
                             status = writer.add(lib_filename, f.read())
                         results.append(f"{lib_filename} {status} ({count} records)")
@@ -1424,6 +2134,15 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
             context.workspace.status_text_set(None)
 
         from .. import _append_export_report
+        # Пересборка (компактирование) архива сразу после экспорта — по галочке.
+        if self.rebuild_after:
+            try:
+                from ..core.img import rebuild_img
+                _st = rebuild_img(img_path)
+                _mb = _st['saved'] / (1024.0 * 1024.0)
+                results.append(f"rebuild: {_st['entries']} записей, -{_mb:.1f} МБ")
+            except Exception as e:
+                results.append(f"rebuild error: {e}")
         _refresh_img_entries(context.scene, img_path)
         try:
             report_path = os.path.join(os.path.dirname(img_path), "_export_report.txt")
@@ -1442,9 +2161,10 @@ class GTATOOLS_OT_export_to_img(bpy.types.Operator):
             # Archive pass. Status-bar shows the *latest* report — make
             # this the visible one; the file list above stays accessible
             # via the report-log click-through.
-            self.report(
-                {'INFO'},
-                T("Rebuild Archive в IMG-туле — иначе игра подтянет старую запись"))
+            if not self.rebuild_after:
+                self.report(
+                    {'INFO'},
+                    T("Rebuild Archive в IMG-туле — иначе игра подтянет старую запись"))
         else:
             self.report({'WARNING'}, T("IMG: нет результатов экспорта"))
         return {'FINISHED'}

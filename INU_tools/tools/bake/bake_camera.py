@@ -169,11 +169,16 @@ def _basis_from_normal(normal):
     return view_dir, quat, right, up
 
 
-def reproject_billboard_uv(low, normal, padding=0.0):
-    """Перепроецировать активную UV `low` из того же базиса И той же
-    рамки, что камера (нормаль плоскости + padding, центрировано по
-    bbox плоскости). Маппинг идентичен проекции камеры, поэтому текстура
-    ложится на плоскость точь-в-точь, без сдвига/зеркала/поворота."""
+def reproject_billboard_uv(low, normal, padding=0.0, uv_name=None):
+    """Перепроецировать UV `low` из того же базиса И той же рамки, что камера
+    (нормаль плоскости + padding, центрировано по bbox плоскости). Маппинг
+    идентичен проекции камеры, поэтому текстура ложится на плоскость
+    точь-в-точь, без сдвига/зеркала/поворота.
+
+    ``uv_name`` — если задан (режим «Не сбрасывать мою UV»), проекция пишется в
+    ОТДЕЛЬНЫЙ слой с этим именем (создаётся при отсутствии), а активная
+    (пользовательская) UV не трогается и остаётся активной. Если None — как
+    раньше: перезаписывается активная UV."""
     _vd, _q, right, up = _basis_from_normal(normal)
     me = low.data
     mw = low.matrix_world
@@ -187,11 +192,18 @@ def reproject_billboard_uv(low, normal, padding=0.0):
     k = 1.0 + padding * 2.0
     rspan = max((max(rs) - min(rs)) * k, 1e-9)
     uspan = max((max(us) - min(us)) * k, 1e-9)
-    uv = me.uv_layers.active or me.uv_layers.new(name="BakeUV")
+    prev_active = me.uv_layers.active
+    if uv_name:
+        uv = me.uv_layers.get(uv_name) or me.uv_layers.new(name=uv_name)
+    else:
+        uv = me.uv_layers.active or me.uv_layers.new(name="BakeUV")
     for loop in me.loops:
         c = coords[loop.vertex_index]
         uv.data[loop.index].uv = ((right.dot(c) - cr) / rspan + 0.5,
                                   (up.dot(c) - cu) / uspan + 0.5)
+    # Вернуть активной пользовательскую UV (создание слоя могло переключить).
+    if uv_name and prev_active is not None:
+        me.uv_layers.active = prev_active
     me.update()
 
 

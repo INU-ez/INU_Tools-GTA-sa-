@@ -22,6 +22,7 @@
 import bpy
 
 from .. import T
+from ..tools import compat
 from ..tools.compat import safe_icon, inu_icon
 from .texture_ops import image_has_significant_alpha
 
@@ -56,15 +57,11 @@ def _alpha_is_wired(mat):
 
 
 def _is_transparent(mat):
+    """Any non-opaque draw mode — 4.2+ 'BLENDED' render method included
+    (compat.blend_method_of normalises both generations)."""
     if mat is None:
         return False
-    # 4.2+ EEVEE Next: BLENDED clearly means alpha blend.
-    if hasattr(mat, 'surface_render_method') and mat.surface_render_method == 'BLENDED':
-        return True
-    # ≤4.1 legacy: any non-opaque blend_method.
-    if hasattr(mat, 'blend_method'):
-        return mat.blend_method != 'OPAQUE'
-    return False
+    return compat.blend_method_of(mat) != 'OPAQUE'
 
 
 def material_matches(mat, mode):
@@ -107,30 +104,17 @@ _SUPPRESS_ITEM_UPDATE = False
 
 
 def _apply_blend(mat, mode):
-    """Set a material's transparency mode across Blender versions.
+    """Set a material's transparency mode across Blender versions
+    (compat.set_blend_method writes both ``blend_method`` and the 4.2+
+    ``surface_render_method`` — on EEVEE Next the legacy property alone
+    looks like "nothing applies").
 
-    • ≤4.1 (EEVEE Legacy): ``blend_method`` drives it.
-    • 4.2+ (EEVEE Next): ``blend_method`` is deprecated — the viewport
-      transparency is controlled by ``surface_render_method``
-      ('BLENDED' vs 'DITHERED'). Setting only blend_method there looks
-      like "nothing applies".
-
-    We set whichever properties exist so it takes effect on both, then
-    tag the material for a viewport refresh. ``mode`` ∈
+    Any transparent mode also switches «Перекрытие прозрачности» OFF —
+    that's the project standard for alpha materials. ``mode`` ∈
     OPAQUE / CLIP / HASHED / BLEND. Returns True if anything was set."""
-    applied = False
-    if hasattr(mat, 'blend_method'):
-        try:
-            mat.blend_method = mode
-            applied = True
-        except (TypeError, AttributeError):
-            pass
-    if hasattr(mat, 'surface_render_method'):
-        try:
-            mat.surface_render_method = 'BLENDED' if mode == 'BLEND' else 'DITHERED'
-            applied = True
-        except (TypeError, AttributeError):
-            pass
+    applied = compat.set_blend_method(mat, mode)
+    if mode != 'OPAQUE':
+        compat.set_transparency_overlap(mat, False)
     if applied:
         mat.update_tag()
     return applied
@@ -139,11 +123,7 @@ def _apply_blend(mat, mode):
 def _current_mode(mat):
     """Map a material's current transparency to OPAQUE/CLIP/HASHED/BLEND
     for the initial per-row dropdown value."""
-    if hasattr(mat, 'blend_method'):
-        return mat.blend_method   # 4-way; exists on ≤4.1 and legacy on 4.2+
-    if hasattr(mat, 'surface_render_method'):
-        return 'BLEND' if mat.surface_render_method == 'BLENDED' else 'CLIP'
-    return 'OPAQUE'
+    return compat.blend_method_of(mat)
 
 
 # ── operators ───────────────────────────────────────────────────────

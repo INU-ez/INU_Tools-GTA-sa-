@@ -928,6 +928,47 @@ def update_road_sign_preview(parent_obj):
     create_road_sign_preview(parent_obj)
 
 
+# Road-sign preview carries FONT text objects that can't be rewritten in place
+# like the escalator wire, so it must remove+recreate children. Doing that from
+# a StringProperty `update=` callback (every keystroke) is the "modify bpy.data
+# during update" hazard — it can raise or leave the preview stale. So the
+# callback only QUEUES the object and a one-shot timer does the churn safely,
+# outside the update, also debouncing rapid typing into a single rebuild.
+_road_sign_pending = set()   # object names awaiting a rebuild
+
+
+def _road_sign_rebuild_tick():
+    names = list(_road_sign_pending)
+    _road_sign_pending.clear()
+    for name in names:
+        obj = bpy.data.objects.get(name)
+        if obj is not None and _has_preview_children(obj):
+            try:
+                update_road_sign_preview(obj)
+            except Exception as e:
+                print(f"[2DFX] road sign rebuild error: {e}")
+    return None   # one-shot; re-armed by request_road_sign_rebuild
+
+
+def request_road_sign_rebuild(parent_obj):
+    """Queue a deferred road-sign preview rebuild (safe from an update= cb)."""
+    if parent_obj is None:
+        return
+    _road_sign_pending.add(parent_obj.name)
+    if not bpy.app.timers.is_registered(_road_sign_rebuild_tick):
+        bpy.app.timers.register(_road_sign_rebuild_tick, first_interval=0.0)
+
+
+def stop_road_sign_timer():
+    """Tear down the deferred-rebuild timer on unregister."""
+    _road_sign_pending.clear()
+    if bpy.app.timers.is_registered(_road_sign_rebuild_tick):
+        try:
+            bpy.app.timers.unregister(_road_sign_rebuild_tick)
+        except Exception:
+            pass
+
+
 # ── Enter/Exit (type 6) preview ─────────────────────────────────────
 # A proper volumetric marker — a glowing translucent cylinder (the column
 # of light you walk into), sized by radius_x × radius_y, plus a floor arrow

@@ -28,7 +28,7 @@
 bl_info = {
     "name": "INU_tools(gta_sa)",
     "author": "INU",
-    "version": (2, 2, 0),
+    "version": (2, 3, 0),
     # Минимум 2.83 LTS — поддержка через tools/compat.py:
     # • bake / preview / DFF I/O работают через legacy mesh.vertex_colors
     # • prelight preview shader использует ShaderNodeMixRGB на ≤3.3
@@ -330,8 +330,19 @@ from .tools.compat import safe_icon, inu_icon
 # =============================================================================
 
 def get_locale():
-    """Return Blender's current UI locale, e.g. 'ru_RU', 'es_ES', 'en_US'."""
+    """Return the locale Blender is actually DISPLAYING the UI in.
+
+    ``bpy.app.translations.locale`` reports the detected/configured locale
+    (the system locale, e.g. 'ru_RU', even on a Russian Windows) regardless
+    of whether interface translation is on. When the user has "Translate
+    Interface" OFF — or English selected — Blender shows its English source
+    strings, so we must emit English too, not the Russian source. Gate on
+    ``use_translate_interface`` so the addon matches what Blender shows.
+    """
     try:
+        view = bpy.context.preferences.view
+        if not getattr(view, 'use_translate_interface', True):
+            return 'en_US'   # Blender shows English source → so do we
         return bpy.app.translations.locale or 'en_US'
     except Exception:
         return 'en_US'
@@ -398,6 +409,7 @@ from .tools import uv_tools as _uv
 from .tools.uv_tools import (
     GTATOOLS_OT_toggle_uv_editor, GTATOOLS_OT_toggle_uv_grid,
     GTATOOLS_OT_randomize_uv_grid, GTATOOLS_OT_snap_uv_to_grid,
+    GTATOOLS_OT_uv_fit_grid_scale, GTATOOLS_OT_uv_texel_density,
     GTATOOLS_OT_set_uv_align, GTATOOLS_PT_uv_tools_panel,
     GTATOOLS_OT_uv_anim_insert_key, GTATOOLS_OT_uv_anim_clear_keys,
     GTATOOLS_PT_uv_anim_panel,
@@ -433,6 +445,9 @@ from .ui.panels import (  # noqa: E501
     GTATOOLS_UL_ipl_sync_list,
     GTATOOLS_PT_main_panel,
     GTATOOLS_PT_ide_ipl_panel,
+    GTATOOLS_PT_ide_ipl_import,
+    GTATOOLS_PT_ide_ipl_export,
+    GTATOOLS_PT_ide_ipl_map,
     GTATOOLS_PT_export_panel,
     GTATOOLS_PT_validate_scene,
     GTATOOLS_MT_create_2dfx,
@@ -446,6 +461,7 @@ from .ui.panels import (  # noqa: E501
     GTATOOLS_UL_texture_browser,
     GTATOOLS_PT_vehicle_panel,
     GTATOOLS_PT_frame_hierarchy,
+    GTATOOLS_PT_frame_hierarchy_anim,
     GTATOOLS_UL_bake_layers,
     GTATOOLS_PT_uv_root,
     GTATOOLS_PT_bake_panel,
@@ -466,10 +482,31 @@ from .ui.panels import (  # noqa: E501
     GTATOOLS_PT_prelight_col_panel,
     GTATOOLS_PT_lightmap_panel,
     GTATOOLS_PT_water_panel,
+    GTATOOLS_PT_zon_panel,
+    GTATOOLS_UL_grass,
+    GTATOOLS_PT_grass_panel,
     GTATOOLS_PT_anim_panel,
     GTATOOLS_PT_radar_panel,
     GTATOOLS_PT_paths_panel,
     GTATOOLS_PT_footer_panel,
+)
+from .ops.zon_ops import (
+    GTATOOLS_OT_import_zon,
+    GTATOOLS_OT_export_zon,
+    GTATOOLS_OT_add_zon_zone,
+    GTATOOLS_OT_zon_copy_lines,
+)
+from .ops.plants_ops import (
+    GTATOOLS_OT_grass_import,
+    GTATOOLS_OT_grass_export,
+    GTATOOLS_OT_grass_add,
+    GTATOOLS_OT_grass_remove,
+    GTATOOLS_OT_grass_duplicate,
+    GTATOOLS_OT_grass_apply_surface,
+    GTATOOLS_OT_grass_preview,
+    GTATOOLS_OT_grass_preview_clear,
+    GTATOOLS_OT_grass_generate_geometry,
+    GTATOOLS_OT_grass_geometry_clear,
 )
 # Material context-menu hook — register/unregister append/remove it.
 from .ui.panels import _draw_sort_materials_menu
@@ -496,6 +533,7 @@ from .scene_settings import (
     INUSceneSettings,
     INUValidateIssue,
     INUBakeLayer,
+    _bake_layer_index_update,
     INULightCutRing,
     GTATOOLS_BinaryIplEntry,
     GTATOOLS_TextIplEntry,
@@ -504,6 +542,7 @@ from .scene_settings import (
     GTATOOLS_LintIssueItem,
     GTATOOLS_PathItem,
     GTATOOLS_TextureBrowserItem,
+    INUGrassEntry,
 )
 from .ops.ifp_import import (
     GTATOOLS_OT_ifp_batch_import,
@@ -530,6 +569,7 @@ from .ops.frame_hierarchy import (
     GTATOOLS_OT_frame_rename,
     GTATOOLS_OT_frame_set_parent,
     GTATOOLS_OT_frame_unparent,
+    GTATOOLS_OT_frame_reparent,
     GTATOOLS_OT_frame_validate,
     GTATOOLS_OT_frame_mirror_lr,
 )
@@ -1085,6 +1125,24 @@ def _inu_pipeline_changed(self, context):
         _inu_flag_propagating = prev_guard
 
 
+def _lod_dist_sync_update(self, context):
+    """Синхронизировать LOD Dist с LOD-партнёром: меняя LOD Distance на основной
+    модели, у которой задан lod_object, ставим то же значение партнёру, чтобы
+    его IDE-строка (берущая свою LOD Dist) сходилась. Защита от рекурсии — не
+    трогаем, если значение уже совпадает."""
+    partner = getattr(self, 'lod_object', None)
+    if partner is None:
+        return
+    pinu = getattr(partner, 'inu', None)
+    if pinu is None:
+        return
+    try:
+        if abs(float(pinu.lod_draw_distance) - float(self.lod_draw_distance)) > 1e-4:
+            pinu.lod_draw_distance = self.lod_draw_distance
+    except Exception:
+        pass
+
+
 class INUObjectProps(bpy.types.PropertyGroup):
     """INU_tools object export properties (replaces DragonFF obj.dff)."""
 
@@ -1484,9 +1542,12 @@ class INUObjectProps(bpy.types.PropertyGroup):
         obj = self.id_data
         if obj and obj.type == 'EMPTY' and self.type == '2DFX' and self.effect_2dfx == 'ROAD_SIGN':
             try:
-                from .ops.fx_preview import update_road_sign_preview, _has_preview_children
+                from .ops.fx_preview import (request_road_sign_rebuild,
+                                             _has_preview_children)
+                # Defer the remove+recreate to a timer — doing bpy.data object
+                # churn from inside this update= callback is unsafe.
                 if _has_preview_children(obj):
-                    update_road_sign_preview(obj)
+                    request_road_sign_rebuild(obj)
             except Exception as e:
                 print(f"[2DFX] Road sign preview update error: {e}")
 
@@ -1940,6 +2001,7 @@ class INUObjectProps(bpy.types.PropertyGroup):
         default=999.0,
         min=0.0,
         description=T("Дальность прорисовки LOD модели (IDE)"),
+        update=_lod_dist_sync_update,
     )
     ide_flags : IntProperty(
         name="IDE Flags",
@@ -1958,6 +2020,33 @@ class INUObjectProps(bpy.types.PropertyGroup):
         name="Break Force",
         description=T("Сила, нужная чтобы сломать объект (умолчание 1.0)"),
         default=1.0, min=0.0,
+    )
+    breakable_offset : FloatVectorProperty(
+        name="Break Offset",
+        description=T("Смещение точки приложения силы разлома (по умолчанию 0,0,0)"),
+        size=3, default=(0.0, 0.0, 0.0), subtype='TRANSLATION',
+    )
+    breakable_alloc_auto : BoolProperty(
+        name="Auto Buffers",
+        description=T("Авто-размер буферов сломанной копии по текущей геометрии. "
+                      "Выключи только если движку не хватает места под осколки"),
+        default=True,
+    )
+    breakable_verts_alloc : IntProperty(
+        name="Verts", description=T("Резерв вершин под сломанную копию"),
+        default=100, min=1,
+    )
+    breakable_faces_alloc : IntProperty(
+        name="Faces", description=T("Резерв граней под сломанную копию"),
+        default=200, min=1,
+    )
+    breakable_mats_alloc : IntProperty(
+        name="Materials", description=T("Резерв материалов под сломанную копию"),
+        default=1, min=1,
+    )
+    breakable_uvs_alloc : IntProperty(
+        name="UVs", description=T("Резерв UV под сломанную копию"),
+        default=100, min=1,
     )
 
     # IDE flag checkboxes with auto-sync to ide_flags.
@@ -1995,35 +2084,35 @@ class INUObjectProps(bpy.types.PropertyGroup):
         self['ide_flags'] = val
 
     # Stable across III/VC/SA — show in every game's UI.
-    flag_draw_last : BoolProperty(name="DRAW_LAST", description=T("Прозрачный, рисовать последним (4) · III/VC/SA"), default=False, update=_update_ide_flag)
-    flag_additive : BoolProperty(name="ADDITIVE", description=T("Аддитивный блендинг (8) · III/VC/SA"), default=False, update=_update_ide_flag)
-    flag_no_zbuffer : BoolProperty(name="NO_ZBUFFER_WRITE", description=T("Не писать в Z-буфер (64) · III/VC/SA"), default=False, update=_update_ide_flag)
+    flag_draw_last : BoolProperty(name=T("Рисовать последним (DRAW_LAST)"), description=T("Прозрачный, рисовать последним (4) · III/VC/SA"), default=False, update=_update_ide_flag)
+    flag_additive : BoolProperty(name=T("Аддитивный (ADDITIVE)"), description=T("Аддитивный блендинг (8) · III/VC/SA"), default=False, update=_update_ide_flag)
+    flag_no_zbuffer : BoolProperty(name=T("Без Z-буфера (NO_ZBUFFER_WRITE)"), description=T("Не писать в Z-буфер (64) · III/VC/SA"), default=False, update=_update_ide_flag)
 
     # III + VC (SA ignores these bits — checkbox hidden in SA scene).
-    flag_do_not_fade : BoolProperty(name="DO_NOT_FADE", description=T("Без затухания на дистанции (2) · III/VC"), default=False, update=_update_ide_flag)
-    flag_ignore_lighting : BoolProperty(name="IGNORE_LIGHTING", description=T("Динамическое освещение вместо статического (32) · III/VC"), default=False, update=_update_ide_flag)
+    flag_do_not_fade : BoolProperty(name=T("Без затухания (DO_NOT_FADE)"), description=T("Без затухания на дистанции (2) · III/VC"), default=False, update=_update_ide_flag)
+    flag_ignore_lighting : BoolProperty(name=T("Динамический свет (IGNORE_LIGHTING)"), description=T("Динамическое освещение вместо статического (32) · III/VC"), default=False, update=_update_ide_flag)
 
     # III only.
-    flag_is_subway : BoolProperty(name="IS_SUBWAY", description=T("Туннель, видим только в cull-зоне (16) · III only"), default=False, update=_update_ide_flag)
+    flag_is_subway : BoolProperty(name=T("Туннель метро (IS_SUBWAY)"), description=T("Туннель, видим только в cull-зоне (16) · III only"), default=False, update=_update_ide_flag)
 
     # VC + SA (III lacks 0x1 IS_ROAD semantics — bit 0 was «ignored»).
-    flag_is_road : BoolProperty(name="IS_ROAD", description=T("Дорога, wet reflections (1) · VC/SA"), default=False, update=_update_ide_flag)
-    flag_no_shadows : BoolProperty(name="NO_SHADOWS", description=T("Не получать тени (128) · VC/SA"), default=False, update=_update_ide_flag)
-    flag_glass_1 : BoolProperty(name="GLASS_TYPE_1", description=T("Стекло разбиваемое (512) · VC/SA"), default=False, update=_update_ide_flag)
-    flag_glass_2 : BoolProperty(name="GLASS_TYPE_2", description=T("Стекло с трещинами (1024) · VC/SA"), default=False, update=_update_ide_flag)
+    flag_is_road : BoolProperty(name=T("Дорога (IS_ROAD)"), description=T("Дорога, wet reflections (1) · VC/SA"), default=False, update=_update_ide_flag)
+    flag_no_shadows : BoolProperty(name=T("Без теней (NO_SHADOWS)"), description=T("Не получать тени (128) · VC/SA"), default=False, update=_update_ide_flag)
+    flag_glass_1 : BoolProperty(name=T("Стекло разбиваемое (GLASS_TYPE_1)"), description=T("Стекло разбиваемое (512) · VC/SA"), default=False, update=_update_ide_flag)
+    flag_glass_2 : BoolProperty(name=T("Стекло с трещинами (GLASS_TYPE_2)"), description=T("Стекло с трещинами (1024) · VC/SA"), default=False, update=_update_ide_flag)
 
     # VC only.
-    flag_ignore_draw_dist : BoolProperty(name="IGNORE_DRAW_DIST", description=T("Игнорировать draw distance (256) · VC only — typical для LOD-моделей"), default=False, update=_update_ide_flag)
+    flag_ignore_draw_dist : BoolProperty(name=T("Игнор. дистанции (IGNORE_DRAW_DIST)"), description=T("Игнорировать draw distance (256) · VC only — typical для LOD-моделей"), default=False, update=_update_ide_flag)
 
     # SA only.
-    flag_garage_door : BoolProperty(name="GARAGE_DOOR", description=T("Дверь гаража (2048) · SA only"), default=False, update=_update_ide_flag)
-    flag_damagable : BoolProperty(name="DAMAGABLE", description=T("Разрушаемый ok/dam (4096) · SA only"), default=False, update=_update_ide_flag)
-    flag_is_tree : BoolProperty(name="IS_TREE", description=T("Дерево, качается на ветру (8192) · SA only"), default=False, update=_update_ide_flag)
-    flag_is_palm : BoolProperty(name="IS_PALM", description=T("Пальма, качается на ветру (16384) · SA only"), default=False, update=_update_ide_flag)
-    flag_no_flyer_col : BoolProperty(name="NO_FLYER_COL", description=T("Нет коллизии с летающим (32768) · SA only"), default=False, update=_update_ide_flag)
-    flag_is_tag : BoolProperty(name="IS_TAG", description=T("Граффити тег (1048576) · SA only"), default=False, update=_update_ide_flag)
-    flag_no_backface : BoolProperty(name="NO_BACKFACE_CULL", description=T("Рисовать обе стороны (2097152) · SA only"), default=False, update=_update_ide_flag)
-    flag_breakable : BoolProperty(name="BREAKABLE_STATUE", description=T("Разрушаемая статуя (4194304) · SA only"), default=False, update=_update_ide_flag)
+    flag_garage_door : BoolProperty(name=T("Дверь гаража (GARAGE_DOOR)"), description=T("Дверь гаража (2048) · SA only"), default=False, update=_update_ide_flag)
+    flag_damagable : BoolProperty(name=T("Повреждаемый (DAMAGABLE)"), description=T("Разрушаемый ok/dam (4096) · SA only"), default=False, update=_update_ide_flag)
+    flag_is_tree : BoolProperty(name=T("Дерево (IS_TREE)"), description=T("Дерево, качается на ветру (8192) · SA only"), default=False, update=_update_ide_flag)
+    flag_is_palm : BoolProperty(name=T("Пальма (IS_PALM)"), description=T("Пальма, качается на ветру (16384) · SA only"), default=False, update=_update_ide_flag)
+    flag_no_flyer_col : BoolProperty(name=T("Без колл. с авиа (NO_FLYER_COL)"), description=T("Нет коллизии с летающим (32768) · SA only"), default=False, update=_update_ide_flag)
+    flag_is_tag : BoolProperty(name=T("Граффити-тег (IS_TAG)"), description=T("Граффити тег (1048576) · SA only"), default=False, update=_update_ide_flag)
+    flag_no_backface : BoolProperty(name=T("Двусторонний (NO_BACKFACE_CULL)"), description=T("Рисовать обе стороны (2097152) · SA only"), default=False, update=_update_ide_flag)
+    flag_breakable : BoolProperty(name=T("Разрушаемая статуя (BREAKABLE_STATUE)"), description=T("Разрушаемая статуя (4194304) · SA only"), default=False, update=_update_ide_flag)
 
     # Source game for the loaded IDE flags — set by ide_import when
     # known (defaults to '' = unknown). Read by export to decide
@@ -2063,6 +2152,14 @@ class INUObjectProps(bpy.types.PropertyGroup):
         name="IPL Target",
         subtype='FILE_PATH',
         description=T("Путь к IPL-файлу куда этот объект был экспортирован последним"),
+        default="",
+    )
+    img_target_file : StringProperty(
+        name="IMG Target",
+        subtype='FILE_PATH',
+        description=T("Путь к IMG-архиву, откуда модель импортирована (или куда "
+                      "последний раз экспортирована). Даёт статус «В IMG» и "
+                      "цель по умолчанию для экспорта модели в IMG"),
         default="",
     )
     ipl_last_pos : FloatVectorProperty(
@@ -2111,11 +2208,24 @@ class INUObjectProps(bpy.types.PropertyGroup):
         default=0,
         description=T("Object flags на момент последнего Add to IDE"),
     )
+    ide_last_model_id : IntProperty(
+        name="IDE Last Model ID",
+        default=0,
+        description=T("Model ID на момент последней привязки к IDE. Если "
+                      "текущий Model ID отличается (например скопировал модель "
+                      "и сменил ID) — привязка к старой строке IDE неактуальна"),
+    )
     ide_linked : BoolProperty(
         name="IDE Linked",
         default=False,
         description=T("True если model_id этого объекта был успешно записан в IDE через Add"),
     )
+
+    # Стек слоёв запекания текстур — PER-MODEL (переехал со сцены). У каждой
+    # модели свой набор карт (Bevel/AO/Diffuse/…) со своими настройками.
+    gtatools_bake_layers : CollectionProperty(type=INUBakeLayer)
+    gtatools_bake_layers_index : IntProperty(
+        default=0, update=_bake_layer_index_update)
 
     # Collision sphere/cone properties
     col_material : IntProperty(default=12, description=T("Материал для Sphere/Cone"))
@@ -2423,8 +2533,24 @@ class GTATOOLS_TxdExportEntry(bpy.types.PropertyGroup):
     include: BoolProperty(
         name="",
         default=True,
-        description=T("Включить модель в экспорт"),
+        description=T("Включить DFF модели в экспорт"),
     )
+    # Иерархия под DFF: LOD и COL. Включены по умолчанию. Имена/флаги
+    # «найдено в сцене» заполняет invoke().
+    inc_lod: BoolProperty(
+        name="",
+        default=True,
+        description=T("Экспортировать LOD этой модели. Если LOD в сцене нет — уйдёт копия основной модели под LOD-именем"),
+    )
+    inc_col: BoolProperty(
+        name="",
+        default=True,
+        description=T("Экспортировать COL (коллизию). Если COL в сцене нет — будет создана пустая габаритная COL-заглушка"),
+    )
+    lod_name: StringProperty()
+    col_name: StringProperty()
+    lod_found: BoolProperty(default=False)
+    col_found: BoolProperty(default=False)
 
 
 # IMG operators + _refresh_img_entries helper moved to ops/img_ops.py
@@ -2433,7 +2559,12 @@ from .ops.img_ops import (
     GTATOOLS_OT_refresh_img_list,
     GTATOOLS_OT_extract_resources,
     GTATOOLS_OT_import_from_img,
+    GTATOOLS_OT_scan_ide_for_ipl,
+    GTATOOLS_OT_scan_img_for_ipl,
+    GTATOOLS_OT_open_url,
+    GTATOOLS_OT_open_text_file,
     GTATOOLS_OT_remove_from_img,
+    GTATOOLS_OT_verify_img_link,
     GTATOOLS_OT_export_to_img,
     GTATOOLS_OT_rebuild_img,
 )
@@ -2487,6 +2618,17 @@ from .ops.dff_import import (
     GTATOOLS_OT_import_dff,
     GTATOOLS_OT_drop_dff,
 )
+from .ops.ariane_bridge import (
+    GTATOOLS_OT_ariane_watch,
+    GTATOOLS_OT_ariane_import_now,
+    GTATOOLS_OT_ariane_send,
+    GTATOOLS_OT_ariane_send_pos,
+    GTATOOLS_OT_ariane_create_model,
+    GTATOOLS_OT_ariane_bind,
+    GTATOOLS_OT_ariane_clear,
+    GTATOOLS_OT_ariane_pick_game,
+    stop_watch as _ariane_stop_watch,
+)
 from .ops.col_import import (
     GTATOOLS_OT_import_col,
     GTATOOLS_OT_drop_col,
@@ -2528,6 +2670,15 @@ def _ide_entry_from_obj(obj, auto_id=False):
     if not txd_name:
         txd_name = name
     draw_dist = getattr(inu, 'draw_distance', 299.0) if inu else 299.0
+    # LOD-модель: в IDE-строку идёт LOD Dist (далёкая дальность), а не обычная
+    # Draw Dist. Тип определяем автоклассификатором (как в панели «По имени: LOD»).
+    if inu is not None:
+        try:
+            from .tools.model_utils import get_model_type
+            if get_model_type(obj)[0] == 'LOD':
+                draw_dist = getattr(inu, 'lod_draw_distance', draw_dist)
+        except Exception:
+            pass
     flags = getattr(inu, 'ide_flags', 0) if inu else 0
     # #9: translate flags when this object was imported tagged with a
     # different source game than the scene's target (mirrors the full-export
@@ -2640,6 +2791,10 @@ def _append_export_report(report_path: str, title: str, rows, max_chars: int = 2
 # Helpers _ide_entry_from_obj / _ipl_entry_from_obj / _clean_model_name_ide
 # stay below as the single source of truth for INU Import/Export too.
 from .ops.ide_ipl import (
+    GTATOOLS_OT_add_to_map,
+    GTATOOLS_OT_remove_from_map,
+    GTATOOLS_OT_import_picked_ide,
+    GTATOOLS_OT_import_picked_ipl,
     GTATOOLS_OT_upsert_ide,
     GTATOOLS_OT_upsert_ipl,
     GTATOOLS_OT_pick_setting_path,
@@ -2647,8 +2802,15 @@ from .ops.ide_ipl import (
     GTATOOLS_OT_ide_remove_link,
     GTATOOLS_OT_ide_verify_links,
     GTATOOLS_OT_ipl_sync_from_file,
+    GTATOOLS_OT_ipl_restore_coords,
     GTATOOLS_OT_ipl_sync_add,
+    GTATOOLS_OT_ipl_sync_add_folder,
     GTATOOLS_OT_ipl_sync_remove,
+    GTATOOLS_OT_ide_sync_add,
+    GTATOOLS_OT_ide_sync_add_folder,
+    GTATOOLS_OT_ide_sync_remove,
+    GTATOOLS_OT_ide_sync_export,
+    GTATOOLS_OT_ipl_sync_export,
     GTATOOLS_OT_ipl_remove_link,
     GTATOOLS_OT_ipl_verify_links,
     GTATOOLS_OT_link_sync,
@@ -2939,6 +3101,7 @@ from .ops.effects_ops import (
 # Operators moved to ops/col_surface_ops.py in Phase 3.
 from .ops.col_surface_ops import (
     GTATOOLS_OT_set_col_surface,
+    GTATOOLS_OT_toggle_col_surface_fav,
     GTATOOLS_OT_col_surface_menu,
     GTATOOLS_OT_batch_set_distance,
 )
@@ -3187,8 +3350,10 @@ def _load_prelight_presets():
                         # so the in-code Default always wins.
                         continue
                     presets.append(p)
-            except:
-                pass
+            except (OSError, ValueError, AttributeError):
+                # Unreadable file, malformed JSON, or a top-level array
+                # instead of an object — skip that preset, keep the rest.
+                continue
     return presets
 
 
@@ -3225,11 +3390,15 @@ from .ops.prelight_preset_ops import (
     GTATOOLS_OT_prelight_preset_rename,
 )
 # Operators moved to ops/water_geometry_ops.py in Phase 3.
+from .ops import water_geometry_ops as _water_geo_mod
 from .ops.water_geometry_ops import (
     GTATOOLS_OT_add_water,
     GTATOOLS_OT_water_snap_grid,
+    GTATOOLS_OT_water_snap_block,
+    GTATOOLS_OT_water_split_blocks,
     GTATOOLS_OT_water_set_params,
     GTATOOLS_OT_water_stitch,
+    GTATOOLS_OT_toggle_water_limits,
 )
 from .ops.file_scanner_ops import (
     GTATOOLS_OT_scan_files,
@@ -3269,12 +3438,24 @@ from .ops.ifp_ops import (
     GTATOOLS_OT_smooth_between_anchors,
     GTATOOLS_OT_delete_active_action,
 )
+from .ops.camera_io import (
+    GTATOOLS_OT_import_camera_dat,
+    GTATOOLS_OT_export_camera_dat,
+)
+from .ops.fragment_ops import (
+    GTATOOLS_OT_fragment_mesh,
+)
 from .ops.ik_rig import (
     GTATOOLS_OT_add_ik_rig,
     GTATOOLS_OT_bake_ik_rig,
     GTATOOLS_OT_add_ground_plane,
     _unregister_follow_handler as _ik_unregister_follow_handler,
     _on_file_load_ik as _ik_on_file_load,
+)
+from .ops.handsign_ops import (
+    GTATOOLS_OT_handsign_attach,
+    GTATOOLS_OT_handsign_detach,
+    GTATOOLS_OT_handsign_export,
 )
 # ── X Radar Maker ────────────────────────────────────────────────────
 
@@ -3328,9 +3509,27 @@ class GTATOOLS_OT_run_legacy_migrations(bpy.types.Operator):
 class INUAddonPreferences(bpy.types.AddonPreferences):
     bl_idname = __package__
 
+    # Запоминается глобально (переживает смену файла и перезапуск Blender) —
+    # чтобы галочку в импортах не приходилось переключать каждый раз.
+    import_weld_sharpen: bpy.props.BoolProperty(
+        name=T("Стандартная модель GTA SA (vanilla)"),
+        description=T("ВКЛ — обрабатывать как СТАНДАРТНУЮ модель GTA SA "
+                      "(сварка + острые рёбра, как раньше). ВЫКЛ — КАСТОМНАЯ "
+                      "модель: связать рассыпанную геометрию и сохранить "
+                      "двусторонние заборы"),
+        default=False)
+
     def draw(self, context):
         layout = self.layout
         col = layout.column()
+        col.label(text=T("Импорт моделей"))
+        box = col.box()
+        box.prop(self, "import_weld_sharpen")
+        box.label(
+            text=T("Запоминается для всех импортов (меню, отдельный Import DFF, "
+                   "перетаскивание .dff)"),
+            icon='INFO')
+        col.separator()
         col.label(text=T("Совместимость со старыми версиями"))
         box = col.box()
         box.label(
@@ -3350,6 +3549,7 @@ classes = (
     INUAddonPreferences,
     GTATOOLS_OT_run_legacy_migrations,
     INUParticleKeyframe,
+    INUBakeLayer,          # ДО INUObjectProps: тот держит per-model стек слоёв
     INUObjectProps,
     INUMaterialProps,
     GTATOOLS_ImgFileEntry,
@@ -3363,6 +3563,7 @@ classes = (
     GTATOOLS_LintIssueItem,
     GTATOOLS_PathItem,
     GTATOOLS_TextureBrowserItem,
+    INUGrassEntry,
     GTATOOLS_TxdExportEntry,
     GTATOOLS_UL_txd_export_plan,
     GTATOOLS_UL_img_files,
@@ -3478,6 +3679,8 @@ classes = (
     GTATOOLS_OT_toggle_uv_grid,
     GTATOOLS_OT_randomize_uv_grid,
     GTATOOLS_OT_snap_uv_to_grid,
+    GTATOOLS_OT_uv_fit_grid_scale,
+    GTATOOLS_OT_uv_texel_density,
     GTATOOLS_OT_set_uv_align,
     GTATOOLS_OT_uv_anim_insert_key,
     GTATOOLS_OT_uv_anim_clear_keys,
@@ -3499,12 +3702,19 @@ classes = (
     GTATOOLS_OT_import_ipl_sections,
     GTATOOLS_OT_export_ipl_sections,
     GTATOOLS_OT_import_from_img,
+    GTATOOLS_OT_scan_ide_for_ipl,
+    GTATOOLS_OT_scan_img_for_ipl,
+    GTATOOLS_OT_open_url,
+    GTATOOLS_OT_open_text_file,
     GTATOOLS_OT_import_water,
     GTATOOLS_OT_export_water,
     GTATOOLS_OT_add_water,
     GTATOOLS_OT_water_snap_grid,
+    GTATOOLS_OT_water_snap_block,
+    GTATOOLS_OT_water_split_blocks,
     GTATOOLS_OT_water_set_params,
     GTATOOLS_OT_water_stitch,
+    GTATOOLS_OT_toggle_water_limits,
     GTATOOLS_OT_scan_files,
     GTATOOLS_OT_scan_save_report,
     GTATOOLS_OT_scan_reveal_file,
@@ -3548,9 +3758,15 @@ classes = (
     GTATOOLS_OT_mirror_anim,
     GTATOOLS_OT_smooth_between_anchors,
     GTATOOLS_OT_delete_active_action,
+    GTATOOLS_OT_import_camera_dat,
+    GTATOOLS_OT_export_camera_dat,
+    GTATOOLS_OT_fragment_mesh,
     GTATOOLS_OT_add_ik_rig,
     GTATOOLS_OT_bake_ik_rig,
     GTATOOLS_OT_add_ground_plane,
+    GTATOOLS_OT_handsign_attach,
+    GTATOOLS_OT_handsign_detach,
+    GTATOOLS_OT_handsign_export,
     GTATOOLS_OT_import_paths_ipl,
     GTATOOLS_OT_export_paths_ipl,
     GTATOOLS_OT_convert_to_path,
@@ -3559,7 +3775,12 @@ classes = (
     GTATOOLS_OT_mark_station,
     GTATOOLS_OT_export_to_img,
     GTATOOLS_OT_remove_from_img,
+    GTATOOLS_OT_verify_img_link,
     GTATOOLS_OT_rebuild_img,
+    GTATOOLS_OT_add_to_map,
+    GTATOOLS_OT_remove_from_map,
+    GTATOOLS_OT_import_picked_ide,
+    GTATOOLS_OT_import_picked_ipl,
     GTATOOLS_OT_upsert_ide,
     GTATOOLS_OT_upsert_ipl,
     GTATOOLS_OT_pick_setting_path,
@@ -3567,8 +3788,15 @@ classes = (
     GTATOOLS_OT_ide_remove_link,
     GTATOOLS_OT_ide_verify_links,
     GTATOOLS_OT_ipl_sync_from_file,
+    GTATOOLS_OT_ipl_restore_coords,
     GTATOOLS_OT_ipl_sync_add,
+    GTATOOLS_OT_ipl_sync_add_folder,
     GTATOOLS_OT_ipl_sync_remove,
+    GTATOOLS_OT_ide_sync_add,
+    GTATOOLS_OT_ide_sync_add_folder,
+    GTATOOLS_OT_ide_sync_remove,
+    GTATOOLS_OT_ide_sync_export,
+    GTATOOLS_OT_ipl_sync_export,
     GTATOOLS_OT_ipl_remove_link,
     GTATOOLS_OT_ipl_verify_links,
     GTATOOLS_OT_link_sync,
@@ -3582,6 +3810,9 @@ classes = (
     GTATOOLS_OT_import_ipl,
     GTATOOLS_OT_replace_ipl_placeholders,
     GTATOOLS_PT_ide_ipl_panel,
+    GTATOOLS_PT_ide_ipl_import,
+    GTATOOLS_PT_ide_ipl_export,
+    GTATOOLS_PT_ide_ipl_map,
     GTATOOLS_PT_export_panel,
     GTATOOLS_PT_validate_scene,
     GTATOOLS_MT_create_2dfx,
@@ -3617,9 +3848,12 @@ classes = (
     GTATOOLS_OT_reload_effects_fxp,
     GTATOOLS_OT_save_particle_effect,
     GTATOOLS_OT_set_col_surface,
+    GTATOOLS_OT_toggle_col_surface_fav,
     GTATOOLS_OT_col_surface_menu,
     GTATOOLS_PT_material_panel,
-    GTATOOLS_PT_object_ide_ipl_panel,
+    # GTATOOLS_PT_object_ide_ipl_panel — убрана из N-панели: дублирует
+    # «INU Tools: Model» (IDE / Placement) в свойствах. Класс оставлен в
+    # импорте, но не регистрируется.
     GTATOOLS_PT_object_inu_tools,
     GTATOOLS_PT_inu_tools_panel,
     GTATOOLS_PT_id_manager_panel,
@@ -3655,7 +3889,25 @@ classes = (
     GTATOOLS_PT_2dfx_settings,
     GTATOOLS_PT_lightmap_panel,
     GTATOOLS_PT_water_panel,
+    GTATOOLS_OT_import_zon,
+    GTATOOLS_OT_export_zon,
+    GTATOOLS_OT_add_zon_zone,
+    GTATOOLS_OT_zon_copy_lines,
+    GTATOOLS_PT_zon_panel,
+    GTATOOLS_OT_grass_import,
+    GTATOOLS_OT_grass_export,
+    GTATOOLS_OT_grass_add,
+    GTATOOLS_OT_grass_remove,
+    GTATOOLS_OT_grass_duplicate,
+    GTATOOLS_OT_grass_apply_surface,
+    GTATOOLS_OT_grass_preview,
+    GTATOOLS_OT_grass_preview_clear,
+    GTATOOLS_OT_grass_generate_geometry,
+    GTATOOLS_OT_grass_geometry_clear,
+    GTATOOLS_UL_grass,
+    GTATOOLS_PT_grass_panel,
     GTATOOLS_PT_anim_panel,
+    GTATOOLS_PT_frame_hierarchy_anim,
     GTATOOLS_OT_radar_generate,
     GTATOOLS_OT_radar_pack_txd,
     GTATOOLS_PT_radar_panel,
@@ -3695,7 +3947,6 @@ classes = (
     GTATOOLS_OT_open_release,
     GTATOOLS_OT_whats_new,
     INUValidateIssue,
-    INUBakeLayer,
     INULightCutRing,
     GTATOOLS_OT_validate_run,
     GTATOOLS_OT_validate_clear,
@@ -3706,6 +3957,7 @@ classes = (
     GTATOOLS_OT_frame_rename,
     GTATOOLS_OT_frame_set_parent,
     GTATOOLS_OT_frame_unparent,
+    GTATOOLS_OT_frame_reparent,
     GTATOOLS_OT_frame_validate,
     GTATOOLS_OT_frame_mirror_lr,
     GTATOOLS_OT_animobj_validate,
@@ -4072,7 +4324,9 @@ def _save_paths(self, context):
     try:
         with open(_get_paths_file(), 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2)
-    except:
+    except OSError:
+        # Read-only config dir / no disk space. This is an update callback
+        # on a path property — it must never interrupt the user's edit.
         pass
 
 def _load_paths(scene):
@@ -4277,6 +4531,20 @@ def _unregister_blender_translations():
         pass
 
 
+# Ariane ↔ Blender bridge (watcher + reverse-send operators). The panel UI now
+# lives as the «Ariane» tab inside GTATOOLS_PT_export_panel (draw_ariane_body).
+classes = classes + (
+    GTATOOLS_OT_ariane_watch,
+    GTATOOLS_OT_ariane_import_now,
+    GTATOOLS_OT_ariane_send,
+    GTATOOLS_OT_ariane_send_pos,
+    GTATOOLS_OT_ariane_create_model,
+    GTATOOLS_OT_ariane_bind,
+    GTATOOLS_OT_ariane_clear,
+    GTATOOLS_OT_ariane_pick_game,
+)
+
+
 def register():
     # Hook the addon's localization into Blender's i18n FIRST — before
     # we touch class bl_descriptions. Once registered, raw Russian
@@ -4455,6 +4723,14 @@ def register():
     if invalidate_model_type_cache not in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.append(invalidate_model_type_cache)
 
+    # Same deal for the panel draw() memos (whole-scene scans: ID
+    # conflicts, zone/action counts, ...). Separate handler so each cache
+    # owns its own invalidation; both skip transform-only batches.
+    from .tools import draw_cache as _draw_cache
+    bpy.app.handlers.persistent(_draw_cache.bump)
+    if _draw_cache.bump not in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.append(_draw_cache.bump)
+
     # One-time migration of user data from the legacy <addons>/INU_Preset/
     # location to bpy.utils.extension_path_user. Idempotent — drops a
     # marker file in the new dir on first success.
@@ -4479,8 +4755,11 @@ def register():
     def _deferred_load_paths():
         try:
             _load_paths(bpy.context.scene)
-        except:
-            pass
+        except Exception as e:
+            # One-shot timer at register time: an escaping error dumps a
+            # traceback on startup and the saved paths are merely a
+            # convenience — report the reason instead of hiding it.
+            print(f"[INU] deferred path load failed: {e}")
         return None
     bpy.app.timers.register(_deferred_load_paths, first_interval=0.5)
 
@@ -4769,7 +5048,6 @@ def _on_file_load_floater(dummy):
     bpy.app.timers.register(_delayed, first_interval=0.5)
 
 
-@persistent
 def _on_file_load(dummy):
     """Single consolidated load_post handler.
 
@@ -4811,6 +5089,13 @@ def _bake_defensive_sweep():
 
 
 def unregister():
+
+    # Stop the Ariane watcher timer so it doesn't outlive the addon reload.
+    try:
+        _ariane_stop_watch()
+    except Exception:
+        pass
+
     # Drop our locale dict before any classes go away — keeps Blender's
     # translation table clean across addon reloads.
     _unregister_blender_translations()
@@ -4849,9 +5134,11 @@ def unregister():
         print(f"[INU] unregister_preset_path failed: {e}")
 
     # 2DFX billboard timer
-    from .ops.fx_preview import stop_billboard_timer, stop_preview_autobuild
+    from .ops.fx_preview import (stop_billboard_timer, stop_preview_autobuild,
+                                 stop_road_sign_timer)
     stop_billboard_timer()
     stop_preview_autobuild()
+    stop_road_sign_timer()
 
     # IFP live preview — unregister frame-change handler so reload
     # doesn't leave a stale callable pointing at the old module.
@@ -4870,6 +5157,15 @@ def unregister():
         from .tools.model_utils import invalidate_model_type_cache
         if invalidate_model_type_cache in bpy.app.handlers.depsgraph_update_post:
             bpy.app.handlers.depsgraph_update_post.remove(invalidate_model_type_cache)
+    except Exception:
+        pass
+
+    # Panel draw() memo invalidator.
+    try:
+        from .tools import draw_cache as _draw_cache
+        if _draw_cache.bump in bpy.app.handlers.depsgraph_update_post:
+            bpy.app.handlers.depsgraph_update_post.remove(_draw_cache.bump)
+        _draw_cache.clear()
     except Exception:
         pass
 
@@ -4896,6 +5192,12 @@ def unregister():
         bpy.types.SpaceView3D.draw_handler_remove(h, 'WINDOW')
     _col_light_mod._col_light_preview_handlers.clear()
     _col_light_mod._col_light_preview_active = False
+
+    # Remove Water Limits overlay handlers
+    for h in _water_geo_mod._water_limits_handlers:
+        bpy.types.SpaceView3D.draw_handler_remove(h, 'WINDOW')
+    _water_geo_mod._water_limits_handlers.clear()
+    _water_geo_mod._water_limits_active = False
 
     # Remove model links draw handler — state lives in ops/map_ops.py
     # (a `global` declaration here would point at a non-existent

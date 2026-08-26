@@ -91,6 +91,103 @@ HAS_CALC_NORMALS_SPLIT = BL < (4, 1, 0)
 HAS_EXTENSION_MANIFEST = BL >= (4, 2, 0)
 
 
+# ── Material transparency compat ─────────────────────────────────────
+# EEVEE Next (4.2+) заменило legacy-настройки прозрачности:
+#   ≤4.1                    4.2+
+#   blend_method            surface_render_method ('BLENDED'/'DITHERED')
+#   show_transparent_back   use_transparency_overlap
+# Записать только legacy-имя на 4.2+ — тихий no-op: именно поэтому
+# альфа-материал оставался «Смешанный/Dithered» с включённым
+# «Перекрытие прозрачности». Все модули ходят сюда, а не в RNA напрямую.
+#
+# Стандарт проекта для GTA-альфы: Метод рендеринга = Колебание (CLIP →
+# 'DITHERED' на 4.2+) + Перекрытие прозрачности ВЫКЛ. См. make_material_alpha().
+# (Раньше был Смешанный/'BLENDED' — вернули на Колебание по просьбе.)
+
+ALPHA_BLEND_MODE = 'CLIP'
+
+
+def set_blend_method(mat, mode):
+    """Выставить режим прозрачности на обоих поколениях EEVEE.
+
+    ``mode`` ∈ OPAQUE / CLIP / HASHED / BLEND. На 4.2+ маппится в
+    surface_render_method: BLEND → 'BLENDED', остальное → 'DITHERED'.
+    Возвращает True, если хоть одно свойство удалось записать."""
+    if mat is None:
+        return False
+    applied = False
+    if hasattr(mat, 'blend_method'):
+        try:
+            mat.blend_method = mode
+            applied = True
+        except (TypeError, AttributeError):
+            pass
+    if hasattr(mat, 'surface_render_method'):
+        try:
+            mat.surface_render_method = 'BLENDED' if mode == 'BLEND' else 'DITHERED'
+            applied = True
+        except (TypeError, AttributeError):
+            pass
+    return applied
+
+
+def blend_method_of(mat):
+    """Текущий режим прозрачности как OPAQUE/CLIP/HASHED/BLEND.
+
+    На 4.2+ авторитетен surface_render_method ('BLENDED' → BLEND);
+    legacy blend_method там читается только чтобы отличить
+    OPAQUE/CLIP/HASHED друг от друга."""
+    if mat is None:
+        return 'OPAQUE'
+    srm = getattr(mat, 'surface_render_method', None)
+    if srm is not None:
+        if srm == 'BLENDED':
+            return 'BLEND'
+        legacy = getattr(mat, 'blend_method', 'CLIP')
+        return legacy if legacy in ('OPAQUE', 'CLIP', 'HASHED') else 'CLIP'
+    return getattr(mat, 'blend_method', 'OPAQUE')
+
+
+def transparency_overlap(mat):
+    """«Перекрытие прозрачности» (4.2+) / «Show Backface» (≤4.1)."""
+    if mat is None:
+        return False
+    for attr in ('use_transparency_overlap', 'show_transparent_back'):
+        if hasattr(mat, attr):
+            return bool(getattr(mat, attr))
+    return False
+
+
+def set_transparency_overlap(mat, enabled):
+    """Записать «Перекрытие прозрачности» под любым из имён (4.2+ и
+    legacy). True — если значение реально изменилось."""
+    if mat is None:
+        return False
+    changed = False
+    for attr in ('use_transparency_overlap', 'show_transparent_back'):
+        if hasattr(mat, attr) and bool(getattr(mat, attr)) != bool(enabled):
+            try:
+                setattr(mat, attr, bool(enabled))
+                changed = True
+            except (TypeError, AttributeError):
+                pass
+    return changed
+
+
+def make_material_alpha(mat, mode=ALPHA_BLEND_MODE):
+    """Привести альфа-материал к стандарту проекта: Метод рендеринга
+    Колебание (DITHERED) + Перекрытие прозрачности выключено. True — если
+    что-то изменилось (call-site'ы используют это для своих 'changed' флагов)."""
+    if mat is None:
+        return False
+    changed = False
+    if blend_method_of(mat) != mode:
+        changed = set_blend_method(mat, mode) or changed
+    if transparency_overlap(mat):
+        changed = set_transparency_overlap(mat, False) or changed
+    return changed
+
+
 # ── Icon name shims ──────────────────────────────────────────────────
 # Иконка 'CHECKMARK' появилась в 2.81. На 2.80 её нет — UILayout кидает
 # исключение каждый кадр в draw_header(), что роняет UI до 2 fps. Любая

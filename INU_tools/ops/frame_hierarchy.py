@@ -70,9 +70,10 @@ def _restore_world_after_reparent(obj, parent):
     world = obj.matrix_world.copy()
     obj.parent = parent
     obj.matrix_parent_inverse.identity()
-    if parent is not None:
-        # World = parent_world @ local. Recompute local from world.
-        obj.matrix_world = world
+    # Restore the world transform for BOTH re-parent AND unparent (parent=None).
+    # Skipping it on unparent left the object shifted by the old parent's
+    # transform (matrix_basis stayed parent-relative but now reads as world).
+    obj.matrix_world = world
 
 
 # ── Operators ──────────────────────────────────────────────────
@@ -176,6 +177,59 @@ class GTATOOLS_OT_frame_unparent(bpy.types.Operator):
                 _restore_world_after_reparent(o, None)
                 count += 1
         self.report({'INFO'}, f"{T('сняли parent с')}: {count}")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_frame_reparent(bpy.types.Operator):
+    """Сделать указанный фрейм РОДИТЕЛЕМ активного — клик прямо в дереве
+    панели: сначала выдели дочерний фрейм, потом жми эту кнопку на строке
+    будущего родителя. Мировая позиция сохраняется, matrix_parent_inverse
+    сбрасывается в identity (требование DFF)."""
+    bl_idname = "gtatools.frame_reparent"
+    bl_label = "INU: Reparent Frame"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    parent_name: StringProperty()
+    # Which frame to move. Empty = the active object (the ⤴ «make this the
+    # parent of the selected» button). Set = that exact frame (the per-row
+    # unparent button passes its own name + empty parent → make it a root).
+    child_name: StringProperty()
+
+    @classmethod
+    def description(cls, context, properties):
+        cn = getattr(properties, 'child_name', '')
+        pn = getattr(properties, 'parent_name', '')
+        if not pn:
+            who = f"«{cn}»" if cn else T('выделенный фрейм')
+            return f"{T('Снять родителя — сделать')} {who} {T('корневым')}"
+        return f"{T('Сделать')} «{pn}» {T('родителем выделенного фрейма')}"
+
+    @classmethod
+    def poll(cls, context):
+        return context.active_object is not None
+
+    def execute(self, context):
+        child = (bpy.data.objects.get(self.child_name)
+                 if self.child_name else context.active_object)
+        parent = (bpy.data.objects.get(self.parent_name)
+                  if self.parent_name else None)
+        if child is None:
+            return {'CANCELLED'}
+        if parent is child:
+            self.report({'WARNING'},
+                        T("Нельзя назначить объект родителем самого себя"))
+            return {'CANCELLED'}
+        # Reject a cycle: the chosen parent must not already be a descendant
+        # of the child (that would make an unexportable loop).
+        p = parent
+        while p is not None:
+            if p is child:
+                self.report({'WARNING'}, T("Циклическая иерархия недопустима"))
+                return {'CANCELLED'}
+            p = p.parent
+        _restore_world_after_reparent(child, parent)
+        self.report({'INFO'},
+                    f"{child.name} → {parent.name if parent else T('корень')}")
         return {'FINISHED'}
 
 

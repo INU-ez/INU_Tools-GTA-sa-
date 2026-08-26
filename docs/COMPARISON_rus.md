@@ -1,6 +1,6 @@
 # INU Tools vs Kams Script vs DragonFF
 
-Фокусное сравнение трёх актуальных тулчейнов для моддинга GTA San Andreas. Актуально для **INU Tools 2.0.2** (май 2026).
+Фокусное сравнение трёх актуальных тулчейнов для моддинга GTA San Andreas. Актуально для **INU Tools 2.3.0** (2026).
 
 > **[🇬🇧 English version](COMPARISON.md)**
 
@@ -10,7 +10,7 @@
 
 | Инструмент | Хост | Авторы | Лицензия | Версия |
 |---|---|---|---|---|
-| **INU Tools** | Blender 4.2 – 5.1 | INU | GPL-3.0 | 2.0.2 (2026) |
+| **INU Tools** | Blender 4.2 – 5.1 | INU | GPL-3.0 | 2.3.0 (2026) |
 | **Kams Script (GTA_Tools GF)** | 3ds Max | Kam, Goldfish, community | freeware (closed) | 2014–2018 |
 | **DragonFF** | Blender 2.8 – 4.x | Parik | GPL-3.0 | active |
 
@@ -116,7 +116,7 @@
 | Roadblocks / traffic-light enums | partial | ✅ | — |
 | Breakable objects chunk | ✅ | ✅ | ✅ |
 | CST (Steve's COL Editor) чтение / запись | ✅ | ✅ | — |
-| Object Explode (разрезка на куски) | — | ✅ | — |
+| Object Explode (разрезка на куски) | ✅ grid + scatter | ✅ | — |
 | Native renderware (GameCube / PS2 / PSP / Xbox / WDGL) | — | — | ✅ |
 | Delta Morphs | — | — | ✅ |
 
@@ -153,5 +153,5 @@
 
 - «✅» = поддерживается в текущем публичном релизе; «partial» = есть, но неполно или ограниченный workflow; «—» = не реализовано.
 - Строка Kams отражает GTA_Tools (GF) от Goldfish плюс community-аддоны (DeniskaMax, ZZPuma, EMAPTool). Точечные standalone-инструменты под Max (Water IO и т.п.) свёрнуты в колонку Kams где применимо.
-- Покрытие сверено с исходниками INU Tools 2.0.2 (`core/`, `ops/`).
+- Покрытие сверено с исходниками INU Tools 2.3.0 (`core/`, `ops/`).
 - Поправки приветствуются — открой issue или пиши `1.n.u` в Discord.

@@ -519,6 +519,11 @@ def check_light_beam_asi(meshes, sa_light_asi_present):
     return out
 
 
+# Детали, у которых по канону НЕТ повреждённого варианта (_dam), — их `_ok`
+# без пары это норма, предупреждать не надо. Напр. exhaust никогда не ломается.
+_NO_DAM_PARTS = frozenset({'exhaust'})
+
+
 def check_damage_pairs(mesh_names):
     """Detect _ok meshes without a _dam twin (and vice versa).
 
@@ -540,6 +545,9 @@ def check_damage_pairs(mesh_names):
 
     out = []
     for base in sorted(set(oks) - set(dams)):
+        # Детали без канонного _dam (exhaust и т.п.) не считаем «без пары».
+        if base.lower() in _NO_DAM_PARTS:
+            continue
         out.append(_issue(
             'WARNING', 'DamagePair',
             'нет парного _dam',

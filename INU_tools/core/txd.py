@@ -39,7 +39,7 @@ class TxdTexture:
     """Single texture extracted from TXD."""
     __slots__ = ('name', 'mask', 'width', 'height', 'depth',
                  'raster_format', 'fourcc', 'num_levels',
-                 'pixels')  # pixels: bytes (RGBA, top-to-bottom)
+                 'platform_id', 'pixels')  # pixels: bytes (RGBA, top-to-bottom)
 
     def __init__(self):
         self.name = ''
@@ -50,6 +50,7 @@ class TxdTexture:
         self.raster_format = 0
         self.fourcc = 0
         self.num_levels = 1
+        self.platform_id = 0   # RW platform: 8=D3D8 (III/VC), 9=D3D9 (SA)
         self.pixels = b''  # RGBA uint8 array
 
 
@@ -358,8 +359,10 @@ def _read_texture_native(r, size):
     ct, cs, cl = _read_chunk_header(r)
     struct_end = r.pos + cs
 
-    # Platform header — platform_id + filter_flags consumed but unused
-    r.read_one('<I')
+    # Platform header — platform_id (8=D3D8 III/VC, 9=D3D9 SA) + filter flags.
+    # platform_id drives the R↔B swap on import (D3D8 textures come in with
+    # swapped channels through our decoder). filter_flags unused.
+    tex.platform_id = r.read_one('<I')
     r.read_one('<I')
 
     tex.name = _read_str32(r)

@@ -521,6 +521,7 @@ class GTATOOLS_MT_materials_menu(bpy.types.Menu):
                         text=T("Сортировка материалов"), **inu_icon(safe_icon('SORTALPHA')))
 
 
+@apply_order
 class GTATOOLS_PT_bitmaps_panel(bpy.types.Panel):
     bl_label = "Менеджер текстур"
     bl_idname = "GTATOOLS_PT_bitmaps_panel"
@@ -531,6 +532,12 @@ class GTATOOLS_PT_bitmaps_panel(bpy.types.Panel):
 
     def draw_header(self, context):
         self.layout.label(text="", **inu_icon(safe_icon('IMAGE_DATA')))
+
+    def draw_header_preset(self, context):
+        # «?» → раздел доки про Менеджер текстур (Bitmaps Manager).
+        self.layout.operator("gtatools.open_docs", text="",
+                             **inu_icon(safe_icon('HELP')),
+                             emboss=False).section = 'bitmaps'
 
     def draw(self, context):
         layout = self.layout

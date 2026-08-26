@@ -9,6 +9,8 @@
 # ``gtatools_`` prefix verbatim so the load_post migration handler in
 # __init__.py can copy values from old scenes byte-for-byte.
 
+import os
+
 import bpy
 from bpy.props import (
     StringProperty, BoolProperty, IntProperty, FloatProperty,
@@ -50,6 +52,74 @@ def _map_region_changed_proxy(self, context):
             self.gtatools_text_ipls_index = 0
         if hasattr(self, 'gtatools_binary_ipls_index'):
             self.gtatools_binary_ipls_index = 0
+    except Exception:
+        pass
+
+
+def _export_all_filter_update(self, context):
+    """Диалог Export All: галочки форматов фильтруют список файлового
+    браузера по расширениям (как в Import All).
+
+    LOD пишется как .dff, поэтому и DFF, и LOD дают ``*.dff``. Пусто (все
+    галочки сняты) → шаблон, который ничего не сопоставляет, иначе Blender
+    при пустом filter_glob показал бы вообще все файлы. Blender копирует
+    filter_glob в params браузера один раз при открытии — смена свойства
+    туда потом не доходит, поэтому пишем прямо в ``sp.params`` по всем
+    окнам и форсим file.refresh отложенно."""
+    pairs = (
+        ('gtatools_export_all_dff', '*.dff'),
+        ('gtatools_export_all_lod', '*.dff'),
+        ('gtatools_export_all_col', '*.col'),
+        ('gtatools_export_all_txd', '*.txd'),
+        ('gtatools_export_all_cst', '*.cst'),
+    )
+    parts = []
+    for attr, glob in pairs:
+        if getattr(self, attr, False) and glob not in parts:
+            parts.append(glob)
+    glob = ';'.join(parts) if parts else '*.__none__'
+    wm = getattr(context, 'window_manager', None)
+    for win in (wm.windows if wm else ()):
+        scr = getattr(win, 'screen', None)
+        if scr is None:
+            continue
+        for area in scr.areas:
+            if area.type != 'FILE_BROWSER':
+                continue
+            for sp in area.spaces:
+                if getattr(sp, 'type', '') == 'FILE_BROWSER' and sp.params:
+                    try:
+                        sp.params.use_filter = True
+                        if hasattr(sp.params, 'use_filter_glob'):
+                            sp.params.use_filter_glob = True
+                        sp.params.filter_glob = glob
+                    except Exception:
+                        pass
+            area.tag_redraw()
+
+    def _refresh():
+        _wm = bpy.context.window_manager
+        for _win in (_wm.windows if _wm else ()):
+            _scr = getattr(_win, 'screen', None)
+            if _scr is None:
+                continue
+            for _area in _scr.areas:
+                if _area.type != 'FILE_BROWSER':
+                    continue
+                _region = next((r for r in _area.regions
+                                if r.type == 'WINDOW'), None)
+                if _region is None:
+                    continue
+                try:
+                    with bpy.context.temp_override(window=_win, area=_area,
+                                                   region=_region):
+                        bpy.ops.file.refresh()
+                except Exception:
+                    pass
+        return None
+    try:
+        if not bpy.app.timers.is_registered(_refresh):
+            bpy.app.timers.register(_refresh, first_interval=0.0)
     except Exception:
         pass
 
@@ -151,6 +221,22 @@ def _bake_map_enum_items_proxy(self, context):
     _bake_map_enum_cache = [(mid, label, desc)
                             for (mid, label, desc) in bake_map_enum_items()]
     return _bake_map_enum_cache
+
+
+_bake_alpha_src_cache = []
+
+
+def _bake_alpha_source_items_proxy(self, context):
+    """Источник альфы для ALPHA-слоя: «Материал» (прозрачность материала)
+    либо любая ДРУГАЯ карта стека (её яркость → альфа, напр. Shadow). Метки
+    карт английские, как в дропдауне карт."""
+    from .tools.bake import bake_map_enum_items
+    global _bake_alpha_src_cache
+    items = [('MATERIAL', 'Material', '')]
+    items += [(mid, label, desc)
+              for (mid, label, desc) in bake_map_enum_items() if mid != 'ALPHA']
+    _bake_alpha_src_cache = items
+    return _bake_alpha_src_cache
 
 
 # Полный набор режимов наложения Blender (как в Mix-узле). Метки —
@@ -264,13 +350,24 @@ def _bake_layer_index_update(self, context):
     layers = self.gtatools_bake_layers
     if not base or not (0 <= i < len(layers)):
         return
-    img = bpy.data.images.get(f"{base}_{layers[i].map_id}")
+    _k = getattr(layers[i], 'uid', '') or layers[i].map_id
+    img = bpy.data.images.get(f"{base}_{_k}")
     if img is None:
         return
     try:
         for area in context.screen.areas:
             if area.type == 'IMAGE_EDITOR':
                 area.spaces.active.image = img
+    except Exception:
+        pass
+    # Память полигонов: у слоя с сохранёнными гранями (Bevel «только
+    # выделенные») — выделить их на объекте. Переключился на слой → его
+    # полигоны выделены и готовы к перезапеканию.
+    try:
+        uid = getattr(layers[i], 'uid', '')
+        if uid and obj.get(f"inu_bake_faces_{uid}"):
+            from .ops.bake_ops import _restore_layer_faces
+            _restore_layer_faces(obj, uid)
     except Exception:
         pass
 
@@ -297,6 +394,28 @@ def _update_uv_grid(self, context):
 def _on_modulate_preview_update(self, context):
     from .tools.prelight import apply_modulate_preview
     apply_modulate_preview(context.scene)
+
+
+def _prelight_view_update(self, context):
+    """Ползунок визуальной коррекции превью прилайта — live-применяем во все
+    материалы с превью, без пересборки графа. Только вьюпорт."""
+    try:
+        from .tools.prelight import apply_prelight_view_correction
+        apply_prelight_view_correction(getattr(context, 'scene', None))
+    except Exception as e:                     # noqa: BLE001
+        print(f"[INU] prelight view correction failed: {e!r}")
+
+
+def _on_game_change(self, context):
+    """Смена игры (SA/VC/III) → загрузить per-game дефолт коррекции превью
+    прилайта в ползунки и применить."""
+    try:
+        from .tools.prelight import load_view_correction_for_game
+        scene = getattr(context, 'scene', None)
+        if scene is not None:
+            load_view_correction_for_game(scene, self.gtatools_game)
+    except Exception as e:                     # noqa: BLE001
+        print(f"[INU] game-change prelight load failed: {e!r}")
 
 
 def _inu_pipeline_changed_proxy(self, context):
@@ -529,7 +648,7 @@ class GTATOOLS_AlphaMatEntry(bpy.types.PropertyGroup):
     ``blend`` mirrors the material's transparency mode; editing it in the
     list applies to the real material via _apply_blend."""
     name: StringProperty()
-    blend: EnumProperty(items=_ALPHA_BLEND_ITEMS, default='CLIP',
+    blend: EnumProperty(items=_ALPHA_BLEND_ITEMS, default='BLEND',
                         update=_alpha_item_blend_update)
 
 
@@ -573,6 +692,50 @@ class GTATOOLS_PathItem(bpy.types.PropertyGroup):
     path: StringProperty(name="Path", subtype='FILE_PATH', default='')
 
 
+class INUGrassEntry(bpy.types.PropertyGroup):
+    """One line of data/plants.dat — a procedural-grass cover definition
+    bound to a COLPOINT surface name. Fields mirror the file columns 1:1
+    (see core/plants_dat.PLANTS_FIELDS). Editable in the «Трава» panel;
+    written back out by the plants.dat exporter."""
+    # Surface name — must match a COLPOINT_SURFACETYPE_* name (e.g.
+    # GRASS_SHORT_LUSH). Kept as free text so imported names round-trip
+    # verbatim and users can target names our surface table abbreviates.
+    name: StringProperty(name=T("Поверхность"), default="GRASS_SHORT_LUSH")
+    pcd_id: IntProperty(name="PCDid", default=0, min=0, max=2,
+        description=T("Индекс определения покрова для поверхности (0-2). "
+                    "На одну поверхность можно до 3 определений"))
+    slot_id: IntProperty(name="SlotID", default=0, min=0, max=3,
+        description=T("Слот: набор геометрии + «большая» текстура в plant1.txd. "
+                    "Должен быть одинаковым для всех PCDid одной поверхности"))
+    model_id: IntProperty(name="ModelID", default=0, min=0, max=3,
+        description=T("Субмодель (0-3)"))
+    uv_off: IntProperty(name="UVoff", default=1, min=0, max=15,
+        description=T("Какой из 16 тайлов «большой» текстуры 64x1024 (0-15)"))
+    r: IntProperty(name="R", default=220, min=0, max=255)
+    g: IntProperty(name="G", default=210, min=0, max=255)
+    b: IntProperty(name="B", default=165, min=0, max=255)
+    intensity: IntProperty(name="I", default=160, min=0, max=255,
+        description=T("Интенсивность цвета (0-255)"))
+    var_i: IntProperty(name="VarI", default=22, min=0, max=255,
+        description=T("Разброс интенсивности (работает при I<255)"))
+    alpha: IntProperty(name="A", default=40, min=0, max=255,
+        description=T("Альфа (129-255; ниже — полупрозрачнее)"))
+    scl_xy: FloatProperty(name="SclXY", default=0.5, min=0.0, soft_max=5.0,
+        description=T("Размер травинки по ширине"))
+    scl_z: FloatProperty(name="SclZ", default=0.51, min=0.0, soft_max=5.0,
+        description=T("Высота травинки"))
+    scl_var_xy: FloatProperty(name="SclVarXY", default=1.5, min=0.0, soft_max=5.0,
+        description=T("Разброс размера по ширине"))
+    scl_var_z: FloatProperty(name="SclVarZ", default=0.65, min=0.0, soft_max=5.0,
+        description=T("Разброс высоты"))
+    wbend_scl: FloatProperty(name="WBendScl", default=1.0, soft_min=-5.0, soft_max=5.0,
+        description=T("Сила качания на ветру (отрицательная = против ветра)"))
+    wbend_var: FloatProperty(name="WBendVar", default=3.0, min=0.0, max=10.0,
+        description=T("Разброс качания между травинками (0-10)"))
+    density: FloatProperty(name="Density", default=0.1, min=0.0, soft_max=1.0,
+        description=T("Плотность: травинок на 1 м² (1.0 густо, 0.1 редко, 0 — нет)"))
+
+
 class GTATOOLS_TextureBrowserItem(bpy.types.PropertyGroup):
     """One row in the Texture Browser UIList. Mirrors
     core/texture_index.TextureEntry. Lives on WindowManager
@@ -603,6 +766,9 @@ class INUBakeLayer(bpy.types.PropertyGroup):
     enabled: BoolProperty(name="", default=True, update=_bake_live_update)
     # Развёрнута ли строка слоя в списке (показывать настройки инлайн).
     expanded: BoolProperty(name="", default=False)
+    # Стабильный уникальный id слоя — ключ памяти запечённых полигонов:
+    # obj["inu_bake_faces_<uid>"] = "1,5,17,…". Ставится при добавлении слоя.
+    uid: StringProperty(name="", default="")
     blend_mode: EnumProperty(
         name=T("Режим"), description=T("Как смешивать с нижними слоями"),
         items=_BAKE_BLEND_ITEMS, default='MULTIPLY', update=_bake_live_update)
@@ -626,6 +792,44 @@ class INUBakeLayer(bpy.types.PropertyGroup):
                             update=_bake_live_update)
     gamma: FloatProperty(name=T("Гамма"), default=1.0, min=0.05, max=4.0,
                          update=_bake_live_update)
+    # ── ALPHA-слой: откуда брать альфа-канал ──
+    # 'MATERIAL' — прозрачность материала (как печётся сама карта ALPHA);
+    # любой другой map_id — яркость этой карты (напр. Shadow) как альфа.
+    # Так делается шэдоу-декаль: источник Shadow + инверсия → видно тёмное
+    # (тень), скрыто светлое (свет).
+    alpha_source: EnumProperty(
+        name=T("Источник альфы"),
+        description=T("Откуда брать альфу: прозрачность материала или яркость "
+                    "другой карты стека (напр. Shadow)"),
+        items=_bake_alpha_source_items_proxy, update=_bake_live_update,
+        translation_context=_MAP_TR_CTX)
+    alpha_invert: BoolProperty(
+        name=T("Инвертировать"), default=False,
+        description=T("Инвертировать альфу: показывать ТЁМНЫЕ участки, скрывать "
+                    "светлые (для тени — включи)"),
+        update=_bake_live_update)
+    # ── Любой слой (напр. Shadow) → прозрачный декаль ──
+    # Уводит ЯРКОСТЬ этой карты в альфа-канал: тёмное видно, светлое — дыра
+    # (шэдоу-декаль). Порог/мягкость отсекают светлое/серое (затухание света),
+    # чтобы осталась только тень. В RGB-стек такой слой не идёт.
+    as_decal: BoolProperty(
+        name=T("Декаль"), default=False,
+        description=T("Увести яркость карты в прозрачность: тёмное (тень) видно, "
+                    "светлое убирается. Порог/Мягкость отсекают серое"),
+        update=_bake_live_update)
+    decal_threshold: FloatProperty(
+        name=T("Порог"), default=0.5, min=0.0, max=1.0, subtype='FACTOR',
+        description=T("Яркость, выше которой пиксель скрывается (прозрачный). "
+                    "Ниже порога — видно. Опусти, чтобы убрать серый пол"),
+        update=_bake_live_update)
+    decal_softness: FloatProperty(
+        name=T("Мягкость"), default=0.25, min=0.0, max=1.0, subtype='FACTOR',
+        description=T("Ширина мягкого перехода у порога (0 — резкая граница)"),
+        update=_bake_live_update)
+    decal_invert: BoolProperty(
+        name=T("Инверсия цвета"), default=False,
+        description=T("Инвертировать: показывать СВЕТЛОЕ вместо тёмного"),
+        update=_bake_live_update)
     # ── FUTURE (identity сейчас; композитор уже читает) ──
     influence_target: StringProperty(name=T("Влияние на"), default='')
     influence_amount: FloatProperty(
@@ -672,6 +876,41 @@ class INULightCutRing(bpy.types.PropertyGroup):
 
 
 # ── PropertyGroup ─────────────────────────────────────────────────
+
+
+_export_img_items_cache = []
+_export_img_items_root = None
+
+
+def _export_img_target_items(self, context):
+    """Items для выбора целевого IMG при экспорте: «родной IMG модели» +
+    все .img из папки игры. Кэш по корню (пересканит только при смене папки)
+    — enum-callback зовётся на каждый draw дропдауна, os.walk каждый раз дорог.
+    Список пиним в модульной переменной, иначе GC съедает строки (известный
+    баг динамических EnumProperty)."""
+    global _export_img_items_cache, _export_img_items_root
+    try:
+        root = bpy.path.abspath(context.scene.inu_settings.gtatools_game_root) \
+            if (context and context.scene) else ''
+    except Exception:
+        root = ''
+    if root == _export_img_items_root and _export_img_items_cache:
+        return _export_img_items_cache
+    items = [('SELF', T("Родной IMG модели"),
+              T("IMG, откуда пришла модель (img_target_file)"))]
+    if root and os.path.isdir(root):
+        seen = set()
+        for dirpath, _dirs, files in os.walk(root):
+            for f in files:
+                if f.lower().endswith('.img'):
+                    fp = os.path.join(dirpath, f)
+                    k = os.path.normcase(fp)
+                    if k not in seen:
+                        seen.add(k)
+                        items.append((fp, f, fp))
+    _export_img_items_root = root
+    _export_img_items_cache = items
+    return _export_img_items_cache
 
 
 class INUSceneSettings(bpy.types.PropertyGroup):
@@ -743,6 +982,21 @@ class INUSceneSettings(bpy.types.PropertyGroup):
         description=T("Полигоны с пересекающимися UV перемещаются вместе"),
         default=False,
     )
+    # ── Масштаб островов по сетке / тексель ──────────────────────
+    gtatools_uv_texture_size: EnumProperty(
+        name=T("Размер текстуры"),
+        description=T("Размер текстуры в пикселях (для расчёта масштаба/текселя)"),
+        items=[('128', "128", ""), ('256', "256", ""), ('512', "512", ""),
+               ('1024', "1024", ""), ('2048', "2048", ""), ('4096', "4096", "")],
+        default='512',
+    )
+    gtatools_uv_texel_value: FloatProperty(
+        name=T("Значение"),
+        description=T("Целевой размер: для «В сетку» — сколько пикселей должна "
+                      "занимать высота(ряды)/ширина(колонки) острова; для текселя "
+                      "— плотность px на юнит"),
+        default=256.0, min=0.0,
+    )
 
     # ── COL Light ───────────────────────────────────────────────
     gtatools_col_day_min: IntProperty(
@@ -790,6 +1044,13 @@ class INUSceneSettings(bpy.types.PropertyGroup):
         description=T("Путь к .img архиву GTA SA для экспорта моделей"),
         default="", subtype='FILE_PATH',
         update=_save_paths_proxy)
+    gtatools_export_img_target: EnumProperty(
+        name=T("IMG для экспорта"),
+        description=T("В какой IMG писать при «Экспорт в IMG»: родной IMG "
+                      "модели (img_target_file) или конкретный архив из папки "
+                      "игры. Обновляет запись, если модель там есть, иначе "
+                      "добавляет"),
+        items=_export_img_target_items)
     gtatools_fx_txd_path: StringProperty(
         name=T("TXD эффектов"),
         description=T(
@@ -858,7 +1119,8 @@ class INUSceneSettings(bpy.types.PropertyGroup):
             ('VC',  "VC",  "GTA: Vice City (RW 3.5, COL2, IMG VER1)"),
             ('III', "III", "GTA III (RW 3.3, COL1, IMG VER1)"),
         ],
-        default='SA')
+        default='SA',
+        update=_on_game_change)
     # Target platform — PC (vanilla RW geometry, D3D textures) vs
     # Mobile (Native Data PLG / OpenGL geometry, PVRTC/ETC1 textures).
     # Affects DFF reader/writer dispatch and export options. Импорт
@@ -876,6 +1138,80 @@ class INUSceneSettings(bpy.types.PropertyGroup):
         description=T("Корневая папка GTA SA"),
         default="", subtype='DIR_PATH',
         update=_save_paths_proxy)
+    ariane_bridge_path: StringProperty(
+        name="Ariane game",
+        description=T("Папка игры с ariane для моста (обмен через <папка>\\ariane\\bridge). "
+                      "Пусто → берётся Game Root, иначе %LOCALAPPDATA%"),
+        default="", subtype='DIR_PATH')
+    ariane_send_position: BoolProperty(
+        name="Переносить позицию",
+        description=T("При «Экспорт → Ariane» переносить и позицию/поворот объекта "
+                      "(двигает инстанс в ariane и авто-сохраняет IPL). Выкл = только геометрия/текстуры"),
+        default=True)
+    ariane_send_col: BoolProperty(
+        name="COL",
+        description=T("Слать коллизию (COL) при «Экспорт → Ariane» (live-перезагрузка коллизии в ariane). "
+                      "DFF и TXD шлются всегда"),
+        default=False)
+    ariane_send_lod: BoolProperty(
+        name="LOD",
+        description=T("Слать и LOD-модель (LOD<имя>) при «Экспорт → Ariane»"),
+        default=True)
+    ariane_live_sync: BoolProperty(
+        name="Live-синхронизация",
+        description=T("Live: перемещение, выделение и камера синхронизируются между ariane "
+                      "и Blender в реальном времени (по ariane_guid). Один переключатель на "
+                      "всё; требует включённого watcher"),
+        default=False)
+    ariane_send_ide: BoolProperty(
+        name="IDE",
+        description=T("Слать назад IDE-свойства (draw distance) при Экспорт → Ariane. "
+                      "Меняет модель в ariane целиком (все инстансы). Выключено по умолчанию, "
+                      "чтобы случайно не переписать дальность у моделей без правок"),
+        default=False)
+    ariane_sync_deletions: BoolProperty(
+        name="Синхр. удаления",
+        description=T("Live: синхронизация удалений в обе стороны. Удалил в Blender → мягкое "
+                      "удаление инстанса в ariane; удалил в ariane → объект СКРЫВАЕТСЯ в "
+                      "Blender (обратимо — undelete в ariane его показывает). Выключено по "
+                      "умолчанию, чтобы можно было удалять свободно, не трогая другую сторону"),
+        default=False)
+    ariane_ui_more_open: BoolProperty(
+        name="Ещё",
+        description=T("Показать редкие/продвинутые действия моста"),
+        default=False)
+    ariane_panel_mode: EnumProperty(
+        name="Режим панели",
+        description=T("Вкладка панели Экспорт/Импорт: обычный экспорт/импорт или мост Ariane"),
+        items=[
+            ('IE', "Экспорт / Импорт", "Обычный экспорт/импорт в файлы"),
+            ('ARIANE', "Ariane", "Мост с запущенной ariane (live-обмен)"),
+        ],
+        default='IE')
+    gtatools_ide_ipl_mode: EnumProperty(
+        name=T("Режим"),
+        description=T("Переключение Импорт / Экспорт в панели IDE/IPL/IMG"),
+        items=[
+            ('IMPORT', T("Импорт"), T("Импорт моделей из игры")),
+            ('EXPORT', T("Экспорт"), T("Запись IDE/IPL/IMG")),
+            ('MAP', T("Карта"), T("Полный импорт/экспорт карты (gta.dat, "
+                                  "бинарные/текстовые IPL, регионы)")),
+        ],
+        default='IMPORT')
+    gtatools_light_mode: EnumProperty(
+        name=T("Режим света"),
+        description=T("Переключение инструментов в панели Освещение"),
+        items=[
+            ('PRELIGHT', "PreLight", T("Прилайт вершинными цветами")),
+            ('COL', "PreLight COL", T("Вершинные цвета → COL Day/Night")),
+            ('ITERA', "Itera", T("Интеграция с Itera Tools 3")),
+        ],
+        default='PRELIGHT')
+    ariane_poll_interval: FloatProperty(
+        name="Интервал опроса",
+        description=T("Как часто watcher проверяет инбокс ariane (сек). "
+                      "Опрос дешёвый — реальный импорт запускается только по poke-файлу от ariane"),
+        default=1.0, min=0.1, max=10.0, subtype='TIME')
     gtatools_ide_path: StringProperty(
         name="IDE File",
         description=T("Путь к IDE файлу GTA SA"),
@@ -901,10 +1237,35 @@ class INUSceneSettings(bpy.types.PropertyGroup):
         name=T("Sync несколько IPL"),
         description=T("Показать список IPL для пакетной синхронизации"),
         default=False)
+    # Симметричный список IDE (round-trip): наполняется импортом, экспорт пишет
+    # каждую модель в её IDE. Рядом с gtatools_ipl_sync_list в «Синхронизации».
+    gtatools_ide_sync_list: CollectionProperty(type=GTATOOLS_PathItem)
+    gtatools_ide_sync_list_index: IntProperty(default=0)
+    # Сворачивание списков в панели Импорта (заголовок остаётся, список прячется).
+    gtatools_show_import_ipl_list: BoolProperty(
+        name=T("IPL для импорта"), default=True)
+    gtatools_show_found_imgs: BoolProperty(
+        name=T("IMG с моделями из IPL"), default=True)
+    gtatools_show_found_ides: BoolProperty(
+        name=T("IDE с моделями из IPL"), default=True)
+    gtatools_show_map_io: BoolProperty(
+        name=T("Ещё"),
+        description=T("Импорт/экспорт по отдельности, синхронизация, секции IPL"),
+        default=False)
+    gtatools_show_img: BoolProperty(
+        name=T("Архив IMG"),
+        description=T("Достать/впихнуть отдельную модель в .img"),
+        default=False)
     gtatools_show_sync_group: BoolProperty(
         name=T("Синхронизация с файлами"),
         description=T("Обновление сцены из файлов, отвязка, проверка"),
         default=False)
+    # Сворачивание списков IPL/IDE в «Синхронизации» Экспорта (изначально
+    # закрыты — разворачиваются треугольником в заголовке).
+    gtatools_show_sync_ipl: BoolProperty(
+        name=T("IPL для экспорта"), default=False)
+    gtatools_show_sync_ide: BoolProperty(
+        name=T("IDE для экспорта"), default=False)
     gtatools_show_ipl_extra: BoolProperty(
         name=T("Дополнительно (IPL)"),
         description=T("Секции IPL (cull/пути/гаражи) и замена Empty-заглушек"),
@@ -914,11 +1275,68 @@ class INUSceneSettings(bpy.types.PropertyGroup):
         description=T("Управление пресетом ID: sync, из игры, GC, лимит FLA"),
         default=False)
 
+    # ── Grass / plants.dat ──────────────────────────────────────
+    # Editable working set of procedural-grass definitions. Imported
+    # from data/plants.dat, edited in the «Трава» panel, written back.
+    gtatools_grass_entries: CollectionProperty(type=INUGrassEntry)
+    gtatools_grass_index: IntProperty(default=0)
+    gtatools_plants_dat_path: StringProperty(
+        name=T("plants.dat"),
+        description=T("Путь к data/plants.dat. Пусто → берётся из Game Root"),
+        default="", subtype='FILE_PATH')
+    # Texture dictionary (plant1.txd style) for the scatter preview — the
+    # grass card texture is taken from here so the preview looks like the
+    # real thing. Empty → flat coloured cards.
+    gtatools_grass_txd_path: StringProperty(
+        name=T("Текстура .txd"),
+        description=T("Путь к .txd с текстурой травы (напр. plant1.txd). "
+                    "Пусто — карточки просто цветные"),
+        default="", subtype='FILE_PATH')
+    gtatools_grass_tint: BoolProperty(
+        name=T("Тонировать цветом"),
+        description=T("Умножать спрайт на цвет из plants.dat (как в игре). "
+                    "Выключено — показывать текстуру как есть (для проверки)"),
+        default=False)
+    # Two ways of making grass: procedural (plants.dat, engine-generated)
+    # or real geometry baked into the model and exported with it.
+    gtatools_grass_mode: EnumProperty(
+        name=T("Способ"),
+        items=[
+            ('PLANTS', "plants.dat", T("Процедурная трава движка (data/plants.dat)")),
+            ('GEOMETRY', T("Генерация геометрией"),
+             T("Реальная геометрия травы, экспортируется вместе с мешем")),
+        ],
+        default='PLANTS')
+
+    # Live preview toggle: while on, «Показать траву» stays active
+    # (depressed) and the preview auto-rebuilds when parameters change.
+    gtatools_grass_live: BoolProperty(default=False)
+
+    # Collapsible sections for the selected entry's parameters (disclosure
+    # triangles, several can be open at once — like the Papka presetov UI).
+    gtatools_grass_exp_preview: BoolProperty(default=True)
+    gtatools_grass_exp_main: BoolProperty(default=True)
+    gtatools_grass_exp_tex: BoolProperty(default=False)
+    gtatools_grass_exp_color: BoolProperty(default=False)
+    gtatools_grass_exp_size: BoolProperty(default=False)
+    gtatools_grass_exp_wind: BoolProperty(default=False)
+
+    # ── Zones / map.zon ─────────────────────────────────────────
+    # Last .zon touched by import/export — prefills the export dialog so
+    # the usual «загрузил → подвинул → записал обратно» loop is two clicks.
+    gtatools_zon_path: StringProperty(
+        name="map.zon",
+        description=T("Путь к файлу зон (data/map.zon или data/info.zon)"),
+        default="", subtype='FILE_PATH')
+
     # ── TXD settings ────────────────────────────────────────────
     gtatools_txd_auto_import: BoolProperty(
         name="Import TXD",
         description=T("Автоимпорт TXD текстур при импорте DFF"),
         default=True)
+    # gtatools_import_weld_sharpen переехал в AddonPreferences
+    # (INUAddonPreferences.import_weld_sharpen) — запоминается глобально,
+    # дефолт OFF. Читается через tools.user_data.get_addon_prefs().
     gtatools_shared_txd_name: StringProperty(
         name="Shared TXD Name",
         description=T("Имя общего TXD файла"),
@@ -1285,6 +1703,44 @@ class INUSceneSettings(bpy.types.PropertyGroup):
                       "(настоящее зеркало гуманоида). Выключи для чистого "
                       "геометрического флипа без обмена"),
         default=True)
+    gtatools_mirror_root_rotation: BoolProperty(
+        name=T("Отражать поворот Root"),
+        description=T("Отражать и поворот корневой кости. Если после зеркала "
+                      "персонаж встаёт «на голову» — выключи: тогда поворот "
+                      "Root останется как в оригинале, отразится только "
+                      "смещение (движение вперёд/назад)"),
+        default=True)
+    gtatools_mirror_flip_root_180: BoolProperty(
+        name=T("Довернуть Root на 180°"),
+        description=T("Автоматически добавляет поворот 180° к Root на каждом "
+                      "кадре (заменяет ручную правку после зеркала). Компенсирует "
+                      "разницу между rest- и игровой ориентацией скелета GTA"),
+        default=True)
+    gtatools_mirror_flip_root_axis: EnumProperty(
+        name=T("Ось доворота Root"),
+        description=T("Ось, вокруг которой Root доворачивается на 180°"),
+        items=[('X', "X", ""), ('Y', "Y", ""), ('Z', "Z", "")],
+        default='X')
+    gtatools_mirror_flip_root_space: EnumProperty(
+        name=T("Пространство доворота Root"),
+        description=T("В каком пространстве применять доворот 180°. Если "
+                      "результат неверный — переключи вариант"),
+        items=[
+            ('LOCAL', T("Локальное"),
+             "rot = rot @ flip (относительно самой кости)"),
+            ('GLOBAL', T("Глобальное"),
+             "rot = flip @ rot (относительно арматуры)"),
+        ],
+        default='GLOBAL')
+    gtatools_mirror_invert_root_loc: EnumProperty(
+        name=T("Инверсия Root Location"),
+        description=T("Негировать одну координату смещения Root (замена ручного "
+                      "«By Values / Over Cursor Value» при курсоре на 0)"),
+        items=[
+            ('NONE', T("Не инвертировать"), ""),
+            ('X', "X", ""), ('Y', "Y", ""), ('Z', "Z", ""),
+        ],
+        default='Y')
     gtatools_ik_chain_offset: FloatVectorProperty(
         name=T("Смещение куба руки/ноги"),
         description=T("Визуальный сдвиг кубов IK для рук и ног"),
@@ -1434,12 +1890,73 @@ class INUSceneSettings(bpy.types.PropertyGroup):
         description=T("Запас вокруг силуэта (доля размера) — чтобы крона не "
                     "упиралась в края текстуры"),
         default=0.05, min=0.0, max=0.5, subtype='FACTOR')
+    gtatools_bake_cam_keep_uv: BoolProperty(
+        name=T("Не сбрасывать мою UV"),
+        description=T("Режим Камера обычно ПЕРЕЗАПИСЫВАЕТ активную UV проекцией "
+                    "камеры. С этой галкой проекция пишется в ОТДЕЛЬНЫЙ слой "
+                    "«INU_BakeUV», а твоя активная UV остаётся целой — на модели "
+                    "две UV: своя + под запечённую текстуру"),
+        default=False)
     gtatools_bake_bevel_size: FloatProperty(
         name=T("Bevel радиус"),
         description=T("Радиус скругления для Bevel-карты (в единицах сцены)"),
         default=0.05, min=0.0, soft_max=1.0, precision=3)
     gtatools_bake_bevel_samples: IntProperty(
         name="Bevel samples", default=8, min=2, max=64)
+    gtatools_bake_selected_faces: BoolProperty(
+        name=T("Только выделенные полигоны"),
+        description=T("Запекать Bevel (UV→UV) только по ВЫДЕЛЕННЫМ граням — "
+                      "карта ляжет лишь на них, и на сложной модели это сильно "
+                      "быстрее. Действует ТОЛЬКО на Bevel; Diffuse/AO/Normal/"
+                      "LightMap всегда печатаются целиком. Выдели грани в Edit "
+                      "Mode перед запеканием"),
+        default=False)
+    gtatools_bake_selected_edges: BoolProperty(
+        name=T("Только выделенные рёбра"),
+        description=T("Bevel только вдоль ВЫДЕЛЕННЫХ рёбер: маска по вершинам "
+                      "выделенных рёбер домножается на маску кромок. Действует "
+                      "ТОЛЬКО на Bevel. Переход у ребра мягкий (интерполяция по "
+                      "граням). Выдели рёбра в Edit Mode перед запеканием"),
+        default=False)
+    gtatools_bake_transparent_bg: BoolProperty(
+        name=T("Прозрачный фон"),
+        description=T("Вкл — фон запечённых карт прозрачный (альфа 0 там, где нет "
+                      "развёртки). Выкл (по умолчанию) — фон заливается СРЕДНИМ "
+                      "цветом текстуры (альфа 1), чтобы на швах/мипах не лезла "
+                      "чернота. Не влияет на карту ALPHA и слои-декали — у них "
+                      "альфа значима"),
+        default=False)
+    # ── Prelight: какие источники учитывать при запекании в vertex colors ──
+    gtatools_prelight_use_point: BoolProperty(
+        name=T("Point"),
+        description=T("Учитывать точечные лампы (Point) при запекании прилайта"),
+        default=True)
+    gtatools_prelight_use_sun: BoolProperty(
+        name=T("Sun"),
+        description=T("Учитывать солнце (Sun) при запекании прилайта"),
+        default=True)
+    gtatools_prelight_use_spot: BoolProperty(
+        name=T("Spot"),
+        description=T("Учитывать прожекторы (Spot, с конусом) при запекании "
+                      "прилайта"),
+        default=True)
+    gtatools_prelight_use_area: BoolProperty(
+        name=T("Area"),
+        description=T("Учитывать площадные лампы (Area) при запекании прилайта "
+                      "(считаются как точечный источник)"),
+        default=True)
+    gtatools_prelight_use_hdri: BoolProperty(
+        name=T("HDRI"),
+        description=T("Добавить освещение от мира/HDRI (World): цвет неба "
+                      "сэмплится по направлению нормали. Можно комбинировать с "
+                      "лампами через тумблеры Point/Sun/Spot/Area"),
+        default=False)
+    gtatools_bake_use_scene_light: BoolProperty(
+        name=T("Свет от сцены"),
+        description=T("Печь Shadow / Diffuse-Lit от реальных источников света "
+                    "сцены (твои лампы/солнце/world), как LightMap. Выкл — "
+                    "внутренний калиброванный SUN (работает даже без ламп)"),
+        default=True)
     gtatools_bake_light_energy_scale: FloatProperty(
         name=T("Свет (экспозиция)"),
         description=T("Множитель энергии внутреннего свет-рига для карт "
@@ -1449,13 +1966,30 @@ class INUSceneSettings(bpy.types.PropertyGroup):
     # — поля выбора убраны намеренно. Настраивается только cage.
     gtatools_bake_cage_extrusion: FloatProperty(
         name="Cage",
-        description=T("Выдавливание cage (на сколько отодвинуть лучи от "
-                    "лоуполи к хайполи)"),
-        default=0.1, min=0.0, soft_max=1.0, precision=3)
+        description=T("Выдавливание cage (на сколько раздуть лоуполи наружу "
+                      "перед пуском лучей к хайполи). 0 = как TexTools: лучи "
+                      "идут от самой поверхности лоуполи. БОЛЬШЕ 0 раздувает "
+                      "лоуполи и на близких параллельных стенах кидает лучи на "
+                      "СОСЕДНЮЮ стену → стены «меняются местами». Поднимай "
+                      "только если хайполи торчит наружу за лоуполи"),
+        default=0.0, min=0.0, soft_max=1.0, precision=3)
     gtatools_bake_max_ray: FloatProperty(
         name="Max Ray",
-        description=T("Макс. дистанция луча (0 = авто)"),
+        description=T("Макс. дистанция луча (0 = без лимита, как TexTools)"),
         default=0.0, min=0.0, soft_max=1.0, precision=3)
+    gtatools_bake_use_prelight: BoolProperty(
+        name=T("Учитывать PreLight"),
+        description=T("Запекать хайполи ВМЕСТЕ с прилайтом (vertex colors × "
+                      "текстура): включает превью прилайта на хайполи на время "
+                      "бейка. Выкл = чистая текстура без освещения прилайта"),
+        default=False)
+    gtatools_bake_isolate: BoolProperty(
+        name=T("Изолировать объект"),
+        description=T("На время бейка прятать прочие МЕШ-объекты сцены (лампы "
+                      "не трогаются). Чинит чёрный AO (соседи по сцене больше "
+                      "не затеняют модель) и ускоряет бейк (Cycles строит BVH "
+                      "только по цели). Выкл = запекать с тенями от соседей"),
+        default=True)
     # ── LightMap (карта GI от реального света сцены) ──────────────
     # Денойз общий для всех ШУМНЫХ карт (AO / Shadow / Diffuse Lit /
     # Emission GI / LightMap): OIDN-нода компоузера на Blender 4.x, bilateral
@@ -1528,8 +2062,8 @@ class INUSceneSettings(bpy.types.PropertyGroup):
                     "выкл. Меняется без пере-запекания — кнопкой «Обновить "
                     "лайтмап» ниже"),
         default=0.0, min=0.0, soft_max=8.0)
-    gtatools_bake_layers_index: IntProperty(
-        default=0, update=_bake_layer_index_update)
+    # gtatools_bake_layers(+_index) переехали на объект (obj.inu) — стек
+    # слоёв запекания теперь per-model. См. INUObjectProps в __init__.py.
     # Карта для формы «Добавить слой» (создание отделено от списка слоёв):
     # выбираешь карту здесь → кнопка добавляет слой с ней. Сама карта слоя
     # после создания не меняется (другой слой = другая карта).
@@ -1566,6 +2100,36 @@ class INUSceneSettings(bpy.types.PropertyGroup):
         description=T("Гамма финального изображения"),
         default=0.8, min=0.1, max=4.0,
         update=_on_modulate_preview_update)
+
+    # ── Визуальная коррекция превью прилайта (ТОЛЬКО вьюпорт) ─────
+    # Дефолты грузятся из prelight.PRELIGHT_VIEW_CORRECTION при смене игры;
+    # ползунками можно крутить живьём. На экспорт НЕ влияют.
+    prelight_view_bright: FloatProperty(
+        name=T("Яркость (превью)"),
+        description=T("Только вьюпорт: яркость прилайта в превью. На экспорт НЕ влияет"),
+        default=-0.150, min=-1.0, max=1.0, precision=3,
+        update=_prelight_view_update)
+    prelight_view_contrast: FloatProperty(
+        name=T("Контраст (превью)"),
+        description=T("Только вьюпорт: контраст прилайта в превью. На экспорт НЕ влияет"),
+        default=-0.400, min=-1.0, max=1.0, precision=3,
+        update=_prelight_view_update)
+    prelight_view_gamma: FloatProperty(
+        name=T("Гамма (превью)"),
+        description=T("Только вьюпорт: гамма прилайта в превью. <1 — светлее. На экспорт НЕ влияет"),
+        default=1.0, min=0.1, max=4.0, precision=3,
+        update=_prelight_view_update)
+    prelight_view_saturation: FloatProperty(
+        name=T("Насыщенность (превью)"),
+        description=T("Только вьюпорт: насыщенность прилайта в превью. 1 — как есть, 0 — ч/б. На экспорт НЕ влияет"),
+        default=1.0, min=0.0, max=2.0, precision=3,
+        update=_prelight_view_update)
+    gtatools_show_prelight_view: BoolProperty(
+        name=T("Коррекция превью"),
+        description=T("Показать ползунки визуальной коррекции превью прилайта "
+                      "(яркость/контраст/гамма/насыщенность). Только вьюпорт — "
+                      "на экспорт не влияет"),
+        default=False)
 
     # ── Prelight / VC processing ────────────────────────────────
     gtatools_prelight_preset: EnumProperty(
@@ -1870,7 +2434,7 @@ class INUSceneSettings(bpy.types.PropertyGroup):
     gtatools_alpha_bulk_blend: EnumProperty(
         name=T("Режим для всех"),
         items=_ALPHA_BLEND_ITEMS,
-        default='CLIP')
+        default='CLIP')   # стандарт проекта: Колебание/DITHERED (см. compat)
 
     # ── GTA Material EFFECTS collapsible sections ───────────────
     gtatools_mat_show_vehicle: BoolProperty(
@@ -1893,23 +2457,23 @@ class INUSceneSettings(bpy.types.PropertyGroup):
     gtatools_export_all_dff: BoolProperty(
         name="Export DFF",
         description=T("Экспортировать DFF при Export All"),
-        default=True)
+        default=True, update=_export_all_filter_update)
     gtatools_export_all_col: BoolProperty(
         name="Export COL",
         description=T("Экспортировать COL при Export All"),
-        default=True)
+        default=True, update=_export_all_filter_update)
     gtatools_export_all_lod: BoolProperty(
         name="Export LOD",
         description=T("Экспортировать LOD при Export All"),
-        default=True)
+        default=True, update=_export_all_filter_update)
     gtatools_export_all_txd: BoolProperty(
         name="Export TXD",
         description=T("Экспортировать TXD при Export All"),
-        default=True)
+        default=True, update=_export_all_filter_update)
     gtatools_export_all_cst: BoolProperty(
         name="Export CST",
         description=T("Экспортировать коллизию в текстовый .cst (Collision File Editor II) при Export All"),
-        default=False)
+        default=False, update=_export_all_filter_update)
     gtatools_export_all_ide_ipl: BoolProperty(
         name="IDE/IPL",
         description=T("После экспорта также дописать модели в IDE и IPL, "
@@ -2116,4 +2680,4 @@ class INUSceneSettings(bpy.types.PropertyGroup):
     gtatools_binary_ipls: CollectionProperty(type=GTATOOLS_BinaryIplEntry)
     gtatools_text_ipls: CollectionProperty(type=GTATOOLS_TextIplEntry)
     gtatools_img_entries: CollectionProperty(type=GTATOOLS_ImgFileEntry)
-    gtatools_bake_layers: CollectionProperty(type=INUBakeLayer)
+    # gtatools_bake_layers переехал на объект (obj.inu) — per-model стек.

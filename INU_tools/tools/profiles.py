@@ -65,16 +65,82 @@ def _is_valid_name(name: str) -> bool:
     return bool(name) and bool(_NAME_RE.match(name)) and len(name) <= 64
 
 
+# ── Draw-path caches ─────────────────────────────────────────────
+# Profile lookups run on EVERY UI redraw from two places:
+#   * ui.registry._profile_aware_poll — once per top-level panel, even
+#     for collapsed ones (poll() always runs);
+#   * profile_enum_items — the profile dropdown lives in the always-drawn
+#     root panel, and Blender re-runs a dynamic enum's items callback
+#     every time the widget is drawn.
+# Uncached, that meant a listdir + an open()+json.load() PER PANEL PER
+# FRAME, which stalled viewport navigation whenever the N-sidebar was
+# open. Cache key = absolute path + on-disk stamp (mtime_ns, size):
+#   * the path, because the data root is relocatable (preset-root
+#     override) and a name-keyed entry would answer for the old root;
+#   * the stamp, so a profile edited by hand outside Blender is picked up.
+# Cost per lookup drops to one stat().
+_dir_listing_cache = None      # None | (dir, stamp, [names])
+_profile_file_cache = {}       # path → (stamp, profile dict | None)
+
+
+def _stamp(path: str):
+    """(mtime_ns, size) of *path*, or None when it doesn't exist.
+
+    mtime_ns rather than getmtime() — float seconds can't tell apart two
+    writes inside the same tick, which is exactly what a Save-profile
+    click followed by a redraw looks like.
+    """
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (st.st_mtime_ns, st.st_size)
+
+
+def _copy_profile(profile):
+    """Shallow copy with fresh lists.
+
+    load_user_profile() used to hand out a freshly built dict every call,
+    and the profile-editor operators edit `order` / `hidden` in place.
+    Now that the parse result is cached, hand out a copy so that in-place
+    editing can't poison the cache — the copy is a couple of 16-item
+    lists, i.e. free next to the json.load() it replaces.
+    """
+    if profile is None:
+        return None
+    out = dict(profile)
+    out['order'] = list(profile.get('order') or [])
+    out['hidden'] = list(profile.get('hidden') or [])
+    return out
+
+
+def invalidate_profile_cache() -> None:
+    """Drop the profile caches. Called after every write/delete so the UI
+    never shows a stale list even if the filesystem stamp is coarse."""
+    global _dir_listing_cache
+    _dir_listing_cache = None
+    _profile_file_cache.clear()
+
+
 def list_user_profiles() -> List[str]:
     """Return the names of profiles saved as JSON files (no extension)."""
+    global _dir_listing_cache
+    d = _profiles_dir()
+    stamp = _stamp(d)
+    if (_dir_listing_cache is not None
+            and _dir_listing_cache[0] == d
+            and _dir_listing_cache[1] == stamp):
+        return list(_dir_listing_cache[2])
     out = []
     try:
-        for f in os.listdir(_profiles_dir()):
+        for f in os.listdir(d):
             if f.lower().endswith('.json'):
                 out.append(os.path.splitext(f)[0])
     except OSError:
         pass
-    return sorted(out)
+    out.sort()
+    _dir_listing_cache = (d, stamp, out)
+    return list(out)
 
 
 def load_user_profile(name: str) -> Optional[dict]:
@@ -94,12 +160,18 @@ def load_user_profile(name: str) -> Optional[dict]:
     if not _is_valid_name(name):
         return None
     path = os.path.join(_profiles_dir(), f"{name}.json")
-    if not os.path.isfile(path):
+    stamp = _stamp(path)
+    if stamp is None:
+        _profile_file_cache.pop(path, None)
         return None
+    hit = _profile_file_cache.get(path)
+    if hit is not None and hit[0] == stamp:
+        return _copy_profile(hit[1])
     try:
         with open(path, 'r', encoding='utf-8') as f:
             data = json.load(f)
     except (OSError, json.JSONDecodeError):
+        _profile_file_cache[path] = (stamp, None)
         return None
 
     raw_order = data.get('order')
@@ -109,6 +181,7 @@ def load_user_profile(name: str) -> Optional[dict]:
         # the canonical addon order.
         raw_order = data.get('panels')
         if not isinstance(raw_order, list):
+            _profile_file_cache[path] = (stamp, None)
             return None
 
     raw_hidden = data.get('hidden') or []
@@ -129,12 +202,14 @@ def load_user_profile(name: str) -> Optional[dict]:
             order.append(idname)
             seen.add(idname)
 
-    return {
+    profile = {
         'name':   data.get('name', name),
         'desc':   data.get('desc', ''),
         'order':  order,
         'hidden': list(raw_hidden),
     }
+    _profile_file_cache[path] = (stamp, profile)
+    return _copy_profile(profile)
 
 
 def save_user_profile(name: str, order: List[str],
@@ -148,7 +223,14 @@ def save_user_profile(name: str, order: List[str],
     """
     if not _is_valid_name(name):
         return False
-    path = os.path.join(_profiles_dir(), f"{name}.json")
+    d = _profiles_dir()
+    # _profiles_dir() memoises its mkdir, so re-create here in case the
+    # folder was removed after the first lookup of the session.
+    try:
+        os.makedirs(d, exist_ok=True)
+    except OSError:
+        return False
+    path = os.path.join(d, f"{name}.json")
 
     # Dedupe preserving first-occurrence order.
     deduped = list(dict.fromkeys(order))
@@ -167,6 +249,7 @@ def save_user_profile(name: str, order: List[str],
             json.dump(payload, f, indent=2, ensure_ascii=False)
     except OSError:
         return False
+    invalidate_profile_cache()
     return True
 
 
@@ -178,6 +261,7 @@ def delete_user_profile(name: str) -> bool:
         os.remove(path)
     except OSError:
         return False
+    invalidate_profile_cache()
     return True
 
 
@@ -231,14 +315,22 @@ _profile_items_cache: list = []
 def profile_enum_items(self, context):
     """EnumProperty items callback — ALL first, then user profiles
     sorted alphabetically. Stable ordering so the dropdown doesn't
-    shuffle when the user adds/removes profiles."""
+    shuffle when the user adds/removes profiles.
+
+    HOT PATH: this dropdown sits in the always-drawn root panel, so
+    Blender re-runs the callback on every redraw of the N-sidebar. The
+    listing/parse behind it is stat-cached (see _dir_listing_cache), and
+    the assembled list is only swapped in when it actually changed —
+    keeping the very same string objects pinned across draws, which is
+    what the GC note above is about."""
     global _profile_items_cache
     items = [('ALL', _ALL_PROFILE['label'], _ALL_PROFILE['desc'])]
     for name in list_user_profiles():
         prof = load_user_profile(name) or {}
         items.append((name, name, prof.get('desc', '') or
                       "Пользовательский профиль"))
-    _profile_items_cache = items
+    if items != _profile_items_cache:
+        _profile_items_cache = items
     return _profile_items_cache
 
 
@@ -247,26 +339,44 @@ def profile_enum_items(self, context):
 # every top-level panel without re-discovering them through bpy.types.
 # Order roughly matches the N-sidebar zone layout for readability.
 
+# idname → fallback label. The labels here are ONLY a fallback for
+# environments where the panel class isn't registered (unit tests);
+# at runtime ``panel_label()`` reads each panel's LIVE ``bl_label`` so
+# the profile editor always shows the exact same tab name as the
+# N-sidebar. Keep both the id list COMPLETE (every top-level panel) and
+# these fallbacks equal to the real bl_labels. Order ≈ N-sidebar order.
 ALL_TOGGLEABLE_PANELS = [
     ('GTATOOLS_PT_export_panel',         "Экспорт / Импорт"),
-    ('GTATOOLS_PT_bitmaps_panel',        "Bitmaps Manager"),
+    ('GTATOOLS_PT_bitmaps_panel',        "Менеджер текстур"),
     ('GTATOOLS_PT_check_panel',          "Проверка"),
     ('GTATOOLS_PT_vehicle_panel',        "Машины"),
     ('GTATOOLS_PT_light_master',         "Lighting"),
-    ('GTATOOLS_PT_frame_hierarchy',      "Иерархия фреймов"),
-    ('GTATOOLS_PT_2dfx_panel',           "2DFX Effects"),
+    # «Иерархия фреймов» больше не топ-вкладка — это подпанель «Машины».
+    ('GTATOOLS_PT_2dfx_panel',           "Эффекты"),
     ('GTATOOLS_PT_anim_panel',           "Анимации"),
-    ('GTATOOLS_PT_object_ide_ipl_panel', "Object IDE/IPL"),
+    ('GTATOOLS_PT_bake_panel',           "Texture Bake"),
+    ('GTATOOLS_PT_object_ide_ipl_panel', "Object IDE / IPL"),
     ('GTATOOLS_PT_ide_ipl_panel',        "IDE / IPL / IMG"),
     ('GTATOOLS_PT_id_manager_panel',     "ID Manager"),
     ('GTATOOLS_PT_paths_panel',          "Пути"),
-    ('GTATOOLS_PT_water_panel',          "Вода"),
+    ('GTATOOLS_PT_zon_panel',            "map.zon"),
+    ('GTATOOLS_PT_water_panel',          "Water"),
+    ('GTATOOLS_PT_grass_panel',          "Трава"),
     ('GTATOOLS_PT_radar_panel',          "X Radar Maker"),
+    ('GTATOOLS_PT_footer_panel',         "Поддержка"),
 ]
 
 
 def panel_label(idname: str) -> str:
-    """Lookup a human label for a panel id. Falls back to the id."""
+    """Human label for a panel id — its LIVE ``bl_label`` so the profile
+    editor matches the N-sidebar tab exactly (same source string → same
+    Blender i18n). Falls back to the static table (unregistered classes,
+    e.g. unit tests), then the id itself."""
+    cls = getattr(bpy.types, idname, None)
+    if cls is not None:
+        lbl = getattr(cls, 'bl_label', None)
+        if lbl:
+            return lbl
     for k, v in ALL_TOGGLEABLE_PANELS:
         if k == idname:
             return v
@@ -774,7 +884,7 @@ class GTATOOLS_OT_profile_edit(bpy.types.Operator):
         if picked:
             hint.alert = True
             hint.label(
-                text=(f"{_t('Взято:')} «{panel_label(picked)}» — "
+                text=(f"{_t('Взято:')} «{_t(panel_label(picked))}» — "
                       f"{_t('клик на другую = переместить сюда')}"),
                 **inu_icon(safe_icon('RESTRICT_SELECT_OFF')))
         else:
@@ -796,14 +906,15 @@ class GTATOOLS_OT_profile_edit(bpy.types.Operator):
             # Visually dim hidden rows
             if is_hidden:
                 name_btn.active = False
-            label_text = panel_label(idname)
+            label_text = _t(panel_label(idname))
             if is_picked:
                 label_text = f"▶ {label_text}"
             pick_op = name_btn.operator(
                 "gtatools.profile_pick_panel",
                 text=label_text,
                 emboss=True,
-                depress=is_picked)
+                depress=is_picked,
+                translate=False)
             pick_op.panel_idname = idname
 
             # Eye toggle on the right (HIDE_OFF / HIDE_ON)

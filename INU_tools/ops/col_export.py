@@ -726,7 +726,9 @@ class GTATOOLS_OT_export_col(bpy.types.Operator, ExportHelper):
             for obj in prelight_was_on:
                 try:
                     setup_prelight_preview(obj, enable=True)
-                except:
+                except Exception:
+                    # Cleanup runs inside the export's error handler — a
+                    # failure here must not mask the real error below.
                     pass
             self.report({'ERROR'}, f"COL export error: {str(e)}")
             return {'CANCELLED'}

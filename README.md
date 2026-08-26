@@ -49,29 +49,6 @@
 
 ## 🔮 Roadmap
 
-### 🚧 Landing in 2.3.0 (done — pending release)
-
-- 🔗 **Ariane bridge** — live folder-watch bridge that auto-imports DFFs pushed from the external **Ariane** tool into a running Blender
-- 🌿 **Plants / grass** — import/export grass, generate geometry, viewport preview, apply to selected polygons, built-in **plants.dat** editor
-- 🌐 **Zones** — import/export `map.zon` / `info.zon` as editable boxes (one file = one collection)
-- 📷 **Cameras** — import/export cutscene camera `.dat` (position + FOV/roll keyframes)
-- 🧩 **Fragments** — split a mesh into breakable fragment objects in one click (grid / scatter)
-- ✋ **Hand signs** — author gang hand-signs for `ghands.ifp`
-- 💡 **Prelight — all light types + HDRI** — bake now uses **Point / Sun / Spot / Area** (per-source toggles) and can sample the **World / HDRI** environment per normal, not just point lamps
-- 🔥 **Texture baking** — **Alpha map** (RGBA save), **Decal** (Shadow → transparent shadow decal: threshold/softness, hard cut, invert), single-map **RGBA save**, **"Scene lights"** for Shadow/Diffuse-Lit, **Bevel bake on selected edges**, **transparent / average-colour background** toggle
-- 📐 **UV tools** — **Fit UV to Grid Scale** + texel density
-- 🎨 **Alpha materials** — scan, select and bulk-apply transparent materials (unified transparency, fixes Blender 4.2+/EEVEE Next)
-- 🗺️ **Import: vanilla vs custom** — **"Standard GTA SA model (vanilla)"** checkbox; OFF = custom model (connect loose geometry, keep double-sided fences), ON leaves vanilla behavior untouched
-- 🚗 **Vehicles / DFF round-trip** — editable import keeps authored normals; re-export **splits by normal**; **swapped textures now export**; single-vehicle DFF with embedded collision
-- 💡 **2DFX** — 4 new effect types with previews: **Road sign**, **Enter/Exit**, **Escalator**, **Raw**
-- 🎬 **Animation (IFP)** — rest-aware **L/R mirror**; byte-exact round-trip + jitter fixes; **IFP Library Viewer** (live-scrub 294 vanilla anims via Action dropdown + Timeline); **Frame Hierarchy** sub-panel with in-tree reparenting
-- 🧱 **IDE / IPL / IMG import overhaul** — modal import with a progress bar, **"Find IMG"** scan of the game folder, multi-IPL select, auto-fills **TXD name / LOD partner / draw distances / IDE link**; a **copied model adds a NEW IPL instance** instead of overwriting the source; split **"Update from IDE" / "from IPL"**; **Import / Export** as toggle-tabs
-- 🌊 **Water** — Water-Limits overlay + snap-to-block; **"Cut by blocks (500)"** also splits pieces into per-block objects
-- 🧵 **TXD** — trilinear **mip filter** on exported textures
-- 🧱 **Collision** — imports into a dedicated collection, dummy frames drawn as cubes
-- ⚡ **Performance** — panel-draw memoisation (`draw_cache`) removes viewport stutter on big maps
-- 🐛 **Fixes** — no longer shows Russian in an English Blender; floating info windows no longer steal clicks meant for the N-panel / toolbar drawn on top of them
-
 ### 💭 Ideas being considered
 
 Not all of these will ship — some may turn out impractical, deprioritised, or just not worth it on closer inspection.
@@ -80,16 +57,29 @@ Not all of these will ship — some may turn out impractical, deprioritised, or 
 - 🔁 **IPL Mass Replace** — swap all INST entries with model X for model Y by coordinates / radius / tag
 - 🎆 **Auto-LOD generation** — when no paired `_L0` is found, Map Export auto-generates a decimated copy (EMAPTool-style)
 
-## 🆕 What's New in 2.2.0
+## 🆕 What's New in 2.3.0
 
-- 🔥 **LightMap bake** — bakes full GI straight from your scene's real lamps / sun / world (no internal light-rig) over diffuse. **Apply LightMap** in 3 modes: keep as a stack layer · bake into diffuse as one vanilla SA texture · write to the Day vertex prelight. Plus **Show over base (UV2)**, **denoise** for every noisy map (OIDN on Blender 4.x, numpy bilateral on 5.x), and linear-space compositing so **Save as** matches the game
-- 🗺️ **Smarter IDE/IPL** — **"Also to IDE/IPL"** export checkbox; automatic `lod_index`; **Model ID = 0 blocked**; IDE flag translation across games; FLA `realInterior` (12th column); the panel-picked file wins on Add
-- 📦 **Rebuild IMG (compact)** — reclaim dead space left by repeated exports; block on IMG entry names over 24 chars
-- 🔍 **Model type auto-detection** (DFF / LOD / COL, case-insensitive LOD) — the `_DFF/_LOD/_COL` suffixes are now a manual override only
-- ✨ **2DFX** — **"Apply settings to selected"** (one effect's settings onto a whole group of empties), attach several at once, relationship-line toggle, preview auto-rebuild on `Shift+D` / `Ctrl+C+V`; per-effect settings moved to the empty's Object Data
-- 🎞️ **UV animation × Night** — found why the animation won't play in retail single-player: **night vertex colors** disable UV anim. Now warned right in DFF Flags and the pre-export check
-- 🆔 **ID Manager** — **"Skip occupied IDs"** toggle (strict from the start number vs. skip occupied)
-- 🧹 **Cleanup + Blender Extensions ready** — dropped NVTT/nvcompress (pure numpy DXT) and dead code (broken JSON material presets, hidden panels); manifest updated for extensions.blender.org rules
+The biggest release yet — headlined by a two-way **live bridge with the Ariane map editor**.
+
+- 🌉 **Ariane bridge** — a two-way live bridge with the external **Ariane** map editor over a shared folder: Ariane pushes selected models straight into a running Blender (auto-placed + IDE/IPL-tagged), and you send models / positions / new instances back — with live sync of position, selection and deletions
+- 🌿 **Plants / grass** — import/export grass, generate geometry, viewport preview, apply to selected polygons, built-in **plants.dat** editor
+- 🌐 **Zones** — import/export `map.zon` / `info.zon` as editable boxes (one file = one collection)
+- 📷 **Cameras** — import/export cutscene camera `.dat` (position + FOV keyframes)
+- 🧩 **Fragments** — split a mesh into breakable fragment objects in one click (grid / scatter)
+- ✋ **Hand signs** — author gang hand-signs for `ghands.ifp`
+- 🗂️ **IDE / IPL / IMG overhaul** — three tabs **Import / Export / Map**; a **"Selected model"** box with per-file status + Check / Add / Export / remove; **LOD / 2DFX / TXD / COL** toggles inverted (ON = load); deleting an IPL instance removes its paired LOD and re-indexes
+- 📦 **Export to IMG dialog** — per-model **DFF → LOD / COL** hierarchy with checkboxes; missing LOD → the main model written as LOD, missing COL → an empty bounding-box stub; **IMG-archive picker**; **"Rebuild after export"**
+- 🔥 **Texture baking** — **per-model layer stacks**; **"Isolate object"** (fixes black AO among map objects + speeds up baking); **Alpha map** (RGBA), **Decal** (transparent shadow decal), **"Scene lights"** for Shadow/Diffuse-Lit, **Bevel on selected edges**
+- 💡 **Prelight — all light types + HDRI** — bakes from **Point / Sun / Spot / Area** plus the **World / HDRI** environment, not just point lamps
+- 🎨 **Alpha materials** — scan, select and bulk-apply transparent materials (unified transparency, fixes Blender 4.2+/EEVEE Next)
+- 🗺️ **Import: vanilla vs custom** — **"Standard GTA SA model (vanilla)"** checkbox; OFF = custom (connect loose geometry, keep double-sided fences)
+- 🚗 **Vehicles / DFF round-trip** — editable import keeps authored normals; re-export **splits by normal**; **swapped textures now export**; single-vehicle DFF with embedded collision
+- 💡 **2DFX** — new effect types with previews: **Road sign**, **Enter/Exit**, **Escalator**, plus **Raw** passthrough for unknown effects
+- 🎬 **Animation (IFP)** — rest-aware **L/R mirror**; byte-exact round-trip + jitter fixes; **Frame Hierarchy** sub-panel with in-tree reparenting
+- 🌊 **Water** — Water-Limits overlay + snap-to-block; **"Cut by blocks (500)"** also splits pieces into per-block objects
+- 🧱 **Collision** — imports into a dedicated collection, per-surface viewport colors, dummy frames drawn as cubes
+- ⚡ **Performance** — panel-draw memoisation (`draw_cache`) removes viewport stutter on big maps
+- 🌐 **Full EN + ES localization** — the entire interface (including operator tooltips) is translated; no Russian leaks into an English/Spanish Blender
 
 → [Release notes 2.3.0](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v2.3.0) · [2.2.0](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v2.2.0) · [2.1.0](https://github.com/INU-ez/INU_Tools-GTA-sa-/releases/tag/v2.1.0) · [Version history](../../releases)
 
@@ -134,8 +124,9 @@ Not all of these will ship — some may turn out impractical, deprioritised, or 
 |---|---|---|
 | `Properties > Scene` | **INU Tools** | IDE/IPL/IMG paths, textures, IMG files, preset folder |
 | `Properties > Object` | **INU Tools: Model** | Type (auto+manual), Model ID, TXD, Draw Dist, IDE Flags, DFF Flags, Pipeline, Breakable, 2DFX |
-| `Properties > Material` | **GTA Material** (2 tabs) | SURFACE — collision surface type · EFFECTS — Env Map, Bump, Reflection, Specular, UV Animation + quick presets (Glass/Chrome/Paint/Reset) |
+| `Properties > Material` | **GTA Material** (3 tabs) | SURFACE — collision surface type · ALPHA — transparent / alpha materials (unified transparency standard) · EFFECTS — Env Map, Bump, Reflection, Specular, UV Animation + quick presets (Glass/Chrome/Paint/Reset) |
 | `View3D > Sidebar (N)` | **GTA Tools** | SETUP → MODEL → DATA → EXPORT pipeline (Export at top, ID Manager, Object IDE/IPL, all other sub-panels) |
+| `View3D > Sidebar (N)` | **GTA Library** | Asset Library builder — Extract Resources → build library folder → regenerate previews |
 | `UV Editor > Sidebar (N)` | **GTA Tools** | UV tools |
 
 ## ⌨️ Hotkeys

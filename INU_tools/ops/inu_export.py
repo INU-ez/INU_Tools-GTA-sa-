@@ -19,6 +19,7 @@ from bpy_extras.io_utils import ImportHelper, ExportHelper
 
 from .. import T
 from ..tools.compat import safe_icon, inu_icon
+from ..tools.model_utils import is_collision_mesh
 
 
 # Формат-галочки в диалоге импорта: при переключении пересобираем
@@ -143,6 +144,19 @@ class GTATOOLS_OT_inu_import(bpy.types.Operator, ImportHelper):
         grid.prop(self, "f_txd")
         grid.prop(self, "f_ide")
         grid.prop(self, "f_ipl")
+
+        # DFF weld toggle — same as Import DFF / drag-drop (AddonPreferences,
+        # запоминается глобально). Only relevant when a .dff is in the selection.
+        if self.f_dff:
+            from ..tools.user_data import get_addon_prefs
+            _prefs = get_addon_prefs()
+            if _prefs is not None:
+                layout.separator()
+                layout.prop(_prefs, "import_weld_sharpen",
+                            text=T("Стандартная модель GTA SA (vanilla)"))
+                if not _prefs.import_weld_sharpen:
+                    layout.label(text=T("Кастом: связать + сохранить заборы"),
+                                 **inu_icon(safe_icon('INFO')))
 
         col = layout.column(align=True)
         col.scale_y = 0.85
@@ -361,7 +375,7 @@ def _write_txd_file(txd_path, context, backend, merge):
 def _export_model_group(context, directory, base_name, models,
                         skip_dff, skip_col, skip_lod, skip_txd,
                         backend, tri_warnings, skip_cst=True,
-                        empty_col=False, txd_merge=False):
+                        empty_col=False, txd_merge=False, txd_notes=None):
     """Export ONE model group (DFF + LOD + COL + TXD) into ``directory``,
     one file per format named from ``base_name``.
 
@@ -483,10 +497,20 @@ def _export_model_group(context, directory, base_name, models,
                 txd_path, context, backend, txd_merge)
             if result == {'FINISHED'}:
                 exported.append(f"{base_name}.txd")
+                # merge → update_txd вернул счётчики текстур (обновлено/
+                # добавлено/всего); показываем их пользователю вместо
+                # безликого «N файлов».
+                if txd_merge and txd_notes is not None and message:
+                    txd_notes.append(f"{base_name}.txd: {message}")
             elif 'No textures' in (message or ''):
-                # A part with no textures (collision, plain mesh) simply
-                # gets no .txd — that's not an error, just skip it.
-                pass
+                # У модели нет ни одной текстуры → .txd не создаётся. Для
+                # коллизии/пустого меша это норма, но для обычной модели чаще
+                # значит «забыл текстуру» — сообщаем, чтобы не гадать, почему в
+                # игре модель без текстуры / «не экспортнулась».
+                if txd_notes is not None:
+                    txd_notes.append(
+                        T("{0}: без текстуры — TXD не создан (добавь текстуру, "
+                          "если модель должна быть текстурной)").format(base_name))
             else:
                 errors.append(f"{base_name}.txd: {message}")
         except Exception as e:
@@ -511,8 +535,9 @@ def run_group_export(context, directory, *, skip_dff, skip_col, skip_lod,
     THE shared engine: same name-based grouping, same core writers, same
     prelight handling for Export All / Export DFF / Export LOD — the caller
     only chooses which formats to skip. Returns
-    ``(exported, errors, tri_warnings, num_groups)``; ``num_groups == 0``
-    means nothing was selected."""
+    ``(exported, errors, tri_warnings, txd_notes, num_groups)``;
+    ``num_groups == 0`` means nothing was selected. ``txd_notes`` holds the
+    per-file «обновлено/добавлено/всего» текстур lines when merging."""
     from ..tools.model_utils import find_all_selected_model_groups
     from ..tools.prelight import setup_prelight_preview
     from ..tools.txd_export import clear_dxt_cache
@@ -550,6 +575,7 @@ def run_group_export(context, directory, *, skip_dff, skip_col, skip_lod,
     all_exported = []
     all_errors = []
     tri_warnings = []
+    txd_notes = []
     wm = context.window_manager
 
     # Library COL / shared TXD divert per-group writes into one combined
@@ -592,7 +618,8 @@ def run_group_export(context, directory, *, skip_dff, skip_col, skip_lod,
             exported, errors = _export_model_group(
                 context, directory, base_name, models,
                 skip_dff, skip_col, skip_lod, skip_txd, backend, tri_warnings,
-                skip_cst=skip_cst, empty_col=empty_col, txd_merge=txd_merge)
+                skip_cst=skip_cst, empty_col=empty_col, txd_merge=txd_merge,
+                txd_notes=txd_notes)
             all_exported.extend(exported)
             all_errors.extend(errors)
             current_step += _group_steps(models)
@@ -632,6 +659,8 @@ def run_group_export(context, directory, *, skip_dff, skip_col, skip_lod,
                 if result == {'FINISHED'}:
                     all_exported.append(
                         f"{txd_shared_name}.txd ({len(shared_txd_objects)} models)")
+                    if txd_merge and message:
+                        txd_notes.append(f"{txd_shared_name}.txd: {message}")
                 else:
                     all_errors.append(f"{txd_shared_name}.txd: {message}")
             except Exception as e:
@@ -648,10 +677,11 @@ def run_group_export(context, directory, *, skip_dff, skip_col, skip_lod,
         for obj in prelight_was_on:
             setup_prelight_preview(obj, enable=True)
 
-    return all_exported, all_errors, tri_warnings, len(model_groups)
+    return all_exported, all_errors, tri_warnings, txd_notes, len(model_groups)
 
 
-def _report_group_export(op, exported, errors, tri_warnings, num_groups):
+def _report_group_export(op, exported, errors, tri_warnings, num_groups,
+                         txd_notes=None):
     """Shared operator reporting for the group-export engine."""
     if num_groups == 0:
         op.report({'ERROR'}, T("Выделите модели для экспорта!"))
@@ -660,6 +690,9 @@ def _report_group_export(op, exported, errors, tri_warnings, num_groups):
         op.report({'INFO'},
                   f"{T('Экспортировано:')} {len(exported)}"
                   f"{T(' файлов (')}{num_groups}{T(' моделей)')}")
+    # При «Дописать в существующий TXD» — сколько текстур обновлено/добавлено.
+    for note in (txd_notes or []):
+        op.report({'INFO'}, note)
     if errors:
         preview = '; '.join(errors[:5])
         more = f" (+{len(errors) - 5})" if len(errors) > 5 else ""
@@ -794,6 +827,10 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
     # выбран .txd — текстуры всех моделей пишутся именно в него (merge при
     # включённой галочке). Для папочного экспорта по моделям остаётся пустым.
     filename: StringProperty(subtype='FILE_NAME')
+    # Фильтр расширений браузера: галочки форматов (DFF/COL/LOD/TXD/CST)
+    # сужают список файлов. Начальное значение ставим в invoke по текущим
+    # настройкам, дальше его живьём пересобирает _export_all_filter_update.
+    filter_glob: StringProperty(default="", options={'HIDDEN'})
     to_img: BoolProperty(
         name="All → IMG",
         description=T("Экспортировать прямо в .img архив, путь к которому "
@@ -834,6 +871,19 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
         self._export_name = name
         if name:
             self.filename = name
+        # Начальный фильтр браузера по включённым форматам (LOD тоже .dff).
+        s = context.scene.inu_settings
+        parts = []
+        for flag, glob in (
+            (s.gtatools_export_all_dff, '*.dff'),
+            (s.gtatools_export_all_lod, '*.dff'),
+            (s.gtatools_export_all_col, '*.col'),
+            (s.gtatools_export_all_txd, '*.txd'),
+            (getattr(s, 'gtatools_export_all_cst', False), '*.cst'),
+        ):
+            if flag and glob not in parts:
+                parts.append(glob)
+        self.filter_glob = ';'.join(parts) if parts else '*.__none__'
         context.window_manager.fileselect_add(self)
         return {'RUNNING_MODAL'}
 
@@ -844,54 +894,51 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
         # the format pick happens at the moment of export.
         layout = self.layout
         scn = context.scene
-        layout.label(text=T("Что экспортировать:"))
-        row = layout.row(align=True)
-        row.prop(scn.inu_settings, "gtatools_export_all_dff", text="DFF")
-        row.prop(scn.inu_settings, "gtatools_export_all_col", text="COL")
-        row.prop(scn.inu_settings, "gtatools_export_all_lod", text="LOD")
-        row.prop(scn.inu_settings, "gtatools_export_all_txd", text="TXD")
-        row.prop(scn.inu_settings, "gtatools_export_all_cst", text="CST")
-        # Также дописать модели в IDE / IPL, выбранные в панели IDE/IPL/IMG
-        # (id, имя, TXD, дальность + расстановка и lod_index).
-        layout.prop(scn.inu_settings, "gtatools_export_all_ide_ipl",
-                    text=T("Также в IDE / IPL (пути из панели)"))
-        # Один DFF (машина/пед): вся выделенная иерархия → один .dff, а не
-        # разбивка по именам. CST/COL-library при этом не нужны.
-        layout.prop(scn.inu_settings, "gtatools_export_all_single_dff",
-                    text=T("Один DFF (машина/пед)"))
-        # Имя экспорта = имя выделенной модели (посчитано в invoke и хранится
-        # в self._export_name — на selected_objects в браузере полагаться
-        # нельзя). При нескольких моделях — серая невыделяемая строка, имена
-        # пишутся по моделям. (Само поле имени внизу — встроенный виджет
-        # браузера Blender, заблокировать/посерить его аддон не может, поэтому
-        # надёжный индикатор тут, в сайдбаре.)
+        # Всё в одну плотную align-колонку — боксы примыкают вплотную, без
+        # зазоров браузера. Заголовки/форматы/имя — в одном верхнем боксе.
+        col = layout.column(align=True)
+        from .dff_export import draw_export_game_rows, draw_dff_flags_block
+        top = col.box()
+        draw_export_game_rows(top, context)
+        top.label(text=T("Что экспортировать:"))
+        # Кнопки-тумблеры (не чекбоксы) — иначе в узком сайдбаре текст
+        # DFF/COL/LOD/TXD/CST обрезается в «D…/C…».
+        row = top.row(align=True)
+        row.prop(scn.inu_settings, "gtatools_export_all_dff", text="DFF", toggle=True)
+        row.prop(scn.inu_settings, "gtatools_export_all_col", text="COL", toggle=True)
+        row.prop(scn.inu_settings, "gtatools_export_all_lod", text="LOD", toggle=True)
+        row.prop(scn.inu_settings, "gtatools_export_all_txd", text="TXD", toggle=True)
+        row.prop(scn.inu_settings, "gtatools_export_all_cst", text="CST", toggle=True)
+        top.prop(scn.inu_settings, "gtatools_export_all_ide_ipl",
+                 text=T("Также в IDE / IPL (пути из панели)"))
+        top.prop(scn.inu_settings, "gtatools_export_all_single_dff",
+                 text=T("Один DFF (машина/пед)"))
+        # Имя экспорта — компактной строкой в том же боксе (без отдельного).
         n_groups = getattr(self, '_n_groups', 0)
         name = (getattr(self, '_export_name', '')
                 or os.path.splitext((self.filename or '').strip())[0])
-        box = layout.box()
         if n_groups > 1:
-            sub = box.row()
-            sub.enabled = False
-            sub.label(text=T("Несколько моделей — имена по моделям"),
-                      **inu_icon(safe_icon('INFO')))
+            nrow = top.row(); nrow.enabled = False
+            nrow.label(text=T("Несколько моделей — имена по моделям"),
+                       **inu_icon(safe_icon('INFO')))
         elif name:
-            box.label(text=f"{T('Имя экспорта:')} {name}",
+            top.label(text=f"{T('Имя экспорта:')} {name}",
                       **inu_icon(safe_icon('FILE')))
         else:
-            sub = box.row()
-            sub.enabled = False
-            sub.label(text=T("Модель не выделена"),
-                      **inu_icon(safe_icon('INFO')))
-        if scn.inu_settings.gtatools_export_all_col:
-            row = layout.row(align=True)
-            row.prop(scn.inu_settings, "gtatools_export_all_col_library",
-                     text="", **inu_icon(safe_icon('PACKAGE')))
-            row.prop(scn.inu_settings, "gtatools_export_all_col_library_name",
-                     text="", placeholder="collision")
+            nrow = top.row(); nrow.enabled = False
+            nrow.label(text=T("Модель не выделена"),
+                       **inu_icon(safe_icon('INFO')))
         # Настройки коллизии — общие для .COL и .CST (одни и те же значения),
         # поэтому показываем блок при любом из двух включённых форматов.
         if scn.inu_settings.gtatools_export_all_col or scn.inu_settings.gtatools_export_all_cst:
-            box = layout.box()
+            box = col.box()
+            # Название COL-библиотеки (только для .COL) — внутри бокса, сверху.
+            if scn.inu_settings.gtatools_export_all_col:
+                row = box.row(align=True)
+                row.prop(scn.inu_settings, "gtatools_export_all_col_library",
+                         text="", **inu_icon(safe_icon('PACKAGE')))
+                row.prop(scn.inu_settings, "gtatools_export_all_col_library_name",
+                         text="", placeholder="collision")
             box.prop(scn.inu_settings, "gtatools_export_all_col_empty",
                      text=T("Пустая коллизия"))
             from .col_export import _draw_col_auto_light
@@ -899,25 +946,24 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
             sub.enabled = not scn.inu_settings.gtatools_export_all_col_empty
             _draw_col_auto_light(sub, context)
         if scn.inu_settings.gtatools_export_all_txd:
-            row = layout.row(align=True)
+            box = col.box()
+            row = box.row(align=True)
             row.prop(scn.inu_settings, "gtatools_export_all_txd_shared",
                      text="", **inu_icon(safe_icon('PACKAGE')))
             row.prop(scn.inu_settings, "gtatools_export_all_txd_shared_name",
                      text="", placeholder="textures")
-            layout.prop(scn.inu_settings, "gtatools_export_all_txd_merge",
-                        text=T("Дописать в существующий TXD"))
+            box.prop(scn.inu_settings, "gtatools_export_all_txd_merge",
+                     text=T("Дописать в существующий TXD"))
 
         # ── Pipeline + DFF flags — shared N-panel mirror ──
         # Показываем только когда включён формат, к которому флаги
         # относятся (DFF или LOD — оба пишутся как DFF-геометрия).
         if (scn.inu_settings.gtatools_export_all_dff
                 or scn.inu_settings.gtatools_export_all_lod):
-            from .dff_export import draw_dff_flags_block
-            draw_dff_flags_block(layout, context)
+            draw_dff_flags_block(col, context)
 
         # ── All → IMG (в самом низу, после DFF Flags) ──
-        layout.separator()
-        box = layout.box()
+        box = col.box()
         box.prop(self, "to_img", text=T("All → IMG"),
                  **inu_icon(safe_icon('PACKAGE')))
         if self.to_img:
@@ -971,7 +1017,7 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
         col_mesh_names = []
         for o in context.scene.objects:
             if (o.type == 'MESH' and o not in sel_set
-                    and getattr(getattr(o, 'inu', None), 'type', '') in ('COL', 'SHA')
+                    and is_collision_mesh(o)
                     and (o.parent is None or o in meshes0_set)):
                 sel.append(o)
                 sel_set.add(o)
@@ -1025,8 +1071,12 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
                 r, msg, _ = _write_txd_file(
                     os.path.join(self.directory, name + '.txd'), context,
                     getattr(s, 'gtatools_dxt_backend', 'numpy'), merge)
-                out.append(name + '.txd') if r == {'FINISHED'} \
-                    else errors.append(f"{name}.txd: {msg}")
+                if r == {'FINISHED'}:
+                    # merge → показать счётчики текстур вместо просто имени.
+                    out.append(f"{name}.txd ({msg})" if (merge and msg)
+                               else name + '.txd')
+                else:
+                    errors.append(f"{name}.txd: {msg}")
             except Exception as e:
                 errors.append(f"{name}.txd: {e}")
             finally:
@@ -1042,8 +1092,7 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
         # ВНУТРЬ .dff (CHUNK_COLLISION_MODEL) — export_dff делает это сам, если
         # среди выделенных есть COL-меш (obj.inu.type == COL/SHA). Имя
         # встроенной коллизии = имя .dff.
-        has_col = (any(getattr(getattr(o, 'inu', None), 'type', '')
-                       in ('COL', 'SHA') for o in meshes)
+        has_col = (any(is_collision_mesh(o) for o in meshes)
                    or any(o.type == 'EMPTY'
                           and getattr(o, 'empty_display_type', '') in ('SPHERE', 'CUBE')
                           for o in sel))
@@ -1111,7 +1160,7 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
         if getattr(s, 'gtatools_export_all_single_dff', False):
             return self._export_single_dff(context, name_override)
 
-        exported, errors, tri_warnings, num_groups = run_group_export(
+        exported, errors, tri_warnings, txd_notes, num_groups = run_group_export(
             context, self.directory,
             skip_dff=not s.gtatools_export_all_dff,
             skip_col=not s.gtatools_export_all_col,
@@ -1128,7 +1177,8 @@ class GTATOOLS_OT_export_all(bpy.types.Operator):
             name_override=name_override)
         if getattr(s, 'gtatools_export_all_ide_ipl', False):
             self._also_upsert_ide_ipl(context)
-        return _report_group_export(self, exported, errors, tri_warnings, num_groups)
+        return _report_group_export(self, exported, errors, tri_warnings,
+                                    num_groups, txd_notes)
 
     def _also_upsert_ide_ipl(self, context):
         """After export, upsert the selected models into the panel-picked
@@ -1205,20 +1255,22 @@ class GTATOOLS_OT_export_dff_models(bpy.types.Operator):
 
     def draw(self, context):
         layout = self.layout
+        from .dff_export import draw_export_game_block, draw_dff_flags_block
+        draw_export_game_block(layout, context)
         col = layout.column(align=True)
         col.scale_y = 0.85
         col.label(text=T("Каждая выделенная модель → свой .dff"),
                   **inu_icon(safe_icon('INFO')))
-        from .dff_export import draw_dff_flags_block
         draw_dff_flags_block(layout, context)
 
     def execute(self, context):
         backend = getattr(context.scene.inu_settings, 'gtatools_dxt_backend', 'numpy')
-        exported, errors, tri_warnings, num_groups = run_group_export(
+        exported, errors, tri_warnings, txd_notes, num_groups = run_group_export(
             context, self.directory,
             skip_dff=False, skip_col=True, skip_lod=True, skip_txd=True,
             backend=backend)
-        return _report_group_export(self, exported, errors, tri_warnings, num_groups)
+        return _report_group_export(self, exported, errors, tri_warnings,
+                                    num_groups, txd_notes)
 
 
 class GTATOOLS_OT_inu_export(bpy.types.Operator, ExportHelper):
@@ -1280,6 +1332,10 @@ class GTATOOLS_OT_inu_export(bpy.types.Operator, ExportHelper):
 
     def draw(self, context):
         layout = self.layout
+
+        # Целевая игра/платформа — в самом верху окна экспорта.
+        from .dff_export import draw_export_game_block
+        draw_export_game_block(layout, context)
 
         # Format
         box = layout.box()

@@ -23,6 +23,7 @@ from ..core.dff import (
     GTA_SA_VERSION, write_dff_file,
 )
 from ..core import game_versions
+from ..tools.model_utils import is_collision_mesh
 
 
 # ── Helpers ──────────────────────────────────────────────────────
@@ -126,13 +127,23 @@ def _read_texture(mat) -> DffTexture:
     от кейса, когда TXD не был загружен и image=None на Texture-ноде, но имя
     текстуры всё равно известно из DFF.
     """
-    # Explicit GTA texture name from INU props wins — lets the user rename/fix
-    # the name directly, independent of the Blender image/node name.
+    # Explicit GTA texture name from INU props overrides the node — BUT only
+    # when the user actually changed it. At import we auto-fill inu.texture_name
+    # with the DFF's name; if we always honoured it, swapping the image node
+    # (e.g. replacing the stock "vehiclelights128" with a custom texture) would
+    # be IGNORED and the original name re-exported. So treat it as an override
+    # only when it differs from the value stashed at import (dff_texture_name);
+    # otherwise fall through and let the image node drive the name, like
+    # DragonFF. A material with no import stamp (dff_texture_name unset) still
+    # honours a hand-typed name.
     _inu = getattr(mat, 'inu', None)
-    if _inu and getattr(_inu, 'texture_name', '').strip():
-        _flt, _msk = _tex_filters_and_mask(mat)
-        return DffTexture(name=_strip_ext(_inu.texture_name.strip()),
-                          mask=_msk, filters=_flt)
+    _inu_name = (getattr(_inu, 'texture_name', '') or '').strip() if _inu else ''
+    if _inu_name:
+        _dff_stamp = (mat.get('dff_texture_name') or '').strip()
+        if _strip_ext(_inu_name) != _strip_ext(_dff_stamp):
+            _flt, _msk = _tex_filters_and_mask(mat)
+            return DffTexture(name=_strip_ext(_inu_name),
+                              mask=_msk, filters=_flt)
 
     # Как в DragonFF: имя текстуры берём из НОДЫ (её label), а НЕ из имени
     # картинки. Так пользователь задаёт имя текстуры в DFF через ноду, и
@@ -460,11 +471,16 @@ def _get_obj_export_flags(obj) -> dict:
 
 # ── Mesh processing ──────────────────────────────────────────────
 
-def _needs_split(bm, vert, uv_layers, color_layers):
+def _needs_split(bm, vert, uv_layers, color_layers, nrm_layer=None):
     """
     Check if a vertex needs to be split because its loops
-    have different UV or color values.
+    have different UV, color, or NORMAL values.
     Returns list of loop groups that need separate vertices.
+
+    Splitting by normal is what restores a GTA car's hard edges: the DFF
+    stores one normal per vertex, so two faces meeting at a crease (same
+    position, different normal) must each get their own output vertex —
+    otherwise the crease collapses to one averaged normal (shading blotch).
     """
     loops = list(vert.link_loops)
     if len(loops) <= 1:
@@ -495,6 +511,17 @@ def _needs_split(bm, vert, uv_layers, color_layers):
                     if loop_a[cl] != loop_b[cl]:
                         same = False
                         break
+
+            if same and nrm_layer is not None:
+                # dot < ~0.9997 ≈ >1.4° apart → distinct normal → separate vert.
+                # Skip when either normal is ~zero: _loop_n hands both the SAME
+                # geometric fallback, so splitting there only makes duplicate
+                # verts (identical pos/uv/color/normal) — pure bloat.
+                na = loop_a[nrm_layer]
+                nb = loop_b[nrm_layer]
+                if (na.length_squared > 1e-12 and nb.length_squared > 1e-12
+                        and na.dot(nb) < 0.9997):
+                    same = False
 
             if same:
                 group.append(loop_b)
@@ -643,9 +670,55 @@ def _process_mesh(obj, clump: DffClump, frame_index: int, *,
             alphas = (flat[3::4] * 255.0).astype(np.int32)
             _mesh_alpha[ci] = dict(zip(loop_vidx.tolist(), alphas.tolist()))
 
+    # Per-loop custom normals — read BEFORE triangulate so the vertex-split
+    # logic below can give a SEPARATE output vertex to every distinct loop
+    # normal. The DFF is per-vertex: two loops sharing one vertex but with
+    # different normals (a hard edge) MUST become two verts, else the export
+    # collapses them to a single averaged normal → a shading blotch on
+    # re-import. Recover the authored normal where Blender zeroed the split
+    # normal at a degenerate hinge corner (from the importer's attribute).
+    _cn = None
+    if getattr(orig_mesh, 'has_custom_normals', False):
+        try:
+            mesh.calc_normals_split()  # pre-4.1; 4.1+ auto-computes
+        except (AttributeError, RuntimeError):
+            pass
+        _nl = len(mesh.loops)
+        if _nl:
+            _cn = np.empty(_nl * 3, dtype=np.float32)
+            mesh.loops.foreach_get('normal', _cn)
+            _cn = _cn.reshape(-1, 3)
+            try:
+                _an_attr = mesh.attributes.get('inu_authored_normal')
+                if _an_attr is not None and len(_an_attr.data) == _nl:
+                    _an = np.empty(_nl * 3, dtype=np.float32)
+                    _an_attr.data.foreach_get('vector', _an)
+                    _an = _an.reshape(-1, 3)
+                    _zero = np.abs(_cn).sum(axis=1) < 1e-6
+                    _anz = np.abs(_an).sum(axis=1) > 1e-6
+                    _cn[_zero & _anz] = _an[_zero & _anz]
+            except Exception:
+                pass
+
     # Triangulate with bmesh
     bm = bmesh.new()
     bm.from_mesh(mesh)
+    # Stash per-loop normals in a bmesh layer (bm.from_mesh keeps loop order =
+    # mesh loop order) BEFORE triangulate so the split can read them per loop.
+    nrm_layer = None
+    if _cn is not None:
+        try:
+            nrm_layer = bm.loops.layers.float_vector.new('_inu_n')
+            _i = 0
+            _n = len(_cn)
+            for _f in bm.faces:
+                for _l in _f.loops:
+                    if _i < _n:
+                        _l[nrm_layer] = (float(_cn[_i, 0]), float(_cn[_i, 1]),
+                                         float(_cn[_i, 2]))
+                    _i += 1
+        except Exception:
+            nrm_layer = None
     bmesh.ops.triangulate(bm, faces=bm.faces[:])
     bm.verts.ensure_lookup_table()
     bm.verts.index_update()
@@ -696,38 +769,19 @@ def _process_mesh(obj, clump: DffClump, frame_index: int, *,
 
     num_original = len(bm.verts)
 
-    # ── Custom split normals (per-vertex) ──
-    # Vehicles/peds carry per-vertex custom normals (set on import via
-    # normals_split_custom_set_from_vertices). bmesh `vert.normal` is the
-    # GEOMETRIC average and ignores them, so a re-export would change the
-    # in-game shading — the model looks slightly darker. When the mesh actually
-    # has custom normals, read the corner normals and key them per vertex so the
-    # export writes the SOURCE normals. Plain/map meshes (no custom normals)
-    # keep the existing bmesh-normal path → zero regression risk.
-    vert_custom_normal = None
-    if getattr(orig_mesh, 'has_custom_normals', False):
-        try:
-            nloops = len(mesh.loops)
-            if nloops:
-                try:
-                    mesh.calc_normals_split()  # pre-4.1; 4.1+ auto-computes
-                except (AttributeError, RuntimeError):
-                    pass
-                cn = np.empty(nloops * 3, dtype=np.float32)
-                mesh.loops.foreach_get('normal', cn)
-                lvi = np.empty(nloops, dtype=np.int32)
-                mesh.loops.foreach_get('vertex_index', lvi)
-                vcn = np.zeros((len(mesh.vertices), 3), dtype=np.float32)
-                vcn[lvi] = cn.reshape(-1, 3)  # corners of a vert share its normal
-                vert_custom_normal = vcn
-        except Exception:
-            vert_custom_normal = None
-
-    def _normal_of(bvert):
-        if vert_custom_normal is not None and 0 <= bvert.index < len(vert_custom_normal):
-            n = vert_custom_normal[bvert.index]
-            return (float(n[0]), float(n[1]), float(n[2]))
-        return (bvert.normal.x, bvert.normal.y, bvert.normal.z)
+    # ── Per-loop custom normals ──
+    # Vehicles/peds carry authored normals (set on import as custom split
+    # normals). `_loop_n` returns a loop's normal from the bmesh layer stashed
+    # above (falls back to the geometric vert normal for plain/map meshes with
+    # no custom normals). A zero layer value (Blender couldn't represent it)
+    # also falls back — never export (0,0,0), which renders black.
+    def _loop_n(loop):
+        if nrm_layer is not None:
+            n = loop[nrm_layer]
+            if abs(n[0]) + abs(n[1]) + abs(n[2]) > 1e-6:
+                return (float(n[0]), float(n[1]), float(n[2]))
+        bn = loop.vert.normal
+        return (bn.x, bn.y, bn.z)
 
     # Vertex data lists (will grow as we split)
     positions = []
@@ -737,7 +791,11 @@ def _process_mesh(obj, clump: DffClump, frame_index: int, *,
 
     for v in bm.verts:
         positions.append((v.co.x, v.co.y, v.co.z))
-        normals_list.append(_normal_of(v))
+        ll = v.link_loops
+        if ll:
+            normals_list.append(_loop_n(ll[0]))
+        else:
+            normals_list.append((v.normal.x, v.normal.y, v.normal.z))
         split_origin.append(v.index)
 
     # Maps: BMLoop object → vertex index in output
@@ -746,21 +804,25 @@ def _process_mesh(obj, clump: DffClump, frame_index: int, *,
     loop_vert_map = {}
 
     for vert in bm.verts:
-        groups = _needs_split(bm, vert, uv_layers_bm, color_layers_bm)
+        groups = _needs_split(bm, vert, uv_layers_bm, color_layers_bm, nrm_layer)
         if groups is None:
-            # No split needed, all loops use original index
-            for loop in vert.link_loops:
+            # No split needed — set the vert's normal from its first loop.
+            ll = vert.link_loops
+            if ll:
+                normals_list[vert.index] = _loop_n(ll[0])
+            for loop in ll:
                 loop_vert_map[loop] = vert.index
         else:
-            # First group keeps original index
+            # First group keeps original index; each group gets its own normal.
+            normals_list[vert.index] = _loop_n(groups[0][0])
             for loop in groups[0]:
                 loop_vert_map[loop] = vert.index
 
-            # Additional groups get new vertices
+            # Additional groups get new vertices (different UV / color / NORMAL)
             for group in groups[1:]:
                 new_idx = len(positions)
                 positions.append((vert.co.x, vert.co.y, vert.co.z))
-                normals_list.append(_normal_of(vert))
+                normals_list.append(_loop_n(group[0]))
                 split_origin.append(vert.index)
                 for loop in group:
                     loop_vert_map[loop] = new_idx
@@ -976,17 +1038,28 @@ def _process_mesh(obj, clump: DffClump, frame_index: int, *,
                 [[inv_mat[row][col] for col in range(4)] for row in range(4)])
 
         # Skin header (num_used / max_weights / bones_used) is weights-related,
-        # NOT bone-position — keep it from the import if present, else it's
-        # computed from the fresh weights further down.
+        # NOT bone-position — replay it from the import ONLY when the bone COUNT
+        # still matches. If the user added/deleted a bone, the stored bones_used
+        # would reference indices that no longer exist (or omit a new bone), so
+        # fall through to the fresh weight-derived computation below.
+        raw_bm = obj.get('dff_bone_matrices')
         raw_bu = obj.get('dff_skin_bones_used')
-        if obj.get('dff_bone_matrices') and raw_bu:
-            skin.num_used = obj.get('dff_skin_num_used', 0)
-            skin.max_weights = obj.get('dff_skin_max_weights', 4)
+        if raw_bm and raw_bu:
             try:
-                skin.bones_used = (json.loads(raw_bu)
-                                   if isinstance(raw_bu, str) else list(raw_bu))
+                _stored_bones = (json.loads(raw_bm)
+                                 if isinstance(raw_bm, str) else raw_bm)
+                _stored_count = len(_stored_bones)
             except Exception:
-                pass
+                _stored_count = -1
+            if _stored_count == len(bones):
+                skin.num_used = obj.get('dff_skin_num_used', 0)
+                skin.max_weights = obj.get('dff_skin_max_weights', 4)
+                try:
+                    skin.bones_used = (json.loads(raw_bu)
+                                       if isinstance(raw_bu, str)
+                                       else list(raw_bu))
+                except Exception:
+                    pass
 
         # Vertex weights — build per-original-vertex first, then expand for splits
         bone_name_to_idx = {name: i for i, name in enumerate(bone_names)}
@@ -1429,6 +1502,25 @@ def _collect_2dfx(objects) -> Extension2dfx:
 
 # ── Hierarchy traversal ──────────────────────────────────────────
 
+def _is_col_primitive_empty(obj):
+    """True если empty — коллизионный примитив (ColSphere/ColBox), который надо
+    встраивать как COL, а НЕ выносить во FrameList.
+
+    Тонкость: и col-примитивы (col_import), и дамми фреймов машины/педа
+    (wheel_lf_dummy, chassis_dummy, … — dff_import) создаются как SPHERE/CUBE
+    empty. Отличаем по маркерам: дамми фрейма несут dff_frame_* (позиция/поворот/
+    флаги кадра), col-примитивы — нет. Если спутать, дамми колёс выпадут из
+    FrameList → движок читает мусорные позиции в GetWheelPosn и краш на спавне.
+    """
+    if getattr(obj, 'empty_display_type', '') not in ('SPHERE', 'CUBE'):
+        return False
+    # Дамми DFF-фрейма (в т.ч. wheel_*_dummy/chassis_dummy) — это КАДР, не COL.
+    if ('dff_frame_pos' in obj or 'dff_frame_rot' in obj
+            or 'dff_frame_flags' in obj):
+        return False
+    return True
+
+
 def _collect_frame_objects(objects):
     """Return list of (obj, parent_obj) in DFS order for DFF frame list.
 
@@ -1447,13 +1539,18 @@ def _collect_frame_objects(objects):
             # atomics (that would render the collision hull in-game and add a
             # stray frame). They still reach build_dff_clump via the objects
             # list, which picks them up for embedding.
-            if itype in ('COL', 'SHA'):
+            # is_collision_mesh, not the raw tag: an explicit `_DFF`/`_LOD`
+            # name marker outranks a stale COL tag, otherwise the mesh drops
+            # out here AND out of the geometry list → DFF with nothing to draw.
+            if is_collision_mesh(obj):
                 continue
             valid.append(obj)
         elif obj.type == 'EMPTY' and itype != '2DFX':
             # SPHERE/CUBE-display empties are collision sphere/box primitives
-            # (embedded as COL), not frames — skip them too.
-            if getattr(obj, 'empty_display_type', '') in ('SPHERE', 'CUBE'):
+            # (embedded as COL), not frames — skip them. НО дамми фреймов
+            # (wheel_*_dummy/chassis_dummy) тоже CUBE — их НЕ пропускаем (см.
+            # _is_col_primitive_empty), иначе колёса теряются → краш GetWheelPosn.
+            if _is_col_primitive_empty(obj):
                 continue
             valid.append(obj)
 
@@ -1756,12 +1853,9 @@ def _build_dff_clump_inner(objects, version: int, col_model_name: str) -> DffClu
     # through other models. build_col_model already turns sphere/cube empties
     # into ColSphere/ColBox via _collect_empty.
     col_objects = [obj for obj in objects
-                   if (obj.type == 'MESH'
-                       and getattr(getattr(obj, 'inu', None), 'type', '')
-                       in ('COL', 'SHA'))
+                   if is_collision_mesh(obj)
                    or (obj.type == 'EMPTY'
-                       and getattr(obj, 'empty_display_type', '')
-                       in ('SPHERE', 'CUBE'))]
+                       and _is_col_primitive_empty(obj))]
     if col_objects:
         from .col_export import export_col_bytes
         if version >= 0x36000:
@@ -1814,6 +1908,28 @@ def export_dff(filepath: str, objects, version: int = GTA_SA_VERSION,
     write_dff_file(filepath, clump)
 
 
+def draw_export_game_rows(layout, context):
+    """Ряды выбора игры/платформы БЕЗ своего бокса — рисует прямо в
+    переданный layout. Нужно, чтобы главный диалог мог положить их в
+    один бокс вместе с форматами экспорта."""
+    from .. import T
+    scn = context.scene
+    layout.label(text=T("Экспорт в игру:"))
+    # Слитый блок: два ГОРИЗОНТАЛЬНЫХ ряда кнопок вплотную (row внутри
+    # column(align) — иначе expand на enum раскрывает кнопки вертикально).
+    col = layout.column(align=True)
+    col.row(align=True).prop(scn.inu_settings, "gtatools_platform", expand=True)  # PC | Mobile
+    col.row(align=True).prop(scn.inu_settings, "gtatools_game", expand=True)      # SA | VC | III
+
+
+def draw_export_game_block(layout, context):
+    """Целевая игра/платформа экспорта в отдельном боксе (для диалогов,
+    где нет блока форматов). Пишет RW-версию (III 3.3 / VC 3.4 / SA 3.6)
+    и колонки IPL/IDE. По умолчанию = игра проекта (её ставит авто-детект
+    при импорте), здесь можно переопределить перед экспортом."""
+    draw_export_game_rows(layout.box(), context)
+
+
 def draw_dff_flags_block(layout, context):
     """Reusable Pipeline-buttons + DFF-flags-column block.
 
@@ -1828,7 +1944,6 @@ def draw_dff_flags_block(layout, context):
     from .. import T
     scn = context.scene
 
-    layout.separator()
     layout.label(text=T("Pipeline:"))
     row = layout.row(align=True)
     row.prop(scn.inu_settings, "gtatools_export_pipeline", expand=True)
@@ -1913,10 +2028,12 @@ class GTATOOLS_OT_export_dff(bpy.types.Operator, ExportHelper):
     filter_glob: StringProperty(default="*.dff", options={'HIDDEN'})
 
     def draw(self, context):
-        # File-browser sidebar: same Pipeline buttons + DFF flags
-        # column as the N-panel, so flags can be checked/tweaked at
-        # the moment of export without leaving the dialog.
-        draw_dff_flags_block(self.layout, context)
+        # File-browser sidebar: target game/platform at the very top, then
+        # the same Pipeline buttons + DFF flags column as the N-panel, so
+        # everything can be tweaked at the moment of export.
+        col = self.layout.column(align=True)   # вплотную, без зазоров браузера
+        draw_export_game_block(col, context)
+        draw_dff_flags_block(col, context)
 
     def execute(self, context):
         from ..tools.prelight import setup_prelight_preview
@@ -1994,7 +2111,9 @@ class GTATOOLS_OT_export_dff(bpy.types.Operator, ExportHelper):
             for obj in prelight_was_on:
                 try:
                     setup_prelight_preview(obj, enable=True)
-                except:
+                except Exception:
+                    # Cleanup runs inside the export's error handler — a
+                    # failure here must not mask the real error below.
                     pass
             self.report({'ERROR'}, f"DFF export error: {str(e)}")
             return {'CANCELLED'}

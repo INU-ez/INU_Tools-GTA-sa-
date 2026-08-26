@@ -1257,6 +1257,26 @@ class Floater:
         if not self.is_active_here(context):
             return 'PASS_THROUGH'
 
+        return self._handle_event_impl(context, event)
+
+    @staticmethod
+    def _cursor_over_panel_region(area, mx_abs, my_abs):
+        """True, если абсолютный курсор над перекрывающим вьюпорт регионом-
+        панелью (N-панель/тулбар/хедер), нарисованным ПОВЕРХ 3D-вида. Такой
+        клик принадлежит панели, а не флоатеру под ней."""
+        if area is None:
+            return False
+        _OVERLAP = {'UI', 'TOOLS', 'HEADER', 'TOOL_HEADER',
+                    'ASSET_SHELF', 'ASSET_SHELF_HEADER'}
+        for r in area.regions:
+            if (r.type in _OVERLAP and r.width > 1 and r.height > 1
+                    and r.x <= mx_abs < r.x + r.width
+                    and r.y <= my_abs < r.y + r.height):
+                return True
+        return False
+
+    def _handle_event_impl(self, context, event):
+
         st = self.state
         # Release drag — even when cursor left the viewport. Covers both
         # the header drag and any active slider drag.
@@ -1315,6 +1335,22 @@ class Floater:
         in_viewport = (area is not None and area.type == 'VIEW_3D'
                        and region is not None and region.type == 'WINDOW')
         if not in_viewport:
+            return 'PASS_THROUGH'
+
+        # N-панель / тулбар / хедер РИСУЮТСЯ ПОВЕРХ вьюпорта, но WINDOW-регион
+        # тянется под ними на всю ширину — поэтому клик визуально «по панели»
+        # попадает в bbox флоатера, стоящего под ней, и тот перехватывает
+        # событие. Если курсор над таким перекрывающим регионом — клик
+        # принадлежит панели: пропускаем событие (кроме случая, когда идёт
+        # перетаскивание/слайдер/правка — тогда floater должен доиграть жест,
+        # даже если курсор соскользнул на панель).
+        if (not st.drag_active and st.drag_slider is None
+                and st.edit_field is None
+                and self._cursor_over_panel_region(
+                    area, event.mouse_x, event.mouse_y)):
+            if self._clear_hover():
+                self._dirty = True
+                _tag_redraw_view3d(context)
             return 'PASS_THROUGH'
 
         # Use raw region coords when valid, otherwise reconstruct

@@ -11,7 +11,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "INU_tools"))
 
-from core.model_classify import classify_model  # noqa: E402
+from core.model_classify import classify_model, explicit_name_type  # noqa: E402
 from core.ipl import strip_lod_marker  # noqa: E402
 
 
@@ -76,6 +76,26 @@ def test_textured_untagged_is_dff():
 
 def test_untextured_untagged_is_col():
     assert classify_model("func_detail_47144", has_texture=False) == ('COL', 'func_detail_47144')
+
+
+# ── Explicit name marker outranks a stale inu.type tag ──
+# LODTerrain270 shipped as a geometry-less DFF: a `*_LOD` mesh carried a COL
+# tag, export diverted it into embedded collision and the model never drew.
+
+def test_lod_suffix_beats_col_tag():
+    assert classify_model("terrain270_LOD", has_texture=True,
+                          inu_type='COL') == ('LOD', 'terrain270')
+
+
+def test_dff_suffix_beats_col_tag():
+    assert classify_model("wall_DFF", has_texture=False,
+                          inu_type='COL') == ('DFF', 'wall')
+
+
+def test_explicit_name_type_reports_marker():
+    assert explicit_name_type("terrain270_LOD") == ('LOD', 'terrain270')
+    assert explicit_name_type("body_SHA") == ('COL', 'body')
+    assert explicit_name_type("LODTerrain270") == (None, 'LODTerrain270')
 
 
 # ── Explicit inu.type tag — checked BEFORE the LOD-name rule ──

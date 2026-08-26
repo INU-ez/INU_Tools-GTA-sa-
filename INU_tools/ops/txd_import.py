@@ -14,8 +14,15 @@ from ..core.txd import read_txd_file, read_txd
 # True — для отладки сопоставления текстур.
 _TXD_VERBOSE = False
 
+# R↔B своп текстур при импорте. Нужен как костыль под мост Ariane: он
+# пересобирает III-текстуры в свой .txd, перекодируя 888/8888→565/4444 и при
+# этом МЕНЯЯ местами R и B (кора синеет, трава бирюзеет). Наш декодер игровые
+# оригиналы читает верно, поэтому по умолчанию OFF; мост включает флаг на время
+# своего импорта (см. ariane_bridge). Обычный импорт НЕ трогаем.
+_SWAP_RB = False
 
-def _textures_to_blender_images(textures):
+
+def _textures_to_blender_images(textures, swap_rb=None):
     """Convert a list of TxdTexture objects into bpy.data.images.
 
     Reuses existing image datablocks by name — never creates ``name.001``
@@ -26,6 +33,22 @@ def _textures_to_blender_images(textures):
     new image — that's the root cause of the user's 6× duplicate
     ``vehiclelights128.001/.002/...`` accumulation across re-imports.
     """
+    # R↔B своп — АВТОМАТИЧЕСКИ, без галочек и без опоры на выбранный режим.
+    # Признак берётся из САМОЙ текстуры (platform_id + формат), решение —
+    # per-texture в цикле ниже. Кратко: своп нужен только палитровым (PAL8/
+    # PAL4) текстурам на D3D8 = GTA III (палитра BGRA). VC (D3D8, 16-бит, без
+    # палитры) и SA (D3D9) — верные. Надёжнее версии DFF и режима сцены.
+    # `swap_rb`/режим сцены — ЗАПАСНОЕ решение для неизвестной платформы.
+    if swap_rb is None:
+        swap_rb = _SWAP_RB
+        if not swap_rb:
+            try:
+                from ..core import game_versions
+                game = game_versions.game_of_scene(bpy.context.scene)
+                swap_rb = game in (game_versions.GAME_III, game_versions.GAME_VC)
+            except Exception:
+                swap_rb = False
+
     images = []
     for tex in textures:
         name = tex.name.rstrip('\x00')
@@ -64,6 +87,23 @@ def _textures_to_blender_images(textures):
 
         arr = np.frombuffer(tex.pixels, dtype=np.uint8).reshape(h, w, 4)
         flipped = arr[::-1].astype(np.float32) / 255.0
+        # Решение по свопу — по платформе И формату самой текстуры.
+        # Своп нужен ТОЛЬКО палитровым (PAL8/PAL4) текстурам на D3D8 (GTA III):
+        # их палитра хранится BGRA, а декодер читает как RGBA → каналы
+        # перепутаны. VC на D3D8 использует 16-битные (палитры НЕТ вообще) —
+        # они верные; SA на D3D9 — тоже. Проверено на реальных файлах:
+        # III models = 640 палитровых, VC models = 0 палитровых.
+        pid = getattr(tex, 'platform_id', 0)
+        paletted = bool(getattr(tex, 'raster_format', 0) & 0x6000)  # PAL8|PAL4
+        if pid == 8 and paletted:
+            tex_swap = True     # D3D8 палитра (GTA III) → своп
+        elif pid in (8, 9):
+            tex_swap = False    # D3D8 16-бит (VC) и D3D9 (SA) — каналы верные
+        else:                   # PS2 / Xbox / mobile / неизвестно
+            tex_swap = swap_rb
+        if tex_swap:
+            # Вернуть R↔B (фикс палитры D3D8-текстур GTA III).
+            flipped = flipped[..., [2, 1, 0, 3]]
         img.pixels.foreach_set(flipped.ravel())
         img.pack()
         img.use_fake_user = True  # keep around even when no shader uses it yet
@@ -105,7 +145,7 @@ def import_txd_bytes(data: bytes, assign_to_materials: bool = False,
 
 
 def import_txd(filepath: str, assign_to_materials: bool = True,
-               name_filter=None, material_scope=None):
+               name_filter=None, material_scope=None, swap_rb=None):
     """
     Import a TXD file into Blender.
 
@@ -151,7 +191,7 @@ def import_txd(filepath: str, assign_to_materials: bool = True,
             print(f"  • {nm!r:<32} {t.width:>4}x{t.height:<4} {fc_str}")
 
     t0 = time.perf_counter()
-    images = _textures_to_blender_images(textures)
+    images = _textures_to_blender_images(textures, swap_rb=swap_rb)
     t_upload = time.perf_counter() - t0
 
     print(f"[TXD IMPORT] uploaded {len(images)} images to bpy.data.images. "

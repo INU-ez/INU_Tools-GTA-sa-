@@ -69,7 +69,7 @@ def _create_mesh_from_col(model: ColModel, collection, obj_type: str,
     if obj_type == 'COL':
         vertices = model.vertices
         faces = model.faces
-        suffix = '_col'
+        suffix = '_COL'
     else:
         vertices = model.shadow_vertices
         faces = model.shadow_faces
@@ -198,6 +198,21 @@ def import_col(filepath: str, context=None, material_cache=None):
                                   material_cache=material_cache)
 
 
+def _get_or_make_collision_collection(parent):
+    """Return a «Collision» sub-collection under ``parent``, reusing an
+    existing one if present so repeated imports don't spawn Collision.001,
+    .002…. Falls back to ``parent`` itself if the link fails."""
+    for child in parent.children:
+        if child.name == "Collision" or child.name.startswith("Collision."):
+            return child
+    try:
+        col = bpy.data.collections.new("Collision")
+        parent.children.link(col)
+        return col
+    except Exception:
+        return parent
+
+
 def import_col_from_models(models, *, bulk_mode: bool = False,
                            target_collection=None,
                            skip_position_match: bool = False,
@@ -228,6 +243,12 @@ def import_col_from_models(models, *, bulk_mode: bool = False,
 
     imported_objects = []
     collection = target_collection if target_collection is not None else bpy.context.collection
+    # Single-model / vehicle import: drop the collision objects into a
+    # dedicated «Collision» sub-collection so they're grouped and can be
+    # hidden with one click instead of covering the model in the viewport.
+    # Map (bulk) import keeps its own collection structure untouched.
+    if not bulk_mode:
+        collection = _get_or_make_collision_collection(collection)
 
     for model in models:
         # Collision mesh

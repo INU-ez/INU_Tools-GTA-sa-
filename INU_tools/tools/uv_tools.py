@@ -305,6 +305,42 @@ def move_island_uv(island, uv_layer, offset_u, offset_v):
                 moved.add(uv_key)
 
 
+def scale_island_uv(island, uv_layer, scale, pivot_u, pivot_v):
+    """Равномерно масштабировать все UV острова на `scale` вокруг (pivot).
+    Каждый loop уникален внутри своей грани — дублей нет, дедуп не нужен."""
+    for face in island:
+        for loop in face.loops:
+            uv = loop[uv_layer].uv
+            uv.x = pivot_u + (uv.x - pivot_u) * scale
+            uv.y = pivot_v + (uv.y - pivot_v) * scale
+
+
+def _uv_face_area(face, uv_layer):
+    """Площадь грани в UV-пространстве (шнуровка по контуру)."""
+    loops = list(face.loops)
+    n = len(loops)
+    if n < 3:
+        return 0.0
+    area = 0.0
+    for i in range(n):
+        a = loops[i][uv_layer].uv
+        b = loops[(i + 1) % n][uv_layer].uv
+        area += a.x * b.y - b.x * a.y
+    return abs(area) * 0.5
+
+
+def _uv_axis_mode(scene):
+    """'rows' (по высоте) | 'cols' (по ширине) | None. Ровно одно из
+    Ряды/Колонки должно быть > 1 (не оба, не ни одного)."""
+    cols = scene.inu_settings.gtatools_uv_grid_cols
+    rows = scene.inu_settings.gtatools_uv_grid_rows
+    if rows > 1 and cols <= 1:
+        return 'rows'
+    if cols > 1 and rows <= 1:
+        return 'cols'
+    return None
+
+
 class GTATOOLS_OT_randomize_uv_grid(bpy.types.Operator):
     """Рандомно распределить UV выделенных полигонов по сетке (для окон, вариаций)"""
     bl_idname = "gtatools.randomize_uv_grid"
@@ -539,6 +575,116 @@ class GTATOOLS_OT_snap_uv_to_grid(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class GTATOOLS_OT_uv_fit_grid_scale(bpy.types.Operator):
+    """Вписать острова в масштаб сетки (вариант B): равномерно масштабировать
+    каждый остров так, чтобы его ВЫСОТА (при Рядах) или ШИРИНА (при Колонках)
+    в UV стала = Значение / Размер текстуры. Пропорции сохраняются, 3D-размер
+    не учитывается (чистая доля UV). Работает только по рядам ИЛИ колонкам."""
+    bl_idname = "gtatools.uv_fit_grid_scale"
+    bl_label = "INU: Fit UV to Grid Scale"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return (context.active_object and context.active_object.type == 'MESH'
+                and context.mode == 'EDIT_MESH')
+
+    def execute(self, context):
+        scene = context.scene
+        mode = _uv_axis_mode(scene)
+        if mode is None:
+            self.report({'ERROR'},
+                        T("Задай ТОЛЬКО ряды ИЛИ только колонки (не оба)"))
+            return {'CANCELLED'}
+        try:
+            tex = float(scene.inu_settings.gtatools_uv_texture_size)
+        except Exception:
+            tex = 512.0
+        value = scene.inu_settings.gtatools_uv_texel_value
+        if tex <= 0 or value <= 0:
+            self.report({'ERROR'}, T("Размер текстуры и значение должны быть > 0"))
+            return {'CANCELLED'}
+        target = value / tex            # целевая доля UV по выбранной оси
+
+        obj = context.active_object
+        bm = bmesh.from_edit_mesh(obj.data)
+        uv_layer = bm.loops.layers.uv.verify()
+        selected = [f for f in bm.faces if f.select]
+        if not selected:
+            self.report({'ERROR'}, T("Выделите полигоны!"))
+            return {'CANCELLED'}
+        islands = find_connected_face_groups(selected, uv_layer)
+        count = 0
+        for island in islands:
+            min_u, max_u, min_v, max_v = get_island_uv_bounds(island, uv_layer)
+            cur = (max_v - min_v) if mode == 'rows' else (max_u - min_u)
+            if cur < 1e-9:
+                continue
+            scale = target / cur
+            scale_island_uv(island, uv_layer, scale,
+                            (min_u + max_u) / 2, (min_v + max_v) / 2)
+            count += 1
+        bmesh.update_edit_mesh(obj.data)
+        self.report({'INFO'}, f"{T('Вписано островов:')} {count}")
+        return {'FINISHED'}
+
+
+class GTATOOLS_OT_uv_texel_density(bpy.types.Operator):
+    """Настоящий тексель: равномерно масштабировать каждый остров так, чтобы
+    плотность текселя стала = Значение px/юнит — по площади (UV↔3D), как в
+    TexTools. Учитывает реальный размер геометрии (детализация выравнивается).
+    Примечание: считает по локальной геометрии — применяй масштаб объекта."""
+    bl_idname = "gtatools.uv_texel_density"
+    bl_label = "INU: Set Texel Density"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return (context.active_object and context.active_object.type == 'MESH'
+                and context.mode == 'EDIT_MESH')
+
+    def execute(self, context):
+        import math
+        scene = context.scene
+        try:
+            tex = float(scene.inu_settings.gtatools_uv_texture_size)
+        except Exception:
+            tex = 512.0
+        value = scene.inu_settings.gtatools_uv_texel_value
+        if tex <= 0 or value <= 0:
+            self.report({'ERROR'}, T("Размер текстуры и значение должны быть > 0"))
+            return {'CANCELLED'}
+        obj = context.active_object
+        bm = bmesh.from_edit_mesh(obj.data)
+        uv_layer = bm.loops.layers.uv.verify()
+        selected = [f for f in bm.faces if f.select]
+        if not selected:
+            self.report({'ERROR'}, T("Выделите полигоны!"))
+            return {'CANCELLED'}
+        islands = find_connected_face_groups(selected, uv_layer)
+        count = 0
+        for island in islands:
+            uv_area = 0.0
+            geo_area = 0.0
+            for face in island:
+                geo_area += face.calc_area()
+                uv_area += _uv_face_area(face, uv_layer)
+            if uv_area < 1e-12 or geo_area < 1e-12:
+                continue
+            # Текущий тексель = tex * sqrt(uv_area / geo_area) (px/юнит).
+            cur_td = tex * math.sqrt(uv_area / geo_area)
+            if cur_td < 1e-9:
+                continue
+            scale = value / cur_td
+            min_u, max_u, min_v, max_v = get_island_uv_bounds(island, uv_layer)
+            scale_island_uv(island, uv_layer, scale,
+                            (min_u + max_u) / 2, (min_v + max_v) / 2)
+            count += 1
+        bmesh.update_edit_mesh(obj.data)
+        self.report({'INFO'}, f"{T('Тексель задан:')} {count} {T('островов')}")
+        return {'FINISHED'}
+
+
 class GTATOOLS_OT_set_uv_align(bpy.types.Operator):
     """Выбрать позицию привязки UV в ячейке"""
     bl_idname = "gtatools.set_uv_align"
@@ -606,6 +752,25 @@ class GTATOOLS_PT_uv_tools_panel(bpy.types.Panel):
         row = box.row(align=True)
         row.operator("gtatools.randomize_uv_grid", text=T("Рандом"), **inu_icon(safe_icon('MOD_UVPROJECT')))
         row.operator("gtatools.snap_uv_to_grid", text=T("Привязать"), **inu_icon(safe_icon('SNAP_GRID')))
+
+        # ── Масштаб островов: «В сетку» (доля UV) + «Тексель» (по площади) ──
+        sbox = layout.box()
+        sbox.label(text=T("Масштаб островов"), **inu_icon(safe_icon('FULLSCREEN_ENTER')))
+        srow = sbox.row(align=True)
+        srow.prop(scene.inu_settings, "gtatools_uv_texture_size", text=T("Текстура"))
+        srow.prop(scene.inu_settings, "gtatools_uv_texel_value", text=T("Значение"))
+        _mode = _uv_axis_mode(scene)
+        _mtext = (T("ось: высота (Ряды)") if _mode == 'rows'
+                  else T("ось: ширина (Колонки)") if _mode == 'cols'
+                  else T("задай только Ряды ИЛИ только Колонки"))
+        sbox.label(text=_mtext, **inu_icon(safe_icon('INFO')))
+        brow = sbox.row(align=True)
+        _fit = brow.row(align=True)
+        _fit.enabled = _mode is not None
+        _fit.operator("gtatools.uv_fit_grid_scale", text=T("В сетку"),
+                      **inu_icon(safe_icon('SNAP_GRID')))
+        brow.operator("gtatools.uv_texel_density", text=T("Тексель"),
+                      **inu_icon(safe_icon('TEXTURE')))
 
 
 # =============================================================================

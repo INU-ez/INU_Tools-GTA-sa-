@@ -857,7 +857,7 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
         # (Map_LAn / Map_LAs / Map_SF / …). Per-IPL collections are
         # created lazily as instances are bucketed in _work — empty
         # IPLs never produce empty collections.
-        group_by_ipl = bool(getattr(scene.inu_settings, 'gtatools_map_group_by_ipl', False))
+        group_by_ipl = bool(getattr(scene.inu_settings, 'gtatools_map_group_by_ipl', True))
 
         if group_by_ipl:
             dff_far = dff_mid = dff_near = lod_col = None
@@ -894,11 +894,11 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
         self._map_col_collection = map_col_collection
         self._imported = 0
         self._skipped = 0
-        # Skip-reason breakdown (LOD skips are expected and NOT counted
-        # here — these three explain «district didn't fully load»):
+        # Skip-reason breakdown:
         self._skip_noname = 0   # model_id has no name in the IDE
         self._skip_nocache = 0  # DFF not found in the loaded IMG/cache
         self._skip_error = 0    # DFF parse raised
+        self._skip_lodname = 0  # detected as LOD name + «Skip LOD» is on
         self._progress = 0
         self._total = len(instances)
         self._scene = scene
@@ -1015,7 +1015,7 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
         skip_2dfx = self._skip_2dfx
         scene = self._scene
         prof = self._profiler
-        load_col = bool(getattr(scene.inu_settings, 'gtatools_map_load_col', True))
+        load_col = bool(getattr(scene.inu_settings, 'gtatools_map_load_col', False))
         # LOD detection by name only. ``is_lod_name`` already handles
         # all 4 vanilla naming patterns (LODfoo / foo_LOD / foo1LOD /
         # modeLODlaett). The IPL ``lod_index`` cross-reference used to
@@ -1152,6 +1152,7 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
                     is_lod = is_lod_name(model_name)
                     if skip_lod and is_lod:
                         self._skipped += 1
+                        self._skip_lodname += 1
                         _need_yield = (idx % 32 == 0)
                     else:
                         _need_yield = True
@@ -1363,6 +1364,9 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
                     # Spell out the non-LOD skip reasons — these explain a
                     # district that «didn't fully load».
                     reasons = []
+                    if self._skip_lodname:
+                        reasons.append(
+                            f"{self._skip_lodname} {T('LOD — снимите «Skip LOD»')}")
                     if self._skip_noname:
                         reasons.append(f"{self._skip_noname} {T('без имени в IDE')}")
                     if self._skip_nocache:

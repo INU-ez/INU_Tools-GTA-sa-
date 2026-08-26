@@ -20,6 +20,43 @@ No Blender dependency — pure Python.
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List
+import math
+
+
+# ── GTA SA engine limits ────────────────────────────────────────────
+# The game renders water on a fixed grid of 500-unit blocks
+# (CWaterLevel: WATER_BLOCK_SIZE = 500, a 12x12 grid over the ±3000
+# world). Water is registered/looked-up per block, so a single quad
+# must fit inside one block: bigger than 500, or straddling a block
+# boundary, and the surface renders without a texture in-game.
+WATER_BLOCK_SIZE = 500.0
+WORLD_HALF = 3000.0          # water is only definable within ±3000
+GRID_STEP = 4.0              # side lengths must be multiples of 4
+
+
+def block_bounds(coord: float) -> tuple[float, float]:
+    """Return (min, max) world edges of the 500-block containing ``coord``."""
+    b = math.floor(coord / WATER_BLOCK_SIZE)
+    return b * WATER_BLOCK_SIZE, (b + 1) * WATER_BLOCK_SIZE
+
+
+def check_quad_fit(min_x, min_y, max_x, max_y, eps=0.01):
+    """Classify a water polygon's XY footprint against the 500-block grid.
+
+    Returns one of:
+      'ok'       — ≤500 on both sides AND inside a single block (renders).
+      'cross'    — ≤500 but straddles a block boundary (snap to fix).
+      'oversize' — wider than 500 on some side (must be split into a grid).
+    """
+    w = max_x - min_x
+    h = max_y - min_y
+    if w > WATER_BLOCK_SIZE + eps or h > WATER_BLOCK_SIZE + eps:
+        return 'oversize'
+    same_block_x = math.floor(min_x / WATER_BLOCK_SIZE) == math.floor((max_x - eps) / WATER_BLOCK_SIZE)
+    same_block_y = math.floor(min_y / WATER_BLOCK_SIZE) == math.floor((max_y - eps) / WATER_BLOCK_SIZE)
+    if same_block_x and same_block_y:
+        return 'ok'
+    return 'cross'
 
 
 @dataclass

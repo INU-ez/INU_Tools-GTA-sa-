@@ -263,6 +263,7 @@ class LayerSpec:
     """Плоское (bpy-free) описание слоя для композитора. Оператор
     извлекает его из INUBakeLayer (PropertyGroup) перед вызовом."""
     map_id: str
+    uid: str = ''                  # per-layer id → своя картинка (layer_image_key)
     enabled: bool = True
     blend_mode: str = 'NORMAL'
     opacity: float = 1.0
@@ -270,6 +271,12 @@ class LayerSpec:
     gamma: float = 1.0             # FUTURE (1.0 = identity)
     influence_target: str = ''     # FUTURE (masking by another map)
     influence_amount: float = 1.0
+    alpha_source: str = ''         # ALPHA-слой: '' / 'MATERIAL' | map_id-источник
+    alpha_invert: bool = False     # ALPHA-слой: инвертировать (тёмное = видно)
+    as_decal: bool = False         # любой слой → альфа по своей яркости (декаль)
+    decal_threshold: float = 0.5   # порог яркости (выше — прозрачно)
+    decal_softness: float = 0.25   # мягкость перехода у порога
+    decal_invert: bool = False     # декаль: показывать светлое вместо тёмного
 
 
 def linear_to_srgb(c):
@@ -316,25 +323,90 @@ def _resample_to(arr, w, h):
     return arr[yi][:, xi]
 
 
+ALPHA_MAP_ID = 'ALPHA'
+
+
+def layer_image_key(L):
+    """Ключ картинки слоя. Раньше все слои одной карты ключевались по map_id и
+    ДЕЛИЛИ одну картинку (второй Bevel затирал первый). Теперь у каждого слоя
+    свой uid → своя картинка `<base>_<uid>`. Старые слои (без uid) — по map_id,
+    как было (обратная совместимость)."""
+    return getattr(L, 'uid', '') or L.map_id
+
+
+def _is_alpha_provider(L):
+    """Слой задаёт альфа-канал результата: карта ALPHA (прозрачность материала)
+    ИЛИ любой слой с as_decal (яркость → прозрачность, напр. Shadow)."""
+    return L.map_id == ALPHA_MAP_ID or getattr(L, 'as_decal', False)
+
+
+def _layer_alpha_array(L, layer_pixels, fallback, w, h):
+    """Посчитать альфа-канал (h,w) float для слоя-провайдера L.
+
+    Источник яркости:
+      * as_decal → сама карта слоя (L.map_id);
+      * ALPHA    → alpha_source (др. карта) или прозрачность материала (Non-Color).
+    Для as_decal применяем порог/мягкость (levels) и инверсию направления
+    (по умолчанию видно ТЁМНОЕ). Возвращает значения в [0,1] (без ×opacity)."""
+    decal = getattr(L, 'as_decal', False)
+    # decal → своя картинка слоя (per-layer key); alpha_source ссылается на
+    # ДРУГУЮ карту по map_id — она в layer_pixels продублирована под map_id.
+    src_id = layer_image_key(L) if decal else (getattr(L, 'alpha_source', '') or 'MATERIAL')
+    if src_id != 'MATERIAL' and src_id in layer_pixels:
+        px = _resample_to(layer_pixels[src_id], w, h)
+        a = (0.2126 * px[..., 0] + 0.7152 * px[..., 1]
+             + 0.0722 * px[..., 2]).astype(np.float32)          # яркость
+    elif ALPHA_MAP_ID in layer_pixels:
+        a = _resample_to(layer_pixels[ALPHA_MAP_ID], w, h)[..., 0].astype(np.float32)
+    else:
+        return np.clip(fallback, 0.0, 1.0).astype(np.float32)
+    if decal:
+        thr = float(getattr(L, 'decal_threshold', 0.5))
+        soft = float(getattr(L, 'decal_softness', 0.25))
+        lo, hi = thr - soft, thr + soft
+        if hi > lo:
+            a = np.clip((a - lo) / (hi - lo), 0.0, 1.0)          # levels
+        else:
+            a = (a >= thr).astype(np.float32)                    # резкая граница
+        # Декаль: по умолчанию видно ТЁМНОЕ → инверсия яркости.
+        if not getattr(L, 'decal_invert', False):
+            a = 1.0 - a
+    else:
+        if getattr(L, 'alpha_invert', False):
+            a = 1.0 - a
+    return np.clip(a, 0.0, 1.0)
+
+
 def composite_layers(layer_pixels, layers, w, h, *, srgb=True):
     """Сложить включённые слои снизу вверх в одну текстуру.
 
     layer_pixels : dict {map_id: (h,w,4) float32} — запечённые карты
                    (scene-linear).
-    layers       : упорядоченный list[LayerSpec]; index 0 = низ = база.
+    layers       : упорядоченный list[LayerSpec]; index 0 = ВЕРХ (как в UI).
     w, h         : целевое разрешение.
     srgb         : кодировать ли RGB результата в sRGB (для записи в
                    8-bit текстуру GTA SA — да; для отладки blend-математики
                    удобно False).
 
-    Возвращает (h,w,4) float32. Alpha = alpha базового слоя (cutout SA).
-    Выключенные слои и слои без запечённых пикселей пропускаются —
-    отсюда «скомбинировать любой поднабор».
+    Возвращает (h,w,4) float32.
+
+    Слои карты ALPHA в RGB-стек НЕ идут — они задают альфа-канал результата
+    (верхний ALPHA-слой × его opacity). Так любую карту (тень, диффуз, …)
+    можно сделать прозрачным декалем. Если ALPHA-слоя нет — альфа берётся из
+    базового слоя без изменений (как раньше: cutout/листва SA).
+
+    Выключенные слои и слои без запечённых пикселей пропускаются — отсюда
+    «скомбинировать любой поднабор».
     """
-    enabled = [L for L in layers if L.enabled and L.map_id in layer_pixels]
-    # Список сверху вниз (как в фотошопе): база = НИЖНИЙ слой → разворот.
-    enabled = list(reversed(enabled))
-    if not enabled:
+    # UI-порядок (сверху вниз): index 0 = верх.
+    present = [L for L in layers if L.enabled and layer_image_key(L) in layer_pixels]
+    # Провайдер альфы — верхний включённый слой ALPHA или as_decal (не требуя
+    # <base>_ALPHA: источником может быть другая карта, напр. Shadow).
+    alpha_layer = next((L for L in layers
+                        if L.enabled and _is_alpha_provider(L)), None)
+    # RGB-стек без ALPHA и без as_decal-слоёв; база = НИЖНИЙ слой → разворот.
+    enabled = list(reversed([L for L in present if not _is_alpha_provider(L)]))
+    if not enabled and alpha_layer is None:
         return np.zeros((h, w, 4), dtype=np.float32)
 
     def _desat(rgb):
@@ -344,32 +416,46 @@ def composite_layers(layer_pixels, layers, w, h, *, srgb=True):
                + 0.0722 * rgb[..., 2])
         return np.repeat(lum[..., None], 3, axis=-1)
 
-    # Композитим в ЛИНЕЙНОМ пространстве (как нодовый превью): картинки —
-    # sRGB-байт, переводим srgb→linear на входе, linear→srgb на выходе.
-    # Так контраст/гамма и блендинг совпадают с живым превью и с игрой.
-    base = _resample_to(layer_pixels[enabled[0].map_id], w, h)
-    acc = srgb_to_linear(base[..., :3].astype(np.float32))
-    if getattr(enabled[0], 'desaturate', False):
-        acc = _desat(acc)
-    acc = apply_contrast_gamma(acc, enabled[0].contrast, enabled[0].gamma)
-    base_alpha = base[..., 3].astype(np.float32)
+    if enabled:
+        # Композитим в ЛИНЕЙНОМ пространстве (как нодовый превью): картинки —
+        # sRGB-байт, переводим srgb→linear на входе, linear→srgb на выходе.
+        # Так контраст/гамма и блендинг совпадают с живым превью и с игрой.
+        base = _resample_to(layer_pixels[layer_image_key(enabled[0])], w, h)
+        acc = srgb_to_linear(base[..., :3].astype(np.float32))
+        if getattr(enabled[0], 'desaturate', False):
+            acc = _desat(acc)
+        acc = apply_contrast_gamma(acc, enabled[0].contrast, enabled[0].gamma)
+        base_alpha = base[..., 3].astype(np.float32)
 
-    for L in enabled[1:]:
-        top = srgb_to_linear(
-            _resample_to(layer_pixels[L.map_id], w, h)[..., :3].astype(np.float32))
-        if getattr(L, 'desaturate', False):
-            top = _desat(top)
-        top = apply_contrast_gamma(top, L.contrast, L.gamma)
-        blended = _BLEND.get(L.blend_mode, _BLEND['NORMAL'])(acc, top)
-        # FUTURE: mask = mask_lookup[L.influence_target]; сейчас 1.0
-        fac = float(L.opacity) * float(L.influence_amount) * 1.0
-        acc = acc * (1.0 - fac) + blended * fac
+        for L in enabled[1:]:
+            top = srgb_to_linear(
+                _resample_to(layer_pixels[layer_image_key(L)], w, h)[..., :3].astype(np.float32))
+            if getattr(L, 'desaturate', False):
+                top = _desat(top)
+            top = apply_contrast_gamma(top, L.contrast, L.gamma)
+            blended = _BLEND.get(L.blend_mode, _BLEND['NORMAL'])(acc, top)
+            # FUTURE: mask = mask_lookup[L.influence_target]; сейчас 1.0
+            fac = float(L.opacity) * float(L.influence_amount) * 1.0
+            acc = acc * (1.0 - fac) + blended * fac
 
-    acc = np.clip(acc, 0.0, 1.0)
-    if srgb:
-        acc = linear_to_srgb(acc)
+        acc = np.clip(acc, 0.0, 1.0)
+        if srgb:
+            acc = linear_to_srgb(acc)
+    else:
+        # Только ALPHA-карта (например тень-декаль без базовой текстуры):
+        # RGB чёрный, значимая только прозрачность.
+        acc = np.zeros((h, w, 3), dtype=np.float32)
+        base_alpha = np.ones((h, w), dtype=np.float32)
+
+    # Альфа-канал результата.
+    if alpha_layer is not None:
+        a = _layer_alpha_array(alpha_layer, layer_pixels, base_alpha, w, h)
+        a = a * float(alpha_layer.opacity) * float(alpha_layer.influence_amount)
+        out_alpha = np.clip(a, 0.0, 1.0)
+    else:
+        out_alpha = np.clip(base_alpha, 0.0, 1.0)
 
     out = np.empty((h, w, 4), dtype=np.float32)
     out[..., :3] = acc
-    out[..., 3] = np.clip(base_alpha, 0.0, 1.0)
+    out[..., 3] = out_alpha
     return out

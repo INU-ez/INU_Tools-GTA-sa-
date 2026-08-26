@@ -77,9 +77,11 @@ RW_VERSION = 0x1803FFFF
 _active_lib_id = RW_VERSION   # mutated transiently by export_txd
 PLATFORM_D3D9 = 9
 RASTER_565 = 0x0200
+RASTER_4444 = 0x0300
 RASTER_8888 = 0x0500
 RASTER_MIPMAP = 0x8000
-FILTER_LINEAR = 0x02
+FILTER_LINEAR = 0x02             # билинейно, БЕЗ мипов (рябь вдали)
+FILTER_LINEARMIPLINEAR = 0x06    # трилинейно: мипы + плавный переход (гладко)
 ADDRESS_WRAP = 0x01
 
 
@@ -95,8 +97,12 @@ def _resolve_lib_id_for_scene(scene) -> int:
         return RW_VERSION
 
 
-def make_filter_flags():
-    return FILTER_LINEAR | (ADDRESS_WRAP << 8) | (ADDRESS_WRAP << 12)
+def make_filter_flags(mip_count=1):
+    """Флаги фильтра+адресации текстуры. При наличии мип-цепочки (mip_count>1)
+    ставим LINEARMIPLINEAR (трилинейный) — иначе движок мипы игнорирует и вдали
+    идёт рябь. Один мип → обычный LINEAR."""
+    flt = FILTER_LINEARMIPLINEAR if mip_count > 1 else FILTER_LINEAR
+    return flt | (ADDRESS_WRAP << 8) | (ADDRESS_WRAP << 12)
 
 
 def write_rw_section_header(data, section_type, size):
@@ -159,7 +165,9 @@ def check_image_has_transparent_pixels(image):
             return False
         alpha = pixels[3::4]
         return np.any(alpha < 0.99)
-    except:
+    except (RuntimeError, ValueError, MemoryError):
+        # RuntimeError: image has no loaded pixel buffer (missing file,
+        # generated-but-unevaluated). MemoryError: huge texture.
         return False
 
 
@@ -527,8 +535,17 @@ def _build_tex_native_from_pixels(texture_data, cmp_dxt1, cmp_dxt3):
         mip_index += 1
 
     if use_alpha:
-        raster_format = RASTER_8888 | RASTER_MIPMAP
-        depth = 32
+        # DXT3 must be flagged 4444/16-bit, NOT 8888/32-bit. 8888+depth32
+        # is the signature of an UNCOMPRESSED A8R8G8B8 raster, so pairing
+        # it with a DXT3 fourcc gives a self-contradicting header: the
+        # raster format says "uncompressed 32-bit", d3dFormat says "DXT3".
+        # RW chokes on it and the texture silently never arrives in game
+        # (the model draws that material's bare colour — reads as white).
+        # Verified against 1257 stock SA TXDs: all 356 DXT3 textures are
+        # 0x0300 / depth 16, and 0x0500 / depth 32 is used only by the
+        # uncompressed A8R8G8B8 rasters (fourcc D3DFMT_A8R8G8B8, flag 0x01).
+        raster_format = RASTER_4444 | RASTER_MIPMAP
+        depth = 16
         fourcc = b'DXT3'
     else:
         raster_format = RASTER_565 | RASTER_MIPMAP
@@ -539,7 +556,8 @@ def _build_tex_native_from_pixels(texture_data, cmp_dxt1, cmp_dxt3):
     mip_count = len(mip_levels)
 
     struct_data = bytearray()
-    struct_data.extend(struct.pack('<II', PLATFORM_D3D9, make_filter_flags()))
+    struct_data.extend(struct.pack('<II', PLATFORM_D3D9,
+                                   make_filter_flags(mip_count)))
     struct_data.extend(tex_name)
     struct_data.extend(b'\x00' * 32)
     struct_data.extend(struct.pack('<I', raster_format))

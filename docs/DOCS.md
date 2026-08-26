@@ -8,14 +8,13 @@
 
 - [Installation](#installation)
 - [Quick Start](#quick-start)
-  - [Floating windows](#floating-windows)
+  - [Floating window (Validation)](#floating-window-validation)
 - [Multi-game support (III / VC / SA)](#multi-game-support-iii--vc--sa)
 - [Export / Import](#export--import)
   - [DFF (Models)](#dff-models)
   - [COL (Collision)](#col-collision)
   - [TXD (Textures)](#txd-textures)
   - [Export All (Batch)](#export-all-batch)
-  - [Collection Export](#collection-export)
 - [IDE / IPL / IMG](#ide--ipl--img)
   - [Import Map Workflow](#import-map-workflow)
   - [IDE (Definitions)](#ide-definitions)
@@ -31,6 +30,7 @@
   - [GTA Material](#gta-material)
   - [COL Surface Types](#col-surface-types)
   - [Textures](#textures)
+  - [Alpha Materials](#alpha-materials)
 - [Prelight (Vertex Colors)](#prelight-vertex-colors)
   - [Baking](#baking)
   - [Scatter Color](#scatter-color)
@@ -49,13 +49,18 @@
 - [Texture Baking](#texture-baking-210)
 - [Characters (Skinned DFF)](#characters-skinned-dff)
 - [Animated Map Objects](#animated-map-objects)
+- [Cutscene Cameras (.dat)](#cutscene-cameras-dat)
+- [Handsign (ghands.ifp)](#handsign-ghandsifp)
+- [Fragment Mesh](#fragment-mesh)
 - [Water IO](#water-io)
+- [Map zones (map.zon)](#map-zones-mapzon)
 - [Path IO](#path-io)
 - [Vehicles](#vehicles)
 - [Grass](#grass)
 - [X Radar Maker](#x-radar-maker)
 - [LightMap (beta_MTA)](#lightmap-beta_mta)
 - [Integrations](#integrations)
+  - [Ariane Bridge](#ariane-bridge)
 - [Asset Library](#asset-library)
 - [Advanced](#advanced)
   - [Map Export](#map-export)
@@ -120,19 +125,17 @@
 | `Shift+T` | Toggle UV Editor |
 | `Shift+A` | Add GTA SA model (Army.dff / Admiral.dff) |
 
-### Floating windows
+### Floating window (Validation)
 
-Five free-floating GPU-rendered windows give one-click access to the most-used operations without scrolling the N-sidebar:
+A free-floating GPU-rendered window gives one-click access to the pre-export sweep without scrolling the N-sidebar:
 
 | Window | What it holds | Toggle |
 |---|---|---|
-| **Info** | Active object readout (vert/face/material counts, format-limit warnings), IDE flag checkboxes, DFF/LOD/COL triplet jumps | Click 🪟 in any N-panel's `Object IDE / IPL` header |
-| **Import / Export** | Selection diagnostic, Import / Export menus, Auto TXD + DXT backend, Pipeline picker (Vehicle/D/N/Building/Ped), DFF Flags collapsible | Click 🪟 in **Export** panel header |
-| **Validation** | Pre-export sweep results (quaternions, paintjob, UV-anim × night vcols, _ok/_dam pairs) with one-click fixes | Click 🪟 in **Check** panel header |
-| **Lighting** | Prelight preset picker, 8-lamps toggle, Day/Night vcol controls, bake, copy, LightMap row | Click 🪟 in **Prelight** panel header |
-| **IDE / IPL / IMG** | Fused 2×2 Add/Del/Import/Export per format, IPL Sections row, Replace Empty, IMG header with toggles | Click 🪟 in **IDE / IPL / IMG** panel header |
+| **Validation** | Pre-export sweep results (quaternions, paintjob, UV-anim × night vcols, _ok/_dam pairs) with one-click fixes | Click 🪟 in the **Check** panel header |
 
-Each floater is **draggable** (any non-button area), **collapsible** to the title bar, **dockable per-workspace** (Lock icon — appears only in pinned workspace), and uses your current Blender theme palette. Position survives `.blend` save/load.
+The floater is **draggable** (any non-button area), **collapsible** to the title bar, **dockable per-workspace** (Lock icon — appears only in pinned workspace), and uses your current Blender theme palette. Position survives `.blend` save/load.
+
+> The other floaters (Info, Import/Export, Lighting, IDE/IPL/IMG) had their launch buttons removed — only Validation remains. The underlying floater code still exists, but those windows are no longer exposed in the UI.
 
 ---
 
@@ -169,6 +172,10 @@ The active game is picked from the top of the **GTA Tools** N-sidebar — three 
 - **Fresh scene (game=SA + 0 INU-tagged objects):** scene auto-flips to detected.
 - **Populated scene:** WARNING shown — `Импортированный файл = VC, но активная игра сцены = SA. Переключи вкладку GTA Tools на «VC»`. Tab switch is manual to avoid surprise flips in mixed-game projects.
 
+**On export:** every export dialog opens with an **"Export to game:"** block at the very top — a PC/Mobile row over a SA/VC/III row — that sets the output's RW version (III 3.3 / VC 3.4 / SA 3.6) and IPL/IDE column layout. It defaults to the project game (set by auto-detect on import); override it right before exporting.
+
+**GTA III textures (auto R↔B):** III uses palettized (PAL8) textures whose palette is stored BGRA. The importer auto-swaps R↔B **only** for D3D8 palettized textures, so III colours import correctly (bark stays brown, not blue). VC (16-bit) and SA are left untouched — no manual toggle, keyed off each texture's own `platform_id`.
+
 ### Cross-game translation (lossy)
 
 When you import a III file and export it as SA (or vice versa), the writer routes data through canonical-category tables so the bytes match the target engine's expectations.
@@ -199,6 +206,8 @@ When the scene targets III/VC but objects still carry SA-only features, **Про
 ## Export / Import
 
 **Panel:** View3D → Sidebar (N) → GTA Tools → Export / Import
+
+> The 🌐 planet icon in the panel header opens [Ariane support (INU Tools + DragonFF)](https://github.com/INU-ez/ariane-support-INU-Tools-and-DragonFF-) — a map editor for round-trips with the addon (temporary fork until Ariane's public release).
 
 ### DFF (Models)
 
@@ -296,12 +305,6 @@ Select your model + its LOD + collision (types are auto-detected — `LOD` in th
 **Pipeline:** None / Building (Day/Night vertex colors) / Reflections (window reflections).
 
 > 💡 **Example — export a building with LOD and collision:** you have three meshes `hospital_DFF`, `hospital_LOD`, `hospital_COL`. Select all three → **To Folder** → you get 4 files at once: `hospital.dff` + `hospitalLOD.dff` + `hospital.col` + `hospital.txd`. Ready to drop into the game.
-
-### Collection Export
-
-If **no objects are selected**, Export All takes all mesh objects from the **active collection** (including child collections). This allows exporting an entire collection without selecting everything.
-
-> 💡 **Example:** `MyCity/Buildings` collection holds 20 buildings (40 meshes — HD + LOD). Deselect everything → activate the collection → **To Folder** → 40 dff + 20 txd + ... all appear on disk at once.
 
 ### File Menu
 
@@ -419,6 +422,25 @@ Conditional options appear when their format is on: a **COL Library** package to
 **Panel:** View3D → Sidebar (N) → GTA Tools → IDE / IPL / IMG
 **Settings:** Properties → Scene → INU Tools → Import Map
 
+### Import / Export / Map — three tabs
+
+The top of the IDE / IPL / IMG panel has three toggle buttons, **Импорт** (Import) | **Экспорт** (Export) | **Карта** (Map), like the Ariane tab. These used to be separate collapsible sub-panels. The active tab's button is depressed; everything below belongs to it. The **Карта** (Map) tab holds the full map import/export workflow (Game Root, region, resource extraction, Import Map / Export Map, BBox) — it moved here from *Properties → Scene → INU Tools*.
+
+**Import tab** — pulls models from the game into the scene:
+- **Папка с IDE** (IDE folder) — the game root, or any folder holding `.ide` files (the narrower, the faster the scan).
+- **IPL** — multi-select: the 📁 button accepts Ctrl/Shift, and picked files accumulate in the collapsible **IPL для импорта** (IPL to import) list. Import merges all selected IPLs (with a `lod_index` offset).
+- **IMG** — path to the primary archive + **LOD / TXD / COL** toggles. These are **ON = load** (the old "Skip"/"Без" prefixes are gone — LOD on pulls LOD models, TXD on pulls textures, COL on pulls collisions).
+- **Найти IDE** (Find IDE) — scans the game folder for the `.ide` files that declare the selected IPLs' models (**IDE с моделями из IPL** list).
+- **Найти IMG** (Find IMG) — scans the game folder recursively for every `.img` that actually contains the IPL's model DFFs (**IMG с моделями из IPL** list). Import then pulls models from the primary IMG **plus** all found custom archives (e.g. `maps/RESOURCES`). Needed when a custom map's models are split across several `.img`.
+- **Импорт** (Import) — the big button. IMG import is **modal**: an **«Импорт из IMG: X/Y»** counter shows at the bottom, Blender doesn't freeze, and **ESC** cancels. On import it fills: TXD name, LOD partner (`inu.lod_object` from the IPL `lod_index`), distances (LOD → LOD Dist, main model → Draw Dist), and the IDE link (status «В IDE (file)», just like IPL).
+- **Обновить из IDE/IPL** (Refresh from IDE/IPL) — pulls fresh data (distances / TXD / flags / coordinates) from the files **into the scene** (file→scene direction). Handy after editing the files by hand.
+
+**Export tab** — writing and syncing back to files. At the top sits the **Выделенная модель** (Selected model) status box:
+- **Выделенная модель** (Selected model) — a per-file status board for the active model. It shows the model name plus one status row each for **IDE**, **IPL** and **IMG** — «В IDE (file)» / «Не в IDE» / «параметры разошлись», «В IPL (file)» / «координаты разошлись» / «копия», «В IMG (file)» / «Не в IMG». Each row carries its own action buttons: **Add** / **Export** (write this model to its own file), a **🗑** to remove it from that file, and a **🔄** icon (in the IPL row, **🔄 = restore coordinates from IPL**; in the IMG row, verify which archive holds the DFF). At the model name: **Check** (read-only present/missing/no-ID) and **🗑 Убрать из IDE+IPL** (remove from *both* IDE and IPL and clear link tracking — distinct from a single-file **🗑**).
+- Collapsible **IPL для экспорта** and **IDE для экспорта** boxes (collapsed by default) — the *same* shared lists populated on the Import tab («Найти IDE/IMG», multi-select IPL) — a round-trip. Each header carries icon-only buttons: **🔄 Refresh-from-files** · **＋ Add** · **📁 Folder** · **🗑 Clear**.
+- The **📄 (open in text editor)** button next to the IPL/IDE paths and in the found lists opens the file in the OS external editor.
+- Below: **Дополнительно (IPL)** (Additional — cull/paths/garages sections + «Заменить Empty») and the **IMG** box (Export to IMG / Remove from IMG / Rebuild IMG).
+
 ### Adding models to the game — full pipeline
 
 The end-to-end flow for putting one or more models (with or without LOD) into GTA SA. Example: four models, each with a main model, collision, textures and a LOD:
@@ -429,7 +451,6 @@ base1  →  base1.dff  base1.col  base1.txd  LODbase1.dff
 base2  →  base2.dff  base2.col  base2.txd  LODbase2.dff
 base3  →  base3.dff  base3.col  base3.txd  LODbase3.dff
 ```
-*(A LOD normally reuses the main model's TXD — no separate `LODbase.txd` is needed, it shares `base.txd`.)*
 
 **What each piece is:** **DFF** = the model itself · **COL** = collision · **TXD** = texture container · **LOD** = the low-detail model shown at distance · **IMG** = the game's big archive of .dff/.txd/.col · **IDE** = the model's "passport" (ID, name, TXD, draw distance, flags) · **IPL** = placement in the world (coordinates, rotation, and the main↔LOD link).
 
@@ -527,8 +548,9 @@ IDE files define model properties: ID, texture dictionary, draw distance, flags.
 |--------|----------|-------------|
 | Add | `gtatools.upsert_ide` | Insert/update entry in IDE file (auto-LOD) |
 | Remove | `gtatools.remove_ide` | Remove entry by Model ID |
-| Import | `gtatools.import_ide` | Load definitions → apply to matching objects |
-| Export | `gtatools.export_ide` | Write selected objects as IDE file |
+| Export | `gtatools.export_ide` | Write selected objects to a new IDE file |
+
+> **Add / Del / Export** live on the **Export** tab. There is no standalone "Import" button anymore: geometry comes from **Import from IMG** (Import tab), and **Обновить из IDE/IPL** pulls the definitions into the scene.
 
 **All sections supported:** objs, tobj, anim, cars, peds, weap, hier, txdp.
 
@@ -567,8 +589,9 @@ IPL files define object positions, rotations, and LOD links on the map.
 |--------|----------|-------------|
 | Add | `gtatools.upsert_ipl` | Insert/update placement (auto-LOD linking) |
 | Remove | `gtatools.remove_ipl` | Remove by Model ID. When an entry is deleted from the middle of the file, all LOD indices of remaining objects are automatically recalculated — otherwise the game would reference wrong lines and may crash |
-| Import | `gtatools.import_ipl` | Place objects or create Empties at positions |
 | Export | `gtatools.export_ipl` | Write selected objects with world transforms |
+
+> The IPL box no longer has a standalone Import button — placement is done by **Import from IMG** (Import tab), and stubs are resolved by «Заменить Empty» under **Дополнительно (IPL)**.
 
 **Quaternion conversion:** GTA SA stores (X,Y,Z,W) conjugated, Blender uses (W,X,Y,Z). Conversion is automatic.
 
@@ -602,20 +625,20 @@ All IPL sections are supported for import/export as Blender objects:
 
 | Button | Operator | Description |
 |--------|----------|-------------|
-| Import from IMG | `gtatools.import_from_img` | Extract and import models by IDE/IPL listing |
 | Export to IMG | `gtatools.export_to_img` | Pack DFF+COL+LOD+TXD directly into .img archive |
 
-**Export toggles (unified with «To folder»):** DFF / COL / LOD / TXD — choose what to pack. Both the Unified Export panel (N-sidebar) and the IDE/IPL/IMG panel write to the same scene properties, so the toggles you see always apply to the operator you click.
+> **Import from IMG** (`gtatools.import_from_img`) and the **LOD / TXD / COL** toggles (ON = load) moved to the **Import** tab (now modal, with an «Импорт из IMG: X/Y» counter, ESC to cancel). The Export tab's IMG box keeps only writing and archive service: **Export to IMG**, **Remove from IMG**, **Rebuild IMG**.
 
-**Import options:** Skip LOD / Load TXD / Load COL.
-
-**COL Library mode** (shown when **COL** is on) — toggle + name field. All collisions get bundled into one multi-entry `.col` file (e.g. `collision.col`) instead of one `.col` per model. Each entry keeps its own `model_id`; the game matches COL to DFF by ID. Mirrors how vanilla ships `LAs.col` / `LAn.col` etc.
-
-**Shared TXD mode** (shown when **TXD** is on) — toggle + name field, same pattern as COL Library. Packs **all** textures of every exported DFF/LOD into one shared `.txd` (default name `textures.txd`). Handy for districts and bundles where many models reuse the same textures — cuts the TXD count and keeps the IMG tidier.
+**Export to IMG dialog — per-model hierarchy.** The dialog is a tree with one box per selected model:
+- **DFF** — a checkbox (include this model) plus its **TXD name** field (hidden when **Общий TXD** / Shared TXD is on).
+- Indented under it, a **LOD** checkbox and a **COL** checkbox. If the model has no LOD in the scene, the row reads **«LOD: основная модель (заглушка)»** — the main model is written as the LOD (stub). If it has no COL, the row reads **«COL: пустая заглушка»** — an empty bounding-box COL is created so the game still finds collision by ID.
+- At the top of the dialog: an **IMG архив** (IMG archive) dropdown — defaults to the model's own IMG (the archive it was imported from), or any `.img` in the game folder.
+- **Общий TXD** (Shared TXD) toggle + name field — packs all textures of every exported model into one shared `.txd` (default `textures.txd`) instead of one `.txd` per model.
+- **Пересобрать после экспорта** (Rebuild after export) checkbox — compacts the IMG right after writing, reclaiming the dead space left by replaced entries.
 
 **Batch writer + parallel encode (big exports):** `Export to IMG` opens the archive once, appends every new payload sequentially, and rewrites the directory exactly once at the end — not per-file. Plus DFF and COL serialisation (`to_bytes()` / `write_col()`) runs in a 4-worker `ThreadPoolExecutor` (numpy/zlib release the GIL). For a full-district export this replaces ~3000 directory rewrites (~2.6 GB of redundant writes) with one, plus ~4× speedup on the CPU-bound encode — typically **5–15× end-to-end**.
 
-> 💡 **Example — batch upload to gta3.img:** you have 50 buildings ready to export. Set `gta3.img` path in Import Map settings → select the buildings → **Export to IMG** → a UIList dialog opens showing all model + TXD names (editable). Optionally toggle Shared TXD if they share textures. Click OK — all DFF+COL+LOD+TXD get encoded in parallel and written to the archive. After that make sure to **Rebuild Archive** in your IMG tool (otherwise the game keeps the old versions).
+> 💡 **Example — batch upload to gta3.img:** you have 50 buildings ready to export. Select the buildings → **Export to IMG** → the per-model dialog opens, each model as a box (DFF + its TXD name, plus indented LOD/COL checkboxes; models with no LOD/COL show a "stub" note). Pick the **IMG архив** (defaults to each model's own IMG), optionally toggle **Общий TXD** if they share textures, and tick **Пересобрать после экспорта** to compact in one go. Click OK — all DFF+COL+LOD+TXD get encoded in parallel and written to the archive.
 
 ### Preset / data folder
 
@@ -720,7 +743,7 @@ When importing maps, INU Tools decides which models are LODs in two layers:
 
 ### Multi-IPL Sync (2.1.0)
 
-**Panel:** View3D → Sidebar (N) → GTA Tools → IDE / IPL / IMG → **Sync несколько IPL** *(In English UI: «Sync multiple IPL» — collapsible section just below the IDE+IPL boxes)*
+**Panel:** the **Import** tab (**IPL для импорта** list, multi-select) and the **Export** tab (**IPL для экспорта** list) — the lists are shared. The reconcile button is now **Обновить из IDE/IPL** (`gtatools.link_sync`) on the Import tab, replacing the former «Sync».
 
 A district is rarely one `.ipl`. Vanilla SA splits each region across several files (`LAn.ipl`, `LAs.ipl`, `LAe.ipl`, streamed chunks…), and the single **IPL File** picker in the box above only reconciles one of them per click. The Multi-IPL Sync list lets you register every `.ipl` that makes up a map and reconcile your whole scene against all of them in **one** pass.
 
@@ -839,6 +862,24 @@ Say you're building a car with body, glass and chrome-trim materials.
 
 > 💡 **Example — auto-assign textures by name:** unzipped 100 PNG textures into `F:/gta_textures/`. Scene has 100 materials named like `brick01`, `brick02`, `roof_tile` (no textures yet). Set `F:/gta_textures/` as System textures → select objects → **Load Textures** → the addon finds `brick01.png`, `brick02.png` etc. and attaches them to the matching materials automatically.
 
+### Alpha Materials
+
+**Panel:** Properties → Material → **GTA Material** → **Альфа** (Alpha) tab
+
+A bulk editor for the transparency mode of alpha materials — GTA maps carry hundreds of alpha-cutout materials (fences, foliage, windows) and fixing each one in Blender's native Material panel is tedious. The tool scans the scene (or the selection), lists every alpha material in a scrollable list with a per-row blend-mode dropdown, and offers one-click bulk actions.
+
+- **Scope** — **Сцена** (whole scene) or **Выделенные** (selected objects only).
+- **Режим** (Filter mode) — how a material counts as "alpha":
+  - **NODE** (default) — the Principled BSDF's **Alpha** input is actually wired (the material genuinely uses texture alpha).
+  - **CHANNEL** — the base texture has a *significant* alpha channel.
+  - **TRANSPARENT** — the material's blend method is already non-opaque.
+  - **ALL** — any of the above.
+- **Обновить** (Scan) — (re)builds the list under the current scope + filter; the header shows how many were found.
+- **Режим для всех** + **Применить ко всем** (Apply blend mode to all) — set one transparency mode (OPAQUE / CLIP / HASHED / BLEND) on every listed material at once.
+- **Выделить объекты** (Select objects) — select the objects that use the listed alpha materials.
+
+> **Unified transparency standard:** applying any transparent mode also switches Blender's *Show Backface* / transparency-overlap **off** — the project's standard for GTA alpha materials — and writes both the legacy `blend_method` and the 4.2+ `surface_render_method` so it also takes on EEVEE Next.
+
 ---
 
 ## Prelight (Vertex Colors)
@@ -848,12 +889,18 @@ Say you're building a car with body, glass and chrome-trim materials.
 
 **Panel:** View3D → Sidebar (N) → GTA Tools → Prelight
 
+> **Lighting panel — three tabs.** The top of the Lighting panel has toggle buttons **PreLight** | **Prelight COL** | **Itera** (formerly separate collapsible sub-panels; LightMap is not in this switch). The 🌐 planet icon in the header opens [Itera Tools 3](https://itera.gumroad.com/l/IteraTools3). The prelight settings block is **always shown**; with no mesh selected it is greyed out (disabled), not hidden.
+
 ### Baking
 
 1. **Create Day/Night** — creates `Day` and `Night` color attributes
-2. **Create 8 Lights** — places 8 point lights around the object
-3. **Bake** (Fast) — CPU bake without shadows
-4. **Bake with Shadows** — raycast shadow baking via depsgraph
+2. **Свет (8 ламп)** (Lights) — places 8 point lights around the object; **Солнце** (Sun) adds an independent directional source
+3. **Запечь** (Bake, Fast) — CPU bake without shadows
+4. **Запечь с тенями** (Bake with Shadows) — raycast shadow baking via depsgraph
+
+**Light sources — the toggle row** below the bake buttons chooses what the bake samples. It is no longer just the 8-lamp rig:
+- **Point / Sun / Spot / Area** — four toggles, one per Blender light type. Only the enabled types contribute, so you can bake from your own scene lamps of any kind, not only the auto-placed 8 point lights.
+- **HDRI** (World, 🌐) — also add world/HDRI lighting: the sky colour is sampled along each vertex normal and combined with the lamps. The HDRI is taken from the viewport's *Окружение сцены* (studio light) or the real `scene.world`.
 
 **Settings:**
 - Ambient (0-1) — base brightness
@@ -1599,10 +1646,23 @@ force: (0, 0, -9.8)
 | 9 Alignment Points | Choose position within cell (top-left, center, etc.) |
 | Link Polygons | Move polygons with overlapping UVs together |
 | Show UV Grid | Visualize GTA texture atlas grid |
+| Island Scale — В сетку (To grid) | Fit island UV height (Rows) / width (Columns) to the Value/Texture-size fraction |
+| Island Scale — Тексель (Texel) | Set real texel density (area-based, TexTools-style) |
 
 **Grid settings:** columns × rows (default 4×4).
 
 > 💡 **Example — UV grid for a 4×4 atlas:** ground mesh with 16 grass variants in a 4×4 atlas. In Edit Mode select faces → UV Editor → **UV Grid Randomizer** → each face's UV coords land in a random cell of the 16. In the viewport the ground shows natural variety without manual texture assignment.
+
+### Island Scale (Масштаб островов)
+
+**Box:** UV Editor → Sidebar (N) → GTA Tools → **Масштаб островов** (below the UV Grid Randomizer).
+
+Two ways to normalise UV island scale. Fields: **Текстура** (Texture size, 128…4096, default 512) and **Значение** (Value).
+
+- **В сетку** (To grid) — uniformly scales each island so its UV **height** (when **Rows** is set) or **width** (when **Columns** is set) becomes `Value / Texture size`. Aspect is preserved, 3D size is ignored (pure UV fraction). Works **only** when exactly one of Rows **or** Columns is set (not both); the hint line shows the active axis.
+- **Тексель** (Texel) — real texel density (px per unit), area-based (UV↔3D) like TexTools. It accounts for the actual geometry size, so detail is levelled across islands. Computed on local geometry — apply object scale first.
+
+> 💡 **Example — uniform texel across buildings:** select all faces in Edit Mode → **Текстура** 1024, **Значение** 256 → **Тексель** → every island is scaled to 256 px/unit, one consistent texture density everywhere.
 
 ---
 
@@ -1793,9 +1853,9 @@ Settings at the top of the panel apply to every map you bake:
 
 > 💡 The output texture name is derived automatically from your model name (known `_DFF` / `_LOD` / `_COL` prefixes and `_hi` / `_low` suffixes are stripped) — there is no name field.
 
-### Bake modes (Запекание)
+### Bake modes
 
-**Sub-panel:** `Texture Bake → Запекание` (collapsible header) → **Режим** (Mode) row
+**Panel:** `Texture Bake` → **Режим** (Mode) row — the three mode buttons (UV → UV / Hi → Low / Камера) are shown directly at the top of the bake box (the old collapsible «Запекание» header was removed).
 
 | Mode | What it does |
 |---|---|
@@ -1823,6 +1883,8 @@ When a mesh is selected the panel shows live info under the mode row (source/tar
 **Sub-panel:** `Texture Bake → Добавить слой` (Add layer) and the layer list below it
 
 The stack reads like Photoshop: the **bottom** layer is the base, layers above blend down onto it. New layers are added at the **top**.
+
+> The layer stack is **per-model** — each object keeps its own bake layers (stored on `obj.inu`), not a single scene-global stack. Select a different model and its own stack appears.
 
 **Add a layer:** in the **Добавить слой** box, pick a map in the dropdown → **Добавить** (Add). The layer appears at the top of the list with that map's default blend mode and opacity. (Normal Map is added with **Обесцветить** / Desaturate already on.)
 
@@ -1896,8 +1958,11 @@ Normal, Darken, Multiply, Color Burn, Lighten, Screen, Color Dodge, Add, Overlay
 
 **Sub-panel:** `Texture Bake → Дополнительно` (collapsed by default). Filtered to the **selected** layer's map — only relevant options show:
 - **Samples** — Cycles samples for noisy maps (AO / lit / GI).
-- **Свет (экспозиция)** (Light exposure) — energy multiplier for the internal light rig (Shadow / Diffuse Lit).
-- **Bevel радиус** / **Bevel samples** — only for the Bevel map.
+- **Свет от сцены** (Scene lights, **Shadow / Diffuse-Lit only**, default **ON**) — bake these maps from the **real scene lights** (your lamps / sun / world), the way LightMap does. Off = the internal calibrated SUN rig (works even with no lamps in the scene).
+- **Свет (экспозиция)** (Light exposure) — energy multiplier for the internal light rig (Shadow / Diffuse Lit). Shown only when **Свет от сцены** is off.
+- **Изолировать объект** (Isolate object, shared, default **ON**) — hide every *other* mesh in the scene for the duration of the bake (lamps are left alone). Fixes **black AO** when the model sits among other map objects (neighbours no longer shadow it) and speeds the bake up (Cycles builds its BVH from the target only). Off = bake with neighbours' shadows. Not applied in **Camera** mode.
+- **Bevel радиус** / **Bevel samples** / **Только выделенные полигоны** (Selected faces only) — only for the Bevel map. "Selected faces only" now applies specifically to Bevel; with multiple Bevel layers each gets its own image.
+- **Прозрачный фон** (Transparent background, shared, default OFF): off — the baked-map background outside the UV islands is filled with the texture's **average colour** (alpha 1), so seams/mips don't bleed black; on — the background is transparent (alpha 0). Does not affect the **ALPHA** map, decal layers, or **Camera** mode, where alpha is meaningful.
 - **LightMap** map only (see the LightMap section): **Качество** (sample preset Preview→Production, or Custom→**Сэмплы LightMap**), **Режим света** (Combined / Indirect only / Direct only), **Денойз** + **Денойз по albedo/normal** (feature-guided), **Интенсивность** (exposure) + **Смягчение** (Gaussian blur), **Применить как**, **Авто lightmap-UV**. Intensity/Softening re-apply without re-baking via the **Пост-обработка** button.
 - **Cage** / **Max Ray** — only in **Hi → Low** mode (Max Ray 0 = auto).
 
@@ -2143,6 +2208,52 @@ If the game crashes when the model appears:
 
 ---
 
+## Cutscene Cameras (.dat)
+
+**Panel:** View3D → Sidebar (N) → GTA Tools → **Анимации** (Animations) → **Камера (катсцена .dat)** box
+
+Import/export a GTA cutscene-camera trajectory (`.dat`, the same format as the `SetCamera.ms` MaxScript).
+
+| Button | Operator | Description |
+|--------|----------|-------------|
+| Импорт | `gtatools.import_camera_dat` | Load a camera `.dat` — builds a **Camera + Empty** (`…​.Target`) linked by a **Track To** constraint |
+| Экспорт | `gtatools.export_camera_dat` | Write the Camera + its Target back to `.dat` |
+
+The `.dat` is a text file of four blocks (FOV keys, Roll angle, camera position, target position), each closed by `;`, then padded with zeros to a multiple of 2048. Coordinates are metres, Z-up — 1:1 with Blender, with a single Z-offset (−1.0 on import, +1.0 on export) to work around the engine's Z-bug, exactly like the original script. FOV is stored as the camera's vertical field of view.
+
+---
+
+## Handsign (ghands.ifp)
+
+**Panel:** View3D → Sidebar (N) → GTA Tools → **Анимации** (Animations) → **Handsign Tools** box
+
+Author gang-sign gestures for `ghands.ifp`. In GTA SA a hand sign is **three separate skeletons/animations** in one file: `gsignN` / `gsignNlh` (the pose of the player's **arms**; the `lh` variant is left-arm-only, used when a weapon is in the right hand), `lhgsignN` (the fingers of the left hand model `shandl.dff`) and `rhgsignN` (the fingers of the right hand `shandr.dff`) — 20 blocks in all (`gsign1..5` + `gsign1lh..5lh` + `lhgsign1..5` + `rhgsign1..5`).
+
+| Button | Operator | Description |
+|--------|----------|-------------|
+| Прицепить кисти | `gtatools.handsign_attach` | **Child Of** constrain the hand models' forearm/wrist bones to the player skeleton's wrists so the hands ride along when you animate the gesture in the viewport (bones are not merged) |
+| Отцепить кисти | `gtatools.handsign_detach` | Remove those constraints |
+| Экспорт жеста → ghands.ifp | `gtatools.handsign_export` | Export the gesture in one pass — the three active actions (arms + both hands) via the standard IFP exporter, one armature at a time |
+
+> The export back-fills each bone's canonical SA `bone_id` by name (ped and hand skeletons use separate id tables) — without a correct `bone_id` the ANP3 animation wouldn't be applied by the game.
+
+---
+
+## Fragment Mesh
+
+**Panel:** View3D → Sidebar (N) → GTA Tools → **Проверка** (Check) → **Фрагментация меша** button (`gtatools.fragment_mesh`)
+
+Split the active mesh into separate **shard objects** (a port of `object_explode.ms`). Each shard is a full copy of the object with the "foreign" faces deleted, so UVs, vertex colours and materials are preserved as-is.
+
+| Mode | What it does |
+|---|---|
+| **Сетка (шаг X/Y)** (Grid) | Slice into a rectangular grid by X/Y step. |
+| **Кластеры (N семян)** (Scatter) | Group faces by the nearest of **N** random seeds — a coarse Voronoi split **without** adding new cuts (existing faces are just partitioned). |
+
+Options in the dialog: **Шаг X / Y** (grid step) or **Число осколков / Seed** (scatter), **Имя осколков** (base name), and **Удалить оригинал** (delete original, on by default). For true geometric fracturing with real break planes, use Blender's built-in **Cell Fracture**.
+
+---
+
 ## Water IO
 
 **Panel:** View3D → Sidebar (N) → GTA Tools → Water
@@ -2165,6 +2276,34 @@ If the game crashes when the model appears:
 - Texture: waterclear256 with flow animation
 
 > 💡 **Example — lake for a custom map:** View3D → Water → **Add Water** → params: Flag `0` (default visible), Wave Height 0.3m, Speed 0.02 — a 100×100m quad appears with water properties. Scale it to match the lake size → **Snap to Grid** so vertices align with GTA's regular grid → **Export Water** → you get `water.dat` ready for in-game use.
+
+---
+
+## Map zones (map.zon)
+
+**Panel:** View3D → Sidebar (N) → GTA Tools → map.zon
+
+Zones from `data/map.zon` and `data/info.zon` — rectangular areas of the map: `map.zon` holds map zones (type 3), `info.zon` the navigation zones with GXT names (type 0). Total conversions add their own types (e.g. 4 for weather zones). Both files share one line format:
+
+```
+name, type, x1, y1, z1, x2, y2, z2, level, GXT-key
+LA01, 3, 480.0, -3000.0, -500.0, 3000.0, -850.0, 500.0, 1, UNUSED
+```
+
+| Button | Description |
+|--------|-------------|
+| Import | Load a `.zon` — every zone becomes a wireframe box in the `ZON_<file name>` collection. Re-importing the same file replaces the old boxes |
+| Export | Write the zones back to a `.zon`. Selected boxes are written, or the whole collection of that file when nothing is selected. The old file is copied next to it as `.bak` once |
+| New zone | A 100×100×100 box at the 3D cursor, type 3 (map zone) |
+| Lines to clipboard | Generate ready-made lines for the selected objects and put them in the clipboard (and in the `INU_map_zon` text block in the Text Editor) — paste them into `map.zon` by hand. A plain mesh is measured by its bounds, so you can select a building and get a line covering it |
+
+**Zone properties** (edited in the panel while a box is selected): name, type, level (island / region: 0 generic, 1 LS, 2 SF, 3 LV; mods extend it), GXT key (`UNUSED` when the zone has no name). Coordinates come from the box bounds — move and scale it with plain Blender tools.
+
+**Worth knowing:**
+- Line order is preserved: the engine returns the **first** matching zone, so reordering changes behaviour. New zones are appended at the end.
+- Zones you didn't touch are written as their original line, character for character — import + export with no edits leaves the file identical (comments, header and line endings included).
+- A reversed bbox (`x1 > x2` etc.) can never match in game — such zones are listed in the import report, but never silently "fixed".
+- The engine splits a line on commas **and spaces**, so a stray space inside a number shifts every column after it. The addon reads it the same way the game does and reports such lines (see the system console).
 
 ---
 
@@ -2378,11 +2517,34 @@ The **Normals** toggle controls vertex normal export in DFF:
 
 > 💡 **Example:** CJ (character) — ☑ Normals (engine lights him based on sun and lamps). Map building with baked vertex colors — ☐ Normals (otherwise the engine overlays its own lighting and the visual breaks).
 
+### Ariane Bridge
+
+Live two-way link between the **Ariane** map editor and Blender — click a model in Ariane and it lands in Blender ready to edit; send it back with one button.
+
+**Panel:** N → GTA Tools → **Export / Import** → **Ariane** tab. The shared **selection block** (Выделено / DFF / LOD / COL) sits on top; the bridge controls are grouped below it.
+
+| Control | What it does |
+|---------|--------------|
+| 📁 game folder | Path to the game — the bridge exchanges files via `<game>\ariane\bridge`. **Set this first**; the row is highlighted red until it is. |
+| **Ручной импорт** | Pull whatever Ariane has dropped into the inbox, once. |
+| **⟳ Авто** | Toggle the watcher — auto-imports models as Ariane sends them. |
+| **Экспорт → Ariane** | Send the selected meshes back to Ariane (DFF + TXD, plus any attached **2DFX** empties — the mesh's direct children tagged `inu.type == '2DFX'` — so coronas/particles/lights ride along with the model). |
+| **COL / LOD / Позиция** | Include collision / distant LOD / position in that export. |
+| **Live-синхронизация** | Two-way live sync of position, selection and camera between Blender and Ariane (needs the ⟳ watcher on). |
+| **Ещё** ▸ | Rare/advanced: **Синхр. удаления** (deleting in Blender soft-deletes the instance in Ariane), **Создать модель** (register a brand-new model), **Очистить кэш**. |
+
+**Workflow:**
+1. Set the **game folder** (📁).
+2. In Ariane, click **Export to Blender** on a model → it appears in Blender (turn on **⟳ Авто** to auto-import a whole selection as it streams in).
+3. Edit / prelight the model in Blender.
+4. **Экспорт → Ariane** → it's rebuilt in the game.
+5. For live editing, turn on **Live-синхронизация** — move or select in either app and the other follows.
+
 ---
 
 ## Asset Library
 
-**Panel:** View3D → Sidebar (N) → GTA Tools → Asset Library
+**Panel:** View3D → Sidebar (N) → **GTA Library** (its own N-panel tab, `bl_category = 'GTA Library'` — separate from the main *GTA Tools* tab)
 
 Builds a Blender Asset Library from any IDE/IPL/IMG set — vanilla SA, a custom map, or a modded archive. Every prop becomes a mark-as-asset with a thumbnail you can drag straight into the scene from Blender's **Asset Browser**.
 

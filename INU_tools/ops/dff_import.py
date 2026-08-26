@@ -8,6 +8,7 @@
 
 from typing import Optional
 
+import math
 import os
 import bpy
 import bmesh
@@ -15,6 +16,7 @@ import mathutils
 import numpy as np
 
 from .. import T
+from ..tools import compat
 from ..tools.compat import safe_icon, inu_icon
 from bpy.props import (
     StringProperty, CollectionProperty,
@@ -28,17 +30,24 @@ from ..core.dff import (
 
 
 def _frame_name_usable(nm: str) -> bool:
-    """True if a DFF frame name is a clean GTA-style name.
+    """True if a DFF frame name is a clean GTA-style name (keep it as-is).
 
-    GTA frame/model names are ASCII letters, digits and a few separators
-    (``_`` ``-`` ``.``). A ``?`` (literal byte 0x3F) or the Unicode
-    replacement char means a previous tool/round-trip mangled the name —
-    e.g. ``hedge_3_?_?_?_?_?_?_N__001``. In that case the caller falls back
-    to the DFF *file* name instead of importing the junk into the outliner.
+    A ``?`` (literal byte 0x3F) or the Unicode replacement char means a
+    previous tool/round-trip mangled the name — e.g.
+    ``hedge_3_?_?_?_?_?_?_N__001``. In that case the caller falls back to the
+    DFF *file* name instead of importing the junk into the outliner.
+
+    We only reject those mangle markers (plus non-ASCII / control bytes) — NOT
+    a strict alnum whitelist. GTA / VehFuncs frame names legitimately use ``:``
+    and spaces (``f_extras:3``, ``extra_radio:1``, ``roof3:1``,
+    ``Bip01 L Clavicle``); the old whitelist silently renamed them to
+    ``<base>_frame_<idx>`` and broke VehFuncs / ped setups.
     """
     if not nm:
         return False
-    return all((c.isascii() and c.isalnum()) or c in '_-.' for c in nm)
+    if '?' in nm:
+        return False
+    return all(c.isascii() and c.isprintable() for c in nm)
 
 
 def _is_light_frame_name(nm: str) -> bool:
@@ -227,10 +236,11 @@ def _create_blender_material(dff_mat: DffMaterial, index: int,
     elif 'Specular' in bsdf.inputs:
         bsdf.inputs['Specular'].default_value = 0.0
 
-    # Альфа — подключать только если материал прозрачный
+    # Альфа — подключать только если материал прозрачный.
+    # Стандарт: Метод рендеринга Смешанный + Перекрытие прозрачности ВЫКЛ
+    # (на 4.2+ blend_method сам по себе ничего не делает — см. compat).
     if c.a < 255:
-        if hasattr(mat, 'blend_method'):
-            mat.blend_method = 'BLEND'
+        compat.make_material_alpha(mat)
         bsdf.inputs['Alpha'].default_value = c.a / 255.0
         # Connect texture alpha to shader alpha
         if tex_node:
@@ -395,7 +405,10 @@ def _weld_and_sharpen(obj):
     и совпавшие дубли-грани), затем РАЗРЕЗАЕМ острые рёбра прямо в геометрии
     (``split_edges``). Так получается связная манифолд-топология с жёсткими
     исходными рёбрами и БЕЗ модификатора — на импорте карты не копятся
-    тысячи модификаторов EdgeSplit (FPS не страдает)."""
+    тысячи модификаторов EdgeSplit (FPS не страдает).
+
+    Это ВАНИЛЬНЫЙ путь (галочка «Авто-острые рёбра» ВКЛ) — НЕ трогаем, работает
+    как раньше. Кастомный импорт (галочка ВЫКЛ) сюда не заходит вообще."""
     me = obj.data
     if me is None or not len(me.vertices):
         return
@@ -417,30 +430,156 @@ def _weld_and_sharpen(obj):
     me.update()
 
 
-def _weld_keep_normals(obj):
-    """Merge coincident verts so a vehicle mesh is editable (connected) and keep
-    its hard-edge shading — a verbatim port of DragonFF's
-    ``remove_object_doubles``.
+# Custom-model weld crease angle: below this the two welded faces are treated as
+# one flat surface (join); above it they stay hard. Only used on the CUSTOM
+# import path — the vanilla path never sees it.
+_CUSTOM_SHARP_ANGLE = math.radians(30.0)
 
-    GTA cars are split at every crease/seam, so before welding those edges have
-    a single linked face (boundaries). We mark every such edge sharp FIRST, then
-    merge by distance, then add an EdgeSplit modifier (sharp edges only, no
-    angle) so the marked edges shade hard while the body stays smooth. The
-    custom split normals set at build time are left untouched."""
+
+def _weld_custom(obj):
+    """Weld for CUSTOM (non-vanilla) models. Kept SEPARATE from
+    ``_weld_and_sharpen`` so it can NEVER affect vanilla import.
+
+    Some tools export a DFF fully split — every triangle isolated, no vertex
+    sharing at all — so it imports as loose polygons (e.g. KRC_Mir01: 61341
+    verts / 20447 tris, only 12850 unique positions). This CONNECTS it:
+      • merge coincident verts (remove_doubles), but
+      • PROTECT double-sided faces (fences/hedges: two coincident polys, opposite
+        winding) from the merge so they stay two-sided, and
+      • split hard edges by ANGLE (open boundaries + creases > _CUSTOM_SHARP_ANGLE)
+        — a fully-split DFF carries no smoothing flag, so angle is the only cue.
+    Per-loop vertex colors survive the weld, so baked lighting is kept."""
     me = obj.data
-    if not me or not len(me.vertices):
+    if me is None or not len(me.vertices):
         return
     bm = bmesh.new()
     try:
         bm.from_mesh(me)
+        # Protect double-sided faces (fences) from the merge.
+        from collections import defaultdict
+        by_pos = defaultdict(list)
+        for f in bm.faces:
+            by_pos[frozenset((round(v.co.x, 4), round(v.co.y, 4),
+                              round(v.co.z, 4)) for v in f.verts)].append(f)
+        protected = set()
+        for faces in by_pos.values():
+            if len(faces) >= 2:
+                for f in faces:
+                    protected.update(f.verts)
+        weld_verts = ([v for v in bm.verts if v not in protected]
+                      if protected else bm.verts)
+
+        bmesh.ops.remove_doubles(bm, verts=weld_verts, dist=0.00001)
+
+        # Do NOT split the geometry — keep the mesh fully WELDED and editable
+        # (a 90° corner stays ONE vertex you can move as a whole). Just FLAG
+        # creases as sharp so they still SHADE hard; Blender honours sharp edges
+        # when computing normals (4.1+) / with auto-smooth (pre-4.1).
+        for edge in bm.edges:
+            if len(edge.link_faces) == 2:
+                try:
+                    edge.smooth = edge.calc_face_angle() <= _CUSTOM_SHARP_ANGLE
+                except ValueError:
+                    edge.smooth = True
+        bm.to_mesh(me)
+    finally:
+        bm.free()
+    if hasattr(me, 'use_auto_smooth'):     # pre-4.1: needed for sharp edges
+        me.use_auto_smooth = True
+        try:
+            me.auto_smooth_angle = math.pi  # rely on explicit sharp flags only
+        except Exception:
+            pass
+    me.update()
+
+
+def _weld_keep_normals(obj):
+    """Merge coincident verts so a vehicle mesh is editable (connected) and keep
+    its hard-edge shading — a port of DragonFF's ``remove_object_doubles``.
+
+    GTA cars are split at every crease/seam, so before welding those edges have
+    a single linked face (boundaries). We mark every such edge sharp FIRST, then
+    merge by distance, then add an EdgeSplit modifier (sharp edges only, no
+    angle) so the marked edges shade hard while the body stays smooth.
+
+    ``bmesh.remove_doubles`` AVERAGES the custom split normals (the
+    ``has_custom_normals`` layer survives but its values are recomputed) — on a
+    GTA car that wrecks the baked panel shading and the re-export writes the
+    smoothed normals → visible stains. To keep them exactly, we stash each
+    loop's authored normal in a bmesh loop custom-data layer BEFORE the merge;
+    bmesh carries that layer verbatim through ``remove_doubles`` (loops keep
+    their own data — only vertices merge), so we read it back afterwards and
+    re-apply it as the mesh's custom split normals. No position matching, no
+    averaging."""
+    me = obj.data
+    if not me or not len(me.vertices):
+        return
+    had_custom = getattr(me, 'has_custom_normals', False)
+    lno = None
+    if had_custom:
+        try:
+            me.calc_normals_split()   # pre-4.1; 4.1+ computes on access
+        except Exception:
+            pass
+        nl = len(me.loops)
+        lno = np.empty(nl * 3, dtype=np.float32)
+        me.loops.foreach_get('normal', lno)
+        lno = lno.reshape(-1, 3)
+
+    restored = None
+    bm = bmesh.new()
+    try:
+        bm.from_mesh(me)
+        nlay = None
+        if lno is not None:
+            # bm.from_mesh keeps face/loop order identical to me.loops, so we
+            # can push the authored normals in loop order into a custom layer.
+            nlay = bm.loops.layers.float_vector.new('_inu_authored_n')
+            i = 0
+            n = len(lno)
+            for f in bm.faces:
+                for l in f.loops:
+                    if i < n:
+                        l[nlay] = (float(lno[i, 0]), float(lno[i, 1]),
+                                   float(lno[i, 2]))
+                    i += 1
         # Mark edges with 1 linked face (creases/seams/boundaries) sharp.
         for edge in bm.edges:
             if len(edge.link_loops) == 1:
                 edge.smooth = False
         bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.00001)
+        # Read the authored normals back in the POST-weld loop order — that is
+        # exactly the order bm.to_mesh will write, so it lines up with the new
+        # me.loops 1:1.
+        if nlay is not None:
+            restored = []
+            for f in bm.faces:
+                for l in f.loops:
+                    v = l[nlay]
+                    restored.append((v[0], v[1], v[2]))
         bm.to_mesh(me)
     finally:
         bm.free()
+    # Drop the temporary per-loop transfer layer — bm.to_mesh persists it as a
+    # mesh attribute otherwise, leaving unused cruft on every welded vehicle.
+    _tmp = me.attributes.get('_inu_authored_n')
+    if _tmp is not None:
+        try:
+            me.attributes.remove(_tmp)
+        except Exception:
+            pass
+    # Re-apply the authored normals the weld would otherwise have averaged.
+    if restored is not None and len(restored) == len(me.loops):
+        if hasattr(me, 'use_auto_smooth'):
+            me.use_auto_smooth = True
+        try:
+            me.normals_split_custom_set(restored)
+        except Exception:
+            pass
+        # NOTE: the RAW authored normals were already stashed in the
+        # 'inu_authored_normal' corner attribute by _build_mesh (before Blender
+        # could zero any); that attribute survives this weld, so we do NOT
+        # overwrite it here with the mesh's (possibly zeroed) split normals.
     # EdgeSplit modifier (sharp-only): splits the marked edges at display so
     # they shade hard, while the base mesh stays connected/editable.
     if not me.shape_keys and not any(m.type == 'EDGE_SPLIT' for m in obj.modifiers):
@@ -491,7 +630,8 @@ def _detect_overlay_faces(geom: DffGeometry):
 
 def _build_mesh(geom: DffGeometry, name: str, materials: list,
                 material_cache: Optional[dict] = None,
-                uv_anim_dict=None, fix_winding: bool = False) -> bpy.types.Mesh:
+                uv_anim_dict=None, fix_winding: bool = False,
+                preserve_doubles: bool = False) -> bpy.types.Mesh:
     """Build a Blender Mesh from DFF geometry via direct foreach_set.
 
     Avoids bmesh entirely — all attributes are pushed in bulk through
@@ -565,7 +705,23 @@ def _build_mesh(geom: DffGeometry, name: str, materials: list,
         # эталону. Модели С нормалями (транспорт/педы) не трогаем.
         has_authored_normals = bool(geom.normals) and len(geom.normals) == n_verts
         double_local = None
-        if not has_authored_normals and n_tris > 0:
+        if preserve_doubles and not has_authored_normals and n_tris > 0:
+            # RAW import (weld toggle OFF): keep every non-degenerate triangle,
+            # INCLUDING coincident duplicates — double-sided fences/hedges. They
+            # sit on separate verts (coincident positions), so validate() keeps
+            # both, and the weld protection later keeps them apart. Only drop
+            # genuinely degenerate tris (a repeated vertex, from strip flags).
+            vkey = np.round(verts_np, 4)
+            _, vclass = np.unique(vkey, axis=0, return_inverse=True)
+            tcls = vclass[tri_np]
+            valid = ((tcls[:, 0] != tcls[:, 1]) & (tcls[:, 1] != tcls[:, 2])
+                     & (tcls[:, 0] != tcls[:, 2]))
+            if not valid.all():
+                keep = np.nonzero(valid)[0]
+                tri_np = tri_np[keep]
+                mat_np = mat_np[keep]
+                n_tris = tri_np.shape[0]
+        elif not has_authored_normals and n_tris > 0:
             # Дубли 2-сторонних граней в GTA часто сидят на ОТДЕЛЬНЫХ
             # вершинах с совпадающими координатами (одна точка — разные
             # индексы). Поэтому группируем по КЛАССАМ совпадающих позиций
@@ -703,6 +859,28 @@ def _build_mesh(geom: DffGeometry, name: str, materials: list,
         # vanilla DFFs have non-manifold data that foreach_set can't absorb.
         print(f"[INU_tools] foreach_set mesh build failed ({e}), falling back to bmesh")
         _build_mesh_bmesh(mesh, geom)
+
+    # Stash the RAW DFF normals in a plain corner attribute — done LAST, after
+    # every mesh rebuild (validate, double-face reorient) so it stays aligned
+    # to the final loops. Blender ZEROES the split normal at a many-faces-one-
+    # position corner (door hinges etc.); reading it back loses the value and
+    # the re-export writes a black/geometric normal → shading blotch. A generic
+    # attribute is never touched, so the exporter writes the authored normal
+    # back verbatim. Zeros in geom.normals stay zero and the exporter ignores
+    # them (falls back to the geometric normal).
+    if geom.normals and len(geom.normals) == len(mesh.vertices):
+        try:
+            gn = np.asarray([(n[0], n[1], n[2]) for n in geom.normals],
+                            dtype=np.float32)
+            nl = len(mesh.loops)
+            if nl:
+                lvi = np.empty(nl, dtype=np.int32)
+                mesh.loops.foreach_get('vertex_index', lvi)
+                attr = mesh.attributes.new(
+                    'inu_authored_normal', 'FLOAT_VECTOR', 'CORNER')
+                attr.data.foreach_set('vector', gn[lvi].ravel())
+        except Exception as ae:
+            print(f"[INU_tools] authored-normal attr skipped: {ae}")
 
     # Store geometry user data on mesh
     if geom.user_data:
@@ -1244,7 +1422,8 @@ def _autoset_scene_pipeline(clump):
 
 def import_dff(filepath: str, context=None, *, skip_2dfx=None,
                bulk_mode: bool = False, target_collection=None,
-               material_cache: Optional[dict] = None, profiler=None):
+               material_cache: Optional[dict] = None, profiler=None,
+               weld_sharpen=None):
     """
     Импорт DFF файла в Blender.
 
@@ -1301,14 +1480,14 @@ def import_dff(filepath: str, context=None, *, skip_2dfx=None,
     return import_dff_from_clump(
         clump, base_name, skip_2dfx=skip_2dfx, bulk_mode=bulk_mode,
         target_collection=target_collection, material_cache=material_cache,
-        profiler=profiler,
+        profiler=profiler, weld_sharpen=weld_sharpen,
     )
 
 
 def import_dff_from_clump(clump, base_name: str, *, skip_2dfx=None,
                           bulk_mode: bool = False, target_collection=None,
                           material_cache: Optional[dict] = None, profiler=None,
-                          fix_winding: bool = False):
+                          fix_winding: bool = False, weld_sharpen=None):
     """Build Blender objects from an already-parsed DffClump.
 
     Separates the Blender-only work from the binary parse so the
@@ -1326,6 +1505,17 @@ def import_dff_from_clump(clump, base_name: str, *, skip_2dfx=None,
             skip_2dfx = bool(getattr(settings, 'gtatools_map_skip_2dfx', False))
         except Exception:
             skip_2dfx = False
+
+    # Auto-weld + sharp edges (and the vehicle keep-normals weld) is right for
+    # STANDARD GTA models but rewrites the topology of CUSTOM ones — gate both
+    # on the user's toggle (scene setting when not passed explicitly).
+    if weld_sharpen is None:
+        try:
+            from ..tools.user_data import get_addon_prefs
+            prefs = get_addon_prefs()
+            weld_sharpen = bool(getattr(prefs, 'import_weld_sharpen', False))
+        except Exception:
+            weld_sharpen = False
 
     # Null-object context manager so `with _stage(...)` works without
     # an `if profiler:` ladder every time. When profiler is None we
@@ -1414,7 +1604,8 @@ def import_dff_from_clump(clump, base_name: str, *, skip_2dfx=None,
         with _stage('build_mesh'):
             mesh = _build_mesh(geom, obj_name, geom.materials,
                                material_cache, clump.uv_anim_dict,
-                               fix_winding=fix_winding)
+                               fix_winding=fix_winding,
+                               preserve_doubles=not weld_sharpen)
 
         # Создаём объект
         obj = bpy.data.objects.new(obj_name, mesh)
@@ -1463,7 +1654,8 @@ def import_dff_from_clump(clump, base_name: str, *, skip_2dfx=None,
             with _stage('build_mesh'):
                 mesh = _build_mesh(geom, obj_name, geom.materials,
                                material_cache, clump.uv_anim_dict,
-                               fix_winding=fix_winding)
+                               fix_winding=fix_winding,
+                               preserve_doubles=not weld_sharpen)
             obj = bpy.data.objects.new(obj_name, mesh)
             _set_object_props(obj, geom)
             collection.objects.link(obj)
@@ -1488,8 +1680,10 @@ def import_dff_from_clump(clump, base_name: str, *, skip_2dfx=None,
                           if (frame.name and _frame_name_usable(frame.name))
                           else f"{base_name}_frame_{fi}")
             dummy = bpy.data.objects.new(dummy_name, None)
-            dummy.empty_display_type = 'PLAIN_AXES'
-            dummy.empty_display_size = 0.2
+            # CUBE (like DragonFF) — a small box is far easier to see and
+            # click in the viewport than the thin PLAIN_AXES cross.
+            dummy.empty_display_type = 'CUBE'
+            dummy.empty_display_size = 0.1
 
             dummy['dff_frame_flags'] = frame.flags
             dummy['dff_frame_rot'] = list(frame.rotation)
@@ -1676,18 +1870,21 @@ def import_dff_from_clump(clump, base_name: str, *, skip_2dfx=None,
             print(f"[INU] embedded COL parse failed for "
                   f"{base_name}: {e}")
 
-    # Авто-сварка вершин + острые рёбра (как DragonFF) для моделей без
-    # авторских нормалей (карты/дороги/террейн).
+    # Сварка моделей без авторских нормалей (карты/дороги/террейн). ВКЛ =
+    # ванильный путь `_weld_and_sharpen` (как DragonFF, НЕ трогаем). ВЫКЛ =
+    # кастомный путь `_weld_custom`: тоже СВЯЗЫВАЕТ рассыпанную геометрию, но
+    # защищает двусторонние заборы и метит острые рёбра по углу.
+    _weld_fn = _weld_and_sharpen if weld_sharpen else _weld_custom
     for obj in weld_targets:
         if getattr(obj, 'type', None) == 'MESH':
             try:
-                _weld_and_sharpen(obj)
+                _weld_fn(obj)
             except Exception as we:
-                print(f"[INU] weld/sharpen failed for {obj.name}: {we}")
+                print(f"[INU] weld failed for {obj.name}: {we}")
 
-    # Транспорт (авторские нормали, без скина): свариваем совпадающие вершины,
-    # чтобы меш был СВЯЗНЫМ и редактируемым (как DragonFF «remove doubles»), но
-    # БЕЗ EdgeSplit — custom split normals сохраняются, затенение не страдает.
+    # Транспорт (авторские нормали, без скина): всегда свариваем совпадающие
+    # вершины, чтобы меш был СВЯЗНЫМ и редактируемым (custom split normals
+    # сохраняются) — независимо от галочки.
     for obj in editable_targets:
         if getattr(obj, 'type', None) == 'MESH':
             try:
@@ -1836,10 +2033,17 @@ def _txd_affinity(txd_path: str, dff_basename: str) -> int:
 
 
 def _pick_best_txd(search_dirs: list, dff_basename: str,
-                   needed_names: set = None) -> Optional[str]:
+                   needed_names: set = None, txd_hint: str = None) -> Optional[str]:
     """Pick the most relevant .txd file for the just-imported DFF.
 
     Strategy:
+      0. ``txd_hint`` (the TXD name declared in the IDE/bridge meta, e.g.
+         «generic») wins if a ``<hint>.txd`` in the search dirs actually
+         covers the model's textures. Shared TXDs (generic.txd) aren't
+         named after the model, so coverage-scoring alone can miss them;
+         the declared name resolves them deterministically. Coverage is
+         still checked so the RIGHT generic.txd is chosen when several
+         games (III + VC) each ship one.
       1. Same-named ``<dff_basename>.txd`` wins immediately (cheap path).
       2. Otherwise, score every .txd in the search dirs by **coverage**:
          what fraction of the DFF's referenced textures live in that
@@ -1856,6 +2060,32 @@ def _pick_best_txd(search_dirs: list, dff_basename: str,
     warn the user so they can pick manually.
     """
     from ..core.txd import read_txd_texture_names
+
+    needed = (needed_names if needed_names is not None
+              else _collect_recent_dff_texture_names())
+
+    # Pass 0: объявленное имя TXD (IDE/мета, напр. «generic»). Ищем
+    # <hint>.txd, что РЕАЛЬНО покрывает нужные текстуры — важно при
+    # нескольких играх (III и VC оба имеют generic.txd: берём тот, где есть
+    # текстуры модели). Приоритет над basename: у shared-моделей рядом может
+    # лежать пустой <model>.txd от моста, а правильный txd — общий.
+    if txd_hint:
+        hint = os.path.splitext(str(txd_hint).strip())[0]
+        if hint:
+            hits = [os.path.join(d, hint + ".txd")
+                    for d in search_dirs if os.path.isdir(d)
+                    if os.path.isfile(os.path.join(d, hint + ".txd"))]
+            if hits and not needed:
+                return hits[0]
+            best_h = None
+            for c in hits:
+                names = _read_txd_names_cached(c)
+                cov = (len(needed & names) / len(needed)) if needed else 0.0
+                if best_h is None or cov > best_h[0]:
+                    best_h = (cov, c)
+            if best_h is not None and best_h[0] >= _PICK_BEST_TXD_MIN_COVERAGE:
+                return best_h[1]
+            # ни один <hint>.txd не покрывает нужное — идём к обычному подбору.
 
     # Pass 1: same-name shortcut
     for d in search_dirs:
@@ -1876,11 +2106,10 @@ def _pick_best_txd(search_dirs: list, dff_basename: str,
     if not candidates:
         return None
 
-    # Pass 2: coverage-based scoring. `needed_names` should be the
+    # Pass 2: coverage-based scoring. `needed` (computed above) is the
     # JUST-imported DFF's referenced texture set; falling back to the
     # full scene-wide collection works for one-shot import but
     # drifts badly across a batch.
-    needed = needed_names if needed_names is not None else _collect_recent_dff_texture_names()
     if needed:
         # Умный порядок: TXD с именем, похожим на DFF — первыми (его «свой»
         # TXD обычно там). coverage = доля текстур DFF, что есть в TXD;
@@ -1971,7 +2200,7 @@ def _init_import_stats(stats: dict) -> dict:
 
 
 def import_one_dff(path, context, stats, *, import_game=None,
-                   link_alpha=False):
+                   link_alpha=False, txd_hint=None):
     """THE canonical interactive single-DFF import: a .dff plus its
     auto-matched TXD. Shared by drag-drop and the file-picker «Import DFF»
     so both behave identically.
@@ -2019,24 +2248,37 @@ def import_one_dff(path, context, stats, *, import_game=None,
         return
     print(f"[TXD timing] {name}: import_dff = {(_time.perf_counter()-_t0)*1000:.0f} ms")
 
-    # Source-game resolution (file-picker only — others pass
-    # import_game=None and keep the no-detection behaviour).
-    if import_game is not None:
-        try:
-            from ..core import game_versions as gv
-            if import_game == 'AUTO':
-                detected = gv.detect_game_from_dff(path)
-            else:
-                detected = import_game
-            switched = gv.maybe_set_game_from_import(context.scene, detected)
-            if switched:
-                stats['infos'].append(f"{name} → game={detected}")
-            else:
-                warn = gv.check_game_mismatch_warning(context.scene, detected)
-                if warn:
-                    stats['warnings'].append(warn)
-        except Exception:
-            pass
+    # Определяем игру модели по RW-версии из заголовка DFF (12 байт) — дёшево
+    # и работает на ВСЕХ путях импорта (файл, drag-drop, мост). Нужно и для
+    # авто-режима сцены, и для свопа R↔B текстур (III/VC = движок D3D8 →
+    # своп, SA = D3D9 → без свопа).
+    detected = None
+    txd_swap_rb = None          # None → txd-слой сам решит по режиму сцены
+    try:
+        from ..core import game_versions as gv
+        if import_game and import_game != 'AUTO':
+            detected = import_game          # игра задана вызвавшим явно
+        else:
+            detected = gv.detect_game_from_dff(path)
+        # Авто-режим сцены: переключается ТОЛЬКО на «свежей» сцене (пустой,
+        # дефолт SA); готовый проект не трогаем (защита внутри самой функции).
+        switched = gv.maybe_set_game_from_import(context.scene, detected)
+        if switched:
+            stats['infos'].append(f"{name} → game={detected}")
+        elif import_game is not None:
+            # Предупреждение о несовпадении — только при файловом импорте,
+            # чтобы не спамить на drag-drop / мосте.
+            warn = gv.check_game_mismatch_warning(context.scene, detected)
+            if warn:
+                stats['warnings'].append(warn)
+        # Per-model решение по свопу — по игре самой модели, а не по режиму.
+        if detected in (gv.GAME_III, gv.GAME_VC):
+            txd_swap_rb = True
+        elif detected == gv.GAME_SA:
+            txd_swap_rb = False
+    except Exception:
+        detected = None
+        txd_swap_rb = None
 
     if auto_txd:
         # Auto-pull a matching TXD: same-name → content-coverage → solo.
@@ -2046,16 +2288,40 @@ def import_one_dff(path, context, stats, *, import_game=None,
             search_dirs.append(custom_dir)
         search_dirs.append(directory)
 
+        # Общие (shared) TXD не лежат рядом с моделью: дорога rd_Road2B50
+        # ссылается на «generic», а generic.txd находится в <игра>\models.
+        # Добавляем папку игры в поиск, чтобы такие txd подхватывались сами.
+        # Источник пути: сначала папка моста (ariane_bridge_path), затем
+        # общий Game Root — что из них задано.
+        for _root_key in ('ariane_bridge_path', 'gtatools_game_root'):
+            _root = getattr(settings, _root_key, '') or ''
+            if not _root:
+                continue
+            _root = bpy.path.abspath(_root)
+            for _sub in (os.path.join(_root, 'models'), _root):
+                if os.path.isdir(_sub) and _sub not in search_dirs:
+                    search_dirs.append(_sub)
+
         # Область = материалы по слотам объектов этого DFF (и нужные им
         # имена текстур). Покрывает и переиспользованные материалы, когда
         # модель дропнута в сцену с уже загруженной картой — иначе они
         # выпадали из назначения и оставались чёрными.
-        _scope_mats, needed = _collect_dff_scope(new_objs)
-        _t1 = _time.perf_counter()
-        txd_file = _pick_best_txd(search_dirs, dff_name, needed_names=needed)
-        print(f"[TXD timing] {name}: _pick_best_txd = "
-              f"{(_time.perf_counter()-_t1)*1000:.0f} ms "
-              f"(found={os.path.basename(txd_file) if txd_file else None})")
+        # Авто-TXD — НЕ-фатальный: любая ошибка подбора/области не должна
+        # ронять импорт модели (иначе в мосте модель импортится, но остаётся
+        # без размещения/тега — а её LOD встаёт → «только лоды»).
+        try:
+            _scope_mats, needed = _collect_dff_scope(new_objs)
+            _t1 = _time.perf_counter()
+            txd_file = _pick_best_txd(search_dirs, dff_name, needed_names=needed,
+                                      txd_hint=txd_hint)
+            print(f"[TXD timing] {name}: _pick_best_txd = "
+                  f"{(_time.perf_counter()-_t1)*1000:.0f} ms "
+                  f"(found={os.path.basename(txd_file) if txd_file else None})")
+        except Exception as _e:                    # noqa: BLE001
+            print(f"[TXD] auto-TXD pick failed for {name}: {_e!r}")
+            stats.setdefault('warnings', []).append(
+                f"{name}: {T('авто-TXD пропущен')} ({_e})")
+            _scope_mats, needed, txd_file = [], set(), None
         # NB: НЕ пропускаем уже виденный txd-путь. Раньше дедуп по пути ломал
         # пару LOD+основная модель, делящих один .txd: LOD обрабатывался
         # первым, грузил txd с name_filter всего на свою 1 текстуру и «застолбя»
@@ -2074,7 +2340,8 @@ def import_one_dff(path, context, stats, *, import_game=None,
                 images = inu_import_txd(
                     filepath=txd_file,
                     name_filter=needed if needed else None,
-                    material_scope=_scope_mats)
+                    material_scope=_scope_mats,
+                    swap_rb=txd_swap_rb)
                 print(f"[TXD timing] {name}: import_txd decode = "
                       f"{(_time.perf_counter()-_t2)*1000:.0f} ms "
                       f"({len(images)} tex)")
@@ -2288,6 +2555,18 @@ class GTATOOLS_OT_import_dff(_DFFImportModalMixin, bpy.types.Operator):
         layout.prop(self, "import_game")
         layout.separator()
 
+        # Auto-weld / sharp-edges toggle — turn OFF for custom models.
+        # Хранится в AddonPreferences → запоминается глобально (дефолт OFF).
+        from ..tools.user_data import get_addon_prefs
+        _prefs = get_addon_prefs()
+        if _prefs is not None:
+            layout.prop(_prefs, "import_weld_sharpen",
+                        text=T("Стандартная модель GTA SA (vanilla)"))
+            if not _prefs.import_weld_sharpen:
+                layout.label(text=T("Кастом: связать + сохранить заборы"),
+                             **inu_icon(safe_icon('INFO')))
+        layout.separator()
+
         layout.prop(scene.inu_settings, "gtatools_txd_auto_import", text=T("Авто TXD"))
 
         if not getattr(scene.inu_settings, 'gtatools_txd_auto_import', True):
@@ -2358,6 +2637,31 @@ class GTATOOLS_OT_drop_dff(_DFFImportModalMixin, bpy.types.Operator):
             if os.path.isfile(path) and path.lower().endswith('.dff'):
                 out.append(path)
         return out
+
+    def invoke(self, context, event):
+        # Show a small chooser ON DROP so the user picks vanilla vs custom
+        # import each time. The checkboxes edit the scene settings directly,
+        # which the import step (execute → import_dff → import_dff_from_clump)
+        # reads. Fall back to a silent import if the scene isn't reachable.
+        if getattr(context.scene, 'inu_settings', None) is None:
+            return self.execute(context)
+        return context.window_manager.invoke_props_dialog(self, width=300)
+
+    def draw(self, context):
+        layout = self.layout
+        st = context.scene.inu_settings
+        layout.label(text=T("Как импортировать DFF?"),
+                     **inu_icon(safe_icon('IMPORT')))
+        # Галочка хранится в AddonPreferences → запоминается глобально (дефолт OFF).
+        from ..tools.user_data import get_addon_prefs
+        _prefs = get_addon_prefs()
+        if _prefs is not None:
+            layout.prop(_prefs, "import_weld_sharpen",
+                        text=T("Стандартная модель GTA SA (vanilla)"))
+            if not _prefs.import_weld_sharpen:
+                layout.label(text=T("Кастом: связать + сохранить заборы"),
+                             **inu_icon(safe_icon('INFO')))
+        layout.prop(st, "gtatools_txd_auto_import", text=T("Авто TXD"))
 
     def execute(self, context):
         # FileHandler-drop оператор получает таймер-тики МОДАЛКИ ненадёжно

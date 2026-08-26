@@ -700,6 +700,35 @@ def read_ide(filepath: str) -> IdeFile:
     return ide
 
 
+def find_ides_for_model_ids(ide_paths, model_ids):
+    """Given IDE file paths and a set of model ids, return which IDE files
+    define at least one of those ids: ``{ide_path: [model_id, ...]}``.
+
+    Powers the Import sub-panel's auto-discovery — «which .ide do this IPL's
+    models come from?». Matching is by Model ID (works for both text and
+    binary IPL, since binary carries only the id). Unreadable IDEs are
+    skipped silently."""
+    wanted = set(model_ids)
+    if not wanted:
+        return {}
+    result = {}
+    for p in ide_paths:
+        try:
+            ide = read_ide(p)
+        except Exception:
+            continue
+        hits = set()
+        for obj in ide.objects:
+            if obj.model_id in wanted:
+                hits.add(obj.model_id)
+        for anim in ide.anims:
+            if anim.model_id in wanted:
+                hits.add(anim.model_id)
+        if hits:
+            result[p] = sorted(hits)
+    return result
+
+
 # ── Writing ─────────────────────────────────────────────────────────
 
 def write_ide(filepath: str, ide: IdeFile, *, game: str = 'SA') -> None:
