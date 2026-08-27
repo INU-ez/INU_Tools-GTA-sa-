@@ -149,11 +149,27 @@ def invalidate_model_type_cache(_scene=None, depsgraph=None):
     panel re-classified its whole fallback set (the active collection,
     when nothing is selected) on every one of those frames. Moving a mesh
     can't change whether it's a DFF, a LOD or a COL, so the cache is left
-    alone and the drag stays smooth."""
+    alone and the drag stays smooth.
+
+    Точечная инвалидация: чистим кэш ТОЛЬКО у объектов, что реально изменились
+    (``depsgraph.updates``), а не весь. Иначе выбор материала / генерация превью
+    (оба сыплют depsgraph-апдейтами) сбрасывали кэш целиком, и N-панель
+    переклассифицировала ВСЕ объекты каждый redraw → лаг при работе с
+    материалами. Объект, которому меняют материал/данные, приходит в updates,
+    так что его запись чистится; export всё равно классифицирует свежо."""
     from .draw_cache import is_transform_only
     if is_transform_only(depsgraph):
         return
-    _MODEL_TYPE_CACHE.clear()
+    if depsgraph is None or not _MODEL_TYPE_CACHE:
+        _MODEL_TYPE_CACHE.clear()
+        return
+    try:
+        for upd in depsgraph.updates:
+            nm = getattr(getattr(upd, 'id', None), 'name', None)
+            if nm is not None:
+                _MODEL_TYPE_CACHE.pop(nm, None)
+    except Exception:                                   # noqa: BLE001
+        _MODEL_TYPE_CACHE.clear()
 
 
 def get_model_type_cached(obj):

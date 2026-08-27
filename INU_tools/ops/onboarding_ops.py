@@ -45,28 +45,28 @@ def _doc_url_for_active_locale():
 # don't ship 4000+ lines of release notes to the modal. The version number
 # in the header is filled in at draw time from bl_info so it never goes
 # stale on a bump (it used to be hardcoded «v1.7.0»).
-_WHATS_NEW_HEADER_RU = "Анимации IFP, Альфа-материалы, IK Rig"
-_WHATS_NEW_HEADER_EN = "IFP animations, Alpha materials, IK Rig"
+_WHATS_NEW_HEADER_RU = "Живой мост с Ariane, растительность, камеры"
+_WHATS_NEW_HEADER_EN = "Live Ariane bridge, plants, cameras"
 
 _WHATS_NEW_RU = [
-    ("• Анимации IFP: импорт/экспорт + зеркало L/R", 'ACTION'),
-    ("• IK Rig для педов — Add IK Rig + Floor", 'ARMATURE_DATA'),
-    ("• Animated Map Object (мельницы, краны)", 'CON_FOLLOWPATH'),
-    ("• Массовая замена альфа-режимов материалов", 'MATERIAL'),
-    ("• Frame Hierarchy Editor + Validate Vehicle/Ped", 'OUTLINER'),
-    ("• Paintjob (Pay'n'Spray) на материалах", 'BRUSH_DATA'),
-    ("• Profile: наборы N-панелей", 'PRESET'),
-    ("• Drag-drop DFF/COL + Smart auto-TXD", 'IMPORT'),
+    ("• Живой мост с Ariane — двусторонний обмен моделями", 'WORLD'),
+    ("• Растительность (трава) + редактор plants.dat", 'MOD_PARTICLES'),
+    ("• Зоны (map.zon) и камеры катсцен (.dat)", 'CAMERA_DATA'),
+    ("• Фрагменты — разбивка меша на осколки", 'MOD_EXPLODE'),
+    ("• IDE/IPL/IMG переработаны + диалог «Экспорт в IMG»", 'PACKAGE'),
+    ("• Запекание per-model + «Изолировать объект»", 'TEXTURE'),
+    ("• Alpha-материалы + единый стандарт прозрачности", 'MATERIAL'),
+    ("• Полная локализация EN + ES", 'FONT_DATA'),
 ]
 _WHATS_NEW_EN = [
-    ("• IFP animations: import/export + L/R mirror", 'ACTION'),
-    ("• IK Rig for peds — Add IK Rig + Floor", 'ARMATURE_DATA'),
-    ("• Animated Map Object (windmills, cranes)", 'CON_FOLLOWPATH'),
-    ("• Bulk alpha blend-mode replace on materials", 'MATERIAL'),
-    ("• Frame Hierarchy Editor + Validate Vehicle/Ped", 'OUTLINER'),
-    ("• Paintjob (Pay'n'Spray) on materials", 'BRUSH_DATA'),
-    ("• Profile: N-sidebar panel sets", 'PRESET'),
-    ("• Drag-drop DFF/COL + Smart auto-TXD", 'IMPORT'),
+    ("• Live Ariane bridge — two-way model exchange", 'WORLD'),
+    ("• Plants / grass + plants.dat editor", 'MOD_PARTICLES'),
+    ("• Zones (map.zon) and cutscene cameras (.dat)", 'CAMERA_DATA'),
+    ("• Fragments — split a mesh into shards", 'MOD_EXPLODE'),
+    ("• IDE/IPL/IMG reworked + Export to IMG dialog", 'PACKAGE'),
+    ("• Per-model baking + \"Isolate object\"", 'TEXTURE'),
+    ("• Alpha materials + unified transparency", 'MATERIAL'),
+    ("• Full EN + ES localization", 'FONT_DATA'),
 ]
 
 

@@ -2,7 +2,7 @@ schema_version = "1.0.0"
 
 # Unique extension ID — reverse-DNS-style. Must not change between versions.
 id = "inu_tools_gta_sa"
-version = "2.3.0"
+version = "2.3.1"
 name = "INU Tools (GTA SA)"
 tagline = "Full-pipeline toolkit for GTA San Andreas modding"
 maintainer = "INU"
@@ -26,11 +26,11 @@ blender_version_min = "4.2.0"
 # Optional max — leave blank for forward compatibility (tested up to 5.1).
 # blender_version_max = ""
 
-# SPDX license expression. INU is GPL-3.0-or-later (`or any later version` in headers).
-# OFL-1.1 covers the bundled Inter font (data/fonts/, used by the GPU floater).
+# SPDX license expression — the EXTENSION's own license. Must be from the
+# platform's accepted list (OFL-1.1 is NOT accepted here). The bundled Inter
+# font keeps its own OFL-1.1 license in data/fonts/OFL.txt.
 license = [
   "SPDX:GPL-3.0-or-later",
-  "SPDX:OFL-1.1",
 ]
 
 # Copyright lines (one per holder/year span).

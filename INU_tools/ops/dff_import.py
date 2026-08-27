@@ -2200,7 +2200,7 @@ def _init_import_stats(stats: dict) -> dict:
 
 
 def import_one_dff(path, context, stats, *, import_game=None,
-                   link_alpha=False, txd_hint=None):
+                   link_alpha=False, txd_hint=None, weld_sharpen=None):
     """THE canonical interactive single-DFF import: a .dff plus its
     auto-matched TXD. Shared by drag-drop and the file-picker «Import DFF»
     so both behave identically.
@@ -2241,7 +2241,8 @@ def import_one_dff(path, context, stats, *, import_game=None,
     mats_before = {m.name for m in bpy.data.materials}
     _t0 = _time.perf_counter()
     try:
-        new_objs = import_dff(filepath=path, context=context)
+        new_objs = import_dff(filepath=path, context=context,
+                              weld_sharpen=weld_sharpen)
         stats['imported'] += 1
     except Exception as e:
         stats['errors'].append((name, str(e)))

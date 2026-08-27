@@ -201,7 +201,8 @@ def _import_one_entry(dff, meta, flags) -> None:
             settings.gtatools_txd_auto_import = bool(flags.get('auto_txd', True))
         except Exception:                     # noqa: BLE001
             pass
-    link_alpha = not bool(flags.get('vanilla', True))
+    is_vanilla = bool(flags.get('vanilla', True))
+    link_alpha = not is_vanilla
 
     # R↔B своп теперь автоматический — по режиму игры (III/VC), см.
     # txd_import._textures_to_blender_images. Мосту ничего делать не нужно.
@@ -209,8 +210,14 @@ def _import_one_entry(dff, meta, flags) -> None:
     try:
         stats = _init_import_stats({})
         _txd_hint = (meta.get('txd', '') or '').strip() or None
+        # Ariane's «Vanilla» flag drives the SAME weld path as the file-picker
+        # «Стандартная модель GTA SA (vanilla)» toggle (weld_sharpen). Without it
+        # the bridge always fell back to the addon pref (usually OFF = custom
+        # path), which keeps GTA's reverse-wound double faces → red flipped
+        # normals in Face Orientation. Vanilla map models need the weld+dedup.
         for _ in import_one_dff(dff, ctx, stats, import_game=None,
-                                link_alpha=link_alpha, txd_hint=_txd_hint):
+                                link_alpha=link_alpha, txd_hint=_txd_hint,
+                                weld_sharpen=is_vanilla):
             pass
     except Exception as exc:                  # noqa: BLE001
         # Модель могла успеть импортироваться ДО ошибки (напр. на авто-TXD) —
@@ -796,13 +803,70 @@ def _sanitize_model_name(raw: str) -> str:
     return s[:23]
 
 
-def create_model_in_ariane(objects) -> int:
+def _spawn_scene_lod(main, base_name):
+    """Создать <base>_LOD как редактируемую копию основной модели (если её ещё
+    нет). Чтобы авто-LOD можно было потом поправить и переслать в ariane."""
+    import bpy
+    lname = base_name + "_LOD"
+    if bpy.data.objects.get(lname) is not None:
+        return None
+    obj = bpy.data.objects.new(lname, main.data.copy())
+    obj.matrix_world = main.matrix_world.copy()
+    for c in (list(main.users_collection) or [bpy.context.scene.collection]):
+        c.objects.link(obj)
+    return obj
+
+
+def _spawn_scene_col(main, base_name, box=True):
+    """Создать <base>_COL (заготовку коллизии, inu.type=COL), если её ещё нет.
+    box=True → габаритный бокс (для пустой COL); box=False → копия геометрии
+    основной модели (для COL, построенной из основной). Чтобы авто-COL можно
+    было отредактировать и переслать."""
+    import bpy
+    from mathutils import Vector
+    cname = base_name + "_COL"
+    if bpy.data.objects.get(cname) is not None:
+        return None
+    if box:
+        bb = [Vector(c) for c in main.bound_box]           # 8 углов, локальные коорд.
+        mn = Vector((min(v.x for v in bb), min(v.y for v in bb), min(v.z for v in bb)))
+        mx = Vector((max(v.x for v in bb), max(v.y for v in bb), max(v.z for v in bb)))
+        verts = [(mn.x, mn.y, mn.z), (mx.x, mn.y, mn.z), (mx.x, mx.y, mn.z), (mn.x, mx.y, mn.z),
+                 (mn.x, mn.y, mx.z), (mx.x, mn.y, mx.z), (mx.x, mx.y, mx.z), (mn.x, mx.y, mx.z)]
+        faces = [(0, 1, 2, 3), (4, 5, 6, 7), (0, 1, 5, 4),
+                 (1, 2, 6, 5), (2, 3, 7, 6), (3, 0, 4, 7)]
+        me = bpy.data.meshes.new(cname)
+        me.from_pydata(verts, [], faces)
+        me.update()
+    else:
+        me = main.data.copy()                              # копия геометрии основной
+        me.name = cname
+    obj = bpy.data.objects.new(cname, me)
+    obj.matrix_world = main.matrix_world.copy()
+    if hasattr(obj, 'inu'):
+        obj.inu.type = 'COL'
+    for c in (list(main.users_collection) or [bpy.context.scene.collection]):
+        c.objects.link(obj)
+    return obj
+
+
+def create_model_in_ariane(objects, auto_lod=True, empty_col=True) -> int:
     """Register each selected mesh as a NEW model in ariane (DFF+TXD exported, COL
     auto-generated), placed at its transform. ariane allocates a free id, writes
-    custom.ide + Mod Loader manifest, and replies with a stable guid we tag back."""
+    custom.ide + Mod Loader manifest, and replies with a stable guid we tag back.
+
+    empty_col: when a group has no real _COL sibling, attach an EMPTY collision
+    (no faces, but real bounds from the visual mesh so GTA doesn't cull it) instead
+    of leaving col=0 (which makes ariane build solid collision from the geometry).
+    A brand-new custom model usually wants a clean, non-solid COL it can shape later."""
     import bpy
-    meshes = [o for o in objects if getattr(o, 'type', None) == 'MESH']
-    if not meshes:
+    from ..tools.model_utils import find_all_selected_model_groups
+    if not any(getattr(o, 'type', None) == 'MESH' for o in objects):
+        return 0
+    # Группируем выделенное по базовому имени: 123_DFF / 123_LOD / 123_COL →
+    # ОДНА модель «123» (DFF=основной меш, LOD/COL — реальные соседи по группе).
+    groups = find_all_selected_model_groups()
+    if not groups:
         return 0
     outbox = outbox_dir()
     os.makedirs(outbox, exist_ok=True)
@@ -812,42 +876,71 @@ def create_model_in_ariane(objects) -> int:
 
     lines = []
     used = set()
-    for obj in meshes:
-        name = _sanitize_model_name(obj.name)
+    _spawn = []      # (main, base_name, make_lod, make_col) — создать в сцене
+    for base_name, models in groups.items():
+        main = models['DFF'] or models['LOD']       # основной меш модели
+        if main is None:
+            continue
+        name = _sanitize_model_name(base_name)
         base, i = name, 1
         while name in used:
             name = f"{base[:20]}_{i}"; i += 1
         used.add(name)
         try:
-            export_dff(os.path.join(outbox, name + '.dff'), [obj])
+            export_dff(os.path.join(outbox, name + '.dff'), [main])
         except Exception as exc:                          # noqa: BLE001
             print(f"[ariane bridge] export DFF failed for {name}: {exc}")
             continue
         try:
             for o in bpy.data.objects:
                 o.select_set(False)
-            obj.select_set(True)
-            view.objects.active = obj
+            main.select_set(True)
+            view.objects.active = main
             bpy.ops.gtatools.export_txd(
                 filepath=os.path.join(outbox, name + '.txd'), selected_only=True)
         except Exception as exc:                          # noqa: BLE001
             print(f"[ariane bridge] export TXD failed for {name}: {exc}")
             continue
 
-        # real COL companion (<obj>_COL) → send it; else ariane auto-generates
+        # COL, если у группы нет реального _COL — генерируем ВСЕГДА (col=1) и
+        # создаём заготовку в сцене:
+        #   empty_col ВКЛ → ПУСТАЯ (габаритная) COL  → в сцене _COL = бокс;
+        #   empty_col ВЫКЛ → COL из ГЕОМЕТРИИ основной → в сцене _COL = копия основной.
         col = 0
-        col_obj = _find_companion(obj, '_COL')
-        if col_obj is not None:
-            try:
-                _export_col_local(col_obj, name, outbox)
+        col_obj = models['COL']
+        _col_mode = None      # что создать в сцене: 'box' | 'copy' | None
+        try:
+            if col_obj is not None:
+                _export_col_local(col_obj, name, outbox)          # реальный сосед _COL
                 col = 1
-            except Exception as exc:                      # noqa: BLE001
-                print(f"[ariane bridge] export COL failed for {name}: {exc}")
+            elif empty_col:
+                # bounds от видимого меша (main), чтобы culling-сфера не была
+                # нулевой; сама геометрия пропускается (empty=True).
+                from .col_export import export_col as _export_col
+                _export_col(os.path.join(outbox, name + '.col'), [main],
+                            model_name=name, empty=True, bounds_ref=[main])
+                col = 1
+                _col_mode = 'box'
+            else:
+                _export_col_local(main, name, outbox)             # COL из геометрии основной
+                col = 1
+                _col_mode = 'copy'
+        except Exception as exc:                              # noqa: BLE001
+            print(f"[ariane bridge] COL export failed for {name}: {exc}")
+            col = 0
+            _col_mode = None
 
-        # real LOD companion (<obj>_LOD) → register a LOD model named LOD<name>
+        # LOD of the group → register a LOD model named LOD<name>. When the DFF
+        # is the main mesh: real _LOD sibling if present; else (auto_lod ON) a
+        # copy of the main model as the LOD; else no LOD.
         lod = 0
         lod_name = ""
-        lod_obj = _find_companion(obj, '_LOD')
+        lod_obj = None
+        if models['DFF'] is not None:
+            if models['LOD'] is not None:
+                lod_obj = models['LOD']
+            elif auto_lod:
+                lod_obj = main            # авто-LOD из основной модели
         if lod_obj is not None:
             lod_name = ("LOD" + name)[:23]
             try:
@@ -863,10 +956,16 @@ def create_model_in_ariane(objects) -> int:
                 print(f"[ariane bridge] export LOD failed for {lod_name}: {exc}")
                 lod = 0
 
-        loc, quat, _s = obj.matrix_world.decompose()
+        # Авто-сгенерённые LOD/COL создаём и объектами в сцене (<base>_LOD /
+        # <base>_COL) — чтобы их можно было отредактировать и переслать.
+        _made_lod = (models['LOD'] is None and lod_obj is main and lod == 1)
+        if _made_lod or _col_mode:
+            _spawn.append((main, base_name, name, _made_lod, _col_mode))
+
+        loc, quat, _s = main.matrix_world.decompose()
         gx, gy, gz, gw = -quat.x, -quat.y, -quat.z, quat.w
         lines.append(
-            f"key={obj.name}\tname={name}\tdd=300.0\tcol={col}\tlod={lod}\tlodname={lod_name}\t"
+            f"key={main.name}\tname={name}\tdd=300.0\tcol={col}\tlod={lod}\tlodname={lod_name}\t"
             f"x={loc.x:.4f}\ty={loc.y:.4f}\tz={loc.z:.4f}\t"
             f"qx={gx:.6f}\tqy={gy:.6f}\tqz={gz:.6f}\tqw={gw:.6f}")
 
@@ -881,6 +980,24 @@ def create_model_in_ariane(objects) -> int:
         view.objects.active = prev_active
     except Exception:                                     # noqa: BLE001
         pass
+
+    # Создать авто-LOD/COL объектами в сцене (после восстановления выделения).
+    # Тегируем их ariane-именами, чтобы повторный «Экспорт → Ariane» находил и
+    # ОБНОВЛЯЛ их (LOD ищется по ariane_name == "LOD"+имя, COL — по _COL/тегу).
+    for _m, _bn, _nm, _dl, _cm in _spawn:
+        try:
+            if _dl:
+                _o = _spawn_scene_lod(_m, _bn)
+                if _o is not None:
+                    _o['ariane_name'] = ("LOD" + _nm)[:23]
+                    _o['ariane_companion'] = True
+            if _cm:
+                _o = _spawn_scene_col(_m, _bn, box=(_cm == 'box'))
+                if _o is not None:
+                    _o['ariane_name'] = _nm
+                    _o['ariane_is_col'] = True
+        except Exception as exc:                          # noqa: BLE001
+            print(f"[ariane bridge] scene LOD/COL create failed for {_bn}: {exc}")
 
     if not lines:
         return 0
@@ -915,6 +1032,20 @@ def _read_create_model_ack() -> bool:
             obj['ariane_guid'] = p[1]
             if len(p) >= 3:
                 obj['ariane_name'] = p[2]
+            # Model ID, выделенный Ariane созданной модели → в inu.model_id
+            # (Ariane может слать «id=/mid=/objid=» или 4-м столбцом числом).
+            _mid = None
+            for _f in p[3:]:
+                if _f.startswith(('id=', 'mid=', 'objid=')):
+                    _mid = _f.split('=', 1)[1]
+                    break
+            if _mid is None and len(p) >= 4 and p[3].strip().lstrip('-').isdigit():
+                _mid = p[3].strip()
+            if _mid is not None and hasattr(obj, 'inu'):
+                try:
+                    obj.inu.model_id = int(_mid)
+                except (TypeError, ValueError):
+                    pass
             ok += 1
     try:
         os.remove(path)
@@ -960,31 +1091,53 @@ class GTATOOLS_OT_ariane_create_model(bpy.types.Operator):
     bl_idname = "gtatools.ariane_create_model"
     bl_label = "Ariane: создать модель"
 
+    auto_lod: BoolProperty(
+        name=T("Авто-LOD из основной модели"),
+        description=T("Если LOD-меша (<имя>_LOD) в сцене нет — отправить копию "
+                      "основной модели как дальний LOD. Выключи, если у модели "
+                      "LOD не предусмотрен"),
+        default=True,
+    )
+
+    empty_col: BoolProperty(
+        name=T("Пустая COL если нет своей"),
+        description=T("Если у группы нет реального _COL: ВКЛ — пустая "
+                      "габаритная COL (без граней, bounds от меша); ВЫКЛ — COL "
+                      "из геометрии основной модели. В обоих случаях в сцене "
+                      "создаётся объект _COL для правки"),
+        default=True,
+    )
+
     @classmethod
     def poll(cls, context):
         return any(getattr(o, 'type', None) == 'MESH' for o in context.selected_objects)
 
     def invoke(self, context, event):
+        from ..tools.model_utils import find_all_selected_model_groups
         self._warn = []
-        for o in context.selected_objects:
-            if getattr(o, 'type', None) != 'MESH':
-                continue
-            if _find_companion(o, '_COL') is None:
-                self._warn.append(T("{0}: нет COL — авто из геометрии").format(o.name))
-            if _find_companion(o, '_LOD') is None:
-                self._warn.append(T("{0}: нет LOD — без дальнего меша").format(o.name))
-        if self._warn:
-            return context.window_manager.invoke_props_dialog(self, width=400)
-        return self.execute(context)
+        # По группам (123_DFF/123_LOD/123_COL → одна модель «123»), а не по
+        # каждому мешу: предупреждаем только если у группы реально нет COL/LOD.
+        for base_name, models in find_all_selected_model_groups().items():
+            if models['COL'] is None:
+                self._warn.append(T("{0}: нет своей COL — будет создана автоматически").format(base_name))
+            if models['LOD'] is None:
+                self._warn.append(T("{0}: нет LOD — авто из основной модели").format(base_name))
+        # Диалог показываем ВСЕГДА — в нём галочка «Авто-LOD» + предупреждения.
+        return context.window_manager.invoke_props_dialog(self, width=400)
 
     def draw(self, context):
         col = self.layout.column(align=True)
         col.label(text=T("Продолжить создание модели?"), icon='QUESTION')
         for w in getattr(self, '_warn', []):
             col.label(text=w, icon='ERROR')
+        col.separator()
+        col.prop(self, "auto_lod")
+        col.prop(self, "empty_col")
 
     def execute(self, context):
-        n = create_model_in_ariane(context.selected_objects)
+        n = create_model_in_ariane(context.selected_objects,
+                                   auto_lod=self.auto_lod,
+                                   empty_col=self.empty_col)
         if n:
             self.report({'INFO'}, T("Отправлено моделей: {0}").format(n))
         else:
@@ -1917,7 +2070,7 @@ def draw_ariane_body(layout, context):
     # Импорт: ручной + авто (⟳) в одном ряду.
     irow = col.row(align=True)
     irow.operator("gtatools.ariane_import_now", text=T("Ручной импорт"), icon='IMPORT')
-    irow.operator("gtatools.ariane_watch", text=T("Авто"), icon='FILE_REFRESH',
+    irow.operator("gtatools.ariane_watch", text=T("Sync импорт"), icon='FILE_REFRESH',
                   depress=is_watching())
 
     # Экспорт + опции «что включать» одним рядом (COL / LOD / позиция).

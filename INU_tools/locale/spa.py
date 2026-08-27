@@ -3,6 +3,13 @@
 # Values are Spanish translations.
 
 LANG = {
+    "Sync импорт": "Importar sync",
+    "Авто-LOD из основной модели": "Auto-LOD del modelo principal",
+    "Если LOD-меша (<имя>_LOD) в сцене нет — отправить копию основной модели как дальний LOD. Выключи, если у модели LOD не предусмотрен": "Si no hay malla LOD (<nombre>_LOD) en la escena, envía una copia del modelo principal como LOD lejano. Desactívalo si el modelo no debe tener LOD",
+    "{0}: нет LOD — авто из основной модели": "{0}: sin LOD — auto del modelo principal",
+    "Пустая COL если нет своей": "COL vacío si no hay",
+    "Если у группы нет реального _COL: ВКЛ — пустая габаритная COL (без граней, bounds от меша); ВЫКЛ — COL из геометрии основной модели. В обоих случаях в сцене создаётся объект _COL для правки": "Si el grupo no tiene un _COL real: ON — un COL vacío de caja envolvente (sin caras, bounds de la malla); OFF — un COL desde la geometría del modelo principal. En ambos casos se crea un objeto _COL en la escena para editar",
+    "{0}: нет своей COL — будет создана автоматически": "{0}: sin COL propio — se creará automáticamente",
     # ── Enum items / raw text / reports localized by audit ──
     "Обычный экспорт/импорт в файлы": "Exportacion/importacion normal a archivos",
     "Мост с запущенной ariane (live-обмен)": "Puente con Ariane en ejecucion (intercambio en vivo)",

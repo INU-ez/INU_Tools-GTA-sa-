@@ -105,7 +105,7 @@
 ### 🧹 Интерфейс и стор
 
 - Плавающие окна: кнопки открытия убраны, оставлено окно **«Проверка»**.
-- Манифест: добавлена лицензия шрифта **`SPDX:OFL-1.1`**, поле `maintainer` приведено к формату.
+- Манифест: поле `maintainer` приведено к формату (лицензия встроенного шрифта Inter — в `data/fonts/OFL.txt`).
 - Документация (DOCS / README / чеклист / сравнение) синхронизирована с аддоном.
 
 ### 🐛 Исправления
@@ -217,7 +217,7 @@ A two-way bridge between Blender (INU Tools) and the **Ariane** map editor over 
 ### 🧹 Interface & store
 
 - Floating windows: launch buttons removed, the **"Validation"** window kept.
-- Manifest: added the **`SPDX:OFL-1.1`** font license, fixed the `maintainer` field.
+- Manifest: fixed the `maintainer` field (the bundled Inter font keeps its OFL license in `data/fonts/OFL.txt`).
 - Docs (DOCS / README / checklist / comparison) synced to the addon.
 
 ### 🐛 Fixes
@@ -244,6 +244,6 @@ La versión más grande del addon. Lo principal: un **puente bidireccional en vi
 - 🎬 IFP: espejo L/R + round-trip exacto; jerarquía de frames como sub-panel. 🌊 Agua: límites + cortar por bloques en objetos. 🧱 Colisiones en colección "Collision" (colores por superficie), dummies como cubos.
 - 🌐 **Localización completa EN + ES**: todas las cadenas, incluidos los tooltips-docstring de 355 operadores y las listas desplegables.
 - ⚡ **Rendimiento**: caché de dibujo del panel N (los paneles ya no escanean la escena en cada fotograma; el viewport deja de tironear en escenas grandes).
-- 🧹 Ventanas flotantes reducidas a «Validación»; manifiesto: +`SPDX:OFL-1.1`, `maintainer`; documentación sincronizada.
+- 🧹 Ventanas flotantes reducidas a «Validación»; manifiesto: `maintainer` corregido; documentación sincronizada.
 - 🐛 Correcciones de revisión (crash del espejo en 4.2/4.3, overlay de agua, skin-header, AO negro con vista previa+aislamiento, dummies de vehículos, etc.).
 ```
