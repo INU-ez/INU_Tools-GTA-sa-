@@ -31,12 +31,16 @@
 <tr>
 <td width="50%" valign="top">
 
+- 🌉 **Live Ariane bridge** — two-way, real-time editing with the **Ariane** map editor: import on click, send models / positions / new instances back
 - ⚡ **Performance** — Import Map ~10×, Export to IMG ~5–15× (parallel DFF parsing + batch IMG writer)
 - 🎨 **Native parsers** — DFF / COL / TXD / IDE / IPL / IMG / IFP / FXP, zero external dependencies
 - 🗺️ **Full map round-trip** — IMG → Blender → edit DFF + COL + TXD → IMG in another build
 - 🎆 **`effects.fxp` editor** — 82 systems, live particle simulation in viewport
 - 🦴 **Skinned DFF + IFP** — import peds with 294+ vanilla animations
 - 🆔 **ID Manager** — multi-preset, scene sync, FLA range extension, conflict detection
+- 🌍 **Multi-game** — GTA III / VC / SA, auto-detected on import
+- 🔥 **Texture baking** — per-model AO / Diffuse / Bevel / Shadow / Alpha, shadow decals, object isolation
+- 💡 **Prelight & LightMap** — bake from all light types + HDRI into vertex colors / textures
 
 </td>
 <td width="50%" valign="top">

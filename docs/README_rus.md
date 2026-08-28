@@ -31,12 +31,16 @@
 <tr>
 <td width="50%" valign="top">
 
+- 🌉 **Живой мост с Ariane** — двусторонняя правка в реальном времени с редактором карт **Ariane**: импорт по клику, отправка моделей / позиций / инстансов обратно
 - ⚡ **Производительность** — Import Map ~10×, Export to IMG ~5–15× (параллельный парсинг DFF + batch IMG writer)
 - 🎨 **Нативные парсеры** — DFF / COL / TXD / IDE / IPL / IMG / IFP / FXP, без внешних зависимостей
 - 🗺️ **Полный round-trip карты** — IMG → Blender → правка DFF + COL + TXD → IMG другой сборки
 - 🎆 **Редактор `effects.fxp`** — 82 системы, живая симуляция частиц во viewport
 - 🦴 **Skinned DFF + IFP** — импорт педов с 294+ ванильными анимациями
 - 🆔 **ID Manager** — multi-preset, sync со сценой, FLA-расширение, детекция конфликтов
+- 🌍 **Мульти-игра** — GTA III / VC / SA, авто-детект при импорте
+- 🔥 **Запекание текстур** — per-model AO / Diffuse / Bevel / Shadow / Alpha, тень-декали, изоляция объекта
+- 💡 **Прилайт и LightMap** — запекание от всех источников + HDRI в vertex colors / текстуры
 
 </td>
 <td width="50%" valign="top">
