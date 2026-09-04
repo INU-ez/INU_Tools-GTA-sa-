@@ -363,6 +363,7 @@ ALL_TOGGLEABLE_PANELS = [
     ('GTATOOLS_PT_water_panel',          "Water"),
     ('GTATOOLS_PT_grass_panel',          "Трава"),
     ('GTATOOLS_PT_radar_panel',          "X Radar Maker"),
+    ('GTATOOLS_PT_timecyc_panel',        "Тайм-циклы"),
     ('GTATOOLS_PT_footer_panel',         "Поддержка"),
 ]
 

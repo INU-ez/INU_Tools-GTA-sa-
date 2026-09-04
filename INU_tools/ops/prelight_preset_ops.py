@@ -495,3 +495,20 @@ class GTATOOLS_OT_prelight_preset_rename(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class GTATOOLS_OT_prelight_view_reset(bpy.types.Operator):
+    """Сбросить коррекцию превью в нейтраль — превью покажет прилайт ровно таким, каким он уйдёт в игру"""
+    bl_idname = "gtatools.prelight_view_reset"
+    bl_label = "Нейтрально"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        from ..tools.prelight import (PRELIGHT_VIEW_NEUTRAL,
+                                      apply_prelight_view_correction)
+        ins = context.scene.inu_settings
+        bright, contrast, gamma, saturation = PRELIGHT_VIEW_NEUTRAL
+        ins.prelight_view_bright = bright
+        ins.prelight_view_contrast = contrast
+        ins.prelight_view_gamma = gamma
+        ins.prelight_view_saturation = saturation
+        apply_prelight_view_correction(context.scene)
+        return {'FINISHED'}

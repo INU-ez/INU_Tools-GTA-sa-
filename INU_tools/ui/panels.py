@@ -658,6 +658,9 @@ def _draw_map_import(layout, context):
              text="TXD", toggle=True)
     row.prop(scene.inu_settings, "gtatools_map_load_col",
              text="COL", toggle=True)
+    c.prop(scene.inu_settings, "gtatools_map_skip_dupes",
+           text=T("Без дублей"), toggle=True,
+           **inu_icon(safe_icon('DUPLICATE')))
     c.prop(scene.inu_settings, "gtatools_map_group_by_ipl",
            text=T("Группировать по IPL"), toggle=True,
            **inu_icon(safe_icon('OUTLINER_COLLECTION')))
@@ -1101,7 +1104,10 @@ class GTATOOLS_PT_ide_ipl_export(bpy.types.Panel):
             _nr.label(text=ao.name, **inu_icon(safe_icon('OBJECT_DATA')))
             _nab = _nr.row(align=True)
             _nab.alignment = 'RIGHT'
-            _nab.label(text="", icon='BLANK1')   # слот под иконку (как 🔄 у IMG)
+            # Два слота-заглушки под ведущие иконки строк ниже (открыть + ▶/🔄),
+            # чтобы колонка «Check» стояла ровно над Add/Export.
+            _nab.label(text="", icon='BLANK1')
+            _nab.label(text="", icon='BLANK1')
             _nab_pv = _nab.row(align=True)
             _nab_pv.ui_units_x = 6.5   # общая ширина главных кнопок
             _nab_pv.operator("gtatools.link_verify", text="Check",
@@ -1125,12 +1131,18 @@ class GTATOOLS_PT_ide_ipl_export(bpy.types.Panel):
                 _sr.label(text=T("Не в IDE"),
                           **inu_icon(safe_icon('RADIOBUT_OFF')))
             else:
-                _drift_ide = (
-                    abs(_iao.draw_distance - _iao.ide_last_draw_distance) > 1e-3
-                    or (_iao.txd_name or '') != (_iao.ide_last_txd_name or '')
-                    or int(_iao.ide_flags) != int(_iao.ide_last_flags))
+                # Что именно разошлось с IDE — перечисляем в предупреждении.
+                _ide_diff = []
+                if abs(_iao.draw_distance - _iao.ide_last_draw_distance) > 1e-3:
+                    _ide_diff.append("DrawDist")
+                if (_iao.txd_name or '') != (_iao.ide_last_txd_name or ''):
+                    _ide_diff.append("TXD")
+                if int(_iao.ide_flags) != int(_iao.ide_last_flags):
+                    _ide_diff.append("Flags")
+                _drift_ide = bool(_ide_diff)
                 if _drift_ide:
-                    _sr.label(text=T("В IDE, параметры разошлись"),
+                    _sr.label(text=T("В IDE, изменено: {0}").format(
+                        ", ".join(_ide_diff)),
                               **inu_icon(safe_icon('ERROR')))
                 else:
                     _t = os.path.basename(_iao.ide_target_file or '') or '?'
@@ -1139,7 +1151,18 @@ class GTATOOLS_PT_ide_ipl_export(bpy.types.Panel):
             _sre = _sr.row(align=True)
             _sre.alignment = 'RIGHT'
             _sre.enabled = has_sel
-            _sre.label(text="", icon='BLANK1')   # слот под иконку (как 🔄 у IMG)
+            # 📄 открыть IDE-файл этой модели во внешнем редакторе.
+            _oide = _sre.row(align=True)
+            _oide.enabled = bool(_iao.ide_target_file)
+            _oide.operator("gtatools.open_text_file", text="",
+                           **inu_icon(safe_icon('TEXT'))).filepath = (
+                               _iao.ide_target_file or "")
+            # ▶ вернуть параметры модели ИЗ IDE (id, флаги, draw dist, TXD) —
+            # парная кнопке «вернуть координаты из IPL» (тоже FORWARD).
+            _rcide = _sre.row(align=True)
+            _rcide.enabled = bool(_iao.ide_linked)
+            _rcide.operator("gtatools.ide_sync_from_file", text="",
+                            **inu_icon(safe_icon('FORWARD')))
             # ↑ обновить строку в IDE + 🗑 удалить (не активна, если ID сменился).
             _sre_ex = _sre.row(align=True)
             _sre_ex.ui_units_x = 6.5
@@ -1190,11 +1213,17 @@ class GTATOOLS_PT_ide_ipl_export(bpy.types.Panel):
             _sre2 = _sr2.row(align=True)
             _sre2.alignment = 'RIGHT'
             _sre2.enabled = has_sel
-            # 🔄 вернуть координаты из IPL (в слот-иконку, как 🔄 у IMG).
+            # 📄 открыть IPL-файл этой модели во внешнем редакторе.
+            _oipl = _sre2.row(align=True)
+            _oipl.enabled = bool(_iao.ipl_target_file)
+            _oipl.operator("gtatools.open_text_file", text="",
+                           **inu_icon(safe_icon('TEXT'))).filepath = (
+                               _iao.ipl_target_file or "")
+            # ▶ вернуть координаты из IPL (в слот-иконку, как ▶ у IDE).
             _rc2 = _sre2.row(align=True)
             _rc2.enabled = bool(_iao.ipl_uuid)
             _rc2.operator("gtatools.ipl_restore_coords", text="",
-                          **inu_icon(safe_icon('FILE_REFRESH')))
+                          **inu_icon(safe_icon('FORWARD')))
             # ↑ обновить координаты в IPL + 🗑 удалить инстанс.
             _sre2_ex = _sre2.row(align=True)
             _sre2_ex.ui_units_x = 6.5
@@ -1228,6 +1257,12 @@ class GTATOOLS_PT_ide_ipl_export(bpy.types.Panel):
             _sre3 = _sr3.row(align=True)
             _sre3.alignment = 'RIGHT'
             _sre3.enabled = has_sel
+            # 📦 открыть .img этой модели ассоциированным приложением ОС.
+            _oimg = _sre3.row(align=True)
+            _oimg.enabled = bool(_img_tgt)
+            _oimg.operator("gtatools.open_text_file", text="",
+                           **inu_icon(safe_icon('FILE_ARCHIVE'))).filepath = (
+                               bpy.path.abspath(_img_tgt) if _img_tgt else "")
             # 🔄 проверить, в каком IMG папки игры лежит DFF модели (слот-иконка).
             _sre3.operator("gtatools.verify_img_link", text="",
                            **inu_icon(safe_icon('FILE_REFRESH')))
@@ -1314,6 +1349,29 @@ class GTATOOLS_PT_ide_ipl_export(bpy.types.Panel):
                              **inu_icon(safe_icon('TEXT'))).filepath = _dit.path
                 _dr.operator("gtatools.ide_sync_remove", text="",
                              **inu_icon(safe_icon('X'))).index = _di
+        # ── Флаги IDE активной модели — свой сворачиваемый бокс ──
+        # Флаги пер-объектные (obj.inu.ide_flags), game-aware список тот же,
+        # что в Object Properties. Здесь — чтобы не лезть в свойства объекта
+        # ради пары галочек при работе с IDE/IPL/IMG.
+        _fl_exp = scn.inu_settings.gtatools_show_ide_flags_box
+        _flbox = bottom_col.box().column(align=True)
+        _flbox.prop(scn.inu_settings, "gtatools_show_ide_flags_box",
+                    **inu_icon(safe_icon('TRIA_DOWN' if _fl_exp
+                                         else 'TRIA_RIGHT')),
+                    text=T("Флаги IDE"), emboss=False)
+        if _fl_exp:
+            _fact = context.active_object
+            _fainu = getattr(_fact, 'inu', None) if _fact else None
+            if _fainu is None or getattr(_fact, 'type', '') != 'MESH':
+                _flbox.label(text=T("Выдели модель"),
+                             **inu_icon(safe_icon('INFO')))
+            else:
+                _flbox.prop(_fainu, "ide_flags", text="IDE Flags")
+                from ..core.ide_flag_translate import flag_props_for_game
+                from ..core import game_versions as _gv
+                _flc = _flbox.column(align=True)
+                for _flp in flag_props_for_game(_gv.game_of_scene(scn)):
+                    _flc.prop(_fainu, _flp)
         # ── «Дополнительно (IPL)»: секции + замена Empty (collapsible) ──
         extra_expanded = scn.inu_settings.gtatools_show_ipl_extra
         extra_group = bottom_col.box().column(align=True)
@@ -1559,6 +1617,10 @@ class GTATOOLS_PT_export_panel(bpy.types.Panel):
         # ID = 0 (peds в GTA SA не используют специальный RW pipeline).
         row = io_col.row(align=True)
         row.prop(context.scene.inu_settings, "gtatools_export_pipeline", expand=True)
+        # ── Авто-генерация коллизии: выдели модель → кнопка (Выпуклая / Бокс).
+        # Создаёт редактируемый <имя>_COL, который дальше идёт в COL-экспорт.
+        io_col.operator_menu_enum("gtatools.auto_col", "mode",
+                                  text=T("Сгенерировать COL"), icon='MESH_CUBE')
         # Suffix/Prefix customisation UI removed — model type is now detected
         # automatically (LOD by «LOD» in the name, COL by an import tag or the
         # absence of textured materials, otherwise DFF). The _DFF/_LOD/_COL
@@ -2594,7 +2656,7 @@ class GTATOOLS_PT_2dfx_panel(bpy.types.Panel):
         # Always show the panel icon; append a checkmark when the
         # active object is actually a 2DFX empty, so the header hints
         # whether the panel's content applies to the current selection.
-        self.layout.label(text="", **inu_icon(safe_icon('LIGHT')))
+        self.layout.label(text="", **inu_icon(safe_icon('SHADERFX')))
         if self._is_2dfx(context):
             self.layout.label(text="", **inu_icon(compat.ICON_CHECK))
 
@@ -3874,9 +3936,29 @@ class GTATOOLS_PT_prelight_panel(bpy.types.Panel):
             row.operator("gtatools.apply_lightmap_uv2", text=T("Добавить LightMap"))
             row.operator("gtatools.remove_lightmap_uv2", text="", **inu_icon(safe_icon('REMOVE')))
 
-            # ─── Коррекция превью прилайта убрана из UI ────────────────
-            # Проперти gtatools_show_prelight_view / prelight_view_* и их
-            # обработчики на месте — блок можно вернуть при желании.
+            # ─── Коррекция превью прилайта ─────────────────────────────
+            # Только вьюпорт: ноды коррекции — постоянная часть графа
+            # превью, нейтраль (0, 0, 1, 1) = pass-through. На экспорт не
+            # влияет вообще — dff_export читает реальные vertex colors
+            # мимо этих нод.
+            view_box = obj_col.box().column(align=True)
+            header = view_box.row(align=True)
+            header.prop(
+                scene.inu_settings, "gtatools_show_prelight_view",
+                text=T("Коррекция превью"),
+                icon='TRIA_DOWN' if scene.inu_settings.gtatools_show_prelight_view else 'TRIA_RIGHT',
+                emboss=False)
+            if scene.inu_settings.gtatools_show_prelight_view:
+                view_col = view_box.column(align=True)
+                view_col.prop(scene.inu_settings, "prelight_view_bright", text=T("Яркость"), slider=True)
+                view_col.prop(scene.inu_settings, "prelight_view_contrast", text=T("Контраст"), slider=True)
+                view_col.prop(scene.inu_settings, "prelight_view_gamma", text=T("Гамма"), slider=True)
+                view_col.prop(scene.inu_settings, "prelight_view_saturation", text=T("Насыщенность"), slider=True)
+                view_box.operator("gtatools.prelight_view_reset",
+                                  text=T("Нейтрально"),
+                                  **inu_icon(safe_icon('LOOP_BACK')))
+                view_box.label(text=T("Только вьюпорт, на экспорт не влияет"),
+                               **inu_icon(safe_icon('INFO')))
 
             # ─── Слои Vertex Color (collapsible, inline) ──────────────
             # Sits below LightMap so the user sees it in the natural
@@ -4399,7 +4481,7 @@ class GTATOOLS_PT_grass_panel(bpy.types.Panel):
     bl_options = {'DEFAULT_CLOSED'}
 
     def draw_header(self, context):
-        self.layout.label(text="", **inu_icon(safe_icon('OUTLINER_DATA_GREASEPENCIL')))
+        self.layout.label(text="", **inu_icon(safe_icon('OUTLINER_DATA_CURVES')))
 
     def draw_header_preset(self, context):
         _draw_doc_help(self.layout, 'grass')
@@ -4633,6 +4715,318 @@ class GTATOOLS_PT_water_panel(bpy.types.Panel):
             else:
                 box.label(text=f"{T('Все грани влезают')} ({n_ok})", **inu_icon(compat.ICON_CHECK))
 
+
+
+@apply_order
+class GTATOOLS_PT_timecyc_panel(bpy.types.Panel):
+    """Панель тайм-циклов: timecyc.dat → освещение сцены и обратно."""
+    bl_label = "Тайм-циклы"
+    bl_idname = "GTATOOLS_PT_timecyc_panel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_parent_id = "GTATOOLS_PT_main_panel"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw_header(self, context):
+        self.layout.label(text="", **inu_icon(safe_icon('WORLD')))
+
+    def draw_header_preset(self, context):
+        _draw_doc_help(self.layout, 'timecyc')
+
+    def draw(self, context):
+        layout = self.layout
+        props = context.scene.inu_settings.gtatools_timecyc
+
+        from ..ops import timecyc_ops as tco
+        cyc = tco.get_cyc(context)
+
+        if cyc is None:
+            # Файла нет — Импорт/Экспорт сверху (Импортом его и грузят) +
+            # подсказка. Комбинированный блок с погодой показывать нечему.
+            io = layout.row(align=True)
+            io.scale_y = 1.4
+            io.operator("gtatools.import_timecyc", text=T("Импорт"),
+                        **inu_icon(safe_icon('IMPORT')))
+            io.operator("gtatools.export_timecyc", text=T("Экспорт"),
+                        **inu_icon(safe_icon('EXPORT')))
+            info = layout.box().column(align=True)
+            info.label(text=T("Файл не загружен"), **inu_icon(safe_icon('INFO')))
+            info.label(text=T("data/timecyc.dat из папки игры"))
+            return
+
+        # Файл есть: слева выбор погоды + «Погод в файле», справа высокие
+        # (в 2 ряда) кнопки Импорт/Экспорт — как просил: [погода][Имп][Эксп].
+        _top = layout.split(factor=0.5, align=True)
+        _wl = _top.column(align=True)
+        _wl.prop_search(props, "weather_name", props, "weathers",
+                        text="", icon=safe_icon('WORLD'))
+        _wl.label(text=T("Погод в файле: %d") % len(cyc.weathers))
+        _wr = _top.row(align=True)
+        _wr.scale_y = 2.0
+        _wr.operator("gtatools.import_timecyc", text=T("Импорт"),
+                     **inu_icon(safe_icon('IMPORT')))
+        _wr.operator("gtatools.export_timecyc", text=T("Экспорт"),
+                     **inu_icon(safe_icon('EXPORT')))
+
+        # ── Мастер вкл/выкл всего тайм-цикла ──
+        en = props.enabled
+        tgl = layout.row(align=True)
+        tgl.scale_y = 1.3
+        tgl.operator("gtatools.timecyc_toggle",
+                     text=T("Тайм-цикл включён") if en else T("Тайм-цикл выключен"),
+                     depress=en,
+                     **inu_icon(safe_icon('CHECKBOX_HLT' if en
+                                          else 'CHECKBOX_DEHLT')))
+
+        time_box = layout.box().column(align=True)
+        time_box.prop(props, "hour", text=T("Время"), slider=True)
+        time_box.label(text=_timecyc_between_label(props.hour))
+        # «Живое превью», «Применить», «Показать в вьюпорте» убраны: превью
+        # всегда живое пока цикл включён, а вьюпорт переводится в Material
+        # Preview автоматически (show_in_viewport при импорте/включении).
+
+        # Прилайт Day↔Night — заметная фича, живёт в теле панели.
+        pre_box = layout.box().column(align=True)
+        pre_box.prop(props, "game_look", **inu_icon(safe_icon('SHADING_SOLID')))
+        # Тумблера «Прилайт по времени суток» нет — он всегда включён
+        # (props.prelight_daynight форсится при активном тайм-цикле).
+        row = pre_box.row(align=True)
+        row.operator("gtatools.timecyc_setup_materials",
+                     text=T("Применить к моделям сцены"),
+                     **inu_icon(safe_icon('SHADERFX')))
+        row.operator("gtatools.timecyc_reset_preview", text="",
+                     **inu_icon(safe_icon('LOOP_BACK')))
+        row.operator("gtatools.timecyc_diagnose", text="",
+                     **inu_icon(safe_icon('CONSOLE')))
+        pre_box.label(text=T("Ночной вес: %.2f") % _timecyc_night_balance(props),
+                      **inu_icon(safe_icon('INFO')))
+
+
+        if (props.game_look or props.prelight_daynight)                 and props.dn_material_count == 0:
+            warn = pre_box.column(align=True)
+            warn.alert = True
+            warn.label(text=T("Нет материалов с превью прилайта"),
+                       **inu_icon(safe_icon('ERROR')))
+            warn.label(text=T("Включите его в панели PreLight"))
+
+        dirty = cyc.dirty_count()
+        if dirty:
+            warn = layout.box().column(align=True)
+            warn.alert = True
+            warn.label(text=T("Не сохранено срезов: %d") % dirty,
+                       **inu_icon(safe_icon('ERROR')))
+            warn.operator("gtatools.timecyc_reload",
+                          text=T("Перечитать файл"),
+                          **inu_icon(safe_icon('FILE_REFRESH')))
+
+
+def _timecyc_fog_label(context, props):
+    """Фактические дистанции тумана — чтобы было с чем сверять игру."""
+    from ..ops import timecyc_ops as tco
+    cyc = tco.get_cyc(context, load=False)
+    if cyc is None:
+        return T("Туман: срез не загружен")
+    values = cyc.interpolate(tco.weather_index(props, cyc), props.hour)
+    start = max(float((values.get('fog_start') or [0.0])[0]), 0.0)
+    end = max(float((values.get('far_clip') or [800.0])[0]), 1.0)
+    scale = props.fog_distance
+    return T("Туман: %d → %d м") % (round(start * scale), round(end * scale))
+
+
+def _timecyc_postfx_label(context, props):
+    """Текущий множитель кадра — видно, насколько фильтр тянет цвет."""
+    from ..ops import timecyc_ops as tco
+    from ..core import timecyc as _tc
+    cyc = tco.get_cyc(context, load=False)
+    if cyc is None or not props.use_postfx:
+        return T("Множитель кадра: 1.00 / 1.00 / 1.00")
+    values = cyc.interpolate(tco.weather_index(props, cyc), props.hour)
+    gain = _tc.postfx_gain(values)
+    return T("Множитель кадра: %.2f / %.2f / %.2f") % gain
+
+
+def _timecyc_night_balance(props):
+    """Тот же расчёт, что уходит в нод-группу — чтобы панель не врала."""
+    from ..core import timecyc as _tc
+    return _tc.night_balance(
+        props.hour,
+        dusk_start=props.dn_dusk_start, dusk_end=props.dn_dusk_end,
+        dawn_start=props.dn_dawn_start, dawn_end=props.dn_dawn_end)
+
+
+def _timecyc_between_label(hour):
+    """Подпись «между какими срезами сейчас интерполяция» — иначе
+    непонятно, какой из восьми срезов правится под текущий час."""
+    from ..core import timecyc as _tc
+    hour = float(hour) % 24.0
+    lo = len(_tc.SLOT_HOURS) - 1
+    for i, h in enumerate(_tc.SLOT_HOURS):
+        if hour < h:
+            lo = i - 1
+            break
+    if lo < 0:
+        lo = len(_tc.SLOT_HOURS) - 1
+    hi = (lo + 1) % len(_tc.SLOT_HOURS)
+    return "%s %02d:00 → %02d:00" % (T("Между срезами"),
+                                     _tc.SLOT_HOURS[lo], _tc.SLOT_HOURS[hi])
+
+
+class GTATOOLS_PT_timecyc_edit(bpy.types.Panel):
+    """Правка одного временно́го среза выбранной погоды."""
+    bl_label = "Правка среза"
+    bl_idname = "GTATOOLS_PT_timecyc_edit"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_parent_id = "GTATOOLS_PT_timecyc_panel"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    @classmethod
+    def poll(cls, context):
+        from ..ops import timecyc_ops as tco
+        return tco.get_cyc(context, load=False) is not None
+
+    def draw(self, context):
+        layout = self.layout
+        props = context.scene.inu_settings.gtatools_timecyc
+
+        from ..ops import timecyc_ops as tco
+        from ..core import timecyc as _tc
+        cyc = tco.get_cyc(context)
+        slot = tco.current_slot(context, cyc)
+
+        layout.prop(props, "slot", text=T("Срез"))
+        if slot is None:
+            layout.label(text=T("Срез недоступен"), **inu_icon(safe_icon('ERROR')))
+            return
+
+        if slot.width != _tc.schema_width(cyc.fields):
+            note = layout.box().column(align=True)
+            note.label(text=T("Строка короче схемы: %d из %d")
+                       % (slot.width, _tc.schema_width(cyc.fields)),
+                       **inu_icon(safe_icon('INFO')))
+            note.label(text=T("Поля читаются со сдвигом — как их видит игра"))
+
+        sky = layout.box().column(align=True)
+        sky.label(text=T("Небо и солнце:"), **inu_icon(safe_icon('LIGHT_SUN')))
+        sky.prop(props, "f_sky_top", text=T("Зенит"))
+        sky.prop(props, "f_sky_bot", text=T("Горизонт"))
+        sky.prop(props, "f_sun_size", text=T("Размер солнца"))
+        sky.prop(props, "f_spr_size", text=T("Размер блика"))
+        sky.prop(props, "f_spr_bright", text=T("Яркость блика"))
+
+        light = layout.box().column(align=True)
+        light.label(text=T("Свет и тени:"), **inu_icon(safe_icon('OUTLINER_OB_LIGHT')))
+        light.prop(props, "f_amb", text=T("Ambient мира"))
+        light.prop(props, "f_amb_obj", text=T("Ambient объектов"))
+        if cyc.has_field('dir'):
+            light.prop(props, "f_dir", text=T("Directional"))
+            light.prop(props, "f_dir_mult", text=T("Множитель dir"))
+        light.prop(props, "f_light_on_ground", text=T("Свет на земле"))
+        light.prop(props, "f_shadow", text=T("Тени"))
+        light.prop(props, "f_light_shad", text=T("Тени от света"))
+        light.prop(props, "f_pole_shad", text=T("Тени столбов"))
+        light.prop(props, "f_highlight_min", text=T("Мин. блики"))
+
+        fog = layout.box().column(align=True)
+        fog.label(text=T("Туман и дальность:"), **inu_icon(safe_icon('MOD_FLUIDSIM')))
+        fog.prop(props, "f_far_clip", text=T("Дальность (FarClp)"))
+        fog.prop(props, "f_fog_start", text=T("Начало тумана"))
+
+        clouds = layout.box().column(align=True)
+        clouds.label(text=T("Облака:"), **inu_icon(safe_icon('OUTLINER_OB_VOLUME')))
+        clouds.prop(props, "f_low_clouds", text=T("Нижние"))
+        clouds.prop(props, "f_bottom_clouds", text=T("У горизонта"))
+        clouds.prop(props, "f_cloud_alpha", text=T("Прозрачность"))
+
+        water = layout.box().column(align=True)
+        water.label(text=T("Вода:"), **inu_icon(safe_icon('MATFLUID')))
+        water.prop(props, "f_water", text=T("Цвет"))
+        water.prop(props, "f_water_a", text=T("Альфа"))
+        water.prop(props, "f_water_fog", text=T("Туман под водой"))
+
+        post = layout.box().column(align=True)
+        post.label(text=T("PostFX:"), **inu_icon(safe_icon('SEQ_PREVIEW')))
+        post.prop(props, "f_postfx1", text=T("Слой 1"))
+        post.prop(props, "f_postfx1_a", text=T("Альфа 1"))
+        post.prop(props, "f_postfx2", text=T("Слой 2"))
+        post.prop(props, "f_postfx2_a", text=T("Альфа 2"))
+        post.label(text=T("В вьюпорте не показывается"),
+                   **inu_icon(safe_icon('INFO')))
+
+        tools = layout.column(align=True)
+        tools.operator("gtatools.timecyc_revert_slot",
+                       text=T("Откатить срез"),
+                       **inu_icon(safe_icon('LOOP_BACK')))
+        tools.operator("gtatools.timecyc_copy_to_all_slots",
+                       text=T("Во все срезы погоды"),
+                       **inu_icon(safe_icon('DUPLICATE')))
+
+
+class GTATOOLS_PT_timecyc_preview(bpy.types.Panel):
+    """Ручки превью: как значения среза ложатся на свет Blender."""
+    bl_label = "Настройки превью"
+    bl_idname = "GTATOOLS_PT_timecyc_preview"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_parent_id = "GTATOOLS_PT_timecyc_panel"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    @classmethod
+    def poll(cls, context):
+        from ..ops import timecyc_ops as tco
+        return tco.get_cyc(context, load=False) is not None
+
+    def draw(self, context):
+        layout = self.layout
+        props = context.scene.inu_settings.gtatools_timecyc
+
+        sky = layout.box().column(align=True)
+        sky.label(text=T("Небо и ambient:"), **inu_icon(safe_icon('WORLD')))
+        sky.prop(props, "sky_strength")
+        sky.prop(props, "gradient")
+        sky.prop(props, "ambient_split")
+        sub = sky.column(align=True)
+        sub.enabled = props.ambient_split
+        sub.prop(props, "ambient_strength")
+        sub.prop(props, "ambient_from_objects")
+
+        screen = layout.box().column(align=True)
+        screen.label(text=T("Экранные эффекты (композитор):"),
+                     **inu_icon(safe_icon('NODE_COMPOSITING')))
+        screen.prop(props, "use_fog", **inu_icon(safe_icon('MOD_FLUIDSIM')))
+        sub = screen.column(align=True)
+        sub.enabled = props.use_fog
+        sub.prop(props, "fog_curve")
+        sub.prop(props, "fog_distance")
+        sub.label(text=_timecyc_fog_label(context, props))
+
+        # PostFX (цветофильтр) — всегда включён при активном тайм-цикле,
+        # тумблера нет; показываем только текущие значения фильтра.
+        screen.label(text=_timecyc_postfx_label(context, props),
+                     **inu_icon(safe_icon('SEQ_PREVIEW')))
+        if props.use_fog or props.use_postfx:
+            from ..tools import timecyc_screen
+            on, total = timecyc_screen.viewport_compositor_state(context)
+            if on:
+                screen.label(text=T("Композитор вьюпорта: вкл (%d из %d)")
+                             % (on, total), **inu_icon(compat.ICON_CHECK))
+            else:
+                warn = screen.column(align=True)
+                warn.alert = True
+                warn.label(text=T("Композитор вьюпорта выключен — "
+                                  "экранных эффектов не видно"),
+                           **inu_icon(safe_icon('ERROR')))
+                warn.operator("gtatools.timecyc_compositor",
+                              text=T("Включить композитор"),
+                              **inu_icon(safe_icon('NODE_COMPOSITING')))
+
+        # Блок «Прилайт Day/Night» (пороги заката/рассвета) убран из UI —
+        # значения фиксированные (dn_dusk_*/dn_dawn_* дефолты), Day↔Night
+        # всегда включён.
+
+        misc = layout.box().column(align=True)
+        misc.prop(props, "use_water")
+        misc.prop(props, "use_far_clip")
 
 
 @apply_order
@@ -6024,6 +6418,7 @@ _VPAINT_HIDDEN_PANELS = [
     GTATOOLS_PT_object_ide_ipl_panel,
     GTATOOLS_PT_id_manager_panel,
     GTATOOLS_PT_water_panel,
+    GTATOOLS_PT_timecyc_panel,
     GTATOOLS_PT_anim_panel,
     GTATOOLS_PT_frame_hierarchy_anim,
     GTATOOLS_PT_radar_panel,

@@ -108,6 +108,7 @@ _DOC_SECTIONS = {
     'materials':       {'ru': 'материалы',              'en': 'materials'},
     'vehicles':        {'ru': 'машины',                 'en': 'vehicles'},
     'grass':           {'ru': 'трава',                  'en': 'grass'},
+    'timecyc':         {'ru': 'тайм-циклы-timecycdat',  'en': 'time-cycles-timecycdat'},
     'radar':           {'ru': 'x-radar-maker',          'en': 'x-radar-maker'},
     'bitmaps':         {'ru': 'менеджер-текстур-bitmaps-manager', 'en': 'bitmaps-manager'},
 }

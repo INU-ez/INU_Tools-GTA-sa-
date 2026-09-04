@@ -362,6 +362,8 @@ class GTATOOLS_OT_upsert_ipl(bpy.types.Operator):
     bl_label = "INU: Add to IPL"
     bl_options = {'REGISTER'}
 
+    last_message = ""
+
     def execute(self, context):
         # ── Маршрутизация по объекту ──
         # Уже отслеживаемую модель обновляем в ЕЁ файле (ipl_target_file),
@@ -416,6 +418,11 @@ class GTATOOLS_OT_upsert_ipl(bpy.types.Operator):
         msg = f"IPL: {T('обновлено')} {total_u}, {T('добавлено')} {total_a}"
         if len(groups) > 1:
             msg += " — " + T("записи разнесены по {0} IPL-файлам").format(len(groups))
+        # Текст кладётся в класс: когда этот оператор вызывают через
+        # bpy.ops из другого (кнопка «Add» в боксе модели идёт через
+        # ipl_sync_export), Blender баннер вложенного оператора гасит, и
+        # пользователь не видит ничего. Обёртка достаёт текст отсюда.
+        GTATOOLS_OT_upsert_ipl.last_message = msg
         _pub(self, 'INFO', msg)
         return {'FINISHED'}
 
@@ -770,8 +777,13 @@ def _ipl_sync_targets(settings):
 
 
 def _sync_one_ipl(context, filepath, sel, claimed_uuids=None,
-                  relink_orphan_uuids=True):
+                  relink_orphan_uuids=True, link_only=False):
     """Reconcile *sel* objects against ONE IPL file.
+
+    *link_only* — только СВЯЗАТЬ несвязанные объекты по (model_id+позиция),
+    НЕ трогая уже связанные (Branch B — подтяжку позиции из файла в объект —
+    пропускаем). Нужно для «Проверки»: она должна распознать, что объект
+    размещён в IPL, но НЕ двигать ничего в сцене.
 
     Extracted from the operator so a list of IPLs can be processed in a
     loop.  *claimed_uuids* holds uuids already linked by an earlier file
@@ -856,6 +868,9 @@ def _sync_one_ipl(context, filepath, sel, claimed_uuids=None,
 
         # Branch B: already linked → pull position from IPL.
         if uuid and uuid in file_links.links:
+            if link_only:
+                # «Проверка»: связь есть — ничего не двигаем, идём дальше.
+                continue
             rec = file_links.links[uuid]
             if not (0 <= rec.line_idx < len(ipl.instances)):
                 skip_reasons['line_lost'] += 1
@@ -897,6 +912,25 @@ def _sync_one_ipl(context, filepath, sel, claimed_uuids=None,
             ipl, model_id,
             (world_pos.x, world_pos.y, world_pos.z),
             occupied=occupied)   # пропускать занятые строки (кластеры наложенных деревьев)
+        if idx < 0 and link_only:
+            # «Проверка»: строгого совпадения по позиции нет (модель сдвинута
+            # относительно IPL), но строка с этим ID в файле есть — привязываем
+            # к БЛИЖАЙШЕЙ свободной строке того же ID. Объект НЕ двигаем: панель
+            # покажет «В IPL, координаты разошлись» и включит кнопку 🔄, которой
+            # можно подтянуть модель к координатам из IPL. Так распознаётся
+            # drag-drop/сдвинутая модель, а не только стоящая точно на месте.
+            best_i, best_d = -1, float('inf')
+            for i, inst in enumerate(ipl.instances):
+                if i in occupied:
+                    continue
+                if int(getattr(inst, 'model_id', -1)) != int(model_id):
+                    continue
+                d2 = ((inst.pos_x - world_pos.x) ** 2
+                      + (inst.pos_y - world_pos.y) ** 2
+                      + (inst.pos_z - world_pos.z) ** 2)
+                if d2 < best_d:
+                    best_d, best_i = d2, i
+            idx = best_i
         if idx < 0:
             skipped += 1
             skip_reasons['no_match'] += 1
@@ -1478,7 +1512,13 @@ class GTATOOLS_OT_ipl_sync_export(bpy.types.Operator):
             # когда у модели ещё нет своего IPL) — показываем мягкое
             # предупреждение вместо красной ошибки с трейсбеком.
             try:
-                return bpy.ops.gtatools.upsert_ipl('EXEC_DEFAULT')
+                GTATOOLS_OT_upsert_ipl.last_message = ""
+                res = bpy.ops.gtatools.upsert_ipl('EXEC_DEFAULT')
+                msg = GTATOOLS_OT_upsert_ipl.last_message
+                if msg:
+                    _pub(self, 'INFO', msg)
+                    _show_status_text(context, msg)
+                return res
             except RuntimeError:
                 self.report(
                     {'WARNING'},
@@ -1537,11 +1577,25 @@ class GTATOOLS_OT_ipl_remove_link(bpy.types.Operator):
         for o in objs:
             u = o.inu.ipl_uuid
             rec = file_links.links.get(u)
-            if rec is None:
-                continue
-            if 0 <= rec.line_idx < len(ipl.instances):
-                drop_idx.add(rec.line_idx)
-            cleared_uuids.append(u)
+            idx = -1
+            if rec is not None and 0 <= rec.line_idx < len(ipl.instances):
+                idx = rec.line_idx
+            elif any(o.inu.ipl_last_pos):
+                # Запись в сайдкаре потеряна (файл правили снаружи, .blend
+                # переименовали, сайдкар не доехал) — ищем строку по
+                # содержимому, ровно как это делает «Add». Без этого
+                # удаление молчало «не найдено записей», хотя строка в IPL
+                # была, и лечилось только повторным Add.
+                idx = iplinks.find_inst_by_content(
+                    ipl,
+                    int(getattr(o.inu, 'ipl_last_model_id', 0) or 0)
+                    or int(getattr(o.inu, 'model_id', 0) or 0),
+                    tuple(o.inu.ipl_last_pos),
+                    occupied=drop_idx)
+            if idx >= 0:
+                drop_idx.add(idx)
+            if u:
+                cleared_uuids.append(u)
 
         if not drop_idx:
             self.report({'INFO'}, T("Не найдено записей для удаления"))
@@ -1621,32 +1675,50 @@ class GTATOOLS_OT_ipl_verify_links(bpy.types.Operator):
     def execute(self, context):
         from ..core.ipl import read_ipl
         from ..core import ipl_links as iplinks
-        filepath = bpy.path.abspath(context.scene.inu_settings.gtatools_ipl_path)
-        if not filepath or not os.path.isfile(filepath):
-            self.report({'ERROR'}, T("IPL файл не найден"))
-            return {'CANCELLED'}
+        settings = context.scene.inu_settings
 
-        blend_path = bpy.data.filepath
-        sidecar = iplinks.load_sidecar(blend_path)
-        file_links = sidecar.file_links(filepath, create=False)
-        if file_links is None or not file_links.links:
-            self.report({'INFO'}, T("Нет связанных объектов для этого IPL"))
-            return {'CANCELLED'}
+        # Scope: выделение, иначе все меши сцены.
+        sel = [o for o in context.selected_objects if o.type == 'MESH']
+        if not sel:
+            sel = [o for o in bpy.data.objects if o.type == 'MESH']
 
-        ipl = read_ipl(filepath)
-        current_hash = iplinks.hash_ipl_file(filepath)
-        repaired, removed = iplinks.reconcile_file_links(
-            file_links, ipl, current_hash)
+        # 1) Link-only content-match: распознать объекты, УЖЕ размещённые в
+        #    IPL (совпал model_id + позиция), но ещё не связанные — так же, как
+        #    IDE-проверка находит модель по ID. Раньше Check смотрел ТОЛЬКО на
+        #    сохранённые uuid, поэтому drag-drop модель (есть имя+ID, стоит на
+        #    своём месте) значилась «Не в IPL». link_only=True → ничего не двигаем.
+        valid, _missing = _ipl_sync_targets(settings)
+        claimed = set()
+        newly_linked = set()
+        for fp in valid:
+            r = _sync_one_ipl(context, fp, sel, claimed,
+                              relink_orphan_uuids=(len(valid) == 1),
+                              link_only=True)
+            claimed |= r['touched_uuids']
+            newly_linked |= r['linked_names']
 
-        # Find orphans: uuids in sidecar with no matching Blender object.
-        uuid_to_obj = {o.inu.ipl_uuid for o in bpy.data.objects
-                       if o.type == 'MESH' and getattr(o.inu, 'ipl_uuid', '')}
-        orphans = [u for u in file_links.links if u not in uuid_to_obj]
+        # 2) Orphan/broken verify по одиночному выбранному пути (как раньше).
+        filepath = bpy.path.abspath(settings.gtatools_ipl_path)
+        ok_links = repaired = removed_n = orphans_n = 0
+        if filepath and os.path.isfile(filepath):
+            blend_path = bpy.data.filepath
+            sidecar = iplinks.load_sidecar(blend_path)
+            file_links = sidecar.file_links(filepath, create=False)
+            if file_links is not None and file_links.links:
+                ipl = read_ipl(filepath)
+                current_hash = iplinks.hash_ipl_file(filepath)
+                repaired, removed = iplinks.reconcile_file_links(
+                    file_links, ipl, current_hash)
+                removed_n = len(removed)
+                uuid_to_obj = {o.inu.ipl_uuid for o in bpy.data.objects
+                               if o.type == 'MESH' and getattr(o.inu, 'ipl_uuid', '')}
+                orphans = [u for u in file_links.links if u not in uuid_to_obj]
+                orphans_n = len(orphans)
+                ok_links = len(file_links.links) - orphans_n
+                iplinks.save_sidecar(blend_path, sidecar)
 
-        iplinks.save_sidecar(blend_path, sidecar)
-        msg = T("Проверка: {0} ссылок ОК, {1} исправлено, {2} удалено, {3} orphan").format(
-            len(file_links.links) - len(orphans),
-            repaired, len(removed), len(orphans))
+        msg = T("IPL Проверка: связано новых {0}, ОК {1}, исправлено {2}, удалено {3}, orphan {4}").format(
+            len(newly_linked), ok_links, repaired, removed_n, orphans_n)
         GTATOOLS_OT_ipl_verify_links.last_message = msg
         _pub(self, 'INFO', msg)
         return {'FINISHED'}

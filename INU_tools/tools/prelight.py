@@ -1706,9 +1706,9 @@ PRELIGHT_LEGACY_NODES = (
 # ползунки при смене игры; ползунками можно крутить живьём поверх.
 PRELIGHT_VIEW_NEUTRAL = (0.0, 0.0, 1.0, 1.0)
 PRELIGHT_VIEW_CORRECTION = {
-    'SA':  (-0.150, -0.400, 1.0, 1.0),
-    'VC':  (-0.150, -0.400, 1.0, 1.0),
-    'III': (-0.150, -0.400, 1.0, 1.0),
+    'SA':  (0.004, 0.0, 1.0, 1.0),
+    'VC':  (0.004, 0.0, 1.0, 1.0),
+    'III': (0.004, 0.0, 1.0, 1.0),
 }
 
 
@@ -1734,7 +1734,22 @@ def _set_view_correction_values(bc, gm, sat, bright, contrast, gamma, saturation
         pass
 
 
-def _ensure_view_correction_nodes(nodes, links, vc_node, mix_node, correction):
+def _prelight_color_source(mat, nodes, vc_node):
+    """Что питает цепочку коррекции — socket ноды Prelight_VertexColor.
+
+    Врезку смеси Day↔Night делает timecyc_prelight.wire_material(), которую
+    setup_prelight_preview зовёт следом (перевязывает вход Prelight_ViewBC).
+    Раньше здесь была попытка врезать её и тут — через timecyc_prelight.
+    is_enabled(), которой НЕ СУЩЕСТВУЕТ: вызов падал AttributeError, гасился
+    except'ом и всё равно возвращал этот же socket, попутно вешая исключение
+    и лишнюю перевязку на каждый материал. Убрано."""
+    if vc_node is None:
+        return None
+    return vc_node.outputs['Color']
+
+
+def _ensure_view_correction_nodes(nodes, links, vc_node, mix_node, correction,
+                                  color_source=None):
     """Создать (если нет) и связать ноды визуальной коррекции на пути
     vertex-color → ViewBC → ViewGamma → ViewSat → Mix.B. Возвращает (bc,gm,sat)."""
     bright, contrast, gamma, saturation = correction
@@ -1757,7 +1772,7 @@ def _ensure_view_correction_nodes(nodes, links, vc_node, mix_node, correction):
         sat.label = "Prelight View Saturation (превью)"
         sat.location = (vc_node.location.x + 600, vc_node.location.y)
     _set_view_correction_values(bc, gm, sat, bright, contrast, gamma, saturation)
-    links.new(vc_node.outputs['Color'], bc.inputs['Color'])
+    links.new(color_source or vc_node.outputs['Color'], bc.inputs['Color'])
     links.new(bc.outputs['Color'], gm.inputs['Color'])
     links.new(gm.outputs['Color'], sat.inputs['Color'])
     links.new(sat.outputs['Color'], compat.mix_input_b(mix_node))
@@ -1809,8 +1824,18 @@ def load_view_correction_for_game(scene, game):
 
 
 
+# Имя инстанса группы Day↔Night — ЕДИНЫЙ источник в timecyc_prelight.NODE_NAME
+# (его ставит та же timecyc_prelight). Импортируем, а не дублируем литерал:
+# idempotency-проверка _preview_graph_is_current сверяет узел по этому имени —
+# разъедься они, и каждый объект перевязывал бы общий материал (recompile-шторм).
+# timecyc_prelight не импортирует prelight, поэтому цикла нет.
+from .timecyc_prelight import NODE_NAME as PRELIGHT_DAYNIGHT_NODE
+PRELIGHT_FOG_NODE = "Prelight_GameFog"
+
+
 def _preview_graph_is_current(nodes, principled, base_color,
-                              vc_node, mix_node, color_name):
+                              vc_node, mix_node, color_name,
+                              mat_game_look=False):
     """True, если граф превью в материале УЖЕ собран как надо.
 
     Нужно, чтобы `setup_prelight_preview` был идемпотентным: материалы в
@@ -1851,9 +1876,23 @@ def _preview_graph_is_current(nodes, principled, base_color,
     if not gm_in.is_linked or gm_in.links[0].from_node is not bc:
         return False
     bc_in = bc.inputs['Color']
-    if not bc_in.is_linked or bc_in.links[0].from_node is not vc_node:
+    if not bc_in.is_linked:
         return False
-    if not base_color.is_linked or base_color.links[0].from_node is not mix_node:
+    bc_src = bc_in.links[0].from_node
+    # В режиме «прилайт по времени суток» цвет приходит не из vc_node, а
+    # из общей группы Day↔Night — это тоже актуальный граф.
+    if bc_src is not vc_node and bc_src.name != PRELIGHT_DAYNIGHT_NODE:
+        return False
+    if mat_game_look:
+        # «Как в игре»: цвет идёт в Emission (через туман, если он есть),
+        # а Base Color намеренно пуст — это тоже собранный граф.
+        emit = compat.principled_emission_input(principled)
+        if emit is None or not emit.is_linked:
+            return False
+        emit_src = emit.links[0].from_node
+        if emit_src is not mix_node and emit_src.name != PRELIGHT_FOG_NODE:
+            return False
+    elif not base_color.is_linked or base_color.links[0].from_node is not mix_node:
         return False
 
     # Mix.A без текстуры допустим только если текстуры в графе и правда нет
@@ -1940,7 +1979,8 @@ def setup_prelight_preview(obj, enable=True):
         # Уже в нужном состоянии — не трогаем граф (см. докстринг).
         if enable:
             if _preview_graph_is_current(nodes, principled, base_color,
-                                         vc_node, mix_node, color_name):
+                                         vc_node, mix_node, color_name,
+                                         mat_game_look=bool(mat.get('inu_tc_game_look'))):
                 continue
         else:
             if _preview_graph_is_absent(nodes, principled, base_color,
@@ -1995,8 +2035,9 @@ def setup_prelight_preview(obj, enable=True):
             # vc → Prelight_ViewBC → Prelight_ViewGamma → Mix.B.
             # Ноды коррекции — постоянная часть графа (нейтраль = pass-through),
             # только вьюпорт. Значения потом крутят ползунки.
-            _ensure_view_correction_nodes(nodes, links, vc_node, mix_node,
-                                          view_corr)
+            _ensure_view_correction_nodes(
+                nodes, links, vc_node, mix_node, view_corr,
+                color_source=_prelight_color_source(mat, nodes, vc_node))
 
             # Mix → Base Color
             for lnk in list(base_color.links):
@@ -2008,6 +2049,18 @@ def setup_prelight_preview(obj, enable=True):
                 n = nodes.get(nm)
                 if n is not None:
                     nodes.remove(n)
+
+            # Режим тайм-цикла («как в игре», туман, Day↔Night) дособерёт
+            # свою часть: без этого включение превью на объекте сбивало бы
+            # игровой вид обратно в PBR.
+            try:
+                from . import timecyc_prelight
+                timecyc_prelight.wire_material(mat)
+            except Exception as exc:
+                # Не глушим молча: сбой врезки Day↔Night / игрового вида —
+                # это как раз «материал стал чёрным без причины», должно быть
+                # видно в системной консоли.
+                print("[INU timecyc] wire_material(%s): %s" % (mat.name, exc))
             modified_count += 1
 
         else:
@@ -2023,6 +2076,40 @@ def setup_prelight_preview(obj, enable=True):
                 links.remove(lnk)
             if tex_socket is not None:
                 links.new(tex_socket, base_color)
+
+            # Инстанс группы Day↔Night ставит tools/timecyc_prelight;
+            # без превью он висел бы в материале ни к чему не подключён.
+            for nm in (PRELIGHT_DAYNIGHT_NODE, PRELIGHT_FOG_NODE):
+                extra = nodes.get(nm)
+                if extra is not None:
+                    nodes.remove(extra)
+            # Игровой unlit-вид держится на Emission — вернуть материал
+            # в PBR обязаны здесь же, иначе он останется светящимся.
+            if mat.get('inu_tc_game_look'):
+                emit = compat.principled_emission_input(principled)
+                if emit is not None:
+                    for lnk in list(emit.links):
+                        links.remove(lnk)
+                    emit.default_value = (0.0, 0.0, 0.0, 1.0)
+                strength = principled.inputs.get('Emission Strength')
+                if strength is not None and not strength.is_linked:
+                    strength.default_value = float(mat.get('inu_tc_prev_emit', 1.0))
+                # Вернуть Base Color, обнулённый game-look'ом. Без этого у
+                # бестекстурного материала (relink выше нечего было цеплять)
+                # Base Color остаётся чёрным, экспорт пишет цвет материала = 0,
+                # и с флагом MODULATE прилайт умножается на ноль → чёрная модель.
+                if not base_color.is_linked:
+                    prev_base = mat.get('inu_tc_prev_base')
+                    if prev_base is not None:
+                        base_color.default_value = tuple(prev_base)
+                    elif tuple(base_color.default_value)[:3] == (0.0, 0.0, 0.0):
+                        # Старый .blend без сохранённого цвета: не оставлять
+                        # чёрным — белый нейтрален для prelit×MODULATE.
+                        base_color.default_value = (1.0, 1.0, 1.0, 1.0)
+                for key in ('inu_tc_game_look', 'inu_tc_prev_emit',
+                            'inu_tc_prev_base'):
+                    if key in mat:
+                        del mat[key]
 
             # Legacy alpha cleanup (Prelight_AlphaMult / prelight_alpha_mode).
             alpha_mode = mat.get('prelight_alpha_mode')

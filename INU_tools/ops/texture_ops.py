@@ -761,8 +761,14 @@ class GTATOOLS_OT_cleanup_materials(bpy.types.Operator):
                         continue
                     for slot in obj.material_slots:
                         if slot.material == dup_mat:
-                            slot.material = original
-                            merged_count += 1
+                            try:
+                                slot.material = original
+                                merged_count += 1
+                            except AttributeError:
+                                # Слот только для чтения (линк-библиотека /
+                                # override / нередактируемые данные) — не роняем
+                                # всю чистку из-за одного объекта, пропускаем.
+                                pass
 
                 removed_materials.append(dup_mat.name)
 

@@ -913,6 +913,289 @@ def _export_img_target_items(self, context):
     return _export_img_items_cache
 
 
+# ── timecyc.dat ─────────────────────────────────────────────────────
+#
+# Сам разобранный файл в сцене НЕ живёт (23 погоды × 8 срезов × 52
+# числа) — он в модульном кэше ops/timecyc_ops.py. Здесь только путь,
+# выбор погоды/среза/часа, ручки превью и поля РЕДАКТИРУЕМОГО среза.
+# Имена полей среза (f_*) сопоставлены ключам core/timecyc.py в
+# таблицах _COLOR_FIELDS / _ALPHA_FIELDS / _NUM_FIELDS того же модуля.
+
+
+def _tc_weather_changed(self, context):
+    from .ops.timecyc_ops import on_weather_changed
+    on_weather_changed(self, context)
+
+
+def _tc_slot_changed(self, context):
+    from .ops.timecyc_ops import on_slot_changed
+    on_slot_changed(self, context)
+
+
+def _tc_hour_changed(self, context):
+    from .ops.timecyc_ops import on_hour_changed
+    on_hour_changed(self, context)
+
+
+def _tc_field_changed(self, context):
+    from .ops.timecyc_ops import on_field_changed
+    on_field_changed(self, context)
+
+
+def _tc_opt_changed(self, context):
+    from .ops.timecyc_ops import on_preview_opt_changed
+    on_preview_opt_changed(self, context)
+
+
+def _tc_path_changed(self, context):
+    from .ops.timecyc_ops import on_path_changed
+    on_path_changed(self, context)
+
+
+def _tc_prelight_changed(self, context):
+    from .ops.timecyc_ops import on_prelight_daynight_changed
+    on_prelight_daynight_changed(self, context)
+
+
+def _tc_material_mode_changed(self, context):
+    """Тумблер, меняющий ГРАФ материалов (игровой вид) — один проход по
+    материалам."""
+    from .ops.timecyc_ops import on_material_mode_changed
+    on_material_mode_changed(self, context)
+
+
+def _tc_screen_mode_changed(self, context):
+    """Туман/PostFX — только композитор, без прохода по материалам."""
+    from .ops.timecyc_ops import on_screen_mode_changed
+    on_screen_mode_changed(self, context)
+
+
+_TC_SLOT_ITEMS = [
+    ('0', "00:00", T("Полночь")),
+    ('1', "05:00", T("Раннее утро")),
+    ('2', "06:00", T("Рассвет")),
+    ('3', "07:00", T("Утро")),
+    ('4', "12:00", T("Полдень")),
+    ('5', "19:00", T("Вечер")),
+    ('6', "20:00", T("Закат")),
+    ('7', "22:00", T("Ночь")),
+]
+
+
+def _tc_color(name, default=(0.0, 0.0, 0.0)):
+    return FloatVectorProperty(
+        name=name, subtype='COLOR', size=3, min=0.0, max=1.0,
+        default=default, update=_tc_field_changed)
+
+
+class INUTimecycWeather(bpy.types.PropertyGroup):
+    """Имя одной погоды из timecyc — строка в списке для выбора."""
+    name: StringProperty(default="")
+
+
+class INUTimecycProps(bpy.types.PropertyGroup):
+    """Состояние вкладки «Тайм-циклы»."""
+
+    # ── Источник ────────────────────────────────────────────────
+    path: StringProperty(
+        name=T("Файл"), subtype='FILE_PATH', default="",
+        update=_tc_path_changed)
+    # Погоды — КОЛЛЕКЦИЯ, а не динамический enum. У enum'а с items-
+    # колбэком есть скверная особенность: стоит колбэку один раз
+    # оступиться (или списку пересобраться под сохранённым значением),
+    # как свойство отдаёт пустую строку, выпадашка рисуется пустой, и в
+    # него нельзя даже записать — «enum "0" not found in ()». Коллекция
+    # живёт в сцене и такого не умеет.
+    weathers: CollectionProperty(type=INUTimecycWeather)
+    weather_name: StringProperty(
+        name=T("Погода"), default="", update=_tc_weather_changed)
+    slot: EnumProperty(
+        name=T("Срез"), items=_TC_SLOT_ITEMS, default='4',
+        update=_tc_slot_changed)
+    hour: FloatProperty(
+        name=T("Время суток"), min=0.0, max=24.0, default=12.0, step=25,
+        precision=2, update=_tc_hour_changed)
+    live: BoolProperty(
+        name=T("Живое превью"), default=True,
+        description=T("Обновлять освещение сцены при каждом изменении"))
+    # Мастер-состояние: применён ли тайм-цикл к сцене. Только индикатор для
+    # кнопки-тумблера — саму работу делает оператор gtatools.timecyc_toggle.
+    enabled: BoolProperty(default=False)
+
+    # ── Ручки превью ────────────────────────────────────────────
+    sky_strength: FloatProperty(
+        name=T("Яркость неба"), min=0.0, max=20.0, default=1.0,
+        update=_tc_opt_changed)
+    ambient_strength: FloatProperty(
+        name=T("Сила ambient"), min=0.0, max=20.0, default=1.0,
+        update=_tc_opt_changed)
+    ambient_split: BoolProperty(
+        name=T("Ambient отдельно от неба"), default=True,
+        description=T("Небо остаётся фоном для камеры, а сцену освещает "
+                      "отдельный цвет Amb. Держится на Light Path — в "
+                      "EEVEE может сработать не так, как в Cycles"),
+        update=_tc_opt_changed)
+    ambient_from_objects: BoolProperty(
+        name=T("Ambient объектов"), default=True,
+        description=T("Брать Amb_Obj вместо Amb — как в игре светятся "
+                      "машины и педы, а не здания"),
+        update=_tc_opt_changed)
+    gradient: FloatProperty(
+        name=T("Резкость горизонта"), min=0.02, max=1.0, default=0.35,
+        description=T("На какой высоте небо доходит до цвета зенита. "
+                      "1.0 растягивает переход на всю полусферу, и в "
+                      "кадре виден только горизонтный цвет"),
+        update=_tc_opt_changed)
+    use_fog: BoolProperty(
+        name=T("Туман"), default=True,
+        description=T("Гасить цвет по расстоянию от FogSt до FarClp — "
+                      "той же фиксированной функцией, что и игра. "
+                      "Работает там же, где превью прилайта"),
+        update=_tc_screen_mode_changed)
+    use_postfx: BoolProperty(
+        name=T("PostFX (цветофильтр)"), default=True,
+        description=T("Цветофильтр кадра из PostFX1/PostFX2 среза: "
+                      "out = in*(1 + rgb1*a1 + rgb2*a2). Именно он делает "
+                      "картинку игры светлее и цветнее значений timecyc"),
+        update=_tc_screen_mode_changed)
+    fog_curve: FloatProperty(
+        name=T("Кривая тумана"), min=0.5, max=6.0, default=2.0,
+        description=T("1 — честная линейка FogSt→FarClp, как у RW. "
+                      "Больше — дымка набирается ближе к горизонту, как "
+                      "выглядит кадр игры"),
+        update=_tc_opt_changed)
+    fog_distance: FloatProperty(
+        name=T("Дальность тумана ×"), min=0.1, max=8.0, default=1.0,
+        description=T("Растянуть обе дистанции. В игре на кадр влияет ещё "
+                      "и ползунок дальности прорисовки, которого в "
+                      "timecyc нет"),
+        update=_tc_opt_changed)
+    # Доля клипа, дальше которой — небо (туман не кладём). Подобрано так,
+    # чтобы небо не красилось (градиент цел), а вся геометрия попадала в
+    # туман. Ползунок из UI убран — значение фиксированное.
+    fog_sky_factor: FloatProperty(
+        name=T("Небо с (× клип)"), min=0.1, max=1.0, default=0.819,
+        subtype='FACTOR',
+        description=T("Где начинается небо — как доля клипа вьюпорта. Всё "
+                      "ближе получает туман, дальше — небо (туман не кладём, "
+                      "градиент цел). Меньше — небо начинается раньше (если "
+                      "градиент пропал), больше — туман тянется дальше (если "
+                      "дальний край торчит без тумана)"),
+        update=_tc_opt_changed)
+    use_water: BoolProperty(
+        name=T("Красить воду"), default=True,
+        description=T("Подставлять WaterRGBA в материал импортированной воды"),
+        update=_tc_opt_changed)
+    use_far_clip: BoolProperty(
+        name=T("Дальность вьюпорта"), default=True,
+        description=T("Поднимать clip end вьюпорта до FarClp среза"),
+        update=_tc_opt_changed)
+
+    # ── Прилайт по времени суток ────────────────────────────────
+    # Движок SA хранит ночные вершинные цвета отдельной секцией DFF и
+    # пишет в prelight смесь day*(1-dn) + night*dn. Здесь то же самое
+    # нодами: общая группа читает атрибуты Day и Night.
+    game_look: BoolProperty(
+        name=T("Как в игре (unlit)"), default=True,
+        description=T("Отдавать цвет прилайта напрямую, мимо PBR: игра "
+                      "рисует здания fixed-function'ом — без теней, "
+                      "бликов и подсветки от неба"),
+        update=_tc_material_mode_changed)
+    # Всегда включён при активном тайм-цикле (тумблер из UI убран, значение
+    # форсится в True при импорте/включении). default=True — для новых сцен.
+    prelight_daynight: BoolProperty(
+        name=T("Прилайт по времени суток"), default=True,
+        description=T("Смешивать вершинные цвета Day и Night по часам — "
+                      "как это делает игра. Работает на материалах, где "
+                      "включено превью прилайта"),
+        update=_tc_prelight_changed)
+    # Сколько материалов подхватило режим — считается в момент
+    # переключения, чтобы панель не обходила bpy.data.materials на
+    # каждую перерисовку.
+    dn_material_count: IntProperty(default=-1)
+    dn_dusk_start: FloatProperty(
+        name=T("Закат: начало"), min=0.0, max=24.0, default=20.0,
+        description=T("С какого часа прилайт начинает уходить в ночной"),
+        update=_tc_opt_changed)
+    dn_dusk_end: FloatProperty(
+        name=T("Закат: конец"), min=0.0, max=24.0, default=21.0,
+        description=T("К какому часу прилайт становится полностью ночным"),
+        update=_tc_opt_changed)
+    dn_dawn_start: FloatProperty(
+        name=T("Рассвет: начало"), min=0.0, max=24.0, default=5.0,
+        description=T("С какого часа ночной прилайт начинает уходить"),
+        update=_tc_opt_changed)
+    dn_dawn_end: FloatProperty(
+        name=T("Рассвет: конец"), min=0.0, max=24.0, default=6.0,
+        description=T("К какому часу прилайт становится полностью дневным"),
+        update=_tc_opt_changed)
+
+    # ── Значения среза: цвета ───────────────────────────────────
+    f_amb: _tc_color(T("Ambient (мир)"))
+    f_amb_obj: _tc_color(T("Ambient (объекты)"))
+    f_dir: _tc_color(T("Directional"), (1.0, 1.0, 1.0))
+    f_sky_top: _tc_color(T("Небо: зенит"))
+    f_sky_bot: _tc_color(T("Небо: горизонт"))
+    f_sun_core: _tc_color(T("Солнце: ядро"))
+    f_sun_corona: _tc_color(T("Солнце: корона"))
+    f_low_clouds: _tc_color(T("Нижние облака"))
+    f_bottom_clouds: _tc_color(T("Облака у горизонта"))
+    f_water: _tc_color(T("Вода"))
+    f_postfx1: _tc_color(T("PostFX 1"))
+    f_postfx2: _tc_color(T("PostFX 2"))
+
+    f_water_a: FloatProperty(
+        name=T("Вода: альфа"), min=0.0, max=1.0, default=0.94,
+        update=_tc_field_changed)
+    f_postfx1_a: FloatProperty(
+        name=T("PostFX 1: альфа"), min=0.0, max=1.0, default=1.0,
+        update=_tc_field_changed)
+    f_postfx2_a: FloatProperty(
+        name=T("PostFX 2: альфа"), min=0.0, max=1.0, default=1.0,
+        update=_tc_field_changed)
+
+    # ── Значения среза: числа ───────────────────────────────────
+    f_sun_size: FloatProperty(
+        name=T("Размер солнца"), min=0.0, max=20.0, default=1.0,
+        update=_tc_field_changed)
+    f_spr_size: FloatProperty(
+        name=T("Размер блика"), min=0.0, max=20.0, default=1.0,
+        update=_tc_field_changed)
+    f_spr_bright: FloatProperty(
+        name=T("Яркость блика"), min=-5.0, max=20.0, default=0.3,
+        update=_tc_field_changed)
+    f_shadow: IntProperty(
+        name=T("Тени"), min=0, max=255, default=200,
+        update=_tc_field_changed)
+    f_light_shad: IntProperty(
+        name=T("Тени от света"), min=0, max=255, default=100,
+        update=_tc_field_changed)
+    f_pole_shad: IntProperty(
+        name=T("Тени столбов"), min=0, max=255, default=0,
+        update=_tc_field_changed)
+    f_far_clip: FloatProperty(
+        name=T("Дальность прорисовки"), min=0.0, max=10000.0, default=800.0,
+        update=_tc_field_changed)
+    f_fog_start: FloatProperty(
+        name=T("Начало тумана"), min=-2000.0, max=10000.0, default=100.0,
+        update=_tc_field_changed)
+    f_light_on_ground: FloatProperty(
+        name=T("Свет на земле"), min=-5.0, max=5.0, default=1.0,
+        update=_tc_field_changed)
+    f_cloud_alpha: IntProperty(
+        name=T("Прозрачность облаков"), min=0, max=255, default=0,
+        update=_tc_field_changed)
+    f_highlight_min: IntProperty(
+        name=T("Мин. яркость бликов"), min=0, max=255, default=90,
+        update=_tc_field_changed)
+    f_water_fog: IntProperty(
+        name=T("Туман под водой"), min=0, max=255, default=0,
+        update=_tc_field_changed)
+    f_dir_mult: FloatProperty(
+        name=T("Множитель directional"), min=0.0, max=20.0, default=1.0,
+        update=_tc_field_changed)
+
+
 class INUSceneSettings(bpy.types.PropertyGroup):
     """All Scene-level INU Tools settings.
 
@@ -1083,6 +1366,12 @@ class INUSceneSettings(bpy.types.PropertyGroup):
         name="Skip 2DFX",
         description=T("Не импортировать 2DFX-эффекты при импорте"),
         default=True)
+    gtatools_map_skip_dupes: BoolProperty(
+        name="Skip duplicates",
+        description=T("Пропускать размещения, которые в сцене уже есть: "
+                      "совпал ID модели и позиция. Удобно доимпортировать "
+                      "соседний кусок карты, не плодя копии"),
+        default=False)
     gtatools_img_use_gta_dat: BoolProperty(
         name="Use gta.dat",
         description=T("Искать все IDE/IPL через gta.dat"),
@@ -1175,6 +1464,15 @@ class INUSceneSettings(bpy.types.PropertyGroup):
                       "удаление инстанса в ariane; удалил в ariane → объект СКРЫВАЕТСЯ в "
                       "Blender (обратимо — undelete в ariane его показывает). Выключено по "
                       "умолчанию, чтобы можно было удалять свободно, не трогая другую сторону"),
+        default=False)
+    ariane_sync_time: BoolProperty(
+        name="Синхр. время/погоду",
+        description=T("Live: время суток (ползунок таймцикла) и погода синхронизируются с "
+                      "ariane в обе стороны. Ведущий — активное окно (как у камеры): крутишь "
+                      "в ariane → двигается ползунок в Blender, и наоборот. Погода по индексу "
+                      "(обе стороны читают один timecyc.dat). Плюс живая правка таймцикла: "
+                      "меняешь поля среза (небо/солнце/туман/цвета) — ariane применяет их в "
+                      "тот же кадр. Требует включённого watcher"),
         default=False)
     ariane_ui_more_open: BoolProperty(
         name="Ещё",
@@ -1333,6 +1631,27 @@ class INUSceneSettings(bpy.types.PropertyGroup):
     gtatools_txd_auto_import: BoolProperty(
         name="Import TXD",
         description=T("Автоимпорт TXD текстур при импорте DFF"),
+        default=True)
+    # Постоянные настройки одиночного импорта DFF (панель «Импорт»). Операторы
+    # импорта/драг-дропа берут из них дефолты в invoke().
+    gtatools_import_auto_game: BoolProperty(
+        name="Auto",
+        description=T("Определять игру автоматически по RW-версии файла"),
+        default=True)
+    gtatools_import_game: EnumProperty(
+        name=T("Игра"),
+        description=T("Из какой игры импортируем (когда Auto выключен)"),
+        items=[
+            ('SA',  "SA",  T("Принудительно SA")),
+            ('VC',  "VC",  T("Принудительно VC")),
+            ('III', "III", T("Принудительно III")),
+        ],
+        default='SA')
+    gtatools_import_2dfx: BoolProperty(
+        name=T("Импортировать 2DFX"),
+        description=T("Создавать пустышки-эффекты 2DFX из DFF (лампы/короны, "
+                      "частицы, ped attractor, sun glare, знаки и т.д.). "
+                      "Выключи, чтобы импортировать модель без эффектов"),
         default=True)
     # gtatools_import_weld_sharpen переехал в AddonPreferences
     # (INUAddonPreferences.import_weld_sharpen) — запоминается глобально,
@@ -1546,6 +1865,12 @@ class INUSceneSettings(bpy.types.PropertyGroup):
     # ── IDE flags / suffixes / prefixes ─────────────────────────
     gtatools_show_ide_flags: BoolProperty(
         name="Show IDE Flags",
+        description=T("Показать флаги IDE"),
+        default=False)
+    # Отдельный тумблер сворачивания бокса «Флаги IDE» в N-панели IDE/IPL/IMG
+    # (независимо от свёрнутости флагов в Object Properties).
+    gtatools_show_ide_flags_box: BoolProperty(
+        name="Show IDE Flags box",
         description=T("Показать флаги IDE"),
         default=False)
     gtatools_suffix_dff: StringProperty(
@@ -2107,12 +2432,12 @@ class INUSceneSettings(bpy.types.PropertyGroup):
     prelight_view_bright: FloatProperty(
         name=T("Яркость (превью)"),
         description=T("Только вьюпорт: яркость прилайта в превью. На экспорт НЕ влияет"),
-        default=-0.150, min=-1.0, max=1.0, precision=3,
+        default=0.004, min=-1.0, max=1.0, precision=3,
         update=_prelight_view_update)
     prelight_view_contrast: FloatProperty(
         name=T("Контраст (превью)"),
         description=T("Только вьюпорт: контраст прилайта в превью. На экспорт НЕ влияет"),
-        default=-0.400, min=-1.0, max=1.0, precision=3,
+        default=0.0, min=-1.0, max=1.0, precision=3,
         update=_prelight_view_update)
     prelight_view_gamma: FloatProperty(
         name=T("Гамма (превью)"),
@@ -2674,6 +2999,11 @@ class INUSceneSettings(bpy.types.PropertyGroup):
     inu_floater_iii_workspace: StringProperty(default="")
     inu_floater_iii_x: IntProperty(default=640, min=-9999, max=9999)
     inu_floater_iii_y: IntProperty(default=400, min=-9999, max=9999)
+
+    # ── timecyc.dat ───────────────────────────────────────────
+    # Вложенная группа, а не плоские gtatools_* поля: их там под сорок,
+    # и все живут одним экраном панели.
+    gtatools_timecyc: PointerProperty(type=INUTimecycProps)
 
     # ── CollectionProperty fields with custom item types ──────
     inu_validate_issues: CollectionProperty(type=INUValidateIssue)

@@ -557,6 +557,16 @@ class GTATOOLS_OT_toggle_bbox(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _map_key(model_name, inst):
+    """Метка размещения: «имя модели|x|y|z» с точностью до сантиметра.
+
+    Имя объекта для опознания не годится — Blender вешает на дубли
+    суффиксы .001, а у моделей из DFF имена берутся от фреймов, а не от
+    имени модели."""
+    return "%s|%.2f|%.2f|%.2f" % (
+        (model_name or "").lower(), inst.pos_x, inst.pos_y, inst.pos_z)
+
+
 class GTATOOLS_OT_import_map(bpy.types.Operator):
     """Импорт карты GTA SA: автопоиск IDE/IPL/IMG по папке игры"""
     bl_idname = "gtatools.import_map"
@@ -582,6 +592,8 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
         # path that scene can read back as None → skip_2dfx silently
         # becomes False and 2DFX load even with the toggle ON.
         skip_2dfx = getattr(scene.inu_settings, 'gtatools_map_skip_2dfx', False)
+        skip_dupes = getattr(scene.inu_settings,
+                             'gtatools_map_skip_dupes', False)
 
         if not game_root or not os.path.isdir(game_root):
             self.report({'ERROR'}, T("Укажите корневую папку GTA SA"))
@@ -884,6 +896,36 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
         self._instances = instances
         self._ide_models = ide_models
         self._skip_lod = skip_lod
+        # Что уже стоит в сцене: (ID модели, позиция с точностью до
+        # сантиметра). Имя объекта для этого не годится — Blender вешает
+        # на дубли суффиксы .001, а ID и координаты остаются прежними.
+        self._skip_dupes = skip_dupes
+        self._placed = set()
+        self._placed_keys = set()
+        # Печатается ВСЕГДА, даже при выключенной галочке: по этой строке
+        # сразу видно и что сборка свежая, и в каком положении тумблер.
+        print("[INU map] «Без дублей» = %s" % ("ВКЛ" if skip_dupes else "выкл"))
+        if skip_dupes:
+            # scene.objects, а не bpy.data.objects: скрытые и лежащие в
+            # выключенных коллекциях сюда входят (hide_viewport и exclude на
+            # состав сцены не влияют), а объекты ДРУГИХ сцен — нет. Иначе
+            # вторая сцена с той же картой молча съела бы весь импорт.
+            for _o in scene.objects:
+                if _o.type != 'MESH':
+                    continue
+                _inu = getattr(_o, 'inu', None)
+                _mk = str(getattr(_inu, 'map_key', '') or '')
+                if _mk:
+                    self._placed_keys.add(_mk)
+                _mid = int(getattr(_inu, 'model_id', 0) or 0)
+                if _mid <= 0:
+                    continue
+                _l = _o.matrix_world.translation
+                self._placed.add((_mid, round(_l.x, 2), round(_l.y, 2),
+                                  round(_l.z, 2)))
+            print("[INU map] «Без дублей»: в сцене найдено %d размещений "
+                  "по метке и %d по (ID, позиция)"
+                  % (len(self._placed_keys), len(self._placed)))
         self._skip_2dfx = skip_2dfx
         self._group_by_ipl = group_by_ipl
         self._ipl_collections = ipl_collections
@@ -899,6 +941,7 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
         self._skip_nocache = 0  # DFF not found in the loaded IMG/cache
         self._skip_error = 0    # DFF parse raised
         self._skip_lodname = 0  # detected as LOD name + «Skip LOD» is on
+        self._skip_dupe = 0     # размещение уже есть в сцене
         self._progress = 0
         self._total = len(instances)
         self._scene = scene
@@ -1150,9 +1193,21 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
                     _need_yield = (idx % 32 == 0)
                 else:
                     is_lod = is_lod_name(model_name)
+                    _dupe = False
+                    if self._skip_dupes:
+                        _mk = _map_key(model_name, inst)
+                        _key = (int(inst.model_id or 0),
+                                round(inst.pos_x, 2), round(inst.pos_y, 2),
+                                round(inst.pos_z, 2))
+                        _dupe = (_mk in self._placed_keys
+                                 or (_key[0] > 0 and _key in self._placed))
                     if skip_lod and is_lod:
                         self._skipped += 1
                         self._skip_lodname += 1
+                        _need_yield = (idx % 32 == 0)
+                    elif _dupe:
+                        self._skipped += 1
+                        self._skip_dupe += 1
                         _need_yield = (idx % 32 == 0)
                     else:
                         _need_yield = True
@@ -1243,6 +1298,14 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
                         if new_objs:
                             with prof.stage('transform apply'):
                                 pos = (inst.pos_x, inst.pos_y, inst.pos_z)
+                                _mk_now = _map_key(model_name, inst)
+                                if self._skip_dupes:
+                                    self._placed_keys.add(_mk_now)
+                                    self._placed.add(
+                                        (int(inst.model_id or 0),
+                                         round(inst.pos_x, 2),
+                                         round(inst.pos_y, 2),
+                                         round(inst.pos_z, 2)))
                                 rot = Quaternion((inst.rot_w, inst.rot_x, inst.rot_y, inst.rot_z)).conjugated()
                                 main_obj = None
                                 for o in new_objs:
@@ -1254,6 +1317,11 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
                                             main_obj = o
                                         if hasattr(o, 'inu'):
                                             o.inu.model_id = inst.model_id
+                                            # Метка размещения: по ней
+                                            # «Без дублей» узнаёт этот кусок
+                                            # карты в следующий раз, даже
+                                            # если ID модели не проставлен.
+                                            o.inu.map_key = _mk_now
                                             if inst.model_id in ide_models:
                                                 ide_obj = ide_models[inst.model_id]
                                                 o.inu.draw_distance = ide_obj.draw_distance
@@ -1364,6 +1432,9 @@ class GTATOOLS_OT_import_map(bpy.types.Operator):
                     # Spell out the non-LOD skip reasons — these explain a
                     # district that «didn't fully load».
                     reasons = []
+                    if self._skip_dupe:
+                        reasons.append(
+                            f"{self._skip_dupe} {T('уже есть в сцене')}")
                     if self._skip_lodname:
                         reasons.append(
                             f"{self._skip_lodname} {T('LOD — снимите «Skip LOD»')}")

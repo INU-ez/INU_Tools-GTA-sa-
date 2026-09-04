@@ -63,6 +63,7 @@ PANELS = {
     'GTATOOLS_PT_water_panel':          ('GTA_TOOLS', 'DATA',     6),
     'GTATOOLS_PT_grass_panel':          ('GTA_TOOLS', 'DATA',     7),
     'GTATOOLS_PT_radar_panel':          ('GTA_TOOLS', 'DATA',     8),
+    'GTATOOLS_PT_timecyc_panel':        ('GTA_TOOLS', 'DATA',     9),
     # Footer = onboarding/links. Use a SETUP zone slot far past
     # anything else so it always renders as the bottom-most subpanel.
     'GTATOOLS_PT_footer_panel':         ('GTA_TOOLS', 'SETUP',   99),

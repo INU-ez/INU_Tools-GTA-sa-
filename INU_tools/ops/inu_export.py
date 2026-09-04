@@ -97,7 +97,9 @@ class GTATOOLS_OT_inu_import(bpy.types.Operator, ImportHelper):
     """Импорт GTA SA файлов (.dff/.col/.cst/.txd/.ide/.ipl) с авто-определением формата"""
     bl_idname = "gtatools.inu_import"
     bl_label = "INU: INU Import"
-    bl_options = {'REGISTER', 'UNDO', 'PRESET'}
+    # Без 'PRESET' — иначе сверху окна появляется строка «Пресеты оператора»,
+    # которой нет в диалоге экспорта (Export All): держим вид одинаковым.
+    bl_options = {'REGISTER', 'UNDO'}
 
     filename_ext = ".dff"
     filter_glob: StringProperty(
@@ -112,6 +114,13 @@ class GTATOOLS_OT_inu_import(bpy.types.Operator, ImportHelper):
     f_txd: BoolProperty(name="TXD", default=True, update=_inu_import_update_filter)
     f_ide: BoolProperty(name="IDE", default=True, update=_inu_import_update_filter)
     f_ipl: BoolProperty(name="IPL", default=True, update=_inu_import_update_filter)
+
+    import_2dfx: BoolProperty(
+        name=T("Импортировать 2DFX"),
+        description=T("Создавать пустышки-эффекты 2DFX из DFF (лампы/короны, "
+                      "частицы, ped attractor, sun glare, знаки и т.д.). "
+                      "Выключи, чтобы импортировать модель без эффектов"),
+        default=True)
 
     files: CollectionProperty(type=bpy.types.OperatorFileListElement)
     directory: StringProperty(subtype='DIR_PATH')
@@ -134,36 +143,56 @@ class GTATOOLS_OT_inu_import(bpy.types.Operator, ImportHelper):
         нет (нужен TXD — отметь .txd в списке), поэтому и тумблера «Авто
         TXD» здесь нет: он управляет авто-TXD в Import DFF / drag-drop, а
         не тут."""
+        # Тот же слитый box-стиль, что и в диалоге экспорта: верхний бокс —
+        # игра + форматы, ниже — бокс опций импорта, ниже — подсказки.
         layout = self.layout
-        layout.label(text=T("Показывать форматы:"))
-        # Галочки в 2 столбика — в один ряд 6 штук не влезают (метки режутся).
-        grid = layout.grid_flow(row_major=True, columns=2, align=True)
-        grid.prop(self, "f_dff")
-        grid.prop(self, "f_col")
-        grid.prop(self, "f_cst")
-        grid.prop(self, "f_txd")
-        grid.prop(self, "f_ide")
-        grid.prop(self, "f_ipl")
+        scn = context.scene
+        col = layout.column(align=True)
 
-        # DFF weld toggle — same as Import DFF / drag-drop (AddonPreferences,
-        # запоминается глобально). Only relevant when a .dff is in the selection.
+        # ── Верхний бокс: игра импорта + форматы (как в экспорте) ──
+        top = col.box()
+        top.label(text=T("Импорт из игры:"))
+        # Две строки, как в экспорте: сверху Auto, снизу SA | VC | III
+        # (ряд игр гаснет, когда Auto включён).
+        g = top.column(align=True)
+        g.row(align=True).prop(scn.inu_settings, "gtatools_import_auto_game",
+                               text="Auto", toggle=True)
+        grow = g.row(align=True)
+        grow.enabled = not scn.inu_settings.gtatools_import_auto_game
+        grow.prop(scn.inu_settings, "gtatools_import_game", expand=True)
+        top.label(text=T("Показывать форматы:"))
+        # Кнопки-тумблеры в два ряда: DFF COL CST / TXD IDE IPL.
+        r1 = top.row(align=True)
+        r1.prop(self, "f_dff", text="DFF", toggle=True)
+        r1.prop(self, "f_col", text="COL", toggle=True)
+        r1.prop(self, "f_cst", text="CST", toggle=True)
+        r2 = top.row(align=True)
+        r2.prop(self, "f_txd", text="TXD", toggle=True)
+        r2.prop(self, "f_ide", text="IDE", toggle=True)
+        r2.prop(self, "f_ipl", text="IPL", toggle=True)
+
+        # ── Бокс опций DFF (только когда DFF в выборке) ──
+        # weld-тумблер — как в Import DFF / drag-drop (AddonPreferences,
+        # глобально). 2DFX — импортировать ли эффекты (лампы/короны/частицы).
         if self.f_dff:
+            box = col.box()
             from ..tools.user_data import get_addon_prefs
             _prefs = get_addon_prefs()
             if _prefs is not None:
-                layout.separator()
-                layout.prop(_prefs, "import_weld_sharpen",
-                            text=T("Стандартная модель GTA SA (vanilla)"))
+                box.prop(_prefs, "import_weld_sharpen",
+                         text=T("Стандартная модель GTA SA (vanilla)"))
                 if not _prefs.import_weld_sharpen:
-                    layout.label(text=T("Кастом: связать + сохранить заборы"),
-                                 **inu_icon(safe_icon('INFO')))
+                    box.label(text=T("Кастом: связать + сохранить заборы"),
+                              **inu_icon(safe_icon('INFO')))
+            box.prop(self, "import_2dfx")
 
-        col = layout.column(align=True)
-        col.scale_y = 0.85
-        col.label(text=T("Импортируются только выбранные файлы"),
-                  **inu_icon(safe_icon('INFO')))
-        col.label(text=T(".dff .col .cst .txd .ide .ipl — каждый по своему типу"))
-        col.label(text=T("Нужны текстуры — выдели .txd в списке"))
+        # ── Подсказки ──
+        info = col.box().column(align=True)
+        info.scale_y = 0.85
+        info.label(text=T("Импортируются только выбранные файлы"),
+                   **inu_icon(safe_icon('INFO')))
+        info.label(text=T(".dff .col .cst .txd .ide .ipl — каждый по своему типу"))
+        info.label(text=T("Нужны текстуры — выдели .txd в списке"))
 
     def check(self, context):
         # Signal Blender to redraw/re-filter when a format toggle changes.
@@ -246,8 +275,22 @@ class GTATOOLS_OT_inu_import(bpy.types.Operator, ImportHelper):
             yield (idx, total, fname)
             try:
                 if ext == '.dff':
-                    inu_import_dff(filepath=fpath, context=context)
+                    inu_import_dff(filepath=fpath, context=context,
+                                   skip_2dfx=not self.import_2dfx)
                     stats['imported'] += 1
+                    # Игра модели: принудительно из селектора или авто по RW —
+                    # переключает режим сцены (на свежей сцене; готовый проект
+                    # защищён внутри maybe_set_game_from_import).
+                    try:
+                        from ..core import game_versions as gv
+                        s = context.scene.inu_settings
+                        if s.gtatools_import_auto_game:
+                            det = gv.detect_game_from_dff(fpath)
+                        else:
+                            det = s.gtatools_import_game
+                        gv.maybe_set_game_from_import(context.scene, det)
+                    except Exception:
+                        pass
                 elif ext == '.col':
                     inu_import_col(filepath=fpath, context=context,
                                    material_cache=col_material_cache)

@@ -58,6 +58,7 @@
 - [Vehicles](#vehicles)
 - [Grass](#grass)
 - [X Radar Maker](#x-radar-maker)
+- [Time cycles (timecyc.dat)](#time-cycles-timecycdat)
 - [LightMap (beta_MTA)](#lightmap-beta_mta)
 - [Integrations](#integrations)
   - [Ariane Bridge](#ariane-bridge)
@@ -220,6 +221,8 @@ When the scene targets III/VC but objects still carry SA-only features, **Про
 
 **Auto TXD:** when importing DFF, automatically imports .txd from the same directory if found.
 
+**Import 2DFX:** a toggle on DFF import (single Import, the Import-All file browser, and drag-drop). Creates the 2DFX effect empties baked into the DFF — lamps/coronas, particles, ped attractors, sun glare, signs, etc. On by default; turn it off to import the model geometry without its effects.
+
 > 💡 **Example — import a single model:** File → Import → GTA SA DFF → pick `admiral.dff`. The addon parses geometry, materials, UV. If `admiral.txd` sits next to it, textures are applied automatically.
 
 > 💡 **Example — export a single mesh:** select mesh → N → Export / Import → **Export DFF** → choose path → saves with current materials and vertex colors.
@@ -249,8 +252,11 @@ in uint16 (max 65536). Split the mesh or simplify (Decimate).
 |--------|----------|-------------|
 | Import COL | `gtatools.import_col` | Import .col with surface materials |
 | Export COL | `gtatools.export_col` | Export as COL3 format |
+| Generate COL | `gtatools.auto_col` | Build a collision mesh from the selected model — **Convex hull** or **Bounding box** |
 
-COL export automatically sets object type to Collision, centers at origin, and writes surface material IDs.
+**Generate COL** (`gtatools.auto_col`, button "Сгенерировать COL" in the Export/Import section): select a model and it creates an editable `<name>_COL` mesh, either a **convex hull** ("Выпуклая оболочка") or an axis-aligned **bounding box** ("Габаритный бокс"). The mesh is tagged `inu.type='COL'` and flows into normal COL export; you can edit it afterwards like any COL.
+
+COL export writes surface material IDs and keeps the geometry in model-local space. It bakes the object's **scale** but **not its rotation** — a viewport rotation is placement (it belongs in the IPL), so it is never baked into the collision, and the COL matches the DFF under the same IPL placement.
 
 > 💡 **Example:** create a cube, name it `mybuilding_COL`, assign a material with `col_mat_index = 0` (default asphalt) in Properties → Material → **COL Surface Type**. Select → **Export COL** → you get `mybuilding.col` with the correct surface material.
 
@@ -2427,6 +2433,94 @@ Renders the scene top-down (ortho camera) into GTA SA minimap/radar tiles (PNG) 
 | Pack into TXD | `gtatools.radar_pack_txd` | Packs `radarNN.png` into TXDs (one tile = one TXD) in `output/txd/`; missing PNGs are skipped |
 
 > 💡 **Order:** set folder, grid, size and height → "Generate" → pick a mode (ALL for the game grid, or SPECIFIC with indices) → "Pack into TXD".
+
+---
+
+## Time cycles (timecyc.dat)
+
+**Panel:** View3D → Sidebar (N) → GTA Tools → **Time cycles**
+
+Reads `data/timecyc.dat` (and `timecycp.dat`), turns a weather + hour into
+actual Blender lighting, and writes edits back to the file.
+
+A timecyc file holds one block per weather (23 in vanilla SA) and exactly
+**8 time slots** inside each: 00:00, 05:00, 06:00, 07:00, 12:00, 19:00,
+20:00, 22:00. The game interpolates linearly between neighbouring slots
+(22:00 → 00:00 wraps through midnight), and so does the panel — the hour
+slider is continuous, but you always **edit a slot**, never an arbitrary hour.
+
+| Button | Description |
+|--------|-------------|
+| Import | Load a `timecyc.dat`, apply it to the scene and switch viewports to Material Preview |
+| Export | Write the file back. Untouched rows are written byte-for-byte (comments, tabs, CRLF included), a `.bak` of the previous file is left next to it |
+| **Time-cycle on/off** | Master toggle at the top of the panel: **ON** — apply the whole cycle to the scene (light, fog, prelight game look on models) and enable live preview; **OFF** — full reset (materials back to PBR, world and compositor clean) |
+| Revert slot | Return the current slot to the values on disk |
+| Re-read file | Reload from disk, dropping all unsaved edits |
+| To all slots of the weather | Copy the current slot into all 8 slots of this weather |
+
+**Live preview is always on.** While the cycle is enabled, any change to the hour/weather/slot fields rebuilds the scene immediately — there is no separate "Live preview" or "Apply" button any more, and the viewport is switched to Material Preview automatically. The hour slider follows the **slot**: drag the hour to 21:00 → "Edit slot" switches to the nearest slot (20:00) and shows its fields below; picking a slot in the dropdown conversely sets the hour to that slot's time.
+
+**What maps onto what**
+
+| timecyc | Blender |
+|---------|---------|
+| Sky top / Sky bot | World gradient — zenith ↔ horizon colour, sharpness set by "Horizon sharpness" |
+| Amb / Amb_Obj | Ambient background (which of the two is used is a preview toggle) |
+| Dir + DirectionalMult | Colour and energy of the `INU_Timecyc_Sun` sun lamp |
+| SunSz | Sun angular size |
+| FarClp | Fog density and, optionally, the viewport clip end |
+| WaterRGBA | Base colour + alpha of the imported water material (`waterclear256`) |
+| PostFX 1 / 2 | The frame colour filter — **always on** while the cycle is active (no toggle; without it the image doesn't match the game). The game draws it as a fullscreen quad textured with the frame, blend `SRCALPHA/ONE`, so `out = in*(1 + rgb1*a1 + rgb2*a2)` (SkyGfx `postfx.cpp`, PC path). For vanilla `EXTRASUNNY_LA` at midday that is a gain of **1.91 / 1.76 / 1.42** — which is exactly why the game frame is lighter and more cyan than the raw timecyc sky. Applied as a **screen** stage in the compositor, right after the fog and over the whole frame — sky included — multiplied in gamma space, exactly where the game applies it |
+
+**Matching the game's lighting**
+
+SA is not PBR, so the preview does not light the scene the way Blender normally would. What the engine actually does, from the reversed pipelines:
+
+```
+prelight = day*dayparam + night*nightparam
+colour   = (prelight*surfDiff + ambient*surfAmb) * matCol      // ambient is ADDED
+final    = colour * texture
+```
+
+(SkyGfx `shaders/vs/xboxBuildingVS.hlsl` / `ps2BuildingVS.hlsl`; the ambient register is filled from `CTimeCycle::GetAmbient* × CCoronas::LightsMult`.) Buildings get **no** directional light and cast **no** shadows — all their lighting is baked into the vertex colours. Directional plus the brighter `Amb_Obj` go to cars, peds and objects instead (`MTACalcGTAVehicleDiffuse`: `saturate(TotalDiffuse + TotalAmbient + emissive)`).
+
+The panel reproduces that:
+
+| Toggle | What it does |
+|--------|--------------|
+| **Game look (unlit)** (on by default) | The prelight colour goes straight into Emission, bypassing PBR — no shadows, no speculars, and no blue tint from the sky. This is what makes the viewport match a game screenshot. |
+| **Apply to scene models** | Turns the prelight preview on for every mesh with vertex colours and wires them to the current mode — the fastest way to get a whole imported map looking right. |
+| **Fog** (on by default) | Fade into the horizon colour by distance — a **screen** stage in the compositor, driven by the depth pass, exactly like the game's fixed-function fog. It therefore covers everything in frame, including objects the prelight preview never touched. `FogSt` and `FarClp` come from the slot in metres (`TimeCycle.cpp` keeps them as-is; far clip is pulled towards 1000 when the camera climbs above 200). Knobs: **Fog curve** (1 = the honest RW ramp, higher pushes the haze towards the horizon) and **Fog distance ×** (the in-game frame also depends on the draw-distance slider, which timecyc does not carry). The sky threshold is fixed at **0.819 × the viewport clip end**: the sky (at clip distance) stays fog-free so the gradient survives, while all geometry closer than the clip gets fog. This fixes the old "fog cuts off" on large maps (far geometry sticking out sharp) and the reverse (fog flooding the sky) — the threshold now tracks the real clip. |
+
+Ambient (`Amb`) is added to the prelight inside the shared node group and then clamped (`saturate`), exactly as the engine does it — which is why it looks almost black in the panel at midday: all the daytime brightness comes from the baked prelight, not from ambient.
+
+This is also why **weather changes how strong the prelight looks**. There is no per-weather prelight multiplier in the engine — `CCoronas::LightsMult`, which scales the ambient register, is just a fade-in to 1.0 after a load (`LightsMult = min(TimeStep*0.03 + LightsMult, 1)`), not a weather value. What differs is `Amb` itself: a clear slot has an almost black `Amb`, so the baked prelight shows at full contrast; an overcast or rainy slot has a much brighter `Amb`, which lifts the shadows and washes the prelight out. Compare the `Amb` swatch between two weathers in the slot editor and you will see the whole effect.
+
+Fog and PostFX are **screen** stages: they live in the scene compositor (`INU_TC_*` nodes) and need Compositor turned on in the viewport shading — the addon switches it on automatically when the cycle is enabled (Import / master toggle). Blender computes viewport compositing on EEVEE, which is what the preview uses anyway. Your own compositor nodes are left alone: whatever fed `Composite` before is remembered and restored when both toggles go off. In Solid shading there is no compositor, so neither effect shows there.
+
+Objects **without** the prelight preview stay on ordinary PBR: they are lit by the world (ambient `Amb_Obj` by default, with the sky kept as camera background only) and get no node fog.
+
+**Prelight by time of day (Day ↔ Night)**
+
+SA keeps the night vertex colours in a separate DFF section (Extra Vert Colour) and the engine writes the blend into the prelight itself:
+
+```
+preLit = day * (1 - dnParam) + night * dnParam
+```
+
+(`CCustomBuildingDNPipeline::SetPrelitColors`; in game the day→night swap lands on 20:00 → 21:00, the same hours street lamps and headlights come on.)
+
+**Prelight by time of day** reproduces that with nodes and is **always on** while the cycle is active (no UI toggle): one shared group `INU_Timecyc_DayNight` reads the `Day` and `Night` colour attributes and mixes them by a single internal Value. Moving the hour slider changes that one number, so a whole map updates without touching hundreds of materials.
+
+- It hooks into materials where the **prelight preview** is already on — the panel says so when there are none (press "Apply to scene models").
+- The dusk/dawn hours are fixed: 20:00 → 21:00 (from the engine) and 05:00 → 06:00 (from the timecyc slots). They used to be editable in the UI — that block was removed and the values are now constant.
+- Meshes without a `Night` attribute are left on their day colours — the group gates on the night attribute's alpha, which is zero when the attribute is missing, so nothing turns black at night.
+
+**Worth knowing:**
+- Row width is detected per file: vanilla SA is 51 values (with `Dir` RGB, no `DirectionalMult`), some total conversions ship 52. Short rows — the vanilla `UNDERWATER` block has one — keep their width on export, so no column is ever added or lost.
+- If a row is shorter than the schema, the panel says so: its fields are read shifted, exactly the way the game's parser reads them.
+- Fog is a World volume: it is visible in the viewport but costs real frames on a full map, so it is off by default.
+- This is an atmosphere match, not a pixel match. SA is not PBR — it lights the world as `texture × (prelight vcol × ambient + directional)` — so use it to pick lighting and shoot screenshots, not to predict the in-game frame exactly.
 
 ---
 

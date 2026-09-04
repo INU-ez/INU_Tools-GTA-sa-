@@ -2200,7 +2200,8 @@ def _init_import_stats(stats: dict) -> dict:
 
 
 def import_one_dff(path, context, stats, *, import_game=None,
-                   link_alpha=False, txd_hint=None, weld_sharpen=None):
+                   link_alpha=False, txd_hint=None, weld_sharpen=None,
+                   skip_2dfx=None):
     """THE canonical interactive single-DFF import: a .dff plus its
     auto-matched TXD. Shared by drag-drop and the file-picker «Import DFF»
     so both behave identically.
@@ -2242,7 +2243,7 @@ def import_one_dff(path, context, stats, *, import_game=None,
     _t0 = _time.perf_counter()
     try:
         new_objs = import_dff(filepath=path, context=context,
-                              weld_sharpen=weld_sharpen)
+                              weld_sharpen=weld_sharpen, skip_2dfx=skip_2dfx)
         stats['imported'] += 1
     except Exception as e:
         stats['errors'].append((name, str(e)))
@@ -2381,7 +2382,7 @@ def import_one_dff(path, context, stats, *, import_game=None,
 
 
 def _iter_import_dff_files(paths, context, stats, *,
-                           import_game=None, link_alpha=False):
+                           import_game=None, link_alpha=False, skip_2dfx=None):
     """Drive ``import_one_dff`` over a list of .dff paths, yielding
     ``(current, total, label)`` for the progress bar. Thin wrapper — the
     real per-file work lives in the shared ``import_one_dff`` so drag-drop
@@ -2391,7 +2392,8 @@ def _iter_import_dff_files(paths, context, stats, *,
     for i, path in enumerate(paths):
         for label in import_one_dff(
                 path, context, stats,
-                import_game=import_game, link_alpha=link_alpha):
+                import_game=import_game, link_alpha=link_alpha,
+                skip_2dfx=skip_2dfx):
             yield (i, total, label)
     yield (total, total, T("готово"))
 
@@ -2410,6 +2412,7 @@ class _DFFImportModalMixin:
     # Subclasses override these to tune per-source behaviour.
     _import_game = None   # None → skip game detection (drag-drop)
     _link_alpha = False   # True → run alpha-link after TXD (file-picker)
+    _skip_2dfx = None     # None → import_dff reads the map setting; ops set it
 
     def _collect_paths(self) -> list:
         raise NotImplementedError
@@ -2423,7 +2426,8 @@ class _DFFImportModalMixin:
         self._stats = {}
         self._gen = _iter_import_dff_files(
             paths, context, self._stats,
-            import_game=self._import_game, link_alpha=self._link_alpha)
+            import_game=self._import_game, link_alpha=self._link_alpha,
+            skip_2dfx=self._skip_2dfx)
 
         wm = context.window_manager
         wm.progress_begin(0, 100)
@@ -2539,7 +2543,20 @@ class GTATOOLS_OT_import_dff(_DFFImportModalMixin, bpy.types.Operator):
         ],
         default='AUTO')
 
+    import_2dfx: bpy.props.BoolProperty(
+        name=T("Импортировать 2DFX"),
+        description=T("Создавать пустышки-эффекты 2DFX из DFF (лампы/короны, "
+                      "частицы, ped attractor, sun glare, знаки и т.д.). "
+                      "Выключи, чтобы импортировать модель без эффектов"),
+        default=True)
+
     def invoke(self, context, event):
+        # дефолт 2DFX из scene-настроек, можно переопределить в диалоге.
+        # import_game здесь НЕ трогаем — у «Import DFF» свой AUTO по умолчанию
+        # (gtatools_import_game из окна Import All — только SA/VC/III).
+        s = getattr(context.scene, 'inu_settings', None)
+        if s is not None:
+            self.import_2dfx = bool(getattr(s, 'gtatools_import_2dfx', True))
         context.window_manager.fileselect_add(self)
         return {'RUNNING_MODAL'}
 
@@ -2568,6 +2585,7 @@ class GTATOOLS_OT_import_dff(_DFFImportModalMixin, bpy.types.Operator):
                              **inu_icon(safe_icon('INFO')))
         layout.separator()
 
+        layout.prop(self, "import_2dfx")
         layout.prop(scene.inu_settings, "gtatools_txd_auto_import", text=T("Авто TXD"))
 
         if not getattr(scene.inu_settings, 'gtatools_txd_auto_import', True):
@@ -2613,6 +2631,7 @@ class GTATOOLS_OT_import_dff(_DFFImportModalMixin, bpy.types.Operator):
         # thread the user's choice through so AUTO still falls back to
         # RW-version detection and explicit III/VC/SA bypasses it.
         self._import_game = self.import_game
+        self._skip_2dfx = not self.import_2dfx
         return self._start_modal(context)
 
 
@@ -2631,6 +2650,13 @@ class GTATOOLS_OT_drop_dff(_DFFImportModalMixin, bpy.types.Operator):
     files: CollectionProperty(type=bpy.types.OperatorFileListElement)
     directory: StringProperty(subtype='DIR_PATH')
 
+    import_2dfx: bpy.props.BoolProperty(
+        name=T("Импортировать 2DFX"),
+        description=T("Создавать пустышки-эффекты 2DFX из DFF (лампы/короны, "
+                      "частицы, ped attractor, sun glare, знаки и т.д.). "
+                      "Выключи, чтобы импортировать модель без эффектов"),
+        default=True)
+
     def _collect_paths(self):
         out = []
         for f in self.files:
@@ -2646,6 +2672,9 @@ class GTATOOLS_OT_drop_dff(_DFFImportModalMixin, bpy.types.Operator):
         # reads. Fall back to a silent import if the scene isn't reachable.
         if getattr(context.scene, 'inu_settings', None) is None:
             return self.execute(context)
+        # дефолт «Импортировать 2DFX» из панели «Импорт»
+        self.import_2dfx = bool(getattr(context.scene.inu_settings,
+                                        'gtatools_import_2dfx', True))
         return context.window_manager.invoke_props_dialog(self, width=300)
 
     def draw(self, context):
@@ -2662,6 +2691,7 @@ class GTATOOLS_OT_drop_dff(_DFFImportModalMixin, bpy.types.Operator):
             if not _prefs.import_weld_sharpen:
                 layout.label(text=T("Кастом: связать + сохранить заборы"),
                              **inu_icon(safe_icon('INFO')))
+        layout.prop(self, "import_2dfx")
         layout.prop(st, "gtatools_txd_auto_import", text=T("Авто TXD"))
 
     def execute(self, context):
@@ -2687,7 +2717,8 @@ class GTATOOLS_OT_drop_dff(_DFFImportModalMixin, bpy.types.Operator):
         self._stats = stats
         gen = _iter_import_dff_files(
             paths, context, stats,
-            import_game=self._import_game, link_alpha=self._link_alpha)
+            import_game=self._import_game, link_alpha=self._link_alpha,
+            skip_2dfx=not self.import_2dfx)
 
         wm = context.window_manager
         workspace = context.workspace

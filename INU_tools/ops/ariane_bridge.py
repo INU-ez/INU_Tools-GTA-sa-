@@ -1689,6 +1689,10 @@ _live_cam_mtime = -1.0
 _cam_seen = None            # last-known viewport (loc, rot, dist)
 _cam_owned_until = 0.0      # monotonic time until which Blender drives the camera
 _cam_target = None          # (loc, rot, dist) we glide the viewport toward
+
+_time_last_push = None      # last "h m ow nw interp" string written to time_blender.txt
+_time_ariane_mtime = -1.0   # mtime of time_ariane.txt we last applied
+_timecyc_last_push = None    # last timecyc-slice body written to timecyc_blender.txt
 _cam_draw_handle = None     # SpaceView3D draw handler (pushes camera during modal nav)
 
 
@@ -1842,6 +1846,185 @@ def _live_camera(now, drive):
         _cam_target = None
 
 
+def _timecyc_props():
+    try:
+        return bpy.context.scene.inu_settings.gtatools_timecyc
+    except Exception:                                     # noqa: BLE001
+        return None
+
+
+def _weather_names():
+    """Ordered weather names from the PARSED timecyc — same order ariane indexes its
+    weathers by (both read the one timecyc.dat), so this list is the index↔name map.
+    Empty when no timecyc is loaded → weather sync is skipped, time still syncs."""
+    try:
+        from . import timecyc_ops as tc
+        cyc = tc.get_cyc(bpy.context)
+        if cyc and cyc.weathers:
+            return [w.name for w in cyc.weathers]
+    except Exception:                                     # noqa: BLE001
+        pass
+    return []
+
+
+def _write_time_blender(hh, mm, ow, nw, interp):
+    d = _live_dir()
+    try:
+        os.makedirs(d, exist_ok=True)
+        tmp = os.path.join(d, 'time_blender.tmp')
+        with open(tmp, 'w', encoding='utf-8') as fh:
+            fh.write(f"time\t{hh}\t{mm}\t{ow}\t{nw}\t{interp:.4f}\n")
+        os.replace(tmp, os.path.join(d, 'time_blender.txt'))
+    except OSError:
+        pass
+
+
+def _apply_time_from_ariane(props, names, hh, mm, ow, nw, interp):
+    """ariane → Blender: move the timecycle hour slider + weather to match. Set hour
+    under timecyc's _SYNCING guard so its callback doesn't rebuild the world twice;
+    let the (unguarded) weather callback apply once, else apply manually."""
+    from . import timecyc_ops as tc
+    hour = (hh % 24) + max(0, min(59, mm)) / 60.0
+    widx = nw if interp >= 0.5 else ow            # dominant weather of the two-slot blend
+
+    applied = False
+    tc._SYNCING = True
+    try:
+        if abs(float(getattr(props, 'hour', -1.0)) - hour) > 1e-4:
+            props.hour = hour
+    finally:
+        tc._SYNCING = False
+    if names and 0 <= widx < len(names):
+        if (props.weather_name or '') != names[widx]:
+            props.weather_name = names[widx]      # fires on_weather_changed → applies once
+            applied = True
+    if not applied:
+        try:
+            tc.apply_to_scene(bpy.context)
+        except Exception:                                 # noqa: BLE001
+            pass
+
+
+def _live_time(now, drive):
+    """Two-way time-of-day + weather sync, mirroring the camera channel. drive → Blender
+    is the active window and PUSHES its timecycle hour/weather to ariane; otherwise it
+    PULLS ariane's time_ariane.txt onto the slider. Gated by ariane_sync_time."""
+    global _time_last_push, _time_ariane_mtime
+    props = _timecyc_props()
+    if props is None:
+        return
+    names = _weather_names()
+
+    if drive:
+        hour = float(getattr(props, 'hour', 12.0))
+        hh = int(hour) % 24
+        mm = max(0, min(59, int((hour - int(hour)) * 60.0)))
+        widx = 0
+        if names:
+            wname = (getattr(props, 'weather_name', '') or '').strip()
+            if wname in names:
+                widx = names.index(wname)
+        # Blender's timecycle has ONE weather → send it in both slots (interp irrelevant).
+        line = f"{hh}\t{mm}\t{widx}"
+        if line != _time_last_push:
+            _time_last_push = line
+            _write_time_blender(hh, mm, widx, widx, 0.0)
+        return
+
+    # follow ariane
+    path = os.path.join(_live_dir(), 'time_ariane.txt')
+    try:
+        mt = os.path.getmtime(path)
+    except OSError:
+        return
+    if mt == _time_ariane_mtime:
+        return
+    _time_ariane_mtime = mt
+    if not _fresh(path):                                  # ariane not live → ignore stale file
+        return
+    try:
+        with open(path, encoding='utf-8') as fh:
+            data = fh.read()
+    except OSError:
+        return
+    p = data.strip().split('\t')
+    if len(p) < 3 or p[0] != 'time':
+        return
+    try:
+        hh = int(p[1]); mm = int(p[2])
+    except ValueError:
+        return
+    ow = nw = 0
+    interp = 0.0
+    if len(p) >= 6:
+        try:
+            ow = int(p[3]); nw = int(p[4]); interp = float(p[5])
+        except ValueError:
+            ow = nw = 0; interp = 0.0
+    _apply_time_from_ariane(props, names, hh, mm, ow, nw, interp)
+
+
+def push_timecyc_if_live(context=None):
+    """Blender → ariane LIVE timecycle editing: when the watcher runs, ariane_sync_time is
+    on and Blender is focused, write the currently-edited slice's fields into
+    timecyc_blender.txt. ariane patches the matching (slot,weather) ColourSet cell in
+    memory → the sky changes the same frame. Called from timecyc_ops.apply_to_scene, so it
+    fires on any slice/field/slot/weather edit; content-diffed so an hour drag (values
+    unchanged) writes nothing. slot index maps 1:1 to ariane's SA hour-row."""
+    global _timecyc_last_push
+    if not _watch_enabled:
+        return
+    context = context or bpy.context
+    try:
+        s = context.scene.inu_settings
+    except Exception:                                     # noqa: BLE001
+        return
+    if not getattr(s, 'ariane_sync_time', False) or not _blender_focused():
+        return
+    props = _timecyc_props()
+    if props is None:
+        return
+    try:
+        from . import timecyc_ops as tc
+        cyc = tc.get_cyc(context)
+        if cyc is None or not cyc.weathers:
+            return
+        w = tc.weather_index(props, cyc)
+        try:
+            slot_idx = int(props.slot)
+        except (TypeError, ValueError):
+            slot_idx = 0
+        slot = cyc.weathers[w].slots[slot_idx]
+        vals = getattr(slot, 'values', None)
+    except Exception:                                     # noqa: BLE001
+        return
+    if not vals:
+        return
+
+    lines = []
+    for key, arr in vals.items():
+        if not arr:
+            continue
+        parts = "\t".join(f"{float(x):.3f}" for x in arr)
+        lines.append(f"tccyc\t{w}\t{slot_idx}\t{key}\t{parts}")
+    if not lines:
+        return
+    body = "\n".join(lines) + "\n"
+    if body == _timecyc_last_push:
+        return
+    _timecyc_last_push = body
+
+    d = _live_dir()
+    try:
+        os.makedirs(d, exist_ok=True)
+        tmp = os.path.join(d, 'timecyc_blender.tmp')
+        with open(tmp, 'w', encoding='utf-8') as fh:
+            fh.write(body)
+        os.replace(tmp, os.path.join(d, 'timecyc_blender.txt'))
+    except OSError:
+        pass
+
+
 def _live_timer():
     """Fast timer (~0.15s): while the watcher runs and any live toggle is on, run
     the two-way position sync, selection sync and/or camera sync. Cheap when idle."""
@@ -1872,6 +2055,8 @@ def _live_timer():
             if drive:
                 _live_deletions()                         # Blender → ariane (while Blender drives)
             _apply_ariane_deletions()                     # ariane → Blender (hide/un-hide)
+        if getattr(s, 'ariane_sync_time', False):
+            _live_time(now, drive)                        # two-way time-of-day + weather
     except Exception as exc:                              # noqa: BLE001
         print(f"[ariane bridge] live sync error: {exc}")
     return 0.05                                           # ~20 Hz for smoother sync
@@ -2099,6 +2284,7 @@ def draw_ariane_body(layout, context):
         col.operator("gtatools.ariane_bind", text=T("Привязать к Ariane"),
                      icon='LINKED')
         col.prop(s, "ariane_sync_deletions", toggle=True)
+        col.prop(s, "ariane_sync_time", toggle=True)
         col.operator("gtatools.ariane_create_model", text=T("Создать модель"), icon='MESH_DATA')
         col.operator("gtatools.ariane_clear", text=T("Очистить кэш"), icon='TRASH')
 

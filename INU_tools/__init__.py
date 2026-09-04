@@ -28,7 +28,7 @@
 bl_info = {
     "name": "INU_tools(gta_sa)",
     "author": "INU",
-    "version": (2, 3, 1),
+    "version": (2, 3, 2),
     # Минимум 2.83 LTS — поддержка через tools/compat.py:
     # • bake / preview / DFF I/O работают через legacy mesh.vertex_colors
     # • prelight preview shader использует ShaderNodeMixRGB на ≤3.3
@@ -482,6 +482,9 @@ from .ui.panels import (  # noqa: E501
     GTATOOLS_PT_prelight_col_panel,
     GTATOOLS_PT_lightmap_panel,
     GTATOOLS_PT_water_panel,
+    GTATOOLS_PT_timecyc_panel,
+    GTATOOLS_PT_timecyc_edit,
+    GTATOOLS_PT_timecyc_preview,
     GTATOOLS_PT_zon_panel,
     GTATOOLS_UL_grass,
     GTATOOLS_PT_grass_panel,
@@ -531,6 +534,8 @@ from .ops.alpha_tools import (
 )
 from .scene_settings import (
     INUSceneSettings,
+    INUTimecycWeather,
+    INUTimecycProps,
     INUValidateIssue,
     INUBakeLayer,
     _bake_layer_index_update,
@@ -1969,6 +1974,13 @@ class INUObjectProps(bpy.types.PropertyGroup):
         min=0,
         description=T("ID модели в GTA SA (IDE/IPL)"),
     )
+    map_key : StringProperty(
+        name="Map Key",
+        default="",
+        description=T("Метка размещения при импорте карты: «имя модели|x|y|z». "
+                      "По ней «Без дублей» узнаёт, что этот кусок карты уже "
+                      "стоит в сцене"),
+    )
     txd_name : StringProperty(
         name="TXD Name",
         default="",
@@ -2614,6 +2626,7 @@ from .ops.txd_export import (
 )
 from .ops.dff_export import GTATOOLS_OT_export_dff
 from .ops.col_export import GTATOOLS_OT_export_col
+from .ops.auto_col_ops import GTATOOLS_OT_auto_col
 from .ops.dff_import import (
     GTATOOLS_OT_import_dff,
     GTATOOLS_OT_drop_dff,
@@ -2967,6 +2980,20 @@ if hasattr(bpy.types, 'FileHandler'):
 # =============================================================================
 
 # Operators moved to ops/world_ops.py in Phase 3.
+from .ops.timecyc_ops import (
+    GTATOOLS_OT_import_timecyc,
+    GTATOOLS_OT_export_timecyc,
+    GTATOOLS_OT_timecyc_apply,
+    GTATOOLS_OT_timecyc_viewport,
+    GTATOOLS_OT_timecyc_setup_materials,
+    GTATOOLS_OT_timecyc_compositor,
+    GTATOOLS_OT_timecyc_diagnose,
+    GTATOOLS_OT_timecyc_reset_preview,
+    GTATOOLS_OT_timecyc_toggle,
+    GTATOOLS_OT_timecyc_revert_slot,
+    GTATOOLS_OT_timecyc_reload,
+    GTATOOLS_OT_timecyc_copy_to_all_slots,
+)
 from .ops.world_ops import (
     GTATOOLS_OT_import_water,
     GTATOOLS_OT_export_water,
@@ -3388,6 +3415,7 @@ from .ops.prelight_preset_ops import (
     GTATOOLS_OT_prelight_preset_delete,
     GTATOOLS_OT_prelight_preset_apply,
     GTATOOLS_OT_prelight_preset_rename,
+    GTATOOLS_OT_prelight_view_reset,
 )
 # Operators moved to ops/water_geometry_ops.py in Phase 3.
 from .ops import water_geometry_ops as _water_geo_mod
@@ -3587,6 +3615,7 @@ classes = (
     GTATOOLS_OT_copy_vertex_alpha,
     GTATOOLS_OT_export_dff,
     GTATOOLS_OT_export_col,
+    GTATOOLS_OT_auto_col,
     GTATOOLS_OT_export_all,
     GTATOOLS_OT_quick_single_export,
     GTATOOLS_OT_export_dff_models,
@@ -3613,6 +3642,7 @@ classes = (
     GTATOOLS_OT_prelight_preset_delete,
     GTATOOLS_OT_prelight_preset_apply,
     GTATOOLS_OT_prelight_preset_rename,
+    GTATOOLS_OT_prelight_view_reset,
     GTATOOLS_OT_reset_scatter_settings,
     GTATOOLS_OT_vc_smooth,
     GTATOOLS_OT_vc_contrast,
@@ -3889,6 +3919,21 @@ classes = (
     GTATOOLS_PT_2dfx_settings,
     GTATOOLS_PT_lightmap_panel,
     GTATOOLS_PT_water_panel,
+    GTATOOLS_PT_timecyc_panel,
+    GTATOOLS_PT_timecyc_edit,
+    GTATOOLS_PT_timecyc_preview,
+    GTATOOLS_OT_import_timecyc,
+    GTATOOLS_OT_export_timecyc,
+    GTATOOLS_OT_timecyc_apply,
+    GTATOOLS_OT_timecyc_viewport,
+    GTATOOLS_OT_timecyc_setup_materials,
+    GTATOOLS_OT_timecyc_compositor,
+    GTATOOLS_OT_timecyc_diagnose,
+    GTATOOLS_OT_timecyc_reset_preview,
+    GTATOOLS_OT_timecyc_toggle,
+    GTATOOLS_OT_timecyc_revert_slot,
+    GTATOOLS_OT_timecyc_reload,
+    GTATOOLS_OT_timecyc_copy_to_all_slots,
     GTATOOLS_OT_import_zon,
     GTATOOLS_OT_export_zon,
     GTATOOLS_OT_add_zon_zone,
@@ -3948,6 +3993,8 @@ classes = (
     GTATOOLS_OT_whats_new,
     INUValidateIssue,
     INULightCutRing,
+    INUTimecycWeather,
+    INUTimecycProps,
     GTATOOLS_OT_validate_run,
     GTATOOLS_OT_validate_clear,
     GTATOOLS_OT_validate_goto,

@@ -246,13 +246,50 @@ def get_surface_name(surface_id):
 # Fast id -> description lookup (built once at import).
 _surface_id_to_desc = {sid: desc for sid, name, desc in GTA_SA_SURFACE_MATERIALS}
 
+# ── Surfaces on which vanilla plants.dat spawns procedural grass/plants ──
+# Источник — data/plants.dat игры: перечислены surface-имена, на которых
+# движок генерирует растительность (CPlantMgr). Многие «базовые» травы
+# (9-14), песок (28-32), лес/поле (22, 40) и P_SAND (74-77) её ТОЖЕ
+# генерируют, а не только P_*-поверхности — но в описаниях это раньше было
+# помечено непоследовательно. Набор даёт единый источник истины; пометку
+# «— генерация» дописывает get_surface_desc, если её ещё нет в тексте.
+PLANTS_GENERATING_IDS = frozenset({
+    3,                                    # TARMAC_REALLYFUCKED
+    9, 10, 11, 12, 13, 14,                # базовая трава GRASS_*_LUSH/DRY
+    22, 40,                               # WOODLANDGROUND, CORNFIELD
+    28, 29, 30, 31, 32,                   # SAND_DEEP/MEDIUM/COMPACT/ARID/MORE
+    74, 75, 76, 77,                       # P_SAND / P_SAND_DENSE/ARID/COMPACT
+    80, 81, 82, 83, 84, 86,               # P_GRASS_SHORT/MEADOW/DRY, P_WOODLAND/DENSE, …
+    113, 115, 116, 117,                   # P_BUSHYDRY, P_GRASSWEEFLOWERS/DRYTALL/LUSHTALL
+    118, 119, 120, 121, 122,              # P_GRASSGREENMIX/BROWNMIX/LOW/ROCKY/SMALLTREES
+    128,                                  # P_FORESTSTUMPS
+    146, 147, 148,                        # P_YOURGRASS1/2/3 (plants: P_GRASSLIGHT/LIGHTER/2)
+    149, 150, 151, 152, 153,              # P_GRASSMID1/2, P_GRASSDARK/2, P_GRASSDIRTMIX
+})
+
+
+def generates_plants(surface_id):
+    """True, если на этой поверхности vanilla plants.dat спавнит траву."""
+    try:
+        return int(surface_id) in PLANTS_GENERATING_IDS
+    except (TypeError, ValueError):
+        return False
+
 
 def get_surface_desc(surface_id):
-    """Human-readable description for a surface ID (empty if unknown)."""
+    """Human-readable description for a surface ID (empty if unknown).
+
+    Для поверхностей из plants.dat дописываем «— генерация», если пометки
+    ещё нет в тексте — чтобы базовая трава (9-14), песок и т.п. были помечены
+    так же, как P_*-поверхности."""
     try:
-        return _surface_id_to_desc.get(int(surface_id), "")
+        sid = int(surface_id)
     except (TypeError, ValueError):
         return ""
+    desc = _surface_id_to_desc.get(sid, "")
+    if sid in PLANTS_GENERATING_IDS and "генерац" not in desc.lower():
+        desc = (desc + " — генерация") if desc else "генерация"
+    return desc
 
 
 # ── Per-surface viewport colors ──────────────────────────────────────

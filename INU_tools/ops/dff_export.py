@@ -109,6 +109,23 @@ def _read_base_color(mat) -> RGBA:
         bc = principled.inputs.get('Base Color')
         if bc:
             c = bc.default_value
+            # Режим timecyc «игровой вид» уводит цвет в Emission и ОБНУЛЯЕТ
+            # Base Color в чёрный. Читать его в этом состоянии нельзя: цвет
+            # материала уйдёт в DFF как 0, и с флагом MODULATE игра считает
+            # prelit × 0 = 0 → чёрная модель. Восстанавливаем исходный цвет:
+            #   1) сохранённый game-look'ом inu_tc_prev_base;
+            #   2) mat.diffuse_color — солид-цвет, его ставит импорт из цвета
+            #      материала DFF, и ни превью, ни game-look, ни заливка его не
+            #      трогают (страхует старые .blend, где режим уже выключали и
+            #      флаг снят, а чёрный Base Color остался).
+            # Работает при ЛЮБОМ пути экспорта, даже если превью не отключалось.
+            _prev = mat.get('inu_tc_prev_base')
+            if _prev is not None and mat.get('inu_tc_game_look'):
+                c = tuple(_prev)
+            elif tuple(c)[:3] == (0.0, 0.0, 0.0) and hasattr(mat, 'diffuse_color'):
+                _dc = mat.diffuse_color
+                if tuple(_dc)[:3] != (0.0, 0.0, 0.0):
+                    c = (_dc[0], _dc[1], _dc[2], c[3])
             # Read alpha from Principled BSDF Alpha input
             alpha_input = principled.inputs.get('Alpha')
             alpha = int(alpha_input.default_value * 255) if alpha_input else int(c[3] * 255)

@@ -155,9 +155,15 @@ def _collect_mesh(obj, model: ColModel):
     bm = bmesh.new()
     try:
         bm.from_mesh(mesh)
-        mat = obj.matrix_world.copy()
-        mat.translation = (0, 0, 0)
-        bm.transform(mat)
+        # Только масштаб объекта — БЕЗ поворота. Поворот объекта (во вьюпорте)
+        # — это РАЗМЕЩЕНИЕ модели (уходит в IPL/frame), в геометрию коллизии
+        # его запекать нельзя: иначе COL двоит поворот с размещением и уезжает
+        # относительно модели. Геометрия остаётся в модель-локале, как в DFF.
+        # Примитивы (сфера/бокс) поворот тоже не берут.
+        import mathutils
+        sx, sy, sz = obj.matrix_world.to_scale()
+        if (sx, sy, sz) != (1.0, 1.0, 1.0):
+            bm.transform(mathutils.Matrix.Diagonal((sx, sy, sz, 1.0)))
         bmesh.ops.triangulate(bm, faces=bm.faces[:])
         _drop_degenerate_faces(bm, compressed=model.version >= 2)
         bm.verts.index_update()
@@ -216,9 +222,12 @@ def _collect_shadow_mesh(obj, model: ColModel):
     bm = bmesh.new()
     try:
         bm.from_mesh(mesh)
-        mat = obj.matrix_world.copy()
-        mat.translation = (0, 0, 0)
-        bm.transform(mat)
+        # Только масштаб, без поворота — как в _collect_mesh (см. коммент там):
+        # поворот объекта = размещение (IPL), не геометрия COL.
+        import mathutils
+        sx, sy, sz = obj.matrix_world.to_scale()
+        if (sx, sy, sz) != (1.0, 1.0, 1.0):
+            bm.transform(mathutils.Matrix.Diagonal((sx, sy, sz, 1.0)))
         bmesh.ops.triangulate(bm, faces=bm.faces[:])
         _drop_degenerate_faces(bm, compressed=model.version >= 2)
         bm.verts.index_update()
